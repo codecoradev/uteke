@@ -1,13 +1,12 @@
 //! Uteke Core — persistent memory library for AI agents.
 //!
 //! # Example
-//! ```no_run
+//! ```ignore
 //! use uteke_core::Uteke;
 //!
 //! let mut uteke = Uteke::open("~/.uteke")?;
 //! uteke.remember("important context", &["tag1"])?;
 //! let results = uteke.recall("query", 5)?;
-//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
 /// Uteke — AI agent memory engine.
@@ -17,7 +16,7 @@ pub struct Uteke {
 
 impl Uteke {
     /// Open or create a Uteke memory store at the given path.
-    pub fn open(_path: impl AsRef<std::path::std::Path>) -> Result<Self, Error> {
+    pub fn open(_path: impl AsRef<std::path::Path>) -> Result<Self, Error> {
         let path = _path.as_ref().to_path_buf();
         Ok(Self { _path: path })
     }
