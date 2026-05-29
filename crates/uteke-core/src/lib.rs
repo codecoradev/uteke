@@ -229,12 +229,22 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
         let memories = self.store.search_content(query, namespace, limit)?;
 
         let results = memories
             .into_iter()
+            .filter(|memory| {
+                if let Some(filter_tags) = tags_filter {
+                    filter_tags
+                        .iter()
+                        .any(|ft| memory.tags.iter().any(|t| t == ft))
+                } else {
+                    true
+                }
+            })
             .map(|memory| SearchResult {
                 memory,
                 score: 1.0, // Text search doesn't have meaningful scores

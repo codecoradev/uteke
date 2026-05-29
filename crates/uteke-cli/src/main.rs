@@ -236,6 +236,9 @@ enum Commands {
         /// Maximum results to return
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Filter by tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
     },
     /// List memories, optionally filtered by tag
     List {
@@ -641,10 +644,16 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             }
             Ok(())
         }
-        Commands::Search { query, limit } => {
+        Commands::Search { query, limit, tags } => {
             tracing::info!("Searching: {query} (limit: {limit})");
+            let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+            let tags_filter = if tag_refs.is_empty() {
+                None
+            } else {
+                Some(tag_refs.as_slice())
+            };
             let results = uteke
-                .search(query, *limit, ns)
+                .search(query, *limit, tags_filter, ns)
                 .map_err(|e| format!("Failed to search: {e}"))?;
             if cli.json {
                 print_json(&results);
