@@ -22,7 +22,7 @@ pub struct Memory {
 }
 
 /// A search result with relevance score.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     /// The matched memory.
     pub memory: Memory,

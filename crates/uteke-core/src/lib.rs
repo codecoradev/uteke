@@ -10,11 +10,14 @@
 //! ```
 
 mod embed;
-mod memory;
+pub mod memory;
+
+pub use memory::types::{Memory, SearchResult, StoreStats};
 
 use embed::EmbeddingEngine;
+use memory::store::Store;
 use memory::vector::euclidean_to_cosine;
-use memory::{Memory, SearchResult, Store, StoreStats, VectorIndex};
+use memory::VectorIndex;
 
 use std::path::Path;
 use std::sync::Mutex;
