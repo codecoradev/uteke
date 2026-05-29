@@ -21,20 +21,15 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: uteke-x86_64-unknown-linux-gnu
             ext: tar.gz
-          # Linux ARM64 (native runner — no cross-compile)
+          # Linux ARM64 (native runner)
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: uteke-aarch64-unknown-linux-gnu
             ext: tar.gz
-          # macOS Apple Silicon (native M1 runner)
+          # macOS Apple Silicon (native M1/M2/M3 runner)
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: uteke-aarch64-apple-darwin
-            ext: tar.gz
-          # macOS Intel
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            artifact: uteke-x86_64-apple-darwin
             ext: tar.gz
           # Windows x86_64
           - os: windows-latest

@@ -33,20 +33,12 @@ Download from [GitHub Releases](https://github.com/ajianaz/uteke/releases):
 | Platform | File |
 |----------|------|
 | macOS (Apple Silicon) | `uteke-aarch64-apple-darwin.tar.gz` |
-| macOS (Intel) | `uteke-x86_64-apple-darwin.tar.gz` |
-| Linux (x86_64) | `uteke-x86_64-unknown-linux-musl.tar.gz` |
+| Linux (x86_64) | `uteke-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux (ARM64) | `uteke-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows (x86_64) | `uteke-x86_64-pc-windows-msvc.zip` |
+| Windows (ARM64) | `uteke-aarch64-pc-windows-msvc.zip` |
 
-```bash
-# Download and extract (example: macOS ARM64)
-curl -fsSL https://github.com/ajianaz/uteke/releases/latest/download/uteke-aarch64-apple-darwin.tar.gz | tar xz
-
-# Move to PATH
-sudo mv uteke /usr/local/bin/
-
-# Verify
-uteke --version
-```
+> **Note:** Intel Mac is not supported via pre-built binaries (ort-sys doesn't provide prebuilts). Intel Mac users can build from source.
 
 ### Quick Install (Linux/macOS)
 
