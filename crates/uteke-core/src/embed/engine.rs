@@ -131,10 +131,12 @@ impl EmbeddingEngine {
 }
 
 /// Download a file from HuggingFace repo to local path.
-fn download_hf_file(repo: &str, path_in_repo: &str, local_path: &std::path::Path) -> Result<(), Error> {
-    let url = format!(
-        "https://huggingface.co/{repo}/resolve/main/{path_in_repo}"
-    );
+fn download_hf_file(
+    repo: &str,
+    path_in_repo: &str,
+    local_path: &std::path::Path,
+) -> Result<(), Error> {
+    let url = format!("https://huggingface.co/{repo}/resolve/main/{path_in_repo}");
     eprintln!("Downloading {url}...");
 
     let response = reqwest::blocking::Client::new()
