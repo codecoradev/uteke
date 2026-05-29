@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Auto-migration of existing databases (zero data loss)
   - Each namespace is fully isolated: recall, search, list, stats scoped
   - Default namespace: `"default"` (backward compatible)
+- **Tiered memory** — access-based scoring with Hot/Warm/Cold tiers
+  - `access_count` and `last_accessed` tracked per memory
+  - Hot memories (accessed within 7 days) get +0.1 score boost in recall
+  - Warm (30 days) and Cold (>30 days) tiers for visibility
+  - `uteke stats` shows tier breakdown: 🔥 Hot / 🟡 Warm / ❄️ Cold
+  - Auto-migration: columns added to existing databases
 - **Removed old deps:** `hnsw`, `rand_pcg`, `space` (replaced by `usearch`)
 - **Added deps:** `usearch`, `tracing`
 

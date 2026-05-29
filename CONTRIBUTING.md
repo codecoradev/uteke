@@ -74,7 +74,7 @@ crates/
 ├── uteke-core/         # Memory engine library
 │   └── src/
 │       ├── lib.rs      # Uteke struct — main API
-│       ├── memory/     # SQLite store + HNSW vector index
+│       ├── memory/     # SQLite store + usearch vector index
 │       └── embed/      # ONNX embedding engine
 └── uteke-cli/          # CLI binary
     └── src/main.rs     # clap commands
