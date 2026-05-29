@@ -22,3 +22,57 @@ body {
 	background-color: var(--color-accent-dim);
 	color: white;
 }
+
+/* Hero accent with glow */
+.hero-accent {
+	color: var(--color-accent);
+	background: linear-gradient(135deg, var(--color-accent), #67e8f9, var(--color-accent));
+	background-size: 200% 200%;
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+	text-shadow: none;
+	filter: drop-shadow(0 0 20px rgba(34, 211, 238, 0.3));
+}
+
+/* Feature card hover */
+.feature-card,
+.audience-card {
+	transition-property: transform, border-color;
+	transition-duration: 200ms;
+	transition-timing-function: ease-out;
+}
+
+.feature-card:hover,
+.audience-card:hover {
+	transform: translateY(-2px);
+	border-color: var(--color-accent-dim);
+}
+
+/* CTA button */
+.cta-button {
+	transition-property: transform, box-shadow, background-color;
+	transition-duration: 200ms;
+	transition-timing-function: ease-out;
+}
+
+.cta-button:hover {
+	transform: translateY(-1px);
+	box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+	background-color: #06b6d4;
+}
+
+.cta-button:active {
+	transform: translateY(0);
+}
+
+/* Code blocks */
+code {
+	font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Architecture diagram - uteke highlight box */
+.uteke-box {
+	border: 2px solid var(--color-accent);
+	background-color: color-mix(in srgb, var(--color-accent-dim) 10%, transparent);
+}
