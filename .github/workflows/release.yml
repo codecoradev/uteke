@@ -21,25 +21,25 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: uteke-x86_64-unknown-linux-gnu
             ext: tar.gz
-          # Linux ARM64 (native runner)
+          # Linux ARM64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: uteke-aarch64-unknown-linux-gnu
             ext: tar.gz
-          # macOS Apple Silicon (native M1/M2/M3 runner)
+          # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: uteke-aarch64-apple-darwin
+            ext: tar.gz
+          # macOS Intel
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: uteke-x86_64-apple-darwin
             ext: tar.gz
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: uteke-x86_64-pc-windows-msvc
-            ext: zip
-          # Windows ARM64 (native runner)
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            artifact: uteke-aarch64-pc-windows-msvc
             ext: zip
 
     steps:
@@ -53,34 +53,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Setup Windows VS environment
-        if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: ${{ matrix.target == 'aarch64-pc-windows-msvc' && 'amd64_arm64' || 'amd64' }}
-
-      # numkong v7.7.0 bug: on aarch64-pc-windows-msvc, probe .c files use #error
-      # directives that crash MSVC try_compile() instead of returning Err.
-      # build.rs respects NK_TARGET_* env vars — setting to "0" skips the probe.
-      - name: Disable unsupported numkong ARM features (Windows ARM64)
-        if: matrix.target == 'aarch64-pc-windows-msvc'
-        shell: bash
-        run: |
-          for feature in NEONHALF NEONBFDOT NEONFHM NEONFP8 \
-            SVE SVEHALF SVEBFDOT SVESDOT SVE2 SVE2P1 \
-            SME SME2 SME2P1 SMEF64 SMEHALF SMEBF16 SMEBI32 SMELUT2 SMEFA64 \
-            HASWELL SKYLAKE; do
-            echo "NK_TARGET_${feature}=0" >> $GITHUB_ENV
-          done
-
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p uteke-cli
-        env:
-          # numkong v7.7.0 via cc-rs on aarch64-pc-windows-msvc:
-          # 1. winnt.h needs _ARM64_=1 or errors "No Target Architecture"
-          # 2. types.h auto-detects x86 HASWELL/SKYLAKE via _MSC_VER
-          # numkong's own CI uses CMake+VS, not cc-rs, so this path is untested upstream.
-          CFLAGS_aarch64_pc_windows_msvc: "-D_ARM64_=1 -DNK_TARGET_HASWELL=0 -DNK_TARGET_SKYLAKE=0"
 
       - name: Strip binary (Unix)
         if: runner.os != 'Windows'
@@ -156,13 +130,10 @@ jobs:
           | Platform | File |
           |----------|------|
           | macOS (Apple Silicon) | `uteke-VERSION-aarch64-apple-darwin.tar.gz` |
+          | macOS (Intel) | `uteke-VERSION-x86_64-apple-darwin.tar.gz` |
           | Linux (x86_64) | `uteke-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
           | Linux (ARM64) | `uteke-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
           | Windows (x86_64) | `uteke-VERSION-x86_64-pc-windows-msvc.zip` |
-          | Windows (ARM64) | `uteke-VERSION-aarch64-pc-windows-msvc.zip` |
-
-          > **Note:** Intel Mac is not available as pre-built binary (ONNX Runtime dropped support).
-          > Intel Mac users can build from source: `cargo build --release`
 
           ### Quick Start
 
