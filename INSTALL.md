@@ -108,7 +108,7 @@ Model cached at:
 ## Verify Installation
 
 ```bash
-uteke --version        # Should show "uteke 0.0.1"
+uteke --version        # Should show "uteke 0.0.2"
 uteke stats            # Should show store statistics
 
 # Quick smoke test

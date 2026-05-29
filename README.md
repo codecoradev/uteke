@@ -8,7 +8,7 @@
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.1-green.svg" alt="v0.0.1" />
+  <img src="https://img.shields.io/badge/status-v0.0.2-green.svg" alt="v0.0.2" />
 </p>
 
 <p align="center">
@@ -253,7 +253,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Uteke follows a demand-gated roadmap — we build what people actually use.
 
-**Now (v0.0.1):** Core engine — store, recall, search, CLI, Python wrapper, persistent vector index, multi-agent namespaces
+**Now (v0.0.2):** Core engine — store, recall, search, CLI, persistent vector index, multi-agent namespaces, tiered memory, health checks
 **Phase A (100+ stars):** Better embeddings, dedup, import/export, remote embedding opt-in
 **Phase B (500+ stars):** Python SDK (PyO3), Node.js SDK, editor integrations
 **Phase C (1000+ stars):** Team features, cloud sync (opt-in), knowledge graph
