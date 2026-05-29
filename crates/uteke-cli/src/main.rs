@@ -49,7 +49,7 @@ fn write_default_config() {
 # path = "~/.uteke"  # Default store location
 
 [embedding]
-# model = "all-MiniLM-L6-v2"
+# model = "embeddinggemma-q4"
 # max_seq_length = 256
 "#;
         std::fs::write(&config_path, default).ok();

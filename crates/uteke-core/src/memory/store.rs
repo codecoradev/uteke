@@ -327,7 +327,7 @@ mod tests {
         Memory {
             id: id.to_string(),
             content: content.to_string(),
-            embedding: vec![0.1; 384],
+            embedding: vec![0.1; 768],
             tags: tags.iter().map(|t| t.to_string()).collect(),
             metadata: serde_json::json!({}),
             created_at: Utc::now(),

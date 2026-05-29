@@ -127,7 +127,7 @@ mod tests {
     fn test_empty_index() {
         let mut idx = VectorIndex::new();
         assert!(idx.is_empty());
-        let results = idx.search(&[0.0; 384], 5, 50);
+        let results = idx.search(&[0.0; 768], 5, 50);
         assert!(results.is_empty());
     }
 
@@ -137,17 +137,17 @@ mod tests {
 
         // Create normalized vectors
         let v1: Vec<f32> = {
-            let mut v = vec![0.0; 384];
+            let mut v = vec![0.0; 768];
             v[0] = 1.0;
             v
         };
         let v2: Vec<f32> = {
-            let mut v = vec![0.0; 384];
+            let mut v = vec![0.0; 768];
             v[1] = 1.0;
             v
         };
         let v3: Vec<f32> = {
-            let mut v = vec![0.0; 384];
+            let mut v = vec![0.0; 768];
             v[0] = 0.9;
             v[1] = 0.1;
             let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -171,7 +171,7 @@ mod tests {
     fn test_build_from_items() {
         let items: Vec<(String, Vec<f32>)> = (0..10)
             .map(|i| {
-                let mut v = vec![0.0f32; 384];
+                let mut v = vec![0.0f32; 768];
                 v[i] = 1.0;
                 (format!("item-{i}"), v)
             })
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(idx.len(), 10);
 
         let query = {
-            let mut v = vec![0.0f32; 384];
+            let mut v = vec![0.0f32; 768];
             v[0] = 1.0;
             v
         };

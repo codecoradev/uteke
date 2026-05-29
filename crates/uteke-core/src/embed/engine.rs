@@ -1,20 +1,18 @@
-//! ONNX-based embedding engine using all-MiniLM-L6-v2.
+//! ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
 
 use crate::Error;
 use std::path::PathBuf;
 
-const MODEL_DIR_NAME: &str = "minilm-l6-v2";
-const MODEL_FILE: &str = "model.onnx";
+const MODEL_DIR_NAME: &str = "embeddinggemma-q4";
+const MODEL_FILE: &str = "model_q4.onnx";
+const MODEL_DATA_FILE: &str = "model_q4.onnx_data";
 const TOKENIZER_FILE: &str = "tokenizer.json";
-const MODEL_DIMS: usize = 384;
+const MODEL_DIMS: usize = 768;
 const MAX_SEQ_LEN: usize = 256;
 
-const MODEL_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
-const TOKENIZER_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
+const HF_REPO: &str = "onnx-community/embeddinggemma-300m-ONNX";
 
-/// ONNX-based embedding engine.
+/// ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
 pub struct EmbeddingEngine {
     session: ort::session::Session,
     tokenizer: tokenizers::Tokenizer,
@@ -27,17 +25,23 @@ impl EmbeddingEngine {
         std::fs::create_dir_all(&model_dir)
             .map_err(|e| Error::Embedding(format!("Failed to create model dir: {e}")))?;
 
-        let model_path = model_dir.join(MODEL_FILE);
+        let onnx_dir = model_dir.join("onnx");
+        std::fs::create_dir_all(&onnx_dir)
+            .map_err(|e| Error::Embedding(format!("Failed to create onnx dir: {e}")))?;
+
+        let model_path = onnx_dir.join(MODEL_FILE);
+        let model_data_path = onnx_dir.join(MODEL_DATA_FILE);
         let tokenizer_path = model_dir.join(TOKENIZER_FILE);
 
-        // Download model if not present
+        // Download model files if not present
         if !model_path.exists() {
-            download_file(MODEL_URL, &model_path)?;
+            download_hf_file(HF_REPO, "onnx/model_q4.onnx", &model_path)?;
         }
-
-        // Download tokenizer if not present
+        if !model_data_path.exists() {
+            download_hf_file(HF_REPO, "onnx/model_q4.onnx_data", &model_data_path)?;
+        }
         if !tokenizer_path.exists() {
-            download_file(TOKENIZER_URL, &tokenizer_path)?;
+            download_hf_file(HF_REPO, "tokenizer.json", &tokenizer_path)?;
         }
 
         // Load ONNX session
@@ -52,7 +56,7 @@ impl EmbeddingEngine {
         Ok(Self { session, tokenizer })
     }
 
-    /// Embed a text string, returning a 384-dimensional f32 vector.
+    /// Embed a text string, returning a 768-dimensional f32 vector.
     pub fn embed(&mut self, text: &str) -> Result<Vec<f32>, Error> {
         // Tokenize
         let encoding = self
@@ -62,7 +66,6 @@ impl EmbeddingEngine {
 
         let input_ids = encoding.get_ids();
         let attention_mask = encoding.get_attention_mask();
-        let token_type_ids = encoding.get_type_ids();
 
         // Truncate to max sequence length
         let seq_len = input_ids.len().min(MAX_SEQ_LEN);
@@ -73,12 +76,8 @@ impl EmbeddingEngine {
             .iter()
             .map(|&v| v as i64)
             .collect();
-        let token_type_ids_i64: Vec<i64> = token_type_ids[..seq_len]
-            .iter()
-            .map(|&v| v as i64)
-            .collect();
 
-        // Create tensors using (shape, data) tuples
+        // Create tensors
         let input_ids_tensor = ort::value::Tensor::<i64>::from_array((
             vec![1i64, seq_len as i64],
             input_ids_i64.into_boxed_slice(),
@@ -87,35 +86,34 @@ impl EmbeddingEngine {
 
         let attention_mask_tensor = ort::value::Tensor::<i64>::from_array((
             vec![1i64, seq_len as i64],
-            attention_mask_i64.clone().into_boxed_slice(),
+            attention_mask_i64.into_boxed_slice(),
         ))
         .map_err(|e| Error::Embedding(format!("Failed to create attention_mask tensor: {e}")))?;
 
-        let token_type_ids_tensor = ort::value::Tensor::<i64>::from_array((
-            vec![1i64, seq_len as i64],
-            token_type_ids_i64.into_boxed_slice(),
-        ))
-        .map_err(|e| Error::Embedding(format!("Failed to create token_type_ids tensor: {e}")))?;
-
-        // Run ONNX inference
+        // Run ONNX inference — EmbeddingGemma has 2 outputs:
+        //   output[0] = last_hidden_state (1, seq_len, 768)
+        //   output[1] = sentence_embedding (1, 768) — already mean-pooled
         let outputs = self
             .session
-            .run(ort::inputs![
-                input_ids_tensor,
-                attention_mask_tensor,
-                token_type_ids_tensor
-            ])
+            .run(ort::inputs![input_ids_tensor, attention_mask_tensor])
             .map_err(|e| Error::Embedding(format!("ONNX inference failed: {e}")))?;
 
-        // Extract output tensor: shape (1, seq_len, 384)
-        let output = &outputs[0];
+        // Use output[1] (sentence_embedding) — already pooled by the model
+        let sentence_emb = &outputs[1];
 
-        let output_view = output
-            .try_extract_array::<f32>()
-            .map_err(|e| Error::Embedding(format!("Failed to extract output: {e}")))?;
+        let emb_view = sentence_emb
+            .try_extract_tensor::<f32>()
+            .map_err(|e| Error::Embedding(format!("Failed to extract sentence embedding: {e}")))?;
 
-        // Mean pool over non-padding tokens, then normalize
-        let embedding = mean_pool_and_normalize(&output_view, &attention_mask_i64, seq_len);
+        let mut embedding: Vec<f32> = emb_view.1.to_vec();
+
+        // L2 normalize
+        let norm = embedding.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            for v in embedding.iter_mut() {
+                *v /= norm;
+            }
+        }
 
         Ok(embedding)
     }
@@ -132,45 +130,15 @@ impl EmbeddingEngine {
     }
 }
 
-/// Mean pool the token embeddings using attention mask, then L2-normalize.
-fn mean_pool_and_normalize(
-    output: &ndarray::ArrayViewD<f32>,
-    attention_mask: &[i64],
-    seq_len: usize,
-) -> Vec<f32> {
-    let mut pooled = vec![0.0f32; MODEL_DIMS];
-    let mut mask_sum = 0.0f32;
+/// Download a file from HuggingFace repo to local path.
+fn download_hf_file(repo: &str, path_in_repo: &str, local_path: &std::path::Path) -> Result<(), Error> {
+    let url = format!(
+        "https://huggingface.co/{repo}/resolve/main/{path_in_repo}"
+    );
+    eprintln!("Downloading {url}...");
 
-    for t in 0..seq_len {
-        if attention_mask[t] == 1 {
-            mask_sum += 1.0;
-            for d in 0..MODEL_DIMS {
-                pooled[d] += output[[0, t, d]];
-            }
-        }
-    }
-
-    if mask_sum > 0.0 {
-        for v in pooled.iter_mut() {
-            *v /= mask_sum;
-        }
-    }
-
-    // L2 normalize
-    let norm = pooled.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for v in pooled.iter_mut() {
-            *v /= norm;
-        }
-    }
-
-    pooled
-}
-
-/// Download a file from URL to path.
-fn download_file(url: &str, path: &std::path::Path) -> Result<(), Error> {
     let response = reqwest::blocking::Client::new()
-        .get(url)
+        .get(&url)
         .send()
         .map_err(|e| Error::Embedding(format!("Failed to download {url}: {e}")))?;
 
@@ -185,7 +153,7 @@ fn download_file(url: &str, path: &std::path::Path) -> Result<(), Error> {
         .bytes()
         .map_err(|e| Error::Embedding(format!("Failed to read download: {e}")))?;
 
-    std::fs::write(path, bytes.as_ref())
+    std::fs::write(local_path, bytes.as_ref())
         .map_err(|e| Error::Embedding(format!("Failed to write file: {e}")))?;
 
     Ok(())

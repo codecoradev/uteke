@@ -9,7 +9,7 @@ pub struct Memory {
     pub id: String,
     /// The text content of the memory.
     pub content: String,
-    /// 384-dimensional embedding vector.
+    /// 768-dimensional embedding vector.
     pub embedding: Vec<f32>,
     /// Tags for categorization.
     pub tags: Vec<String>,

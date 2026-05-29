@@ -290,7 +290,7 @@ mod tests {
         let m = Memory {
             id: "test-id".to_string(),
             content: "hello".to_string(),
-            embedding: vec![0.1; 384],
+            embedding: vec![0.1; 768],
             tags: vec!["a".to_string(), "b".to_string()],
             metadata: serde_json::json!({"key": "value"}),
             created_at: now,
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(restored.id, m.id);
         assert_eq!(restored.content, m.content);
         assert_eq!(restored.tags, m.tags);
-        assert_eq!(restored.embedding.len(), 384);
+        assert_eq!(restored.embedding.len(), 768);
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
         let m = Memory {
             id: "sr-test".to_string(),
             content: "test content".to_string(),
-            embedding: vec![0.0; 384],
+            embedding: vec![0.0; 768],
             tags: vec![],
             metadata: serde_json::Value::Null,
             created_at: now,
