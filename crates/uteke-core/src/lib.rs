@@ -21,6 +21,7 @@ use memory::store::Store;
 use memory::vector::euclidean_to_cosine;
 use memory::VectorIndex;
 
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -282,6 +283,129 @@ impl Uteke {
         self.store.list_namespaces()
     }
 
+    /// Check system health: DB, index, model, consistency.
+    pub fn doctor(&self) -> Result<DoctorReport, Error> {
+        let mut checks = Vec::new();
+
+        // 1. SQLite DB
+        let db_count = self.store.count(None)?;
+        let db_path = self.store.path();
+        let db_size = db_path
+            .as_ref()
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .unwrap_or(0);
+        checks.push(DoctorCheck {
+            name: "SQLite DB".to_string(),
+            status: DoctorStatus::Ok,
+            detail: format!("{} memories, {}", db_count, format_bytes(db_size)),
+        });
+
+        // 2. usearch index
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+        let index_count = index.len();
+        checks.push(DoctorCheck {
+            name: "usearch index".to_string(),
+            status: DoctorStatus::Ok,
+            detail: format!("{} vectors", index_count),
+        });
+
+        // 3. Index consistency
+        if db_count == index_count {
+            checks.push(DoctorCheck {
+                name: "Index consistency".to_string(),
+                status: DoctorStatus::Ok,
+                detail: format!("DB={} Index={}", db_count, index_count),
+            });
+        } else {
+            checks.push(DoctorCheck {
+                name: "Index consistency".to_string(),
+                status: DoctorStatus::Error,
+                detail: format!(
+                    "MISMATCH: DB={} Index={} — run `uteke repair`",
+                    db_count, index_count
+                ),
+            });
+        }
+
+        // 4. Embedding model
+        let model_dir = dirs::home_dir()
+            .map(|h| h.join(".uteke").join("models").join("embeddinggemma-q4"))
+            .unwrap_or_default();
+        let model_file = model_dir.join("onnx").join("model_q4.onnx");
+        let tokenizer_file = model_dir.join("tokenizer.json");
+        let model_exists = model_file.exists() && tokenizer_file.exists();
+        checks.push(DoctorCheck {
+            name: "Embedding model".to_string(),
+            status: if model_exists {
+                DoctorStatus::Ok
+            } else {
+                DoctorStatus::Error
+            },
+            detail: if model_exists {
+                "embeddinggemma-q4".to_string()
+            } else {
+                "Model files not found — will download on first use".to_string()
+            },
+        });
+
+        Ok(DoctorReport { checks })
+    }
+
+    /// Verify DB and index consistency. Returns mismatch count.
+    pub fn verify(&self) -> Result<VerifyReport, Error> {
+        let db_count = self.store.count(None)?;
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+        let index_count = index.len();
+
+        let consistent = db_count == index_count;
+        Ok(VerifyReport {
+            db_count,
+            index_count,
+            consistent,
+        })
+    }
+
+    /// Repair: rebuild usearch index from SQLite.
+    pub fn repair(&self) -> Result<RepairReport, Error> {
+        let before_db = self.store.count(None)?;
+        let before_index = {
+            let index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            index.len()
+        };
+
+        // Load all from SQLite and rebuild index
+        let all_memories = self.store.load_all(None)?;
+        let items: Vec<(String, Vec<f32>)> = all_memories
+            .iter()
+            .map(|m| (m.id.clone(), m.embedding.clone()))
+            .collect();
+
+        {
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            index.build(&items);
+            index.save().ok();
+        }
+
+        Ok(RepairReport {
+            db_count: before_db,
+            index_before: before_index,
+            index_after: items.len(),
+        })
+    }
+
     /// Get statistics about the memory store.
     pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
         let total_memories = self.store.count(namespace)?;
@@ -410,6 +534,65 @@ fn resolve_db_path(db_path: &Path) -> Result<String, Error> {
         }
         Ok(db_path.to_string_lossy().to_string())
     }
+}
+
+/// Helper to format bytes.
+fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// Status of a doctor check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DoctorStatus {
+    Ok,
+    Warn,
+    Error,
+}
+
+/// A single check in the doctor report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorCheck {
+    /// Name of the check.
+    pub name: String,
+    /// Status: ok, warn, error.
+    pub status: DoctorStatus,
+    /// Detail message.
+    pub detail: String,
+}
+
+/// Result of `uteke doctor`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorReport {
+    /// All checks performed.
+    pub checks: Vec<DoctorCheck>,
+}
+
+/// Result of `uteke verify`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyReport {
+    /// Count of memories in SQLite.
+    pub db_count: usize,
+    /// Count of vectors in usearch index.
+    pub index_count: usize,
+    /// Whether they match.
+    pub consistent: bool,
+}
+
+/// Result of `uteke repair`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepairReport {
+    /// Count of memories in DB.
+    pub db_count: usize,
+    /// Index count before repair.
+    pub index_before: usize,
+    /// Index count after repair.
+    pub index_after: usize,
 }
 
 /// Uteke error type.

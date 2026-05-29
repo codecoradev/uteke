@@ -6,6 +6,7 @@
 - **C compiler** — Required by `rusqlite` (bundled SQLite)
   - macOS: Xcode Command Line Tools (`xcode-select --install`)
   - Linux: `gcc` or `clang` (`sudo apt install build-essential`)
+  - Windows: Visual Studio Build Tools or `winget install Microsoft.VisualStudio.2022.BuildTools`
 
 ## Installation
 
@@ -32,11 +33,11 @@ Download from [GitHub Releases](https://github.com/ajianaz/uteke/releases):
 
 | Platform | File |
 |----------|------|
-| macOS (Apple Silicon) | `uteke-aarch64-apple-darwin.tar.gz` |
-| Linux (x86_64) | `uteke-x86_64-unknown-linux-gnu.tar.gz` |
-| Linux (ARM64) | `uteke-aarch64-unknown-linux-gnu.tar.gz` |
-| Windows (x86_64) | `uteke-x86_64-pc-windows-msvc.zip` |
-| Windows (ARM64) | `uteke-aarch64-pc-windows-msvc.zip` |
+| macOS (Apple Silicon) | `uteke-{version}-aarch64-apple-darwin.tar.gz` |
+| Linux (x86_64) | `uteke-{version}-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux (ARM64) | `uteke-{version}-aarch64-unknown-linux-gnu.tar.gz` |
+| Windows (x86_64) | `uteke-{version}-x86_64-pc-windows-msvc.zip` |
+| Windows (ARM64) | `uteke-{version}-aarch64-pc-windows-msvc.zip` |
 
 > **Note:** Intel Mac is not supported via pre-built binaries (ort-sys doesn't provide prebuilts). Intel Mac users can build from source.
 
@@ -51,6 +52,47 @@ curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/develop/scripts/insta
 > echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
 > ```
 
+### Windows Setup
+
+#### Option A: Pre-built Binary
+
+```powershell
+# Download from GitHub Releases
+# Example (PowerShell):
+Invoke-WebRequest -Uri "https://github.com/ajianaz/uteke/releases/latest/download/uteke-x86_64-pc-windows-msvc.zip" -OutFile "uteke.zip"
+
+# Extract
+Expand-Archive -Path uteke.zip -DestinationPath uteke
+
+# Move to a directory in PATH (e.g. C:\Users\you\AppData\Local\bin)
+mkdir -p C:\Users\you\AppData\Local\bin
+move uteke\uteke.exe C:\Users\you\AppData\Local\bin\
+
+# Add to PATH (current session)
+$env:PATH += ";C:\Users\you\AppData\Local\bin"
+
+# Permanent PATH (add to profile)
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\Users\you\AppData\Local\bin", "User")
+```
+
+#### Option B: Build from Source
+
+```powershell
+# Install Rust via rustup
+winget install Rustlang.Rustup
+
+# Clone and build
+git clone https://github.com/ajianaz/uteke.git
+cd uteke
+cargo build --release
+
+# Binary at target\release\uteke.exe
+# Copy somewhere in PATH
+copy target\release\uteke.exe C:\Users\you\AppData\Local\bin\
+```
+
+> **Note:** On Windows, data is stored at `C:\Users\you\.uteke\`.
+
 ## First Run
 
 On first `remember` command, Uteke automatically downloads the embedding model (~188MB):
@@ -59,31 +101,20 @@ On first `remember` command, Uteke automatically downloads the embedding model (
 uteke remember "My first memory" --tags test
 ```
 
-Model cached at `~/.uteke/models/embeddinggemma-q4/`.
+Model cached at:
+- **macOS/Linux:** `~/.uteke/models/embeddinggemma-q4/`
+- **Windows:** `C:\Users\you\.uteke\models\embeddinggemma-q4\`
 
 ## Verify Installation
 
 ```bash
-uteke --version        # Should show "uteke 0.1.0"
+uteke --version        # Should show "uteke 0.0.1"
 uteke stats            # Should show store statistics
 
 # Quick smoke test
 uteke remember "Hello world" --tags test
 uteke recall "hello"
 uteke forget <id-from-above>
-```
-
-## Configuration
-
-Config file: `~/.uteke/config.toml` (auto-created on first run)
-
-```toml
-[store]
-# path = "~/.uteke"  # Default store location
-
-[embedding]
-# model = "embeddinggemma-q4"
-# max_seq_length = 256
 ```
 
 ## Shell Completions
@@ -117,6 +148,9 @@ xcode-select --install
 
 # Ubuntu/Debian
 sudo apt install build-essential
+
+# Windows
+# Install Visual Studio Build Tools via winget or visualstudio.com
 ```
 
 ### Model download fails
@@ -127,15 +161,23 @@ https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX
 
 Manual download:
 ```bash
+# macOS/Linux
 mkdir -p ~/.uteke/models/embeddinggemma-q4/onnx
+# Download model_q4.onnx and model_q4.onnx_data to above directory
+
+# Windows
+mkdir C:\Users\you\.uteke\models\embeddinggemma-q4\onnx
 # Download model_q4.onnx and model_q4.onnx_data to above directory
 ```
 
 ### `uteke: command not found`
 ```bash
-# Add Cargo bin to PATH
+# macOS/Linux — Add Cargo bin to PATH
 echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
+
+# Windows — Add to PATH via PowerShell
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.cargo\bin", "User")
 ```
 
 ## Uninstall
@@ -145,5 +187,9 @@ source ~/.bashrc
 cargo uninstall uteke
 
 # Remove all data (memories, models, config)
+# macOS/Linux
 rm -rf ~/.uteke
+
+# Windows
+Remove-Item -Recurse -Force "$env:USERPROFILE\.uteke"
 ```

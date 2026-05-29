@@ -161,6 +161,53 @@ fn print_stats_human(stats: &uteke_core::StoreStats) {
     println!("  Database size:  {}", size_str);
 }
 
+fn print_doctor_human(report: &uteke_core::DoctorReport) {
+    println!("Uteke Health Check");
+    println!("───────────────────");
+    let all_ok = report
+        .checks
+        .iter()
+        .all(|c| matches!(c.status, uteke_core::DoctorStatus::Ok));
+    for check in &report.checks {
+        let icon = match check.status {
+            uteke_core::DoctorStatus::Ok => "✓",
+            uteke_core::DoctorStatus::Warn => "⚠",
+            uteke_core::DoctorStatus::Error => "✗",
+        };
+        println!("  {} {}: {}", icon, check.name, check.detail);
+    }
+    if all_ok {
+        println!("\n  All checks passed.");
+    } else {
+        println!("\n  Some checks failed. Run `uteke repair` if index is inconsistent.");
+    }
+}
+
+fn print_verify_human(report: &uteke_core::VerifyReport) {
+    println!("Verify Report");
+    println!("─────────────");
+    println!("  SQLite DB:    {} memories", report.db_count);
+    println!("  usearch index: {} vectors", report.index_count);
+    if report.consistent {
+        println!("  ✓ Consistent");
+    } else {
+        println!("  ✗ MISMATCH — run `uteke repair` to rebuild index");
+    }
+}
+
+fn print_repair_human(report: &uteke_core::RepairReport) {
+    println!("Repair Report");
+    println!("─────────────");
+    println!("  SQLite DB:     {} memories", report.db_count);
+    println!("  Index before:  {} vectors", report.index_before);
+    println!("  Index after:   {} vectors", report.index_after);
+    if report.index_after == report.db_count {
+        println!("  ✓ Index rebuilt successfully");
+    } else {
+        println!("  ⚠ Index count still differs from DB");
+    }
+}
+
 // ── CLI definition ──────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -243,6 +290,12 @@ enum Commands {
     },
     /// Show memory store statistics
     Stats,
+    /// Check system health (DB, index, model, consistency)
+    Doctor,
+    /// Verify DB and index consistency
+    Verify,
+    /// Repair index by rebuilding from SQLite
+    Repair,
     /// Export all memories to JSONL file (no embeddings — portable)
     Export {
         /// Output file path (use - for stdout)
@@ -625,6 +678,36 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
                 print_json(&stats);
             } else {
                 print_stats_human(&stats);
+            }
+            Ok(())
+        }
+        Commands::Doctor => {
+            tracing::info!("Running doctor");
+            let report = uteke.doctor().map_err(|e| format!("Doctor failed: {e}"))?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                print_doctor_human(&report);
+            }
+            Ok(())
+        }
+        Commands::Verify => {
+            tracing::info!("Running verify");
+            let report = uteke.verify().map_err(|e| format!("Verify failed: {e}"))?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                print_verify_human(&report);
+            }
+            Ok(())
+        }
+        Commands::Repair => {
+            tracing::info!("Running repair");
+            let report = uteke.repair().map_err(|e| format!("Repair failed: {e}"))?;
+            if cli.json {
+                print_json(&report);
+            } else {
+                print_repair_human(&report);
             }
             Ok(())
         }

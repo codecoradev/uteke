@@ -60,13 +60,18 @@ jobs:
         if: runner.os != 'Windows'
         run: strip target/${{ matrix.target }}/release/uteke
 
+      - name: Extract version
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p release
           cp target/${{ matrix.target }}/release/uteke release/${{ matrix.artifact }}
           cd release
-          tar czf ${{ matrix.artifact }}.${{ matrix.ext }} ${{ matrix.artifact }}
+          tar czf ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} ${{ matrix.artifact }}
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -75,13 +80,13 @@ jobs:
           mkdir release
           cp target/${{ matrix.target }}/release/uteke.exe release/${{ matrix.artifact }}.exe
           cd release
-          7z a ${{ matrix.artifact }}.${{ matrix.ext }} ${{ matrix.artifact }}.exe
+          7z a ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} ${{ matrix.artifact }}.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: release/${{ matrix.artifact }}.${{ matrix.ext }}
+          name: ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}
+          path: release/${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}
 
   release:
     name: Create GitHub Release
@@ -104,7 +109,7 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         run: |
@@ -124,11 +129,11 @@ jobs:
 
           | Platform | File |
           |----------|------|
-          | macOS (Apple Silicon) | `uteke-aarch64-apple-darwin.tar.gz` |
-          | Linux (x86_64) | `uteke-x86_64-unknown-linux-gnu.tar.gz` |
-          | Linux (ARM64) | `uteke-aarch64-unknown-linux-gnu.tar.gz` |
-          | Windows (x86_64) | `uteke-x86_64-pc-windows-msvc.zip` |
-          | Windows (ARM64) | `uteke-aarch64-pc-windows-msvc.zip` |
+          | macOS (Apple Silicon) | `uteke-VERSION-aarch64-apple-darwin.tar.gz` |
+          | Linux (x86_64) | `uteke-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
+          | Linux (ARM64) | `uteke-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
+          | Windows (x86_64) | `uteke-VERSION-x86_64-pc-windows-msvc.zip` |
+          | Windows (ARM64) | `uteke-VERSION-aarch64-pc-windows-msvc.zip` |
 
           > **Note:** Intel Mac is not available as pre-built binary (ONNX Runtime dropped support).
           > Intel Mac users can build from source: `cargo build --release`
@@ -141,7 +146,7 @@ jobs:
           ```
 
           EOF
-          sed -i "s/vVERSION/${{ steps.version.outputs.VERSION }}/g" release-notes.md
+          sed -i "s/VERSION/${{ steps.version.outputs.VERSION }}/g" release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

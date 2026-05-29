@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Warm (30 days) and Cold (>30 days) tiers for visibility
   - `uteke stats` shows tier breakdown: 🔥 Hot / 🟡 Warm / ❄️ Cold
   - Auto-migration: columns added to existing databases
+- **Health check commands** — `doctor`, `verify`, `repair`
+  - `uteke doctor` — checks SQLite DB, usearch index, embedding model, consistency
+  - `uteke verify` — compares DB count vs index count
+  - `uteke repair` — rebuilds usearch index from SQLite
+  - All support `--json` output
 - **Removed old deps:** `hnsw`, `rand_pcg`, `space` (replaced by `usearch`)
 - **Added deps:** `usearch`, `tracing`
 
@@ -70,4 +75,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
-[0.1.0]: https://github.com/ajianaz/uteke/releases/tag/v0.1.0
+[0.0.1]: https://github.com/ajianaz/uteke/releases/tag/v0.0.1
