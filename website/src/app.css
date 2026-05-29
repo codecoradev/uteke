@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+
+:root {
+	--color-bg: #0a0a0a;
+	--color-surface: #141414;
+	--color-border: #262626;
+	--color-text: #fafafa;
+	--color-text-muted: #a3a3a3;
+	--color-accent: #22d3ee;
+	--color-accent-dim: #0e7490;
+}
+
+body {
+	background-color: var(--color-bg);
+	color: var(--color-text);
+	font-family: 'Inter', system-ui, -apple-system, sans-serif;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+	background-color: var(--color-accent-dim);
+	color: white;
+}
