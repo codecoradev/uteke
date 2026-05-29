@@ -116,10 +116,10 @@ uteke stats --json
 ├──────────┬──────────────────┬────────────────────────┤
 │   ONNX   │      HNSW        │       SQLite           │
 │ Embedding│  Vector Index    │    Metadata Store      │
-│ (384d)   │  (Fast ANN)      │    (rusqlite)          │
+│ (768d)   │  (Fast ANN)      │    (rusqlite)          │
 ├──────────┴──────────────────┴────────────────────────┤
 │              ~/.uteke/ (local storage)               │
-│   uteke.db  │  config.toml  │  models/minilm-l6-v2/  │
+│   uteke.db  │  config.toml  │ models/embeddinggemma/ │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -128,11 +128,11 @@ uteke stats --json
 | Language | Rust (no unsafe) | Memory-safe, fast, single binary |
 | Vector Index | HNSW | Fast approximate nearest neighbor search |
 | Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
-| Embedding | all-MiniLM-L6-v2 ONNX | 384d vectors, downloaded on first run |
+| Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
 | CLI | clap | Standard Rust CLI framework |
 
 **How it works:**
-1. `remember` → text is embedded into a 384d vector via ONNX → stored in SQLite + indexed in HNSW
+1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in HNSW
 2. `recall` → query is embedded → HNSW finds nearest neighbors → returns ranked results
 3. `search` → SQLite LIKE-based keyword search (fast, deterministic)
 4. Everything lives in `~/.uteke/` — fully local, fully yours
@@ -185,7 +185,7 @@ On first run, Uteke creates `~/.uteke/config.toml`:
 # path = "~/.uteke"  # Default store location
 
 [embedding]
-# model = "all-MiniLM-L6-v2"
+# model = "embeddinggemma-q4"
 # max_seq_length = 256
 ```
 

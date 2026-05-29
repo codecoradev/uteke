@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Core memory engine** — store, recall, search, forget, list, get operations
 - **Semantic search** — vector similarity using HNSW index with cosine scoring
-- **ONNX embedding** — all-MiniLM-L6-v2 model (384d), auto-downloaded on first run
+- **ONNX embedding** — EmbeddingGemma Q4 model (768d), auto-downloaded on first run
 - **SQLite storage** — embedded database with indexed tags and metadata
 - **CLI** — full command-line interface with clap
   - `remember` — store memories with optional tags
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Technical Details
 
-- **Embedding model:** sentence-transformers/all-MiniLM-L6-v2 (ONNX, 384 dimensions)
+- **Embedding model:** onnx-community/embeddinggemma-300m-ONNX (Q4 quantized, 768 dimensions)
 - **Vector index:** HNSW with configurable ef and k parameters
 - **Storage:** SQLite via rusqlite (bundled) with WAL mode
 - **Tokenization:** HuggingFace tokenizers crate

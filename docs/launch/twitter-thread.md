@@ -43,7 +43,7 @@ Under the hood:
 
 🔹 SQLite — metadata & structured storage
 🔹 HNSW — fast vector search (approximate nearest neighbor)
-🔹 ONNX — all-MiniLM-L6-v2 embeddings (384d)
+🔹 ONNX — EmbeddingGemma Q4 embeddings (768d)
 🔹 Rust — no unsafe code, memory safe
 
 Everything lives in ~/.uteke/
