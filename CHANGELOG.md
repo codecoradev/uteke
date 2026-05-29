@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Website** — https://uteke.ajianaz.dev (SvelteKit 5 + Tailwind)
+  - Landing page, docs, roadmap
+  - Auto-deploy via CF Pages + Infisical OIDC
+- **Release matrix** — 4 platforms: Linux x64, Linux ARM64, macOS ARM64, Windows x64
 - **Persistent vector index** — replaced in-memory HNSW with usearch (persistent HNSW)
   - Cold start: loads from disk (~5ms) instead of rebuilding from SQLite (~5s at 10K memories)
   - Incremental delete: `remove()` in ~0.1ms instead of full index rebuild
@@ -34,16 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **License:** MIT → Apache 2.0
 - **Vector index:** HNSW (in-memory) → usearch (persistent, incremental)
 - **Delete:** rebuild-based → incremental `remove()` + save
 - **Startup:** rebuild from SQLite → `restore()` from disk
-- **Binary size:** 20MB → 21MB (+1MB from usearch)
+- **Binary size:** 26MB (v0.0.1) → 28MB (v0.0.2, +usearch)
 - **CI:** only runs on PR to develop and push to main (eliminates duplicate runs)
 - **Release:** versioned artifact filenames (`uteke-{version}-{target}.tar.gz`)
+- **CI secrets:** Infisical OIDC for CF Pages deploy (website workflow)
 
 ### Removed
 
 - Old deps: `hnsw`, `rand_pcg`, `space` (replaced by `usearch`)
+- macOS Intel (`x86_64-apple-darwin`) from release matrix
+- Windows ARM64 (`aarch64-pc-windows-msvc`) from release matrix (numkong incompatibility)
 
 ### Docs
 

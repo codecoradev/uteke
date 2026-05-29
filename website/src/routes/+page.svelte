@@ -54,7 +54,7 @@
 		{ feature: 'Speed (warm)', uteke: '~23ms*', mem0: '~50ms', letta: '~100ms', cognee: '~200ms' },
 		{ feature: 'Knowledge Graph', uteke: '🔮 Planned', mem0: '❌', letta: '❌', cognee: '✅ GraphRAG' },
 		{ feature: 'Auto-Forget', uteke: '🔮 Planned', mem0: '✅', letta: '✅ Core memory', cognee: '✅ TTL-based' },
-		{ feature: 'License', uteke: 'MIT', mem0: 'MIT', letta: 'Apache-2.0', cognee: 'Apache-2.0' }
+		{ feature: 'License', uteke: 'Apache-2.0', mem0: 'MIT', letta: 'Apache-2.0', cognee: 'Apache-2.0' }
 	];
 
 	const audiences: Feature[] = [
@@ -259,7 +259,7 @@
 <!-- CTA -->
 <section class="max-w-6xl mx-auto px-6 py-16 md:py-20 text-center">
 	<h2 class="text-2xl md:text-3xl font-bold mb-4">Ready to give your AI a brain?</h2>
-	<p class="text-[var(--color-text-muted)] mb-8">Open source, MIT licensed. Start in 30 seconds.</p>
+	<p class="text-[var(--color-text-muted)] mb-8">Open source, Apache 2.0 licensed. Start in 30 seconds.</p>
 	<a
 		href="https://github.com/ajianaz/uteke"
 		target="_blank"
