@@ -106,12 +106,49 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## Uteke vVERSION — Local-first AI Memory Engine
+
+          ### Installation
+
+          ```bash
+          # Quick install (Linux/macOS)
+          curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/develop/scripts/install.sh | sh
+
+          # Or download binary from assets below
+          ```
+
+          ### Platforms
+
+          | Platform | File |
+          |----------|------|
+          | macOS (Apple Silicon) | `uteke-aarch64-apple-darwin.tar.gz` |
+          | Linux (x86_64) | `uteke-x86_64-unknown-linux-gnu.tar.gz` |
+          | Linux (ARM64) | `uteke-aarch64-unknown-linux-gnu.tar.gz` |
+          | Windows (x86_64) | `uteke-x86_64-pc-windows-msvc.zip` |
+          | Windows (ARM64) | `uteke-aarch64-pc-windows-msvc.zip` |
+
+          > **Note:** Intel Mac is not available as pre-built binary (ONNX Runtime dropped support).
+          > Intel Mac users can build from source: `cargo build --release`
+
+          ### Quick Start
+
+          ```bash
+          uteke remember "Important context" --tags project
+          uteke recall "what was that context?"
+          ```
+
+          EOF
+          sed -i "s/vVERSION/${{ steps.version.outputs.VERSION }}/g" release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: Release ${{ steps.version.outputs.VERSION }}
-          body_path: CHANGELOG.md
+          body_path: release-notes.md
           files: release-artifacts/*
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
