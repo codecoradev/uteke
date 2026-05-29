@@ -28,8 +28,6 @@ pub struct VectorIndex {
     hnsw: Hnsw<Euclidean, Vec<f32>, Pcg64, M, M0>,
     /// Maps HNSW internal index → memory ID.
     id_map: Vec<String>,
-    /// Search scratch space.
-    searcher: Searcher<u32>,
 }
 
 impl VectorIndex {
@@ -38,7 +36,6 @@ impl VectorIndex {
         Self {
             hnsw: Hnsw::new_params(Euclidean, Params::new().ef_construction(200)),
             id_map: Vec::new(),
-            searcher: Searcher::default(),
         }
     }
 
@@ -55,7 +52,8 @@ impl VectorIndex {
 
     /// Insert a single item into the index.
     pub fn insert(&mut self, id: &str, embedding: &[f32]) {
-        let idx = self.hnsw.insert(embedding.to_vec(), &mut self.searcher);
+        let mut searcher = Searcher::default();
+        let idx = self.hnsw.insert(embedding.to_vec(), &mut searcher);
         // Ensure id_map is large enough
         if idx >= self.id_map.len() {
             self.id_map.resize(idx + 1, String::new());
@@ -71,6 +69,7 @@ impl VectorIndex {
         }
 
         let count = k.max(1);
+        let mut searcher = Searcher::default();
         let mut dest = vec![
             space::Neighbor {
                 index: !0,
@@ -81,7 +80,7 @@ impl VectorIndex {
 
         let found = self
             .hnsw
-            .nearest(&query.to_vec(), ef, &mut self.searcher, &mut dest);
+            .nearest(&query.to_vec(), ef, &mut searcher, &mut dest);
 
         found
             .iter()

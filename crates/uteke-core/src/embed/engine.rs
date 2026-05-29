@@ -10,7 +10,7 @@ const MODEL_DIMS: usize = 384;
 const MAX_SEQ_LEN: usize = 256;
 
 const MODEL_URL: &str =
-    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/model.onnx";
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
 const TOKENIZER_URL: &str =
     "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
 
@@ -145,7 +145,7 @@ fn mean_pool_and_normalize(
         if attention_mask[t] == 1 {
             mask_sum += 1.0;
             for d in 0..MODEL_DIMS {
-                pooled[d] += output[[t, d]];
+                pooled[d] += output[[0, t, d]];
             }
         }
     }

@@ -138,7 +138,11 @@ impl Uteke {
             .index
             .lock()
             .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
-        let candidates = index.search(&query_embedding, limit * 3, limit * 4);
+        // Cap k to index size to avoid HNSW dest-buffer-size mismatch
+        let index_len = index.len();
+        let k = (limit * 3).min(index_len).max(1);
+        let ef = (limit * 4).max(k);
+        let candidates = index.search(&query_embedding, k, ef);
 
         // Fetch full memories and apply tag filter
         let mut results = Vec::new();
