@@ -5,7 +5,7 @@ use clap_complete::{generate, Shell};
 use std::io::{self, Read};
 use std::path::PathBuf;
 use tracing::Level;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 use uteke_core::Uteke;
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -509,16 +509,33 @@ fn init_cursor(json: bool) -> Result<(), String> {
 fn main() {
     let cli = Cli::parse();
 
-    // Initialize tracing
-    if cli.verbose {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(Level::DEBUG.into()))
+    // ── Logging: console (existing behavior) + file (always DEBUG, daily rotation) ──
+    let log_dir = dirs::home_dir()
+        .map(|h| h.join(".uteke"))
+        .unwrap_or_default();
+    let _guard = {
+        let file_appender = tracing_appender::rolling::daily(&log_dir, "uteke.log");
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+        let file_layer = tracing_subscriber::fmt::layer()
+            .with_writer(non_blocking)
+            .with_filter(EnvFilter::from_default_env().add_directive(Level::DEBUG.into()));
+
+        let console_level = if cli.verbose {
+            Level::DEBUG
+        } else {
+            Level::WARN
+        };
+        let console_layer = tracing_subscriber::fmt::layer()
+            .with_filter(EnvFilter::from_default_env().add_directive(console_level.into()));
+
+        tracing_subscriber::registry()
+            .with(console_layer)
+            .with(file_layer)
             .init();
-    } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(Level::WARN.into()))
-            .init();
-    }
+
+        guard
+    };
+    // _guard must stay alive — dropping it flushes and disables the non-blocking file writer.
 
     // Handle completions and init early — don't need store
     match &cli.command {
