@@ -77,8 +77,8 @@
 </script>
 
 <svelte:head>
-	<title>uteke — Obsidian for AI Agents</title>
-	<meta name="description" content="uteke — Obsidian for AI agents. Local-first semantic memory. Single binary, zero infra, fully offline. Your AI's second brain." />
+	<title>uteke — Give Your AI a Memory</title>
+	<meta name="description" content="uteke — Local-first semantic memory engine for AI agents. Single binary, zero infrastructure, fully offline. Give your AI a memory that stays on your machine." />
 </svelte:head>
 
 <!-- Hero -->
@@ -89,17 +89,17 @@
 	</div>
 
 	<h1 class="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tight mb-4">
-		Obsidian for<br />
-		<span class="hero-accent">AI Agents</span>
+		Give Your AI<br />
+		<span class="hero-accent">a Memory</span>
 	</h1>
 
-	<p class="hero-tagline text-sm md:text-base font-medium text-[var(--color-accent)] mb-6 tracking-wide uppercase">
-		Your AI's second brain — local, private, portable
+	<p class="hero-tagline text-sm md:text-base font-medium text-[var(--color-accent)] mb-6 tracking-wide">
+		Local-first semantic memory engine — single binary, zero infrastructure, fully offline
 	</p>
 
 	<p class="text-base md:text-xl text-[var(--color-text-muted)] max-w-2xl mx-auto mb-10 leading-relaxed">
-		Local-first semantic memory that lives in a single folder. Zero infrastructure, fully offline, single binary.
-		Your AI remembers everything — without sending data to the cloud. Works alongside your existing tools, not instead of them.
+		Your AI remembers everything — without sending data to the cloud. No server, no database, no API keys.
+		Works alongside your existing tools, not instead of them.
 	</p>
 
 	<!-- Install -->
