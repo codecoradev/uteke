@@ -5,7 +5,32 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — 2026-05-29
+## [Unreleased]
+
+### Added
+
+- **Persistent vector index** — replaced in-memory HNSW with usearch (persistent HNSW)
+  - Cold start: loads from disk (~5ms) instead of rebuilding from SQLite (~5s at 10K memories)
+  - Incremental delete: `remove()` in ~0.1ms instead of full index rebuild
+  - Index persisted as `uteke_index.usearch` + `uteke_index.keys` sidecar
+  - Auto-migration: builds usearch index from SQLite on first load
+- **Multi-agent namespaces** — isolated memory spaces per agent
+  - `--namespace` global flag on all commands
+  - SQLite `namespace` column with index
+  - Auto-migration of existing databases (zero data loss)
+  - Each namespace is fully isolated: recall, search, list, stats scoped
+  - Default namespace: `"default"` (backward compatible)
+- **Removed old deps:** `hnsw`, `rand_pcg`, `space` (replaced by `usearch`)
+- **Added deps:** `usearch`, `tracing`
+
+### Changed
+
+- **Vector index:** HNSW (in-memory) → usearch (persistent, incremental)
+- **Delete:** rebuild-based → incremental `remove()` + save
+- **Startup:** rebuild from SQLite → `restore()` from disk
+- **Binary size:** 20MB → 21MB (+1MB from usearch)
+
+## [0.0.1] — 2026-05-29
 
 ### Added
 

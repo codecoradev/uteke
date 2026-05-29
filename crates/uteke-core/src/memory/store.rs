@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS memories (
     tags TEXT,
     metadata TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    namespace TEXT NOT NULL DEFAULT 'default'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -49,6 +50,27 @@ impl Store {
         self.conn
             .execute_batch(SCHEMA)
             .map_err(|e| Error::Database(e.to_string()))?;
+
+        // Migration: add namespace column if missing (existing DBs)
+        let has_namespace: bool = self
+            .conn
+            .prepare("SELECT namespace FROM memories LIMIT 1")
+            .is_ok();
+        if !has_namespace {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN namespace TEXT NOT NULL DEFAULT 'default';",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+
+        // Create namespace index (safe after column exists)
+        self.conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -62,8 +84,8 @@ impl Store {
 
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     memory.id,
                     memory.content,
@@ -72,6 +94,7 @@ impl Store {
                     metadata_json,
                     memory.created_at.to_rfc3339(),
                     memory.updated_at.to_rfc3339(),
+                    memory.namespace,
                 ],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -83,7 +106,7 @@ impl Store {
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at FROM memories WHERE id = ?1")
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE id = ?1")
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let result = stmt
@@ -114,7 +137,7 @@ impl Store {
 
         self.conn
             .execute(
-                "UPDATE memories SET content = ?2, embedding = ?3, tags = ?4, metadata = ?5, updated_at = ?6
+                "UPDATE memories SET content = ?2, embedding = ?3, tags = ?4, metadata = ?5, updated_at = ?6, namespace = ?7
                  WHERE id = ?1",
                 params![
                     memory.id,
@@ -123,22 +146,26 @@ impl Store {
                     tags_json,
                     metadata_json,
                     memory.updated_at.to_rfc3339(),
+                    memory.namespace,
                 ],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
         Ok(())
     }
 
-    /// List memories with optional tag filter and pagination.
+    /// List memories with optional tag filter, namespace filter, and pagination.
     pub fn list(
         &self,
         tag: Option<&str>,
+        namespace: Option<&str>,
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+
         let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at FROM memories WHERE tags LIKE ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at FROM memories ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE namespace = ?1 AND tags LIKE ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         };
 
         let mut memories = Vec::new();
@@ -149,7 +176,10 @@ impl Store {
                     .prepare(sql)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 let rows = stmt
-                    .query_map(params![format!("%\"{t}\"%"), limit, offset], row_to_memory)
+                    .query_map(
+                        params![ns, format!("%\"{t}\"%"), limit, offset],
+                        row_to_memory,
+                    )
                     .map_err(|e| Error::Database(e.to_string()))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::Database(e.to_string()))?;
@@ -162,7 +192,7 @@ impl Store {
                     .prepare(sql)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 let rows = stmt
-                    .query_map(params![limit, offset], row_to_memory)
+                    .query_map(params![ns, limit, offset], row_to_memory)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::Database(e.to_string()))?;
@@ -174,19 +204,25 @@ impl Store {
     }
 
     /// Search memories by content using LIKE (simple full-text for v2).
-    pub fn search_content(&self, query: &str, limit: usize) -> Result<Vec<Memory>, Error> {
+    pub fn search_content(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Memory>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let pattern = format!("%{query}%");
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at
-                 FROM memories WHERE content LIKE ?1
-                 ORDER BY created_at DESC LIMIT ?2",
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace
+                 FROM memories WHERE namespace = ?1 AND content LIKE ?2
+                 ORDER BY created_at DESC LIMIT ?3",
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let rows = stmt
-            .query_map(params![pattern, limit], row_to_memory)
+            .query_map(params![ns, pattern, limit], row_to_memory)
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let mut memories = Vec::new();
@@ -197,48 +233,88 @@ impl Store {
         Ok(memories)
     }
 
-    /// Load all memories (for index rebuilding).
-    pub fn load_all(&self) -> Result<Vec<Memory>, Error> {
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at FROM memories ORDER BY created_at",
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
-
-        let rows = stmt
-            .query_map([], row_to_memory)
-            .map_err(|e| Error::Database(e.to_string()))?;
+    /// Load all memories for index rebuilding, optionally filtered by namespace.
+    pub fn load_all(&self, namespace: Option<&str>) -> Result<Vec<Memory>, Error> {
+        let sql = match namespace {
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE namespace = ?1 ORDER BY created_at",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories ORDER BY created_at",
+        };
 
         let mut memories = Vec::new();
-        for row in rows {
-            let m = row.map_err(|e| Error::Database(e.to_string()))?;
-            memories.push(m);
+        match namespace {
+            Some(ns) => {
+                let mut stmt = self
+                    .conn
+                    .prepare(sql)
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                let rows = stmt
+                    .query_map(params![ns], row_to_memory)
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                for row in rows {
+                    let m = row.map_err(|e| Error::Database(e.to_string()))?;
+                    memories.push(m);
+                }
+            }
+            None => {
+                let mut stmt = self
+                    .conn
+                    .prepare(sql)
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                let rows = stmt
+                    .query_map([], row_to_memory)
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                for row in rows {
+                    let m = row.map_err(|e| Error::Database(e.to_string()))?;
+                    memories.push(m);
+                }
+            }
         }
         Ok(memories)
     }
 
-    /// Count total memories.
-    pub fn count(&self) -> Result<usize, Error> {
-        let count: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+    /// Count total memories, optionally filtered by namespace.
+    pub fn count(&self, namespace: Option<&str>) -> Result<usize, Error> {
+        let count: usize = match namespace {
+            Some(ns) => self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories WHERE namespace = ?1",
+                    params![ns],
+                    |row| row.get(0),
+                )
+                .map_err(|e| Error::Database(e.to_string()))?,
+            None => self
+                .conn
+                .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+                .map_err(|e| Error::Database(e.to_string()))?,
+        };
         Ok(count)
     }
 
-    /// Get all unique tags across all memories.
-    pub fn unique_tags(&self) -> Result<Vec<String>, Error> {
+    /// Get all unique tags, optionally filtered by namespace.
+    pub fn unique_tags(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
+        let sql = match namespace {
+            Some(_) => {
+                "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL AND namespace = ?1"
+            }
+            None => "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL",
+        };
+
         let mut stmt = self
             .conn
-            .prepare("SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL")
+            .prepare(sql)
             .map_err(|e| Error::Database(e.to_string()))?;
 
-        let rows = stmt
-            .query_map([], |row: &rusqlite::Row| -> rusqlite::Result<String> {
-                row.get(0)
-            })
-            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows: Vec<Result<String, rusqlite::Error>> = match namespace {
+            Some(ns) => stmt
+                .query_map(params![ns], |row: &rusqlite::Row| row.get(0))
+                .map_err(|e| Error::Database(e.to_string()))?
+                .collect(),
+            None => stmt
+                .query_map([], |row: &rusqlite::Row| row.get(0))
+                .map_err(|e| Error::Database(e.to_string()))?
+                .collect(),
+        };
 
         let mut all_tags = std::collections::HashSet::new();
         for row in rows {
@@ -250,6 +326,24 @@ impl Store {
             }
         }
         Ok(all_tags.into_iter().collect())
+    }
+
+    /// List all distinct namespaces.
+    pub fn list_namespaces(&self) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT namespace FROM memories ORDER BY namespace")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map([], |row: &rusqlite::Row| row.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let mut namespaces = Vec::new();
+        for row in rows {
+            namespaces.push(row.map_err(|e| Error::Database(e.to_string()))?);
+        }
+        Ok(namespaces)
     }
 
     /// Get the underlying database path, if file-based.
@@ -305,6 +399,9 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
         .map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
         })?;
+    let namespace: String = row
+        .get(7)
+        .unwrap_or_else(|_| crate::memory::types::DEFAULT_NAMESPACE.to_string());
 
     Ok(Memory {
         id,
@@ -314,6 +411,7 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
         metadata,
         created_at,
         updated_at,
+        namespace,
     })
 }
 
@@ -332,6 +430,20 @@ mod tests {
             metadata: serde_json::json!({}),
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
+        }
+    }
+
+    fn make_test_memory_ns(id: &str, content: &str, tags: &[&str], namespace: &str) -> Memory {
+        Memory {
+            id: id.to_string(),
+            content: content.to_string(),
+            embedding: vec![0.1; 768],
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            metadata: serde_json::json!({}),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            namespace: namespace.to_string(),
         }
     }
 
@@ -368,10 +480,10 @@ mod tests {
             .insert(&make_test_memory("3", "c", &["rust", "ai"]))
             .unwrap();
 
-        let rust_memories = store.list(Some("rust"), 10, 0).unwrap();
+        let rust_memories = store.list(Some("rust"), None, 10, 0).unwrap();
         assert_eq!(rust_memories.len(), 2);
 
-        let all = store.list(None, 10, 0).unwrap();
+        let all = store.list(None, None, 10, 0).unwrap();
         assert_eq!(all.len(), 3);
     }
 
@@ -386,7 +498,7 @@ mod tests {
             .insert(&make_test_memory("2", "python machine learning", &[]))
             .unwrap();
 
-        let results = store.search_content("rust", 10).unwrap();
+        let results = store.search_content("rust", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "1");
     }
@@ -423,7 +535,59 @@ mod tests {
             .insert(&make_test_memory("2", "b", &["rust", "web"]))
             .unwrap();
 
-        let tags = store.unique_tags().unwrap();
+        let tags = store.unique_tags(None).unwrap();
         assert_eq!(tags.len(), 3);
+    }
+
+    #[test]
+    fn test_namespace_isolation() {
+        let store = Store::open(":memory:").unwrap();
+
+        // Insert into different namespaces
+        store
+            .insert(&make_test_memory_ns(
+                "a1",
+                "hermes deploy",
+                &["deploy"],
+                "hermes",
+            ))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns(
+                "a2",
+                "hermes config",
+                &["config"],
+                "hermes",
+            ))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("b1", "pi preference", &["pref"], "pi"))
+            .unwrap();
+
+        // Count per namespace
+        assert_eq!(store.count(Some("hermes")).unwrap(), 2);
+        assert_eq!(store.count(Some("pi")).unwrap(), 1);
+        assert_eq!(store.count(None).unwrap(), 3);
+
+        // List per namespace
+        let hermes_list = store.list(None, Some("hermes"), 10, 0).unwrap();
+        assert_eq!(hermes_list.len(), 2);
+
+        let pi_list = store.list(None, Some("pi"), 10, 0).unwrap();
+        assert_eq!(pi_list.len(), 1);
+        assert_eq!(pi_list[0].content, "pi preference");
+
+        // Search per namespace
+        let hermes_search = store.search_content("deploy", Some("hermes"), 10).unwrap();
+        assert_eq!(hermes_search.len(), 1);
+
+        let pi_search = store.search_content("deploy", Some("pi"), 10).unwrap();
+        assert_eq!(pi_search.len(), 0);
+
+        // List namespaces
+        let ns = store.list_namespaces().unwrap();
+        assert_eq!(ns.len(), 2);
+        assert!(ns.contains(&"hermes".to_string()));
+        assert!(ns.contains(&"pi".to_string()));
     }
 }

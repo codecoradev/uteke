@@ -12,7 +12,9 @@
 mod embed;
 pub mod memory;
 
-pub use memory::types::{ExportEntry, ImportResult, Memory, SearchResult, StoreStats};
+pub use memory::types::{
+    ExportEntry, ImportResult, Memory, SearchResult, StoreStats, DEFAULT_NAMESPACE,
+};
 
 use embed::EmbeddingEngine;
 use memory::store::Store;
@@ -74,7 +76,7 @@ impl Uteke {
 
         // If index is empty but SQLite has memories, build from SQLite (migration)
         if index.is_empty() {
-            let all_memories = store.load_all()?;
+            let all_memories = store.load_all(None)?;
             if !all_memories.is_empty() {
                 let items: Vec<(String, Vec<f32>)> = all_memories
                     .into_iter()
@@ -100,6 +102,7 @@ impl Uteke {
         content: &str,
         tags: &[&str],
         metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
     ) -> Result<String, Error> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now();
@@ -117,6 +120,7 @@ impl Uteke {
             metadata: metadata.unwrap_or(serde_json::Value::Null),
             created_at: now,
             updated_at: now,
+            namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
         };
 
         self.store.insert(&memory)?;
@@ -134,13 +138,15 @@ impl Uteke {
 
     /// Recall memories relevant to a query using vector similarity.
     ///
-    /// Optionally filter by tags.
+    /// Optionally filter by tags and namespace.
     pub fn recall(
         &self,
         query: &str,
         limit: usize,
         tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let query_embedding = self
             .embedder
             .lock()
@@ -169,6 +175,11 @@ impl Uteke {
                 None => continue,
             };
 
+            // Apply namespace filter
+            if memory.namespace != ns {
+                continue;
+            }
+
             // Apply tag filter
             if let Some(filter_tags) = tags_filter {
                 let has_tag = filter_tags
@@ -194,8 +205,13 @@ impl Uteke {
     }
 
     /// Search memories by content text (LIKE-based for v2).
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>, Error> {
-        let memories = self.store.search_content(query, limit)?;
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        namespace: Option<&str>,
+    ) -> Result<Vec<SearchResult>, Error> {
+        let memories = self.store.search_content(query, namespace, limit)?;
 
         let results = memories
             .into_iter()
@@ -228,8 +244,9 @@ impl Uteke {
         tag: Option<&str>,
         limit: usize,
         offset: usize,
+        namespace: Option<&str>,
     ) -> Result<Vec<Memory>, Error> {
-        self.store.list(tag, limit, offset)
+        self.store.list(tag, namespace, limit, offset)
     }
 
     /// Get a single memory by ID.
@@ -239,10 +256,15 @@ impl Uteke {
             .ok_or_else(|| Error::Database(format!("Memory not found: {id}")))
     }
 
+    /// List all namespaces.
+    pub fn list_namespaces(&self) -> Result<Vec<String>, Error> {
+        self.store.list_namespaces()
+    }
+
     /// Get statistics about the memory store.
-    pub fn stats(&self) -> Result<StoreStats, Error> {
-        let total_memories = self.store.count()?;
-        let unique_tags = self.store.unique_tags()?.len();
+    pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
+        let total_memories = self.store.count(namespace)?;
+        let unique_tags = self.store.unique_tags(namespace)?.len();
 
         let db_size_bytes = self
             .store
@@ -262,8 +284,8 @@ impl Uteke {
     ///
     /// Embeddings are NOT exported — they will be re-computed on import.
     /// This keeps export files small and portable.
-    pub fn export(&self) -> Result<String, Error> {
-        let memories = self.store.load_all()?;
+    pub fn export(&self, namespace: Option<&str>) -> Result<String, Error> {
+        let memories = self.store.load_all(namespace)?;
         let entries: Vec<ExportEntry> = memories
             .into_iter()
             .map(|m| ExportEntry {
@@ -287,7 +309,7 @@ impl Uteke {
     ///
     /// Each line should be a valid JSON object with `content`, `tags`, `metadata`, `created_at`.
     /// Embeddings are re-computed during import.
-    pub fn import(&self, jsonl: &str) -> Result<ImportResult, Error> {
+    pub fn import(&self, jsonl: &str, namespace: Option<&str>) -> Result<ImportResult, Error> {
         let mut imported = 0;
         let mut skipped = 0;
 
@@ -328,6 +350,7 @@ impl Uteke {
                 metadata: entry.metadata,
                 created_at: entry.created_at,
                 updated_at: now,
+                namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
             };
 
             self.store.insert(&memory)?;
@@ -388,6 +411,7 @@ mod tests {
             metadata: serde_json::json!({"key": "value"}),
             created_at: now,
             updated_at: now,
+            namespace: DEFAULT_NAMESPACE.to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -409,6 +433,7 @@ mod tests {
             metadata: serde_json::Value::Null,
             created_at: now,
             updated_at: now,
+            namespace: DEFAULT_NAMESPACE.to_string(),
         };
 
         let sr = SearchResult {

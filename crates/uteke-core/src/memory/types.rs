@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Default namespace for memories without explicit namespace.
+pub const DEFAULT_NAMESPACE: &str = "default";
+
 /// A stored memory with content, embedding, tags, and metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Memory {
@@ -19,6 +22,13 @@ pub struct Memory {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// When this memory was last updated.
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Namespace for multi-agent isolation.
+    #[serde(default = "default_namespace")]
+    pub namespace: String,
+}
+
+fn default_namespace() -> String {
+    DEFAULT_NAMESPACE.to_string()
 }
 
 /// A search result with relevance score.

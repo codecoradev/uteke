@@ -171,6 +171,10 @@ struct Cli {
     #[arg(long, global = true)]
     store: Option<String>,
 
+    /// Namespace for multi-agent isolation (default: "default")
+    #[arg(long, global = true)]
+    namespace: Option<String>,
+
     /// Output as JSON
     #[arg(long, global = true)]
     json: bool,
@@ -521,12 +525,14 @@ fn main() {
 }
 
 fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
+    let ns = cli.namespace.as_deref();
+
     match &cli.command {
         Commands::Remember { content, tags } => {
             tracing::info!("Remembering: {content}");
             let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
             let id = uteke
-                .remember(content, &tag_refs, None)
+                .remember(content, &tag_refs, None, ns)
                 .map_err(|e| format!("Failed to store memory: {e}"))?;
             tracing::info!("Memory stored with ID: {id}");
             if cli.json {
@@ -546,7 +552,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
                 Some(tag_refs.as_slice())
             };
             let results = uteke
-                .recall(query, *limit, tags_filter)
+                .recall(query, *limit, tags_filter, ns)
                 .map_err(|e| format!("Failed to recall: {e}"))?;
             if cli.json {
                 print_json(&results);
@@ -558,7 +564,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
         Commands::Search { query, limit } => {
             tracing::info!("Searching: {query} (limit: {limit})");
             let results = uteke
-                .search(query, *limit)
+                .search(query, *limit, ns)
                 .map_err(|e| format!("Failed to search: {e}"))?;
             if cli.json {
                 print_json(&results);
@@ -573,7 +579,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
                 tag
             );
             let results = uteke
-                .list(tag.as_deref(), *limit, *offset)
+                .list(tag.as_deref(), *limit, *offset, ns)
                 .map_err(|e| format!("Failed to list: {e}"))?;
             if cli.json {
                 print_json(&results);
@@ -610,7 +616,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
         Commands::Stats => {
             tracing::info!("Getting stats");
             let stats = uteke
-                .stats()
+                .stats(ns)
                 .map_err(|e| format!("Failed to get stats: {e}"))?;
             if cli.json {
                 print_json(&stats);
@@ -622,7 +628,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
         Commands::Export { output } => {
             tracing::info!("Exporting memories to {output}");
             let jsonl = uteke
-                .export()
+                .export(ns)
                 .map_err(|e| format!("Failed to export: {e}"))?;
 
             if output == "-" {
@@ -653,7 +659,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             };
 
             let result = uteke
-                .import(&jsonl)
+                .import(&jsonl, ns)
                 .map_err(|e| format!("Failed to import: {e}"))?;
 
             if cli.json {

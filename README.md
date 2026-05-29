@@ -28,8 +28,11 @@ cargo install --path crates/uteke-cli
 # Store a memory
 uteke remember "Deploy v2.1 to staging on Friday" --tags deploy,staging
 
-# Semantic search
-uteke recall "what deployment is coming up?"
+# Store in a specific namespace (multi-agent isolation)
+uteke --namespace hermes remember "Prod server on AWS us-east-1" --tags deploy
+
+# Semantic search (scoped to namespace)
+uteke --namespace hermes recall "server deployment"
 
 # Get stats
 uteke stats
@@ -86,6 +89,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | Flag | Description |
 |------|-------------|
 | `--store <path>` | Override store location (default: `~/.uteke`) |
+| `--namespace <name>` | Namespace for multi-agent isolation (default: `"default"`) |
 | `--json` | Output as JSON (all commands) |
 | `--verbose` | Enable debug logging |
 
@@ -104,6 +108,25 @@ uteke stats --json
 # {"total_memories":42,"unique_tags":5,"db_size_bytes":102400}
 ```
 
+### Multi-Agent Namespaces
+
+Isolate memories per agent using `--namespace`:
+
+```bash
+# Each agent gets its own memory space
+uteke --namespace hermes remember "Prod deploy config" --tags deploy
+uteke --namespace pi remember "User prefers dark mode" --tags pref
+
+# Search is scoped to the namespace
+uteke --namespace hermes recall "deployment"  # Only finds hermes memories
+uteke --namespace pi recall "preferences"    # Only finds pi memories
+
+# Without --namespace, uses "default" namespace
+uteke remember "General knowledge" --tags misc
+```
+
+Existing databases are auto-migrated — the `namespace` column is added on first run with zero data loss.
+
 ---
 
 ## Architecture
@@ -116,28 +139,30 @@ uteke stats --json
 │                    Uteke API                         │
 │                  uteke-core crate                    │
 ├──────────┬──────────────────┬────────────────────────┤
-│   ONNX   │      HNSW        │       SQLite           │
+│   ONNX   │     usearch      │       SQLite           │
 │ Embedding│  Vector Index    │    Metadata Store      │
-│ (768d)   │  (Fast ANN)      │    (rusqlite)          │
+│ (768d)   │ (Persistent HNSW)│    (rusqlite)          │
 ├──────────┴──────────────────┴────────────────────────┤
 │              ~/.uteke/ (local storage)               │
-│   uteke.db  │  config.toml  │ models/embeddinggemma/ │
+│ uteke.db │ uteke_index.usearch │ models/embeddinggemma/ │
 └─────────────────────────────────────────────────────┘
 ```
 
 | Component | Technology | Detail |
 |-----------|-----------|--------|
 | Language | Rust (no unsafe) | Memory-safe, fast, single binary |
-| Vector Index | HNSW | Fast approximate nearest neighbor search |
+| Vector Index | usearch | Persistent HNSW with incremental updates |
 | Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
 | Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
+| Namespaces | SQLite column | Multi-agent isolation, zero overhead |
 | CLI | clap | Standard Rust CLI framework |
 
 **How it works:**
-1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in HNSW
-2. `recall` → query is embedded → HNSW finds nearest neighbors → returns ranked results
-3. `search` → SQLite LIKE-based keyword search (fast, deterministic)
-4. Everything lives in `~/.uteke/` — fully local, fully yours
+1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in usearch
+2. `recall` → query is embedded → usearch finds nearest neighbors → returns ranked results (scoped to namespace)
+3. `search` → SQLite LIKE-based keyword search (fast, deterministic, scoped to namespace)
+4. `forget` → incremental delete from usearch + SQLite (no rebuild)
+5. Everything lives in `~/.uteke/` — fully local, fully yours
 
 ---
 
@@ -224,7 +249,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Uteke follows a demand-gated roadmap — we build what people actually use.
 
-**Now (v0.1.0):** Core engine — store, recall, search, CLI, Python wrapper
+**Now (v0.0.1):** Core engine — store, recall, search, CLI, Python wrapper, persistent vector index, multi-agent namespaces
 **Phase A (100+ stars):** Better embeddings, dedup, import/export, remote embedding opt-in
 **Phase B (500+ stars):** Python SDK (PyO3), Node.js SDK, editor integrations
 **Phase C (1000+ stars):** Team features, cloud sync (opt-in), knowledge graph
