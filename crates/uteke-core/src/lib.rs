@@ -12,7 +12,7 @@
 mod embed;
 pub mod memory;
 
-pub use memory::types::{Memory, SearchResult, StoreStats};
+pub use memory::types::{ExportEntry, ImportResult, Memory, SearchResult, StoreStats};
 
 use embed::EmbeddingEngine;
 use memory::store::Store;
@@ -249,6 +249,92 @@ impl Uteke {
             unique_tags,
             db_size_bytes,
         })
+    }
+
+    /// Export all memories to JSONL format (one JSON object per line).
+    ///
+    /// Embeddings are NOT exported — they will be re-computed on import.
+    /// This keeps export files small and portable.
+    pub fn export(&self) -> Result<String, Error> {
+        let memories = self.store.load_all()?;
+        let entries: Vec<ExportEntry> = memories
+            .into_iter()
+            .map(|m| ExportEntry {
+                content: m.content,
+                tags: m.tags,
+                metadata: m.metadata,
+                created_at: m.created_at,
+            })
+            .collect();
+
+        let mut lines = Vec::with_capacity(entries.len());
+        for entry in &entries {
+            let line = serde_json::to_string(entry).map_err(|e| Error::Database(e.to_string()))?;
+            lines.push(line);
+        }
+
+        Ok(lines.join("\n"))
+    }
+
+    /// Import memories from JSONL format.
+    ///
+    /// Each line should be a valid JSON object with `content`, `tags`, `metadata`, `created_at`.
+    /// Embeddings are re-computed during import.
+    pub fn import(&self, jsonl: &str) -> Result<ImportResult, Error> {
+        let mut imported = 0;
+        let mut skipped = 0;
+
+        for line in jsonl.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let entry: ExportEntry = match serde_json::from_str(line) {
+                Ok(e) => e,
+                Err(_) => {
+                    skipped += 1;
+                    continue;
+                }
+            };
+
+            if entry.content.is_empty() {
+                skipped += 1;
+                continue;
+            }
+
+            // Re-embed the content
+            let embedding = self
+                .embedder
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire embedder lock".into()))?
+                .embed(&entry.content)?;
+
+            let id = uuid::Uuid::new_v4().to_string();
+            let now = chrono::Utc::now();
+
+            let memory = Memory {
+                id: id.clone(),
+                content: entry.content,
+                embedding: embedding.clone(),
+                tags: entry.tags,
+                metadata: entry.metadata,
+                created_at: entry.created_at,
+                updated_at: now,
+            };
+
+            self.store.insert(&memory)?;
+
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            index.insert(&id, &embedding);
+
+            imported += 1;
+        }
+
+        Ok(ImportResult { imported, skipped })
     }
 }
 

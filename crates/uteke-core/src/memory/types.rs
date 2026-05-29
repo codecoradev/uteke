@@ -40,3 +40,25 @@ pub struct StoreStats {
     /// Database file size in bytes.
     pub db_size_bytes: u64,
 }
+
+/// Lightweight export format — no embedding vector (re-embedded on import).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportEntry {
+    /// The text content.
+    pub content: String,
+    /// Tags for categorization.
+    pub tags: Vec<String>,
+    /// Arbitrary JSON metadata.
+    pub metadata: serde_json::Value,
+    /// When this memory was originally created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Result of an import operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    /// Number of memories imported.
+    pub imported: usize,
+    /// Number of entries skipped (duplicate or invalid).
+    pub skipped: usize,
+}

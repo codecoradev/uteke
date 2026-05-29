@@ -2,7 +2,7 @@
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
-use std::io;
+use std::io::{self, Read};
 use std::path::PathBuf;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
@@ -236,6 +236,18 @@ enum Commands {
     },
     /// Show memory store statistics
     Stats,
+    /// Export all memories to JSONL file (no embeddings — portable)
+    Export {
+        /// Output file path (use - for stdout)
+        #[arg(default_value = "-")]
+        output: String,
+    },
+    /// Import memories from JSONL file (re-embeds content)
+    Import {
+        /// Input file path (use - for stdin)
+        #[arg(default_value = "-")]
+        input: String,
+    },
     /// Generate shell completions
     Completions {
         /// Shell type
@@ -403,6 +415,53 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
                 print_json(&stats);
             } else {
                 print_stats_human(&stats);
+            }
+            Ok(())
+        }
+        Commands::Export { output } => {
+            tracing::info!("Exporting memories to {output}");
+            let jsonl = uteke
+                .export()
+                .map_err(|e| format!("Failed to export: {e}"))?;
+
+            if output == "-" {
+                println!("{jsonl}");
+            } else {
+                std::fs::write(output, &jsonl)
+                    .map_err(|e| format!("Failed to write export file: {e}"))?;
+                let count = jsonl.lines().filter(|l| !l.trim().is_empty()).count();
+                if cli.json {
+                    print_json(&serde_json::json!({"exported": count}));
+                } else {
+                    println!("✓ Exported {count} memories");
+                }
+            }
+            Ok(())
+        }
+        Commands::Import { input } => {
+            tracing::info!("Importing memories from {input}");
+            let jsonl = if input == "-" {
+                let mut buf = String::new();
+                io::stdin()
+                    .read_to_string(&mut buf)
+                    .map_err(|e| format!("Failed to read stdin: {e}"))?;
+                buf
+            } else {
+                std::fs::read_to_string(input)
+                    .map_err(|e| format!("Failed to read import file: {e}"))?
+            };
+
+            let result = uteke
+                .import(&jsonl)
+                .map_err(|e| format!("Failed to import: {e}"))?;
+
+            if cli.json {
+                print_json(&result);
+            } else {
+                println!(
+                    "✓ Imported {} memories ({} skipped)",
+                    result.imported, result.skipped
+                );
             }
             Ok(())
         }
