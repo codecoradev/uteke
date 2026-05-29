@@ -81,7 +81,10 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | `list` | List memories with optional tag filter | `uteke list --tag project --limit 20` |
 | `get` | Get a single memory by ID | `uteke get <uuid>` |
 | `forget` | Delete a memory by ID | `uteke forget <uuid>` |
-| `stats` | Show memory store statistics | `uteke stats` |
+| `stats` | Show memory store statistics (with tier breakdown) | `uteke stats` |
+| `doctor` | Check system health (DB, index, model, consistency) | `uteke doctor` |
+| `verify` | Verify DB and index consistency | `uteke verify` |
+| `repair` | Rebuild index from SQLite | `uteke repair` |
 | `completions` | Generate shell completion scripts | `uteke completions bash` |
 
 ### Global Flags
