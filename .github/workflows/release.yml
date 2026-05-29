@@ -13,26 +13,39 @@ jobs:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
+          # Linux x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: uteke-x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
+            ext: tar.gz
+          # Linux ARM64 (native runner — no cross-compile)
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: uteke-aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact: uteke-x86_64-apple-darwin
+            ext: tar.gz
+          # macOS Apple Silicon (native M1 runner)
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: uteke-aarch64-apple-darwin
+            ext: tar.gz
+          # macOS Intel
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: uteke-x86_64-apple-darwin
+            ext: tar.gz
+          # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: uteke-x86_64-pc-windows-msvc
-          - os: windows-latest
+            ext: zip
+          # Windows ARM64 (native runner)
+          - os: windows-11-arm
             target: aarch64-pc-windows-msvc
             artifact: uteke-aarch64-pc-windows-msvc
+            ext: zip
 
     steps:
       - uses: actions/checkout@v4
@@ -41,41 +54,39 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p uteke-cli
 
-      - name: Strip binary (Linux/macOS)
+      - name: Strip binary (Unix)
         if: runner.os != 'Windows'
-        run: strip target/${{ matrix.target }}/release/uteke${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        run: strip target/${{ matrix.target }}/release/uteke
 
-      - name: Prepare artifact (Unix)
+      - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p release
           cp target/${{ matrix.target }}/release/uteke release/${{ matrix.artifact }}
           cd release
-          tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.artifact }}
+          tar czf ${{ matrix.artifact }}.${{ matrix.ext }} ${{ matrix.artifact }}
 
-      - name: Prepare artifact (Windows)
+      - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           mkdir release
           cp target/${{ matrix.target }}/release/uteke.exe release/${{ matrix.artifact }}.exe
           cd release
-          7z a ${{ matrix.artifact }}.zip ${{ matrix.artifact }}.exe
+          7z a ${{ matrix.artifact }}.${{ matrix.ext }} ${{ matrix.artifact }}.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: release/${{ matrix.artifact }}.*
+          path: release/${{ matrix.artifact }}.${{ matrix.ext }}
 
   release:
     name: Create GitHub Release
