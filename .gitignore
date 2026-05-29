@@ -6,3 +6,5 @@
 .idea/
 .vscode/
 *.pdb
+__pycache__/
+milestone*.md

@@ -1,78 +1,273 @@
-# Uteke 🧠
+<p align="center">
+  <img src="https://img.shields.io/badge/Uteke-🧠-blue" alt="Uteke" />
+</p>
 
-**The Brain for Your AI** — Persistent memory and smart context management for AI agents.
+<h1 align="center">Uteke</h1>
+<p align="center"><strong>Local-first memory for AI agents — written in Rust</strong></p>
+<p align="center">
+  <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
+  <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
+  <img src="https://img.shields.io/badge/status-v0.0.2-green.svg" alt="v0.0.2" />
+</p>
 
-> From Javanese: *uteke* (otak) = brain
+<p align="center">
+  <em>From Javanese: <strong>uteke</strong> (otak) = brain</em>
+</p>
 
-## What
-
-Uteke is a Rust library + CLI for persistent memory and smart context retrieval for AI agents. Think of it as the memory layer your AI tools are missing.
-
-```
-$ cargo install uteke
-$ uteke remember "BOND uses Go + SvelteKit monorepo architecture" --tags bond,architecture
-$ uteke recall "what architecture does BOND use?"
-→ Memory: BOND uses Go + SvelteKit monorepo architecture (score: 0.94)
-```
-
-## Why
-
-- **Memory loss** — AI agents forget everything between sessions
-- **Context window** — Can't fit entire codebase in context
-- **Cross-tool** — Different tools, different memory formats, no unification
-
-## Features
-
-- 🦀 **Rust** — Single binary, 2MB, zero dependencies
-- 🏠 **Local-first** — All data stays on your machine
-- ⚡ **Fast** — <5ms recall for 10K memories
-- 🧠 **Smart** — Semantic search with EmbeddingGemma (768d)
-- 📦 **Zero config** — Works out of the box, no API keys needed
+---
 
 ## Quick Start
 
 ```bash
 # Install
-cargo install uteke
+git clone https://github.com/ajianaz/uteke.git
+cd uteke
+cargo install --path crates/uteke-cli
 
-# Remember
-uteke remember "your important context here" --tags project,architecture
+# Store a memory
+uteke remember "Deploy v2.1 to staging on Friday" --tags deploy,staging
 
-# Recall
-uteke recall "what was I working on?"
+# Store in a specific namespace (multi-agent isolation)
+uteke --namespace hermes remember "Prod server on AWS us-east-1" --tags deploy
 
-# Search
-uteke search "monorepo decisions" --limit 5
+# Semantic search (scoped to namespace)
+uteke --namespace hermes recall "server deployment"
 
-# List
-uteke list --tag project
+# Get stats
 uteke stats
 ```
 
-## How It Works
+**That's it.** No API keys. No server. No config. First run downloads the embedding model (~188MB) and you're good to go.
 
+> 📖 For more install options (pre-built binaries, quick install script), see [INSTALL.md](INSTALL.md).
+
+---
+
+## Why Uteke?
+
+AI agents forget everything between sessions. Uteke gives them persistent, searchable memory — entirely local.
+
+| | **Uteke** | MemGPT | ChromaDB | Zep |
+|---|---|---|---|---|
+| **Setup** | Single binary | Python + deps | Python + server | Cloud service |
+| **Cloud required** | ❌ No | ❌ No | ✅ Optional | ✅ Yes |
+| **Semantic search** | ✅ Built-in | ✅ | ✅ | ✅ |
+| **Embedding model** | Built-in (ONNX) | External | External | External |
+| **Zero config** | ✅ | ❌ | ❌ | ❌ |
+| **Offline** | ✅ Fully | ⚠️ Partial | ⚠️ Partial | ❌ |
+| **Language** | Rust | Python | Python | Go + Python |
+| **Binary size** | Small | Large | Large | N/A |
+| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | MIT |
+
+---
+
+## Use Cases
+
+- **🤖 AI Agents** — Give your agents persistent memory across sessions. Recall context from yesterday's conversation.
+- **🔬 Research Notes** — Store findings with semantic search. Find that insight you read 3 months ago.
+- **📝 Personal Knowledge** — A local, searchable second brain. No cloud, no subscriptions, no lock-in.
+- **🛠️ Developer Context** — Remember architecture decisions, debug notes, and project-specific knowledge.
+
+---
+
+## Commands
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `remember` | Store a new memory with optional tags | `uteke remember "text" --tags a,b` |
+| `recall` | Semantic search using vector similarity | `uteke recall "query" --limit 5` |
+| `search` | Keyword text search | `uteke search "monorepo" --limit 10` |
+| `list` | List memories with optional tag filter | `uteke list --tag project --limit 20` |
+| `get` | Get a single memory by ID | `uteke get <uuid>` |
+| `forget` | Delete a memory by ID | `uteke forget <uuid>` |
+| `stats` | Show memory store statistics (with tier breakdown) | `uteke stats` |
+| `doctor` | Check system health (DB, index, model, consistency) | `uteke doctor` |
+| `verify` | Verify DB and index consistency | `uteke verify` |
+| `repair` | Rebuild index from SQLite | `uteke repair` |
+| `completions` | Generate shell completion scripts | `uteke completions bash` |
+
+### Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `--store <path>` | Override store location (default: `~/.uteke`) |
+| `--namespace <name>` | Namespace for multi-agent isolation (default: `"default"`) |
+| `--json` | Output as JSON (all commands) |
+| `--verbose` | Enable debug logging |
+
+### JSON Output
+
+Every command supports `--json` for machine-readable output:
+
+```bash
+uteke remember "hello" --json
+# {"id":"a1b2c3d4-..."}
+
+uteke recall "hello" --json
+# [{"memory":{"id":"...","content":"hello",...},"score":0.95}]
+
+uteke stats --json
+# {"total_memories":42,"unique_tags":5,"db_size_bytes":102400}
 ```
-uteke remember "context" --tags tag
-    ↓
-EmbeddingGemma ONNX (768d vector)
-    ↓
-HNSW index (fast approximate nearest neighbor)
-    ↓
-SQLite (metadata + structured data)
-    ↓
-~/.uteke/ (everything local)
+
+### Multi-Agent Namespaces
+
+Isolate memories per agent using `--namespace`:
+
+```bash
+# Each agent gets its own memory space
+uteke --namespace hermes remember "Prod deploy config" --tags deploy
+uteke --namespace pi remember "User prefers dark mode" --tags pref
+
+# Search is scoped to the namespace
+uteke --namespace hermes recall "deployment"  # Only finds hermes memories
+uteke --namespace pi recall "preferences"    # Only finds pi memories
+
+# Without --namespace, uses "default" namespace
+uteke remember "General knowledge" --tags misc
 ```
+
+Existing databases are auto-migrated — the `namespace` column is added on first run with zero data loss.
+
+---
 
 ## Architecture
 
-| Component | Technology |
-|-----------|-----------|
-| Language | Rust |
-| Vector Index | HNSW |
-| Structured Storage | SQLite (rusqlite) |
-| Embedding | EmbeddingGemma ONNX Q4 (768d) |
-| CLI | clap |
+```
+┌─────────────────────────────────────────────────────┐
+│                    CLI (clap)                        │
+│                  uteke-cli crate                     │
+├─────────────────────────────────────────────────────┤
+│                    Uteke API                         │
+│          uteke-core crate (lib)                      │
+├──────────┬──────────────────┬────────────────────────┤
+│   ONNX   │     usearch      │       SQLite           │
+│ Embedding│  Vector Index    │    Metadata Store      │
+│ (768d)   │ (Persistent HNSW)│    (rusqlite)          │
+├──────────┴──────────────────┴────────────────────────┤
+│              ~/.uteke/ (local storage)               │
+│ uteke.db │ uteke_index.usearch │ models/embeddinggemma/ │
+└─────────────────────────────────────────────────────┘
+```
+
+| Component | Technology | Detail |
+|-----------|-----------|--------|
+| Language | Rust (no unsafe) | Memory-safe, fast, single binary |
+| Vector Index | usearch | Persistent HNSW with incremental updates |
+| Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
+| Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
+| Namespaces | SQLite column | Multi-agent isolation, zero overhead |
+| Tiered Memory | Access tracking | Hot/Warm/Cold scoring boost |
+| CLI | clap | Standard Rust CLI framework |
+
+**How it works:**
+1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in usearch
+2. `recall` → query is embedded → usearch finds nearest neighbors → hot memories get +0.1 score boost → returns ranked results
+3. `search` → SQLite LIKE-based keyword search (fast, deterministic, scoped to namespace)
+4. `forget` → incremental delete from usearch + SQLite (no rebuild)
+5. Everything lives in `~/.uteke/` — fully local, fully yours
+
+---
+
+## Python Integration
+
+Uteke comes with a zero-dependency Python wrapper (stdlib only, Python 3.8+):
+
+```python
+from python_hermes import UtekeMemory
+
+mem = UtekeMemory()
+
+# Store
+mid = mem.remember("Deploy v2.1 to staging", tags=["deploy", "staging"])
+
+# Semantic search
+results = mem.recall("deployment steps")
+for r in results:
+    print(f"[{r['score']:.2f}] {r['memory']['content']}")
+
+# Forget
+mem.forget(mid)
+```
+
+The wrapper calls the `uteke` binary via subprocess with `--json` — no FFI, no bindings, works everywhere.
+
+See [`examples/python_hermes.py`](examples/python_hermes.py) for the full implementation.
+
+---
+
+## Shell Completions
+
+```bash
+uteke completions bash  > ~/.local/share/bash-completion/completions/uteke
+uteke completions zsh   > ~/.zfunc/_uteke
+uteke completions fish  > ~/.config/fish/completions/uteke.fish
+```
+
+---
+
+## Configuration
+
+On first run, Uteke creates `~/.uteke/config.toml`:
+
+```toml
+[store]
+# path = "~/.uteke"  # Default store location
+
+[embedding]
+# model = "embeddinggemma-q4"
+# max_seq_length = 256
+```
+
+Override store path per-command with `--store`:
+
+```bash
+uteke --store /path/to/project/.uteke remember "project-specific note"
+```
+
+---
+
+## Development
+
+```bash
+# Build
+cargo build --workspace
+
+# Test
+cargo test --workspace
+
+# Lint
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
+
+# Run locally
+cargo run --bin uteke -- remember "test" --tags dev
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
+
+---
+
+## Roadmap
+
+Uteke follows a demand-gated roadmap — we build what people actually use.
+
+**Now (v0.0.2):** Core engine — store, recall, search, CLI, persistent vector index, multi-agent namespaces, tiered memory, health checks
+**Phase A (100+ stars):** Better embeddings, dedup, import/export, remote embedding opt-in
+**Phase B (500+ stars):** Python SDK (PyO3), Node.js SDK, editor integrations
+**Phase C (1000+ stars):** Team features, cloud sync (opt-in), knowledge graph
+
+See the [full blueprint](BLUEPRINT_V2.md) for details.
+
+---
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE) — use it, fork it, ship it.
+
+---
+
+<p align="center">
+  <strong>Local-first. Zero config. Your memory, your machine.</strong>
+</p>

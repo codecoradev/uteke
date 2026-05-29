@@ -1,0 +1,61 @@
+name: Deploy Website to Cloudflare Pages
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-website.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-website
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: website
+
+      - name: Build
+        run: npm run build
+        working-directory: website
+
+      - name: Verify build output
+        run: |
+          if [ ! -d "website/build" ] || [ -z "$(ls -A website/build)" ]; then
+            echo "::error::Build output is empty or missing."
+            exit 1
+          fi
+
+      - name: Fetch secrets from Infisical
+        uses: Infisical/secrets-action@v1.0.9
+        with:
+          method: "oidc"
+          identity-id: "6bd2b8d8-a9a3-4331-8b37-bf2764fc320b"
+          project-slug: "github-actions"
+          env-slug: "prod"
+          domain: "https://infisical.ajianaz.dev"
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+          preCommands: npx wrangler pages project create uteke --production-branch=develop || true
+          command: pages deploy website/build/ --project-name=uteke --commit-dirty=true --branch=develop

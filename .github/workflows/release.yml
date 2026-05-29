@@ -1,0 +1,175 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-release:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: uteke-x86_64-unknown-linux-gnu
+            ext: tar.gz
+          # Linux ARM64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: uteke-aarch64-unknown-linux-gnu
+            ext: tar.gz
+          # macOS Apple Silicon
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: uteke-aarch64-apple-darwin
+            ext: tar.gz
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: uteke-x86_64-pc-windows-msvc
+            ext: zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }} -p uteke-cli
+
+      - name: Strip binary (Unix)
+        if: runner.os != 'Windows'
+        run: strip target/${{ matrix.target }}/release/uteke
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p release
+          cp target/${{ matrix.target }}/release/uteke release/${{ matrix.artifact }}
+          cd release
+          tar czf ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} ${{ matrix.artifact }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          mkdir release
+          cp target/${{ matrix.target }}/release/uteke.exe release/${{ matrix.artifact }}.exe
+          cd release
+          7z a ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} ${{ matrix.artifact }}.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}
+          path: release/${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}
+
+  release:
+    name: Create GitHub Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la release-artifacts/
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## What's New in VERSION
+
+          ### 🔧 Features
+
+          - **Persistent vector index** — usearch replaces in-memory HNSW
+            - Cold start: ~5ms (was ~5s at 10K memories)
+            - Incremental delete: ~0.1ms (was full rebuild)
+            - Index persisted as `uteke_index.usearch` + `uteke_index.keys`
+            - Auto-migration from v0.0.1 databases
+          - **Multi-agent namespaces** — isolated memory per agent
+            - `--namespace` flag on all commands
+            - Fully isolated: recall, search, list, stats scoped
+            - Default: `"default"` (backward compatible)
+          - **Tiered memory** — Hot/Warm/Cold scoring
+            - Hot (7 days) gets +0.1 score boost in recall
+            - `uteke stats` shows tier breakdown
+          - **Health checks** — `uteke doctor`, `verify`, `repair`
+          - **Website** — https://uteke.ajianaz.dev
+
+          ### 🔄 Changed
+
+          - License: MIT → Apache 2.0
+          - Binary size: 26MB → 28MB (+usearch)
+          - CI: Infisical OIDC for CF Pages deploy
+          - Release matrix: 4 platforms (dropped macOS Intel, Windows ARM64)
+
+          ### 📦 Platforms
+
+          | Platform | File |
+          |----------|------|
+          | Linux (x86_64) | `uteke-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
+          | Linux (ARM64) | `uteke-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
+          | macOS (Apple Silicon) | `uteke-VERSION-aarch64-apple-darwin.tar.gz` |
+          | Windows (x86_64) | `uteke-VERSION-x86_64-pc-windows-msvc.zip` |
+
+          ### 🚀 Quick Start
+
+          ```bash
+          # Install
+          curl -fsSL https://uteke.ajianaz.dev/install.sh | sh
+
+          # Remember
+          uteke remember "Important context" --tags project
+
+          # Recall by meaning
+          uteke recall "what was that context?"
+          ```
+
+          **Full changelog:** https://github.com/ajianaz/uteke/blob/main/CHANGELOG.md
+
+          EOF
+          sed -i "s/VERSION/${{ steps.version.outputs.VERSION }}/g" release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          body_path: release-notes.md
+          files: release-artifacts/*
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

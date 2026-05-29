@@ -13,3 +13,10 @@ path = "src/main.rs"
 [dependencies]
 uteke-core = { path = "../uteke-core" }
 clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5"
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+clap_complete = "4"
