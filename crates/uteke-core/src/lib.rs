@@ -61,15 +61,28 @@ impl Uteke {
     }
 
     fn finish_open(store: Store, embedder: EmbeddingEngine) -> Result<Self, Error> {
-        // Load existing memories into HNSW index
-        let all_memories = store.load_all()?;
-        let mut index = VectorIndex::new();
-        if !all_memories.is_empty() {
-            let items: Vec<(String, Vec<f32>)> = all_memories
-                .into_iter()
-                .map(|m| (m.id, m.embedding))
-                .collect();
-            index.build(&items);
+        // Determine index path: same directory as SQLite DB
+        let index_path = store.path().map(|p| {
+            let dir = p.parent().unwrap_or(Path::new("."));
+            dir.join("uteke_index.usearch")
+        });
+
+        let mut index = match &index_path {
+            Some(path) => VectorIndex::load_or_create(path, EmbeddingEngine::dims())?,
+            None => VectorIndex::new(EmbeddingEngine::dims()),
+        };
+
+        // If index is empty but SQLite has memories, build from SQLite (migration)
+        if index.is_empty() {
+            let all_memories = store.load_all()?;
+            if !all_memories.is_empty() {
+                let items: Vec<(String, Vec<f32>)> = all_memories
+                    .into_iter()
+                    .map(|m| (m.id, m.embedding))
+                    .collect();
+                index.build(&items);
+                index.save().ok(); // Persist after migration build
+            }
         }
 
         Ok(Self {
@@ -108,12 +121,13 @@ impl Uteke {
 
         self.store.insert(&memory)?;
 
-        // Add to HNSW index
+        // Add to usearch index and persist
         let mut index = self
             .index
             .lock()
             .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
         index.insert(&id, &embedding);
+        index.save().ok(); // Persist after insert
 
         Ok(id)
     }
@@ -133,16 +147,15 @@ impl Uteke {
             .map_err(|_| Error::Database("Failed to acquire embedder lock".into()))?
             .embed(query)?;
 
-        // Search HNSW with higher ef for better recall
-        let mut index = self
+        // Search usearch index
+        let index = self
             .index
             .lock()
             .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
-        // Cap k to index size to avoid HNSW dest-buffer-size mismatch
+        // Cap k to index size
         let index_len = index.len();
         let k = (limit * 3).min(index_len).max(1);
-        let ef = (limit * 4).max(k);
-        let candidates = index.search(&query_embedding, k, ef);
+        let candidates = index.search(&query_embedding, k, limit * 4);
 
         // Fetch full memories and apply tag filter
         let mut results = Vec::new();
@@ -195,22 +208,16 @@ impl Uteke {
         Ok(results)
     }
 
-    /// Delete a memory by ID.
+    /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
         self.store.delete(id)?;
 
-        // Rebuild index (simple approach for v2)
-        let all_memories = self.store.load_all()?;
         let mut index = self
             .index
             .lock()
             .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
-
-        let items: Vec<(String, Vec<f32>)> = all_memories
-            .into_iter()
-            .map(|m| (m.id, m.embedding))
-            .collect();
-        index.build(&items);
+        index.remove(id);
+        index.save().ok(); // Persist after delete
 
         Ok(())
     }
