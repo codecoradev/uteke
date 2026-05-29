@@ -5,7 +5,7 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.2] — 2026-05-29
 
 ### Added
 
@@ -31,8 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `uteke verify` — compares DB count vs index count
   - `uteke repair` — rebuilds usearch index from SQLite
   - All support `--json` output
-- **Removed old deps:** `hnsw`, `rand_pcg`, `space` (replaced by `usearch`)
-- **Added deps:** `usearch`, `tracing`
 
 ### Changed
 
@@ -40,6 +38,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Delete:** rebuild-based → incremental `remove()` + save
 - **Startup:** rebuild from SQLite → `restore()` from disk
 - **Binary size:** 20MB → 21MB (+1MB from usearch)
+- **CI:** only runs on PR to develop and push to main (eliminates duplicate runs)
+- **Release:** versioned artifact filenames (`uteke-{version}-{target}.tar.gz`)
+
+### Removed
+
+- Old deps: `hnsw`, `rand_pcg`, `space` (replaced by `usearch`)
+
+### Docs
+
+- **INSTALL.md:** Windows setup guide (pre-built + build from source)
+- **CONTRIBUTING.md:** HNSW → usearch references updated
+- **README:** architecture table, tiered memory, health check commands
+
+## [Unreleased]
 
 ## [0.0.1] — 2026-05-29
 
@@ -75,4 +87,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
+[0.0.2]: https://github.com/ajianaz/uteke/releases/tag/v0.0.2
 [0.0.1]: https://github.com/ajianaz/uteke/releases/tag/v0.0.1
