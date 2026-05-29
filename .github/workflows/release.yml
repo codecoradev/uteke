@@ -58,7 +58,7 @@ jobs:
       - name: Extract version
         id: version
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -104,37 +104,60 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
         run: |
           cat > release-notes.md << 'EOF'
-          ## Uteke vVERSION — Local-first AI Memory Engine
+          ## What's New in vVERSION
 
-          ### Installation
+          ### 🔧 Features
 
-          ```bash
-          # Quick install (Linux/macOS)
-          curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/develop/scripts/install.sh | sh
+          - **Persistent vector index** — usearch replaces in-memory HNSW
+            - Cold start: ~5ms (was ~5s at 10K memories)
+            - Incremental delete: ~0.1ms (was full rebuild)
+            - Index persisted as `uteke_index.usearch` + `uteke_index.keys`
+            - Auto-migration from v0.0.1 databases
+          - **Multi-agent namespaces** — isolated memory per agent
+            - `--namespace` flag on all commands
+            - Fully isolated: recall, search, list, stats scoped
+            - Default: `"default"` (backward compatible)
+          - **Tiered memory** — Hot/Warm/Cold scoring
+            - Hot (7 days) gets +0.1 score boost in recall
+            - `uteke stats` shows tier breakdown
+          - **Health checks** — `uteke doctor`, `verify`, `repair`
+          - **Website** — https://uteke.ajianaz.dev
 
-          # Or download binary from assets below
-          ```
+          ### 🔄 Changed
 
-          ### Platforms
+          - License: MIT → Apache 2.0
+          - Binary size: 26MB → 28MB (+usearch)
+          - CI: Infisical OIDC for CF Pages deploy
+          - Release matrix: 4 platforms (dropped macOS Intel, Windows ARM64)
+
+          ### 📦 Platforms
 
           | Platform | File |
           |----------|------|
-          | macOS (Apple Silicon) | `uteke-VERSION-aarch64-apple-darwin.tar.gz` |
-          | Linux (x86_64) | `uteke-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
-          | Linux (ARM64) | `uteke-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
-          | Windows (x86_64) | `uteke-VERSION-x86_64-pc-windows-msvc.zip` |
+          | Linux (x86_64) | `uteke-vVERSION-x86_64-unknown-linux-gnu.tar.gz` |
+          | Linux (ARM64) | `uteke-vVERSION-aarch64-unknown-linux-gnu.tar.gz` |
+          | macOS (Apple Silicon) | `uteke-vVERSION-aarch64-apple-darwin.tar.gz` |
+          | Windows (x86_64) | `uteke-vVERSION-x86_64-pc-windows-msvc.zip` |
 
-          ### Quick Start
+          ### 🚀 Quick Start
 
           ```bash
+          # Install
+          curl -fsSL https://uteke.ajianaz.dev/install.sh | sh
+
+          # Remember
           uteke remember "Important context" --tags project
+
+          # Recall by meaning
           uteke recall "what was that context?"
           ```
+
+          **Full changelog:** https://github.com/ajianaz/uteke/blob/main/CHANGELOG.md
 
           EOF
           sed -i "s/VERSION/${{ steps.version.outputs.VERSION }}/g" release-notes.md
