@@ -31,11 +31,6 @@ jobs:
             target: aarch64-apple-darwin
             artifact: uteke-aarch64-apple-darwin
             ext: tar.gz
-          # macOS Intel
-          - os: macos-13
-            target: x86_64-apple-darwin
-            artifact: uteke-x86_64-apple-darwin
-            ext: tar.gz
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -130,7 +125,6 @@ jobs:
           | Platform | File |
           |----------|------|
           | macOS (Apple Silicon) | `uteke-VERSION-aarch64-apple-darwin.tar.gz` |
-          | macOS (Intel) | `uteke-VERSION-x86_64-apple-darwin.tar.gz` |
           | Linux (x86_64) | `uteke-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
           | Linux (ARM64) | `uteke-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
           | Windows (x86_64) | `uteke-VERSION-x86_64-pc-windows-msvc.zip` |
