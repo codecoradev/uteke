@@ -25,6 +25,12 @@ pub struct Memory {
     /// Namespace for multi-agent isolation.
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// How many times this memory has been accessed (recall, get).
+    #[serde(default)]
+    pub access_count: u32,
+    /// When this memory was last accessed.
+    #[serde(default)]
+    pub last_accessed: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn default_namespace() -> String {
@@ -40,6 +46,34 @@ pub struct SearchResult {
     pub score: f32,
 }
 
+/// Memory tier based on access recency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryTier {
+    /// Accessed within last 7 days — boosted in recall.
+    Hot,
+    /// Accessed within last 30 days — normal recall.
+    Warm,
+    /// Not accessed in 30+ days — lower priority.
+    Cold,
+}
+
+impl MemoryTier {
+    /// Determine tier from last_accessed timestamp.
+    pub fn from_last_accessed(last_accessed: Option<chrono::DateTime<chrono::Utc>>) -> Self {
+        let Some(la) = last_accessed else {
+            return MemoryTier::Cold;
+        };
+        let age = chrono::Utc::now() - la;
+        if age.num_days() <= 7 {
+            MemoryTier::Hot
+        } else if age.num_days() <= 30 {
+            MemoryTier::Warm
+        } else {
+            MemoryTier::Cold
+        }
+    }
+}
+
 /// Statistics about the memory store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreStats {
@@ -49,6 +83,12 @@ pub struct StoreStats {
     pub unique_tags: usize,
     /// Database file size in bytes.
     pub db_size_bytes: u64,
+    /// Number of hot memories (accessed within 7 days).
+    pub hot: usize,
+    /// Number of warm memories (accessed within 30 days).
+    pub warm: usize,
+    /// Number of cold memories (not accessed in 30+ days).
+    pub cold: usize,
 }
 
 /// Lightweight export format — no embedding vector (re-embedded on import).

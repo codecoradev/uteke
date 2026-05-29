@@ -147,6 +147,9 @@ fn print_stats_human(stats: &uteke_core::StoreStats) {
     println!("Memory Store Statistics");
     println!("──────────────────────");
     println!("  Total memories: {}", stats.total_memories);
+    println!("  🔥 Hot (7d):    {}", stats.hot);
+    println!("  🟡 Warm (30d):  {}", stats.warm);
+    println!("  ❄️  Cold (>30d):  {}", stats.cold);
     println!("  Unique tags:    {}", stats.unique_tags);
     let size_str = if stats.db_size_bytes < 1024 {
         format!("{} B", stats.db_size_bytes)

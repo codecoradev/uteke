@@ -13,7 +13,7 @@ mod embed;
 pub mod memory;
 
 pub use memory::types::{
-    ExportEntry, ImportResult, Memory, SearchResult, StoreStats, DEFAULT_NAMESPACE,
+    ExportEntry, ImportResult, Memory, MemoryTier, SearchResult, StoreStats, DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -121,6 +121,8 @@ impl Uteke {
             created_at: now,
             updated_at: now,
             namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
+            access_count: 0,
+            last_accessed: None,
         };
 
         self.store.insert(&memory)?;
@@ -191,7 +193,18 @@ impl Uteke {
             }
 
             let score = euclidean_to_cosine(distance);
-            results.push(SearchResult { memory, score });
+
+            // Boost hot memories (+0.1 bonus)
+            let tier = MemoryTier::from_last_accessed(memory.last_accessed);
+            let boosted_score = match tier {
+                MemoryTier::Hot => (score + 0.1).min(1.0),
+                _ => score,
+            };
+
+            results.push(SearchResult {
+                memory,
+                score: boosted_score,
+            });
         }
 
         // Sort by score descending
@@ -200,6 +213,11 @@ impl Uteke {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // Touch access for returned results
+        for r in &results {
+            self.store.touch_access(&r.memory.id).ok();
+        }
 
         Ok(results)
     }
@@ -251,9 +269,12 @@ impl Uteke {
 
     /// Get a single memory by ID.
     pub fn get(&self, id: &str) -> Result<Memory, Error> {
-        self.store
+        let memory = self
+            .store
             .get_by_id(id)?
-            .ok_or_else(|| Error::Database(format!("Memory not found: {id}")))
+            .ok_or_else(|| Error::Database(format!("Memory not found: {id}")))?;
+        self.store.touch_access(id).ok();
+        Ok(memory)
     }
 
     /// List all namespaces.
@@ -265,6 +286,7 @@ impl Uteke {
     pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
         let total_memories = self.store.count(namespace)?;
         let unique_tags = self.store.unique_tags(namespace)?.len();
+        let (hot, warm, cold) = self.store.tier_counts(namespace)?;
 
         let db_size_bytes = self
             .store
@@ -277,6 +299,9 @@ impl Uteke {
             total_memories,
             unique_tags,
             db_size_bytes,
+            hot,
+            warm,
+            cold,
         })
     }
 
@@ -351,6 +376,8 @@ impl Uteke {
                 created_at: entry.created_at,
                 updated_at: now,
                 namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
+                access_count: 0,
+                last_accessed: None,
             };
 
             self.store.insert(&memory)?;
@@ -412,6 +439,8 @@ mod tests {
             created_at: now,
             updated_at: now,
             namespace: DEFAULT_NAMESPACE.to_string(),
+            access_count: 0,
+            last_accessed: None,
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -434,6 +463,8 @@ mod tests {
             created_at: now,
             updated_at: now,
             namespace: DEFAULT_NAMESPACE.to_string(),
+            access_count: 0,
+            last_accessed: None,
         };
 
         let sr = SearchResult {
@@ -450,6 +481,9 @@ mod tests {
             total_memories: 42,
             unique_tags: 5,
             db_size_bytes: 1024,
+            hot: 10,
+            warm: 15,
+            cold: 17,
         };
 
         let json = serde_json::to_string(&stats).unwrap();

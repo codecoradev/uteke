@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS memories (
     metadata TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    namespace TEXT NOT NULL DEFAULT 'default'
+    namespace TEXT NOT NULL DEFAULT 'default',
+    access_count INTEGER NOT NULL DEFAULT 0,
+    last_accessed TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -71,7 +73,28 @@ impl Store {
             )
             .map_err(|e| Error::Database(e.to_string()))?;
 
+        // Migration: add access tracking columns
+        if !self.column_exists("access_count") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0;",
+                )
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        if !self.column_exists("last_accessed") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN last_accessed TEXT;")
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+
         Ok(())
+    }
+
+    fn column_exists(&self, column: &str) -> bool {
+        self.conn
+            .prepare("SELECT * FROM memories LIMIT 0")
+            .map(|stmt| stmt.column_names().iter().any(|n| n == &column))
+            .unwrap_or(false)
     }
 
     /// Insert a new memory. Returns the inserted memory's ID.
@@ -84,8 +107,8 @@ impl Store {
 
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     memory.id,
                     memory.content,
@@ -95,6 +118,8 @@ impl Store {
                     memory.created_at.to_rfc3339(),
                     memory.updated_at.to_rfc3339(),
                     memory.namespace,
+                    memory.access_count,
+                    memory.last_accessed.map(|t| t.to_rfc3339()),
                 ],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -106,7 +131,7 @@ impl Store {
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE id = ?1")
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE id = ?1")
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let result = stmt
@@ -164,8 +189,8 @@ impl Store {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
 
         let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE namespace = ?1 AND tags LIKE ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE namespace = ?1 AND tags LIKE ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         };
 
         let mut memories = Vec::new();
@@ -236,8 +261,8 @@ impl Store {
     /// Load all memories for index rebuilding, optionally filtered by namespace.
     pub fn load_all(&self, namespace: Option<&str>) -> Result<Vec<Memory>, Error> {
         let sql = match namespace {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories WHERE namespace = ?1 ORDER BY created_at",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace FROM memories ORDER BY created_at",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE namespace = ?1 ORDER BY created_at",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories ORDER BY created_at",
         };
 
         let mut memories = Vec::new();
@@ -350,6 +375,55 @@ impl Store {
     pub fn path(&self) -> Option<std::path::PathBuf> {
         self.conn.path().map(std::path::PathBuf::from)
     }
+
+    /// Increment access count and update last_accessed for a memory.
+    pub fn touch_access(&self, id: &str) -> Result<(), Error> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE memories SET access_count = access_count + 1, last_accessed = ?1 WHERE id = ?2",
+                params![now, id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Count memories by tier (hot/warm/cold) for a namespace.
+    pub fn tier_counts(&self, namespace: Option<&str>) -> Result<(usize, usize, usize), Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let now = chrono::Utc::now();
+        let hot_cutoff = (now - chrono::Duration::days(7)).to_rfc3339();
+        let warm_cutoff = (now - chrono::Duration::days(30)).to_rfc3339();
+
+        let hot: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND last_accessed >= ?2",
+                params![ns, hot_cutoff],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let warm: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND last_accessed >= ?2 AND last_accessed < ?3",
+                params![ns, warm_cutoff, hot_cutoff],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let cold: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL)",
+                params![ns, warm_cutoff],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        Ok((hot, warm, cold))
+    }
 }
 
 /// Serialize an embedding vector to a byte blob.
@@ -402,6 +476,12 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
     let namespace: String = row
         .get(7)
         .unwrap_or_else(|_| crate::memory::types::DEFAULT_NAMESPACE.to_string());
+    let access_count: u32 = row.get(8).unwrap_or(0);
+    let last_accessed_str: Option<String> = row.get(9).ok().flatten();
+    let last_accessed = last_accessed_str
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.to_utc());
 
     Ok(Memory {
         id,
@@ -412,6 +492,8 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
         created_at,
         updated_at,
         namespace,
+        access_count,
+        last_accessed,
     })
 }
 
@@ -431,6 +513,8 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
+            access_count: 0,
+            last_accessed: None,
         }
     }
 
@@ -444,6 +528,8 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
             namespace: namespace.to_string(),
+            access_count: 0,
+            last_accessed: None,
         }
     }
 
