@@ -42,7 +42,7 @@
 			<div class="flex items-center gap-4">
 				<a href="https://github.com/ajianaz/uteke" target="_blank" rel="noopener" class="hover:text-[var(--color-text)] transition-colors">GitHub</a>
 				<a href="https://discord.gg/uteke" target="_blank" rel="noopener" class="hover:text-[var(--color-text)] transition-colors">Discord</a>
-				<a href="https://github.com/ajianaz/uteke/blob/main/LICENSE" class="hover:text-[var(--color-text)] transition-colors">MIT License</a>
+				<a href="https://github.com/ajianaz/uteke/blob/main/LICENSE" class="hover:text-[var(--color-text)] transition-colors">Apache 2.0 License</a>
 			</div>
 		</div>
 	</footer>
