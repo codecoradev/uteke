@@ -6,3 +6,4 @@
 .idea/
 .vscode/
 *.pdb
+__pycache__/
