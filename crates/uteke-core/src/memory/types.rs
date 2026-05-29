@@ -112,3 +112,12 @@ pub struct ImportResult {
     /// Number of entries skipped (duplicate or invalid).
     pub skipped: usize,
 }
+
+/// A tag with its usage count.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagInfo {
+    /// Tag name.
+    pub name: String,
+    /// Number of memories using this tag.
+    pub count: usize,
+}
