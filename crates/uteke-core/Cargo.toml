@@ -14,3 +14,13 @@ hnsw = "0.11"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
+rand_pcg = "0.3"
+space = "0.17"
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+ndarray = "0.17"
+tokenizers = "0.23"
+dirs = "5"
+reqwest = { version = "0.12", features = ["blocking"] }
+
+[dev-dependencies]
+tempfile = "3"
