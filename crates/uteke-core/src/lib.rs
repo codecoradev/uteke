@@ -454,6 +454,18 @@ impl Uteke {
         Ok(lines.join("\n"))
     }
 
+    /// Graceful shutdown — save dirty index to disk.
+    pub fn shutdown(&self) -> Result<(), Error> {
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("lock".into()))?;
+        if index.is_dirty() {
+            index.save()?;
+        }
+        Ok(())
+    }
+
     /// Import memories from JSONL format.
     ///
     /// Each line should be a valid JSON object with `content`, `tags`, `metadata`, `created_at`.
