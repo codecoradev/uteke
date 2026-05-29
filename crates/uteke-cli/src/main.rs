@@ -1,60 +1,16 @@
 //! Uteke CLI — persistent memory for AI agents.
 
+mod config;
+
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
+use config::Config;
 use std::io::{self, Read};
-use std::path::PathBuf;
 use tracing::Level;
 use tracing_subscriber::EnvFilter;
 use uteke_core::Uteke;
 
-// ── Config ──────────────────────────────────────────────────────────────────
-
-/// Runtime config loaded from ~/.uteke/config.toml (or defaults).
-#[derive(serde::Deserialize, Default)]
-struct Config {
-    store_path: Option<String>,
-}
-
-impl Config {
-    fn load() -> Self {
-        let config_path = dirs::home_dir()
-            .map(|h| h.join(".uteke").join("config.toml"))
-            .unwrap_or_default();
-
-        if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path).unwrap_or_default();
-            toml::from_str(&content).unwrap_or_default()
-        } else {
-            Self::default()
-        }
-    }
-
-    fn ensure_dirs() -> PathBuf {
-        let base = dirs::home_dir()
-            .expect("Cannot determine home directory")
-            .join(".uteke");
-        std::fs::create_dir_all(&base).ok();
-        std::fs::create_dir_all(base.join("models")).ok();
-        base
-    }
-}
-
-fn write_default_config() {
-    let base = Config::ensure_dirs();
-    let config_path = base.join("config.toml");
-    if !config_path.exists() {
-        let default = r#"# Uteke configuration
-[store]
-# path = "~/.uteke"  # Default store location
-
-[embedding]
-# model = "embeddinggemma-q4"
-# max_seq_length = 256
-"#;
-        std::fs::write(&config_path, default).ok();
-    }
-}
+// ── Config is in config.rs ─────────────────────────────────────────────────
 
 // ── JSON output helpers ─────────────────────────────────────────────────────
 
@@ -540,28 +496,16 @@ fn main() {
         _ => {}
     }
 
-    // Ensure config directory exists
-    write_default_config();
+    // Ensure config directory exists and load layered config
+    Config::write_default_config();
     let config = Config::load();
 
-    // Determine store path
+    // Determine store path: CLI > config > default
     let store_path = cli
         .store
         .as_deref()
-        .or(config.store_path.as_deref())
-        .unwrap_or("~/.uteke");
-
-    // Expand tilde
-    let store_path = if store_path.starts_with("~/") {
-        dirs::home_dir()
-            .map(|h| {
-                let rest = &store_path[2..];
-                h.join(rest).to_string_lossy().to_string()
-            })
-            .unwrap_or_else(|| store_path.to_string())
-    } else {
-        store_path.to_string()
-    };
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| Config::expand_tilde(&config.store.path));
 
     tracing::debug!("Opening store at: {store_path}");
 
