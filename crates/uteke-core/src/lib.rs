@@ -14,7 +14,7 @@ pub mod memory;
 
 pub use memory::types::{
     AgingStatus, CleanupResult, ExportEntry, ImportResult, Memory, MemoryTier, SearchResult,
-    StoreStats, DEFAULT_NAMESPACE,
+    StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -292,6 +292,26 @@ impl Uteke {
     /// List all namespaces.
     pub fn list_namespaces(&self) -> Result<Vec<String>, Error> {
         self.store.list_namespaces()
+    }
+
+    /// List all tags with their usage counts.
+    pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
+        self.store.tags_with_counts(namespace)
+    }
+
+    /// Rename a tag across all memories in a namespace.
+    pub fn rename_tag(
+        &self,
+        old: &str,
+        new: &str,
+        namespace: Option<&str>,
+    ) -> Result<usize, Error> {
+        self.store.rename_tag(old, new, namespace)
+    }
+
+    /// Delete a tag from all memories in a namespace.
+    pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        self.store.delete_tag(tag, namespace)
     }
 
     /// Check system health: DB, index, model, consistency.
