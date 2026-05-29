@@ -24,17 +24,6 @@ fn print_json<T: serde::Serialize>(value: &T) {
 
 // ── Human-readable output helpers ───────────────────────────────────────────
 
-fn print_tags_human(tags: &[uteke_core::TagInfo], _by_count: bool) {
-    if tags.is_empty() {
-        println!("No tags found.");
-        return;
-    }
-    println!("Tags ({} total):\n", tags.len());
-    for t in tags {
-        println!("  {} ({})", t.name, t.count);
-    }
-}
-
 fn print_remember_human(id: &str) {
     println!("✓ Memory stored");
     println!("  ID: {id}");
@@ -179,6 +168,38 @@ fn print_repair_human(report: &uteke_core::RepairReport) {
     }
 }
 
+fn print_aging_status_human(status: &uteke_core::AgingStatus) {
+    println!("Memory Aging Status");
+    println!("────────────────────");
+    println!("  Total:          {}", status.total);
+    println!("  🔥 Hot (7d):    {}", status.hot);
+    println!("  🟡 Warm (30d):  {}", status.warm);
+    println!("  ❄️  Cold (>30d):  {}", status.cold);
+    println!("  🚫 Never accessed: {}", status.never_accessed);
+}
+
+fn print_aging_preview_human(memories: &[uteke_core::Memory]) {
+    if memories.is_empty() {
+        println!("No aged memories eligible for cleanup.");
+        return;
+    }
+    println!("Aged Memories ({} eligible for cleanup):\n", memories.len());
+    for (i, m) in memories.iter().enumerate() {
+        let accessed = m
+            .last_accessed
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| "never".to_string());
+        println!(
+            "  {}. {}",
+            i + 1,
+            m.content.chars().take(80).collect::<String>()
+        );
+        println!("     ID: {}", m.id);
+        println!("     Created: {}", m.created_at.to_rfc3339());
+        println!("     Accessed: {} (count: {})", accessed, m.access_count);
+    }
+}
+
 // ── CLI definition ──────────────────────────────────────────────────────────
 
 #[derive(Parser)]
@@ -290,39 +311,41 @@ enum Commands {
         #[arg(long, default_value = "pi")]
         agent: String,
     },
-    /// Manage tags: list, rename, delete
-    Tags {
+    /// Memory aging: status, preview cleanup, cleanup
+    Aging {
         #[command(subcommand)]
-        command: TagCommands,
-    },
-}
-
-#[derive(Subcommand)]
-enum TagCommands {
-    /// List all tags with usage counts
-    List {
-        /// Sort by count (descending) instead of alphabetical
-        #[arg(long)]
-        by_count: bool,
-    },
-    /// Rename a tag across all memories
-    Rename {
-        /// Current tag name
-        old: String,
-        /// New tag name
-        new: String,
-    },
-    /// Delete a tag from all memories
-    Delete {
-        /// Tag name to delete
-        tag: String,
-        /// Skip confirmation prompt
-        #[arg(long)]
-        confirm: bool,
+        command: AgingCommands,
     },
 }
 
 // ── Agent Init ──────────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum AgingCommands {
+    /// Show aging status: hot, warm, cold, never-accessed counts
+    Status,
+    /// Preview memories eligible for cleanup (dry-run)
+    Preview {
+        /// Minimum age in days for a memory to be considered aged
+        #[arg(long, default_value = "180")]
+        older_than_days: u32,
+        /// Maximum access count threshold
+        #[arg(long, default_value = "1")]
+        max_access_count: u32,
+    },
+    /// Delete aged memories (use --yes to skip confirmation)
+    Cleanup {
+        /// Minimum age in days for a memory to be considered aged
+        #[arg(long, default_value = "180")]
+        older_than_days: u32,
+        /// Maximum access count threshold
+        #[arg(long, default_value = "1")]
+        max_access_count: u32,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+}
 
 fn run_init_command(cli: &Cli) -> Result<(), String> {
     if let Commands::Init { agent } = &cli.command {
@@ -735,73 +758,6 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             }
             Ok(())
         }
-        Commands::Tags { command } => {
-            match command {
-                TagCommands::List { by_count } => {
-                    tracing::info!("Listing tags (by_count: {by_count})");
-                    let mut tags = uteke
-                        .tags_with_counts(ns)
-                        .map_err(|e| format!("Failed to list tags: {e}"))?;
-                    if *by_count {
-                        tags.sort_by_key(|b| std::cmp::Reverse(b.count));
-                    } else {
-                        tags.sort_by(|a, b| a.name.cmp(&b.name));
-                    }
-                    if cli.json {
-                        print_json(&tags);
-                    } else {
-                        print_tags_human(&tags, *by_count);
-                    }
-                }
-                TagCommands::Rename { old, new } => {
-                    tracing::info!("Renaming tag: {old} -> {new}");
-                    let count = uteke
-                        .rename_tag(old, new, ns)
-                        .map_err(|e| format!("Failed to rename tag: {e}"))?;
-                    if cli.json {
-                        print_json(
-                            &serde_json::json!({"renamed": count, "tag": old, "new_tag": new}),
-                        );
-                    } else {
-                        println!("✓ Tag '{old}' renamed to '{new}' ({count} memories updated)");
-                    }
-                }
-                TagCommands::Delete { tag, confirm } => {
-                    if !confirm {
-                        // Check if tag exists and show count
-                        let tags = uteke
-                            .tags_with_counts(ns)
-                            .map_err(|e| format!("Failed to list tags: {e}"))?;
-                        let info = tags.iter().find(|t| t.name == *tag);
-                        match info {
-                            Some(info) => {
-                                println!(
-                                    "Tag '{}' is used by {} memory(ies).",
-                                    info.name, info.count
-                                );
-                                println!("Use --confirm to proceed with deletion.");
-                                return Err(
-                                    "Tag deletion not confirmed. Use --confirm flag.".to_string()
-                                );
-                            }
-                            None => {
-                                return Err(format!("Tag '{}' not found.", tag));
-                            }
-                        }
-                    }
-                    tracing::info!("Deleting tag: {tag}");
-                    let count = uteke
-                        .delete_tag(tag, ns)
-                        .map_err(|e| format!("Failed to delete tag: {e}"))?;
-                    if cli.json {
-                        print_json(&serde_json::json!({"deleted": count, "tag": tag}));
-                    } else {
-                        println!("✓ Tag '{tag}' deleted ({count} memories updated)");
-                    }
-                }
-            }
-            Ok(())
-        }
         Commands::Export { output } => {
             tracing::info!("Exporting memories to {output}");
             let jsonl = uteke
@@ -854,5 +810,81 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             Ok(())
         }
         Commands::Init { agent } => run_init(agent, cli.json),
+        Commands::Aging { command } => match command {
+            AgingCommands::Status => {
+                tracing::info!("Aging status");
+                let status = uteke
+                    .aging_status(ns)
+                    .map_err(|e| format!("Failed to get aging status: {e}"))?;
+                if cli.json {
+                    print_json(&status);
+                } else {
+                    print_aging_status_human(&status);
+                }
+                Ok(())
+            }
+            AgingCommands::Preview {
+                older_than_days,
+                max_access_count,
+            } => {
+                tracing::info!(
+                    "Aging preview (older_than: {}d, max_access: {})",
+                    older_than_days,
+                    max_access_count
+                );
+                let memories = uteke
+                    .aging_preview(*older_than_days, *max_access_count, ns)
+                    .map_err(|e| format!("Failed to preview aged memories: {e}"))?;
+                if cli.json {
+                    print_json(&memories);
+                } else {
+                    print_aging_preview_human(&memories);
+                }
+                Ok(())
+            }
+            AgingCommands::Cleanup {
+                older_than_days,
+                max_access_count,
+                yes,
+            } => {
+                // Preview first
+                let preview = uteke
+                    .aging_preview(*older_than_days, *max_access_count, ns)
+                    .map_err(|e| format!("Failed to preview aged memories: {e}"))?;
+
+                if preview.is_empty() {
+                    if cli.json {
+                        print_json(&uteke_core::CleanupResult { deleted: 0 });
+                    } else {
+                        println!("No aged memories to clean up.");
+                    }
+                    return Ok(());
+                }
+
+                if !yes {
+                    if !cli.json {
+                        print_aging_preview_human(&preview);
+                        println!();
+                        println!(
+                            "⚠ About to delete {} memory(ies). Use --yes to confirm.",
+                            preview.len()
+                        );
+                    }
+                    return Err("Cleanup not confirmed. Use --yes flag to proceed.".to_string());
+                }
+
+                let count = preview.len();
+                let result = uteke
+                    .aging_cleanup(*older_than_days, *max_access_count, ns)
+                    .map_err(|e| format!("Failed to cleanup aged memories: {e}"))?;
+                if cli.json {
+                    print_json(&result);
+                } else {
+                    println!("✓ Cleaned up {} aged memory(ies)", result.deleted);
+                }
+                let _ = count;
+                Ok(())
+            }
+        },
     }
 }
