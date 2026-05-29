@@ -1,0 +1,15 @@
+[package]
+name = "uteke-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for uteke — persistent memory for AI agents"
+
+[[bin]]
+name = "uteke"
+path = "src/main.rs"
+
+[dependencies]
+uteke-core = { path = "../uteke-core" }
+clap = { version = "4", features = ["derive"] }

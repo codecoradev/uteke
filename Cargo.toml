@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/uteke-core",
+    "crates/uteke-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ajianaz/uteke"
+description = "The Brain for Your AI — persistent memory and smart context management"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
