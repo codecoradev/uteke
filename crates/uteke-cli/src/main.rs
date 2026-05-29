@@ -6,9 +6,13 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use config::Config;
 use std::io::{self, Read};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 use uteke_core::Uteke;
+
+/// Global flag set by SIGINT handler.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 // ── Config is in config.rs ─────────────────────────────────────────────────
 
@@ -526,6 +530,7 @@ fn main() {
 
     tracing::debug!("Opening store at: {store_path}");
 
+    // Install SIGINT handler for graceful shutdown
     let uteke = match Uteke::open(&store_path) {
         Ok(u) => u,
         Err(e) => {
@@ -534,7 +539,24 @@ fn main() {
         }
     };
 
+    ctrlc::set_handler(|| {
+        SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+        eprintln!("\nInterrupt received, shutting down gracefully...");
+    })
+    .expect("Failed to set SIGINT handler");
+
     let result = run_command(&cli, &uteke);
+
+    // Graceful shutdown: save dirty index if needed
+    if let Err(e) = uteke.shutdown() {
+        tracing::warn!("Shutdown flush failed: {e}");
+    }
+
+    if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) {
+        eprintln!("Shutdown complete.");
+        std::process::exit(130); // 128 + SIGINT(2)
+    }
+
     if let Err(e) = result {
         eprintln!("Error: {e}");
         std::process::exit(1);
