@@ -61,6 +61,10 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p uteke-cli
+        env:
+          # numkong v7.7.0 bug: types.h auto-detects x86 features via _MSC_VER on non-x86 MSVC targets.
+          # Defining these to 0 prevents the broken auto-detect path from including immintrin.h.
+          CFLAGS_aarch64_pc_windows_msvc: "-DNK_TARGET_HASWELL=0 -DNK_TARGET_SKYLAKE=0"
 
       - name: Strip binary (Unix)
         if: runner.os != 'Windows'
