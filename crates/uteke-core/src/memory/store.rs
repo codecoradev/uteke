@@ -1,6 +1,6 @@
 //! SQLite-backed persistence for memories.
 
-use crate::memory::types::Memory;
+use crate::memory::types::{Memory, TagInfo};
 use crate::Error;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -388,6 +388,125 @@ impl Store {
         Ok(())
     }
 
+    /// Get all tags with their usage counts, optionally filtered by namespace.
+    pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
+        let tags = self.unique_tags(namespace)?;
+        let mut result = Vec::new();
+        for tag in &tags {
+            let count = self.count_tag(tag, namespace)?;
+            result.push(TagInfo {
+                name: tag.clone(),
+                count,
+            });
+        }
+        Ok(result)
+    }
+
+    /// Count how many memories use a specific tag.
+    fn count_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{tag}\"%");
+        let count: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND tags LIKE ?2",
+                rusqlite::params![ns, pattern],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(count)
+    }
+
+    /// Rename a tag across all memories (optionally filtered by namespace).
+    /// Returns the number of memories updated.
+    pub fn rename_tag(
+        &self,
+        old: &str,
+        new: &str,
+        namespace: Option<&str>,
+    ) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{old}\"%");
+        let sql = "SELECT id, tags FROM memories WHERE namespace = ?1 AND tags LIKE ?2";
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params![ns, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut updated = 0;
+        for (id, tags_str) in &rows {
+            let mut tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            let mut changed = false;
+            for t in &mut tags {
+                if t == old {
+                    *t = new.to_string();
+                    changed = true;
+                }
+            }
+            if changed {
+                let new_tags_json =
+                    serde_json::to_string(&tags).map_err(|e| Error::Database(e.to_string()))?;
+                let now = chrono::Utc::now().to_rfc3339();
+                self.conn
+                    .execute(
+                        "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                        rusqlite::params![new_tags_json, now, id],
+                    )
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
+
+    /// Delete a tag from all memories (optionally filtered by namespace).
+    /// Returns the number of memories updated.
+    pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{tag}\"%");
+        let sql = "SELECT id, tags FROM memories WHERE namespace = ?1 AND tags LIKE ?2";
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params![ns, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut updated = 0;
+        for (id, tags_str) in &rows {
+            let mut tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            let before_len = tags.len();
+            tags.retain(|t| t != tag);
+            if tags.len() != before_len {
+                let new_tags_json =
+                    serde_json::to_string(&tags).map_err(|e| Error::Database(e.to_string()))?;
+                let now = chrono::Utc::now().to_rfc3339();
+                self.conn
+                    .execute(
+                        "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                        rusqlite::params![new_tags_json, now, id],
+                    )
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
+
     /// Count memories by tier (hot/warm/cold) for a namespace.
     pub fn tier_counts(&self, namespace: Option<&str>) -> Result<(usize, usize, usize), Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
@@ -675,5 +794,74 @@ mod tests {
         assert_eq!(ns.len(), 2);
         assert!(ns.contains(&"hermes".to_string()));
         assert!(ns.contains(&"pi".to_string()));
+    }
+
+    #[test]
+    fn test_tags_with_counts() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "web"]))
+            .unwrap();
+        store.insert(&make_test_memory("3", "c", &["ai"])).unwrap();
+
+        let mut tags = store.tags_with_counts(None).unwrap();
+        tags.sort_by(|a, b| a.name.cmp(&b.name));
+
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0].name, "ai");
+        assert_eq!(tags[0].count, 2);
+        assert_eq!(tags[1].name, "rust");
+        assert_eq!(tags[1].count, 2);
+        assert_eq!(tags[2].name, "web");
+        assert_eq!(tags[2].count, 1);
+    }
+
+    #[test]
+    fn test_rename_tag() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
+
+        let count = store.rename_tag("rust", "systems", None).unwrap();
+        assert_eq!(count, 2);
+
+        let m1 = store.get_by_id("1").unwrap().unwrap();
+        assert_eq!(m1.tags, vec!["systems", "ai"]);
+
+        let m2 = store.get_by_id("2").unwrap().unwrap();
+        assert_eq!(m2.tags, vec!["systems"]);
+
+        let m3 = store.get_by_id("3").unwrap().unwrap();
+        assert_eq!(m3.tags, vec!["python"]);
+    }
+
+    #[test]
+    fn test_delete_tag() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust"]))
+            .unwrap();
+
+        let count = store.delete_tag("rust", None).unwrap();
+        assert_eq!(count, 2);
+
+        let m1 = store.get_by_id("1").unwrap().unwrap();
+        assert_eq!(m1.tags, vec!["ai"]);
+
+        let m2 = store.get_by_id("2").unwrap().unwrap();
+        assert!(m2.tags.is_empty());
     }
 }

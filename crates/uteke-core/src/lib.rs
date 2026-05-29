@@ -13,7 +13,8 @@ mod embed;
 pub mod memory;
 
 pub use memory::types::{
-    ExportEntry, ImportResult, Memory, MemoryTier, SearchResult, StoreStats, DEFAULT_NAMESPACE,
+    ExportEntry, ImportResult, Memory, MemoryTier, SearchResult, StoreStats, TagInfo,
+    DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -427,6 +428,26 @@ impl Uteke {
             warm,
             cold,
         })
+    }
+
+    /// List all tags with their usage counts.
+    pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
+        self.store.tags_with_counts(namespace)
+    }
+
+    /// Rename a tag across all memories. Returns count of memories updated.
+    pub fn rename_tag(
+        &self,
+        old: &str,
+        new: &str,
+        namespace: Option<&str>,
+    ) -> Result<usize, Error> {
+        self.store.rename_tag(old, new, namespace)
+    }
+
+    /// Delete a tag from all memories. Returns count of memories updated.
+    pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        self.store.delete_tag(tag, namespace)
     }
 
     /// Export all memories to JSONL format (one JSON object per line).
