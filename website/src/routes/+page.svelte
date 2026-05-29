@@ -85,7 +85,7 @@
 <section class="max-w-6xl mx-auto px-6 pt-20 md:pt-28 pb-16 text-center">
 	<div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] mb-8">
 		<span class="w-2 h-2 rounded-full bg-green-500"></span>
-		v0.0.2 — 5 platforms, open source
+		v0.0.2 — 4 platforms, open source
 	</div>
 
 	<h1 class="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tight mb-4">
