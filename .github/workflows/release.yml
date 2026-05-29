@@ -76,9 +76,11 @@ jobs:
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }} -p uteke-cli
         env:
-          # numkong v7.7.0: types.h auto-detects x86 HASWELL/SKYLAKE via _MSC_VER
-          # on non-x86 MSVC targets. Inject -D flags to bypass the broken auto-detect.
-          CFLAGS_aarch64_pc_windows_msvc: "-DNK_TARGET_HASWELL=0 -DNK_TARGET_SKYLAKE=0"
+          # numkong v7.7.0 via cc-rs on aarch64-pc-windows-msvc:
+          # 1. winnt.h needs _ARM64_=1 or errors "No Target Architecture"
+          # 2. types.h auto-detects x86 HASWELL/SKYLAKE via _MSC_VER
+          # numkong's own CI uses CMake+VS, not cc-rs, so this path is untested upstream.
+          CFLAGS_aarch64_pc_windows_msvc: "-D_ARM64_=1 -DNK_TARGET_HASWELL=0 -DNK_TARGET_SKYLAKE=0"
 
       - name: Strip binary (Unix)
         if: runner.os != 'Windows'
