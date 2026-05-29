@@ -66,7 +66,9 @@ impl Store {
 
         // Create namespace index (safe after column exists)
         self.conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);")
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
+            )
             .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(())
@@ -174,7 +176,10 @@ impl Store {
                     .prepare(sql)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 let rows = stmt
-                    .query_map(params![ns, format!("%\"{t}\"%"), limit, offset], row_to_memory)
+                    .query_map(
+                        params![ns, format!("%\"{t}\"%"), limit, offset],
+                        row_to_memory,
+                    )
                     .map_err(|e| Error::Database(e.to_string()))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::Database(e.to_string()))?;
@@ -199,7 +204,12 @@ impl Store {
     }
 
     /// Search memories by content using LIKE (simple full-text for v2).
-    pub fn search_content(&self, query: &str, namespace: Option<&str>, limit: usize) -> Result<Vec<Memory>, Error> {
+    pub fn search_content(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Memory>, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let pattern = format!("%{query}%");
         let mut stmt = self
@@ -267,7 +277,11 @@ impl Store {
         let count: usize = match namespace {
             Some(ns) => self
                 .conn
-                .query_row("SELECT COUNT(*) FROM memories WHERE namespace = ?1", params![ns], |row| row.get(0))
+                .query_row(
+                    "SELECT COUNT(*) FROM memories WHERE namespace = ?1",
+                    params![ns],
+                    |row| row.get(0),
+                )
                 .map_err(|e| Error::Database(e.to_string()))?,
             None => self
                 .conn
@@ -280,7 +294,9 @@ impl Store {
     /// Get all unique tags, optionally filtered by namespace.
     pub fn unique_tags(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
         let sql = match namespace {
-            Some(_) => "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL AND namespace = ?1",
+            Some(_) => {
+                "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL AND namespace = ?1"
+            }
             None => "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL",
         };
 
@@ -383,7 +399,9 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
         .map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
         })?;
-    let namespace: String = row.get(7).unwrap_or_else(|_| crate::memory::types::DEFAULT_NAMESPACE.to_string());
+    let namespace: String = row
+        .get(7)
+        .unwrap_or_else(|_| crate::memory::types::DEFAULT_NAMESPACE.to_string());
 
     Ok(Memory {
         id,
@@ -526,9 +544,25 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
 
         // Insert into different namespaces
-        store.insert(&make_test_memory_ns("a1", "hermes deploy", &["deploy"], "hermes")).unwrap();
-        store.insert(&make_test_memory_ns("a2", "hermes config", &["config"], "hermes")).unwrap();
-        store.insert(&make_test_memory_ns("b1", "pi preference", &["pref"], "pi")).unwrap();
+        store
+            .insert(&make_test_memory_ns(
+                "a1",
+                "hermes deploy",
+                &["deploy"],
+                "hermes",
+            ))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns(
+                "a2",
+                "hermes config",
+                &["config"],
+                "hermes",
+            ))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("b1", "pi preference", &["pref"], "pi"))
+            .unwrap();
 
         // Count per namespace
         assert_eq!(store.count(Some("hermes")).unwrap(), 2);

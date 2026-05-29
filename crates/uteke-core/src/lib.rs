@@ -12,7 +12,9 @@
 mod embed;
 pub mod memory;
 
-pub use memory::types::{DEFAULT_NAMESPACE, ExportEntry, ImportResult, Memory, SearchResult, StoreStats};
+pub use memory::types::{
+    ExportEntry, ImportResult, Memory, SearchResult, StoreStats, DEFAULT_NAMESPACE,
+};
 
 use embed::EmbeddingEngine;
 use memory::store::Store;
@@ -203,7 +205,12 @@ impl Uteke {
     }
 
     /// Search memories by content text (LIKE-based for v2).
-    pub fn search(&self, query: &str, limit: usize, namespace: Option<&str>) -> Result<Vec<SearchResult>, Error> {
+    pub fn search(
+        &self,
+        query: &str,
+        limit: usize,
+        namespace: Option<&str>,
+    ) -> Result<Vec<SearchResult>, Error> {
         let memories = self.store.search_content(query, namespace, limit)?;
 
         let results = memories
