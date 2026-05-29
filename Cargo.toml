@@ -14,3 +14,10 @@ description = "The Brain for Your AI — persistent memory and smart context man
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Link-time optimization
+codegen-units = 1   # Single codegen unit for better LTO
+strip = true        # Strip debug symbols
+panic = "abort"     # Smaller panic handler
