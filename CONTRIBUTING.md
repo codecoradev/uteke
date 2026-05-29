@@ -91,4 +91,4 @@ Open an issue with the `question` label. We're happy to help.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).

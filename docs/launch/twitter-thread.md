@@ -63,7 +63,7 @@ Makes it trivial to integrate with any AI agent, script, or tool. Python wrapper
 **Tweet 6/7**
 Built for my own AI agent fleet (Hermes). Dogfooding daily.
 
-Uteke is MIT licensed, fully open source. Contributions welcome.
+Uteke is Apache 2.0 licensed, fully open source. Contributions welcome.
 
 → Architecture docs in repo
 → Contributing guide included

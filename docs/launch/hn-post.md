@@ -36,6 +36,6 @@ uteke recall "what deployment is coming up?"
 
 **Python integration** included — a zero-dependency wrapper that shells out to the binary. Works with any Python 3.8+.
 
-The project is MIT licensed. I'm using it daily with my own AI agents (Hermes fleet). PRs welcome.
+The project is Apache 2.0 licensed. I'm using it daily with my own AI agents (Hermes fleet). PRs welcome.
 
 Happy to answer questions about the architecture, embedding choices, or Rust/ML integration.

@@ -6,7 +6,7 @@
 <p align="center"><strong>Local-first memory for AI agents — written in Rust</strong></p>
 <p align="center">
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" />
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
   <img src="https://img.shields.io/badge/status-v0.1.0-green.svg" alt="v0.1.0" />
 </p>
@@ -35,7 +35,9 @@ uteke recall "what deployment is coming up?"
 uteke stats
 ```
 
-**That's it.** No API keys. No server. No config. First run downloads the embedding model (~90MB) and you're good to go.
+**That's it.** No API keys. No server. No config. First run downloads the embedding model (~188MB) and you're good to go.
+
+> 📖 For more install options (pre-built binaries, quick install script), see [INSTALL.md](INSTALL.md).
 
 ---
 
@@ -53,7 +55,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | **Offline** | ✅ Fully | ⚠️ Partial | ⚠️ Partial | ❌ |
 | **Language** | Rust | Python | Python | Go + Python |
 | **Binary size** | Small | Large | Large | N/A |
-| **License** | MIT | Apache 2.0 | Apache 2.0 | MIT |
+| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | MIT |
 
 ---
 
@@ -233,7 +235,7 @@ See the [full blueprint](BLUEPRINT_V2.md) for details.
 
 ## License
 
-[MIT](LICENSE) — use it, fork it, ship it.
+[Apache License 2.0](LICENSE) — use it, fork it, ship it.
 
 ---
 
