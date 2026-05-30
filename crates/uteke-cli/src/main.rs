@@ -24,6 +24,17 @@ fn print_json<T: serde::Serialize>(value: &T) {
 
 // ── Human-readable output helpers ───────────────────────────────────────────
 
+fn print_tags_human(tags: &[uteke_core::TagInfo], _by_count: bool) {
+    if tags.is_empty() {
+        println!("No tags found.");
+        return;
+    }
+    println!("Tags ({} total):\n", tags.len());
+    for t in tags {
+        println!("  {} ({})", t.name, t.count);
+    }
+}
+
 fn print_remember_human(id: &str) {
     println!("✓ Memory stored");
     println!("  ID: {id}");
@@ -330,6 +341,36 @@ enum Commands {
     Hook {
         /// Shell type: bash, zsh, fish
         shell: SupportedShell,
+    },
+    /// Manage tags: list, rename, delete
+    Tags {
+        #[command(subcommand)]
+        command: TagCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum TagCommands {
+    /// List all tags with usage counts
+    List {
+        /// Sort by count (descending) instead of alphabetical
+        #[arg(long)]
+        by_count: bool,
+    },
+    /// Rename a tag across all memories
+    Rename {
+        /// Current tag name
+        old: String,
+        /// New tag name
+        new: String,
+    },
+    /// Delete a tag from all memories
+    Delete {
+        /// Tag name to delete
+        tag: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        confirm: bool,
     },
 }
 
@@ -776,6 +817,73 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
                 print_json(&report);
             } else {
                 print_repair_human(&report);
+            }
+            Ok(())
+        }
+        Commands::Tags { command } => {
+            match command {
+                TagCommands::List { by_count } => {
+                    tracing::info!("Listing tags (by_count: {by_count})");
+                    let mut tags = uteke
+                        .tags_with_counts(ns)
+                        .map_err(|e| format!("Failed to list tags: {e}"))?;
+                    if *by_count {
+                        tags.sort_by_key(|b| std::cmp::Reverse(b.count));
+                    } else {
+                        tags.sort_by(|a, b| a.name.cmp(&b.name));
+                    }
+                    if cli.json {
+                        print_json(&tags);
+                    } else {
+                        print_tags_human(&tags, *by_count);
+                    }
+                }
+                TagCommands::Rename { old, new } => {
+                    tracing::info!("Renaming tag: {old} -> {new}");
+                    let count = uteke
+                        .rename_tag(old, new, ns)
+                        .map_err(|e| format!("Failed to rename tag: {e}"))?;
+                    if cli.json {
+                        print_json(
+                            &serde_json::json!({"renamed": count, "tag": old, "new_tag": new}),
+                        );
+                    } else {
+                        println!("✓ Tag '{old}' renamed to '{new}' ({count} memories updated)");
+                    }
+                }
+                TagCommands::Delete { tag, confirm } => {
+                    if !confirm {
+                        // Check if tag exists and show count
+                        let tags = uteke
+                            .tags_with_counts(ns)
+                            .map_err(|e| format!("Failed to list tags: {e}"))?;
+                        let info = tags.iter().find(|t| t.name == *tag);
+                        match info {
+                            Some(info) => {
+                                println!(
+                                    "Tag '{}' is used by {} memory(ies).",
+                                    info.name, info.count
+                                );
+                                println!("Use --confirm to proceed with deletion.");
+                                return Err(
+                                    "Tag deletion not confirmed. Use --confirm flag.".to_string()
+                                );
+                            }
+                            None => {
+                                return Err(format!("Tag '{}' not found.", tag));
+                            }
+                        }
+                    }
+                    tracing::info!("Deleting tag: {tag}");
+                    let count = uteke
+                        .delete_tag(tag, ns)
+                        .map_err(|e| format!("Failed to delete tag: {e}"))?;
+                    if cli.json {
+                        print_json(&serde_json::json!({"deleted": count, "tag": tag}));
+                    } else {
+                        println!("✓ Tag '{tag}' deleted ({count} memories updated)");
+                    }
+                }
             }
             Ok(())
         }

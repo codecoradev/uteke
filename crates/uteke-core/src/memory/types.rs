@@ -113,6 +113,15 @@ pub struct ImportResult {
     pub skipped: usize,
 }
 
+/// A tag with its usage count.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagInfo {
+    /// Tag name.
+    pub name: String,
+    /// Number of memories using this tag.
+    pub count: usize,
+}
+
 /// Aging status — breakdown of memories by access tier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgingStatus {
