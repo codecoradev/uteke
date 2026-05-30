@@ -1,0 +1,21 @@
+[package]
+name = "uteke-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP server for uteke — persistent warm memory for AI agents"
+
+[[bin]]
+name = "uteke-serve"
+path = "src/main.rs"
+
+[dependencies]
+uteke-core = { path = "../uteke-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ctrlc = "3"
+dirs = "6.0.0"
