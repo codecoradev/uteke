@@ -31,10 +31,26 @@ pub struct Memory {
     /// When this memory was last accessed.
     #[serde(default)]
     pub last_accessed: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether this memory has been superseded by a newer one.
+    #[serde(default)]
+    pub deprecated: bool,
+    /// When this fact became valid (temporal metadata).
+    #[serde(default)]
+    pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    /// When this fact was invalidated (temporal metadata).
+    #[serde(default)]
+    pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
+    /// Memory type: fact, procedure, preference, decision, context.
+    #[serde(default = "default_memory_type")]
+    pub memory_type: String,
 }
 
 fn default_namespace() -> String {
     DEFAULT_NAMESPACE.to_string()
+}
+
+fn default_memory_type() -> String {
+    "fact".to_string()
 }
 
 /// A search result with relevance score.
@@ -151,4 +167,73 @@ pub struct AgingStatus {
 pub struct CleanupResult {
     /// Number of memories deleted.
     pub deleted: usize,
+}
+
+/// Result of a prune operation (auto-forget with decay policy).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PruneResult {
+    /// Number of memories pruned.
+    pub pruned: usize,
+    /// IDs of pruned memories.
+    pub ids: Vec<String>,
+    /// Number of memories deprecated (contradicted).
+    pub deprecated: usize,
+    /// IDs of deprecated memories.
+    pub deprecated_ids: Vec<String>,
+}
+
+/// Result of a contradiction check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContradictionResult {
+    /// Whether a contradiction was detected.
+    pub contradicted: bool,
+    /// ID of the existing memory that was deprecated.
+    pub deprecated_id: Option<String>,
+    /// Similarity score that triggered the contradiction.
+    pub similarity: f32,
+}
+
+/// Memory type classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MemoryType {
+    /// A factual statement (has temporal validity).
+    Fact,
+    /// A procedure or how-to (doesn't expire).
+    Procedure,
+    /// A user preference (doesn't expire).
+    Preference,
+    /// A design or architecture decision (may be superseded).
+    Decision,
+    /// Contextual information (session-scoped, may expire).
+    Context,
+}
+
+impl MemoryType {
+    /// Parse from string.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "fact" => Some(Self::Fact),
+            "procedure" => Some(Self::Procedure),
+            "preference" => Some(Self::Preference),
+            "decision" => Some(Self::Decision),
+            "context" => Some(Self::Context),
+            _ => None,
+        }
+    }
+
+    /// Convert to string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fact => "fact",
+            Self::Procedure => "procedure",
+            Self::Preference => "preference",
+            Self::Decision => "decision",
+            Self::Context => "context",
+        }
+    }
+
+    /// Whether this memory type has temporal validity.
+    pub fn has_temporal_validity(&self) -> bool {
+        matches!(self, Self::Fact | Self::Decision | Self::Context)
+    }
 }

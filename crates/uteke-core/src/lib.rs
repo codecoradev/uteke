@@ -13,8 +13,9 @@ mod embed;
 pub mod memory;
 
 pub use memory::types::{
-    AgingStatus, BulkDeleteResult, CleanupResult, ExportEntry, ImportResult, Memory, MemoryTier,
-    SearchResult, StoreStats, TagInfo, DEFAULT_NAMESPACE,
+    AgingStatus, BulkDeleteResult, CleanupResult, ContradictionResult, ExportEntry, ImportResult,
+    Memory, MemoryTier, MemoryType, PruneResult, SearchResult, StoreStats, TagInfo,
+    DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -125,6 +126,10 @@ impl Uteke {
             namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
             access_count: 0,
             last_accessed: None,
+            deprecated: false,
+            valid_from: Some(now),
+            valid_until: None,
+            memory_type: "fact".to_string(),
         };
 
         self.store.insert(&memory)?;
@@ -583,6 +588,159 @@ impl Uteke {
         Ok(CleanupResult { deleted })
     }
 
+    /// Check for contradictions when storing a new memory.
+    ///
+    /// Compares new embedding against existing memories in the same namespace.
+    /// If similarity > threshold (0.65), marks the old memory as deprecated.
+    pub fn check_contradiction(
+        &self,
+        content: &str,
+        embedding: &[f32],
+        namespace: &str,
+        threshold: f32,
+    ) -> Result<ContradictionResult, Error> {
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+
+        let results = index.search(embedding, 5, 50);
+
+        for (id, distance) in &results {
+            let similarity = 1.0 - distance;
+            if similarity > threshold {
+                if let Ok(Some(memory)) = self.store.get_by_id(id) {
+                    if memory.namespace == namespace && !memory.deprecated {
+                        self.store.deprecate(id)?;
+                        tracing::info!(
+                            "Contradiction detected (sim={:.3}): deprecating '{}' → replaced by '{}'",
+                            similarity,
+                            memory.content.chars().take(60).collect::<String>(),
+                            content.chars().take(60).collect::<String>()
+                        );
+                        return Ok(ContradictionResult {
+                            contradicted: true,
+                            deprecated_id: Some(id.clone()),
+                            similarity,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(ContradictionResult {
+            contradicted: false,
+            deprecated_id: None,
+            similarity: 0.0,
+        })
+    }
+
+    /// Store a memory with contradiction detection and temporal metadata.
+    ///
+    /// Returns the ID of the new memory and any contradiction result.
+    pub fn remember_with_contradiction(
+        &self,
+        content: &str,
+        tags: &[&str],
+        namespace: Option<&str>,
+        memory_type: Option<&str>,
+        check_contradiction: bool,
+    ) -> Result<(String, ContradictionResult), Error> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let embedding = self
+            .embedder
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire embedder lock".into()))?
+            .embed(content)?;
+
+        // Check for contradictions before inserting
+        let contradiction = if check_contradiction {
+            // Release embedder lock first, then check
+            self.check_contradiction(content, &embedding, ns, 0.65)?
+        } else {
+            ContradictionResult {
+                contradicted: false,
+                deprecated_id: None,
+                similarity: 0.0,
+            }
+        };
+
+        let memory = Memory {
+            id: id.clone(),
+            content: content.to_string(),
+            embedding: embedding.clone(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            metadata: serde_json::Value::Null,
+            created_at: now,
+            updated_at: now,
+            namespace: ns.to_string(),
+            access_count: 0,
+            last_accessed: None,
+            deprecated: false,
+            valid_from: Some(now),
+            valid_until: None,
+            memory_type: memory_type.unwrap_or("fact").to_string(),
+        };
+
+        self.store.insert(&memory)?;
+
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+        index.insert(&id, &embedding);
+        index.save().ok();
+
+        Ok((id, contradiction))
+    }
+
+    /// Prune deprecated memories older than TTL days.
+    ///
+    /// Deletes from both SQLite and vector index.
+    pub fn prune(
+        &self,
+        ttl_days: u32,
+        namespace: Option<&str>,
+        dry_run: bool,
+    ) -> Result<PruneResult, Error> {
+        let deprecated = self.store.find_deprecated_for_prune(ttl_days, namespace)?;
+        let ids: Vec<String> = deprecated.iter().map(|m| m.id.clone()).collect();
+        let count = ids.len();
+
+        if dry_run || count == 0 {
+            return Ok(PruneResult {
+                pruned: 0,
+                ids: vec![],
+                deprecated: count,
+                deprecated_ids: ids,
+            });
+        }
+
+        // Delete from SQLite
+        let pruned = self.store.prune_ttl(ttl_days, namespace)?;
+
+        // Remove from vector index
+        {
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            for id in &ids {
+                index.remove(id);
+            }
+            index.save().ok();
+        }
+
+        Ok(PruneResult {
+            pruned,
+            ids: ids.clone(),
+            deprecated: count,
+            deprecated_ids: ids,
+        })
+    }
+
     /// Export all memories to JSONL format (one JSON object per line).
     ///
     /// Embeddings are NOT exported — they will be re-computed on import.
@@ -668,6 +826,10 @@ impl Uteke {
                 namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
                 access_count: 0,
                 last_accessed: None,
+                deprecated: false,
+                valid_from: Some(entry.created_at),
+                valid_until: None,
+                memory_type: "fact".to_string(),
             };
 
             self.store.insert(&memory)?;
@@ -790,6 +952,10 @@ mod tests {
             namespace: DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
             last_accessed: None,
+            deprecated: false,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -814,6 +980,10 @@ mod tests {
             namespace: DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
             last_accessed: None,
+            deprecated: false,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
         };
 
         let sr = SearchResult {
