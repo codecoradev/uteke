@@ -1,10 +1,23 @@
 # Uteke shell hook for Zsh
 # Add to ~/.zshrc: eval "$(uteke hook zsh)"
-chpwd_functions+=(uteke_chpwd)
+_uteke_find_project() {
+    local dir="$PWD"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -f "$dir/.uteke/uteke.db" ]]; then
+            echo "$dir/.uteke"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
 uteke_chpwd() {
-    if [[ -f ".uteke/uteke.db" ]]; then
-        export UTEKE_PROJECT_STORE="$PWD/.uteke"
+    local project_store
+    if project_store="$(_uteke_find_project)"; then
+        export UTEKE_PROJECT_STORE="$project_store"
     else
         unset UTEKE_PROJECT_STORE
     fi
 }
+chpwd_functions+=(uteke_chpwd)
