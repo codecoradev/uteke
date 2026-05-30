@@ -110,6 +110,28 @@ impl Default for AgingConfig {
 
 // ── Top-level config ────────────────────────────────────────────────────────
 
+/// Server configuration.
+#[derive(serde::Deserialize, Clone)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Enable server mode.
+    pub enabled: bool,
+    /// Bind host.
+    pub host: String,
+    /// Bind port.
+    pub port: u16,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: "127.0.0.1".to_string(),
+            port: 8767,
+        }
+    }
+}
+
 /// Full uteke configuration, loaded from `uteke.toml`.
 #[derive(serde::Deserialize, Default, Clone)]
 #[serde(default)]
@@ -119,6 +141,7 @@ pub struct Config {
     pub tier: TierConfig,
     pub logging: LoggingConfig,
     pub aging: AgingConfig,
+    pub server: ServerConfig,
 }
 
 impl Config {
@@ -216,6 +239,17 @@ impl Config {
             self.aging.max_cold_count = overlay.aging.max_cold_count;
         }
 
+        // Server
+        if overlay.server.enabled != ServerConfig::default().enabled {
+            self.server.enabled = overlay.server.enabled;
+        }
+        if overlay.server.host != ServerConfig::default().host {
+            self.server.host = overlay.server.host;
+        }
+        if overlay.server.port != ServerConfig::default().port {
+            self.server.port = overlay.server.port;
+        }
+
         self
     }
 
@@ -260,6 +294,11 @@ impl Config {
 # enabled = false
 # max_age_days = 180
 # max_cold_count = 10000
+
+[server]
+# enabled = false
+# host = "127.0.0.1"
+# port = 8767
 "#;
         std::fs::write(&config_path, default).ok();
     }
