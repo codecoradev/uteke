@@ -13,8 +13,8 @@ mod embed;
 pub mod memory;
 
 pub use memory::types::{
-    AgingStatus, CleanupResult, ExportEntry, ImportResult, Memory, MemoryTier, SearchResult,
-    StoreStats, TagInfo, DEFAULT_NAMESPACE,
+    AgingStatus, BulkDeleteResult, CleanupResult, ExportEntry, ImportResult, Memory, MemoryTier,
+    SearchResult, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -268,6 +268,61 @@ impl Uteke {
         Ok(())
     }
 
+    /// Bulk delete memories by tag. Also removes from index.
+    pub fn bulk_forget_by_tag(
+        &self,
+        tag: &str,
+        namespace: Option<&str>,
+    ) -> Result<BulkDeleteResult, Error> {
+        let ids = self.store.bulk_delete_by_tag(tag, namespace)?;
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+        for id in &ids {
+            index.remove(id);
+        }
+        index.save().ok();
+        Ok(BulkDeleteResult {
+            deleted: ids.len(),
+            ids,
+        })
+    }
+
+    /// Bulk delete all cold memories. Also removes from index.
+    pub fn bulk_forget_cold(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
+        let ids = self.store.bulk_delete_cold(namespace)?;
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+        for id in &ids {
+            index.remove(id);
+        }
+        index.save().ok();
+        Ok(BulkDeleteResult {
+            deleted: ids.len(),
+            ids,
+        })
+    }
+
+    /// Bulk delete all memories in a namespace. Also removes from index.
+    pub fn bulk_forget_all(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
+        let ids = self.store.bulk_delete_all(namespace)?;
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+        for id in &ids {
+            index.remove(id);
+        }
+        index.save().ok();
+        Ok(BulkDeleteResult {
+            deleted: ids.len(),
+            ids,
+        })
+    }
+
     /// List memories with optional tag filter and pagination.
     pub fn list(
         &self,
@@ -438,6 +493,11 @@ impl Uteke {
     }
 
     /// Get statistics about the memory store.
+    /// Access the underlying store (read-only reference).
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
     pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
         let total_memories = self.store.count(namespace)?;
         let unique_tags = self.store.unique_tags(namespace)?.len();

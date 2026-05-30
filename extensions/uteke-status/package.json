@@ -1,0 +1,11 @@
+{
+  "name": "uteke-status",
+  "version": "0.1.0",
+  "description": "Pi extension — shows uteke memory stats in the footer status bar",
+  "main": "index.ts",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "keywords": ["pi-extension", "uteke", "memory", "status"],
+  "license": "Apache-2.0"
+}
