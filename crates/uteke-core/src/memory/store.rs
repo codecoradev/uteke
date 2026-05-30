@@ -16,7 +16,11 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at TEXT NOT NULL,
     namespace TEXT NOT NULL DEFAULT 'default',
     access_count INTEGER NOT NULL DEFAULT 0,
-    last_accessed TEXT
+    last_accessed TEXT,
+    deprecated INTEGER NOT NULL DEFAULT 0,
+    valid_from TEXT,
+    valid_until TEXT,
+    memory_type TEXT NOT NULL DEFAULT 'fact'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -87,6 +91,33 @@ impl Store {
                 .map_err(|e| Error::Database(e.to_string()))?;
         }
 
+        // Migration: add temporal/deprecation columns
+        if !self.column_exists("deprecated") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN deprecated INTEGER NOT NULL DEFAULT 0;")
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        if !self.column_exists("valid_from") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN valid_from TEXT;")
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        if !self.column_exists("valid_until") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN valid_until TEXT;")
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        if !self.column_exists("memory_type") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'fact';")
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+
+        // Create deprecation index
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
         Ok(())
     }
 
@@ -107,8 +138,8 @@ impl Store {
 
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     memory.id,
                     memory.content,
@@ -120,6 +151,10 @@ impl Store {
                     memory.namespace,
                     memory.access_count,
                     memory.last_accessed.map(|t| t.to_rfc3339()),
+                    memory.deprecated as i32,
+                    memory.valid_from.map(|t| t.to_rfc3339()),
+                    memory.valid_until.map(|t| t.to_rfc3339()),
+                    memory.memory_type,
                 ],
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -131,7 +166,7 @@ impl Store {
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE id = ?1")
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE id = ?1")
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let result = stmt
@@ -189,8 +224,8 @@ impl Store {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
 
         let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE namespace = ?1 AND tags LIKE ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE namespace = ?1 AND tags LIKE ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         };
 
         let mut memories = Vec::new();
@@ -240,7 +275,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
                  FROM memories WHERE namespace = ?1 AND content LIKE ?2
                  ORDER BY created_at DESC LIMIT ?3",
             )
@@ -261,8 +296,8 @@ impl Store {
     /// Load all memories for index rebuilding, optionally filtered by namespace.
     pub fn load_all(&self, namespace: Option<&str>) -> Result<Vec<Memory>, Error> {
         let sql = match namespace {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories WHERE namespace = ?1 ORDER BY created_at",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed FROM memories ORDER BY created_at",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE namespace = ?1 ORDER BY created_at",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories ORDER BY created_at",
         };
 
         let mut memories = Vec::new();
@@ -400,9 +435,10 @@ impl Store {
     ) -> Result<Vec<Memory>, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let sql = r#"
-            SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed
+            SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
             FROM memories
             WHERE namespace = ?1
+              AND deprecated = 0
               AND created_at < datetime('now', '-' || ?2 || ' days')
               AND access_count <= ?3
               AND (last_accessed IS NULL OR last_accessed < datetime('now', '-' || ?4 || ' days'))
@@ -701,6 +737,85 @@ impl Store {
             )
             .map_err(|e| Error::Database(e.to_string()))
     }
+
+    /// Deprecate a memory by ID. Sets deprecated=1 and valid_until=now.
+    pub fn deprecate(&self, id: &str) -> Result<(), Error> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "UPDATE memories SET deprecated = 1, valid_until = ?1, updated_at = ?1 WHERE id = ?2",
+                params![now, id],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Find memories that contradict a new embedding (high similarity, same namespace).
+    /// Returns memories with cosine similarity > threshold that are not already deprecated.
+    pub fn find_similar(
+        &self,
+        namespace: &str,
+        limit: usize,
+    ) -> Result<Vec<Memory>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
+                 FROM memories WHERE namespace = ?1 AND deprecated = 0 ORDER BY created_at DESC LIMIT ?2",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![namespace, limit], row_to_memory)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut memories = Vec::new();
+        for row in rows {
+            memories.push(row.map_err(|e| Error::Database(e.to_string()))?);
+        }
+        Ok(memories)
+    }
+
+    /// Prune (delete) cold, deprecated, or expired memories based on TTL.
+    /// Returns count of pruned memories.
+    pub fn prune_ttl(&self, ttl_days: u32, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM memories WHERE namespace = ?1
+                 AND deprecated = 1
+                 AND datetime(updated_at) < datetime('now', '-' || ?2 || ' days')",
+                params![ns, ttl_days],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(deleted)
+    }
+
+    /// Find deprecated memories eligible for pruning (dry-run).
+    pub fn find_deprecated_for_prune(
+        &self,
+        ttl_days: u32,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Memory>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
+                 FROM memories WHERE namespace = ?1
+                 AND deprecated = 1
+                 AND datetime(updated_at) < datetime('now', '-' || ?2 || ' days')
+                 ORDER BY updated_at ASC",
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![ns, ttl_days], row_to_memory)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let mut memories = Vec::new();
+        for row in rows {
+            memories.push(row.map_err(|e| Error::Database(e.to_string()))?);
+        }
+        Ok(memories)
+    }
 }
 fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(embedding.len() * 4);
@@ -757,6 +872,18 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.to_utc());
+    let deprecated: bool = row.get(10).unwrap_or(false);
+    let valid_from_str: Option<String> = row.get(11).ok().flatten();
+    let valid_from = valid_from_str
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.to_utc());
+    let valid_until_str: Option<String> = row.get(12).ok().flatten();
+    let valid_until = valid_until_str
+        .as_deref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.to_utc());
+    let memory_type: String = row.get(13).unwrap_or_else(|_| "fact".to_string());
 
     Ok(Memory {
         id,
@@ -769,6 +896,10 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
         namespace,
         access_count,
         last_accessed,
+        deprecated,
+        valid_from,
+        valid_until,
+        memory_type,
     })
 }
 
@@ -790,6 +921,10 @@ mod tests {
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
             last_accessed: None,
+            deprecated: false,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
         }
     }
 
@@ -805,6 +940,10 @@ mod tests {
             namespace: namespace.to_string(),
             access_count: 0,
             last_accessed: None,
+            deprecated: false,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
         }
     }
 
