@@ -8,7 +8,7 @@
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.2-green.svg" alt="v0.0.2" />
+  <img src="https://img.shields.io/badge/status-v0.0.3-green.svg" alt="v0.0.3" />
 </p>
 
 <p align="center">
@@ -77,14 +77,21 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 |---------|-------------|---------|
 | `remember` | Store a new memory with optional tags | `uteke remember "text" --tags a,b` |
 | `recall` | Semantic search using vector similarity | `uteke recall "query" --limit 5` |
-| `search` | Keyword text search | `uteke search "monorepo" --limit 10` |
-| `list` | List memories with optional tag filter | `uteke list --tag project --limit 20` |
+| `search` | Keyword text search (supports `--tags` filter) | `uteke search "monorepo" --tags rust,cli` |
+| `list` | List memories with pagination and tag filter | `uteke list --tag project --limit 20 --offset 10` |
 | `get` | Get a single memory by ID | `uteke get <uuid>` |
 | `forget` | Delete a memory by ID | `uteke forget <uuid>` |
+| `tags list` | List all tags with usage counts | `uteke tags list --by-count` |
+| `tags rename` | Rename a tag across all memories | `uteke tags rename old-name new-name` |
+| `tags delete` | Delete a tag from all memories | `uteke tags delete unused-tag` |
+| `aging status` | Show hot/warm/cold/never-accessed breakdown | `uteke aging status` |
+| `aging preview` | Preview memories older than N days | `uteke aging preview --days 90` |
+| `aging cleanup` | Delete stale memories older than N days | `uteke aging cleanup --days 180 --confirm` |
 | `stats` | Show memory store statistics (with tier breakdown) | `uteke stats` |
 | `doctor` | Check system health (DB, index, model, consistency) | `uteke doctor` |
 | `verify` | Verify DB and index consistency | `uteke verify` |
 | `repair` | Rebuild index from SQLite | `uteke repair` |
+| `hook install` | Install shell hook for auto-context loading | `uteke hook install bash` |
 | `completions` | Generate shell completion scripts | `uteke completions bash` |
 
 ### Global Flags
@@ -93,6 +100,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 |------|-------------|
 | `--store <path>` | Override store location (default: `~/.uteke`) |
 | `--namespace <name>` | Namespace for multi-agent isolation (default: `"default"`) |
+| `--config <path>` | Override config file path |
 | `--json` | Output as JSON (all commands) |
 | `--verbose` | Enable debug logging |
 
@@ -209,21 +217,24 @@ uteke completions fish  > ~/.config/fish/completions/uteke.fish
 
 ## Configuration
 
-On first run, Uteke creates `~/.uteke/config.toml`:
+Uteke supports `uteke.toml` configuration with layered resolution:
+
+1. `./uteke.toml` (current directory)
+2. Parent directories up to root
+3. `~/.config/uteke/uteke.toml` (user-level)
+4. Built-in defaults
 
 ```toml
-[store]
-# path = "~/.uteke"  # Default store location
-
-[embedding]
-# model = "embeddinggemma-q4"
-# max_seq_length = 256
+store_path = "~/.uteke"
+log_level = "info"
+log_dir = "~/.uteke/logs"
+default_namespace = "default"
 ```
 
-Override store path per-command with `--store`:
+Override config file path with `--config`:
 
 ```bash
-uteke --store /path/to/project/.uteke remember "project-specific note"
+uteke --config ./my-config.toml remember "project-specific note"
 ```
 
 ---
@@ -253,7 +264,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Uteke follows a demand-gated roadmap — we build what people actually use.
 
-**Now (v0.0.2):** Core engine — store, recall, search, CLI, persistent vector index, multi-agent namespaces, tiered memory, health checks
+**Now (v0.0.3):** Core engine + tag management, memory aging, shell hooks, config files, file logging, graceful shutdown
 **Phase A (100+ stars):** Better embeddings, dedup, import/export, remote embedding opt-in
 **Phase B (500+ stars):** Python SDK (PyO3), Node.js SDK, editor integrations
 **Phase C (1000+ stars):** Team features, cloud sync (opt-in), knowledge graph

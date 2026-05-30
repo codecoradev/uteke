@@ -59,6 +59,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CONTRIBUTING.md:** HNSW → usearch references updated
 - **README:** architecture table, tiered memory, health check commands
 
+## [0.0.3] — 2026-05-30
+
+### Added
+
+- **Graceful shutdown** — SIGINT (Ctrl+C) handler via `ctrlc` crate
+  - Saves usearch index to disk before exit
+  - Prevents index corruption on interrupt
+- **File logging with daily rotation** — via `tracing-appender`
+  - Logs written to `~/.uteke/logs/uteke.log`
+  - Automatic daily rotation (`uteke.log.YYYY-MM-DD`)
+  - Non-blocking async writer
+- **Configuration file** — `uteke.toml` with layered resolution
+  - Search order: `./uteke.toml` → parent dirs → `~/.config/uteke/uteke.toml` → defaults
+  - Configurable: `store_path`, `log_level`, `log_dir`, `default_namespace`
+  - New `--config` flag to override config file path
+- **Tag management commands** — `tags list`, `tags rename`, `tags delete`
+  - `tags list [--by-count]` — list all tags with usage counts
+  - `tags rename <old> <new>` — rename tag across all memories
+  - `tags delete <tag>` — remove tag from all memories
+- **`--tags` filter for search** — filter search results by tags
+  - `uteke search "query" --tags "rust,cli"`
+- **Memory aging with auto-cleanup** — `aging status`, `aging preview`, `aging cleanup`
+  - `aging status` — show hot/warm/cold/never-accessed breakdown
+  - `aging preview --days N` — preview memories older than N days
+  - `aging cleanup --days N [--confirm]` — delete stale memories
+- **Shell hook for auto-context loading** — `hook install`
+  - Supports bash, zsh, fish
+  - Walks up from cwd to find `.uteke/uteke.db`
+  - Auto-loads project-scoped context on shell init
+  - Shell scripts loaded via `include_str!` from canonical files
+  - `SupportedShell` enum for parse-time shell validation
+- **Node.js 24** — CI upgraded from Node.js 20 → 24
+
+### Changed
+
+- Version bumped from 0.0.2 → 0.0.3
+
+### Stress Test Results (50 memories)
+
+| Phase | Result | Time |
+|---|---|---|
+| WRITE (50 memories) | 50/50 ✅ | 49.6s (~1.0/s) |
+| RECALL (5 queries) | 5/5 ✅ | 4.8s |
+| SEARCH (5 queries) | 5/5 ✅ | 4.7s |
+| EXPORT/IMPORT | 51/51 ✅ | - |
+| TAGS (list/rename/delete) | ✅ | - |
+| AGING | ✅ | - |
+| VERIFY + DOCTOR | ✅ All pass | - |
+| CLEANUP (50 delete) | 50/50 ✅ | 50.2s |
+
+[0.0.3]: https://github.com/ajianaz/uteke/releases/tag/v0.0.3
+
 ## [Unreleased]
 
 ## [0.0.1] — 2026-05-29
