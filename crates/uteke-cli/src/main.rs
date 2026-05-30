@@ -229,6 +229,13 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum SupportedShell {
+    Bash,
+    Zsh,
+    Fish,
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Store a new memory
@@ -322,7 +329,7 @@ enum Commands {
     /// Output shell hook script for auto-context loading
     Hook {
         /// Shell type: bash, zsh, fish
-        shell: String,
+        shell: SupportedShell,
     },
 }
 
@@ -901,55 +908,12 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             }
         },
         Commands::Hook { shell } => {
-            match shell.as_str() {
-                "bash" => print!(
-                    r#"# Uteke shell hook for Bash
-# Add to ~/.bashrc: eval "$(uteke hook bash)"
-_uteke_prev_dir="$PWD"
-uteke_prompt_hook() {{
-    if [[ "$PWD" != "$_uteke_prev_dir" ]]; then
-        _uteke_prev_dir="$PWD"
-        if [[ -f ".uteke/uteke.db" ]]; then
-            export UTEKE_PROJECT_STORE="$PWD/.uteke"
-        else
-            unset UTEKE_PROJECT_STORE
-        fi
-    fi
-}}
-PROMPT_COMMAND="uteke_prompt_hook;${{PROMPT_COMMAND}}"
-"#
-                ),
-                "zsh" => print!(
-                    r#"# Uteke shell hook for Zsh
-# Add to ~/.zshrc: eval "$(uteke hook zsh)"
-chpwd_functions+=(uteke_chpwd)
-uteke_chpwd() {{
-    if [[ -f ".uteke/uteke.db" ]]; then
-        export UTEKE_PROJECT_STORE="$PWD/.uteke"
-    else
-        unset UTEKE_PROJECT_STORE
-    fi
-}}
-"#
-                ),
-                "fish" => print!(
-                    r#"# Uteke shell hook for Fish
-# Add to ~/.config/fish/config.fish: uteke hook fish | source
-function __uteke_directory_change --on-variable PWD
-    if test -f .uteke/uteke.db
-        set -gx UTEKE_PROJECT_STORE "$PWD/.uteke"
-    else
-        set -e UTEKE_PROJECT_STORE
-    fi
-end
-"#
-                ),
-                other => {
-                    return Err(format!(
-                        "Unknown shell: {other}. Supported shells: bash, zsh, fish"
-                    ))
-                }
-            }
+            let script = match shell {
+                SupportedShell::Bash => include_str!("../../../scripts/shell/uteke-hook.bash"),
+                SupportedShell::Zsh => include_str!("../../../scripts/shell/uteke-hook.zsh"),
+                SupportedShell::Fish => include_str!("../../../scripts/shell/uteke-hook.fish"),
+            };
+            print!("{script}");
             Ok(())
         }
     }
