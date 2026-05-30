@@ -256,6 +256,12 @@ enum Commands {
         /// Tags for categorization (comma-separated)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Memory type: fact, procedure, preference, decision, context
+        #[arg(long, default_value = "fact")]
+        r#type: String,
+        /// Enable contradiction detection (auto-deprecate conflicting memories)
+        #[arg(long)]
+        detect_contradiction: bool,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -363,6 +369,15 @@ enum Commands {
     Tags {
         #[command(subcommand)]
         command: TagCommands,
+    },
+    /// Prune deprecated memories (auto-forget with TTL)
+    Prune {
+        /// TTL in days — deprecate memories older than this
+        #[arg(long, default_value = "30")]
+        ttl: u32,
+        /// Dry run — show what would be pruned without deleting
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -742,18 +757,44 @@ fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(), String> 
     let ns: Option<&str> = Some(resolved_ns.as_str());
 
     match &cli.command {
-        Commands::Remember { content, tags } => {
-            tracing::info!("Remembering: {content}");
+        Commands::Remember { content, tags, r#type, detect_contradiction } => {
+            tracing::info!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
             let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
-            let id = uteke
-                .remember(content, &tag_refs, None, ns)
-                .map_err(|e| format!("Failed to store memory: {e}"))?;
-            tracing::info!("Memory stored with ID: {id}");
-            if cli.json {
-                let obj = serde_json::json!({"id": id});
-                println!("{}", obj);
+
+            if *detect_contradiction {
+                let (id, contradiction) = uteke
+                    .remember_with_contradiction(content, &tag_refs, ns, Some(r#type.as_str()), true)
+                    .map_err(|e| format!("Failed to store memory: {e}"))?;
+                tracing::info!("Memory stored with ID: {id}");
+                if cli.json {
+                    let obj = serde_json::json!({
+                        "id": id,
+                        "contradiction": {
+                            "detected": contradiction.contradicted,
+                            "deprecated_id": contradiction.deprecated_id,
+                            "similarity": contradiction.similarity
+                        }
+                    });
+                    println!("{}", obj);
+                } else {
+                    print_remember_human(&id);
+                    if contradiction.contradicted {
+                        if let Some(dep_id) = &contradiction.deprecated_id {
+                            println!("  \u{26a0} Contradiction detected (sim: {:.3}): deprecated {}", contradiction.similarity, &dep_id[..8]);
+                        }
+                    }
+                }
             } else {
-                print_remember_human(&id);
+                let id = uteke
+                    .remember(content, &tag_refs, None, ns)
+                    .map_err(|e| format!("Failed to store memory: {e}"))?;
+                tracing::info!("Memory stored with ID: {id}");
+                if cli.json {
+                    let obj = serde_json::json!({"id": id});
+                    println!("{}", obj);
+                } else {
+                    print_remember_human(&id);
+                }
             }
             Ok(())
         }
@@ -1007,6 +1048,27 @@ fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(), String> 
                     } else {
                         println!("✓ Tag '{tag}' deleted ({count} memories updated)");
                     }
+                }
+            }
+            Ok(())
+        }
+        Commands::Prune { ttl, dry_run } => {
+            tracing::info!("Pruning with TTL={ttl}d (dry_run={dry_run})");
+            let result = uteke
+                .prune(*ttl, ns, *dry_run)
+                .map_err(|e| format!("Failed to prune: {e}"))?;
+            if cli.json {
+                print_json(&result);
+            } else {
+                if result.deprecated_ids.is_empty() && result.pruned == 0 {
+                    println!("No deprecated memories to prune.");
+                } else if *dry_run {
+                    println!("Dry run — {} deprecated memories would be pruned (TTL: {ttl}d):", result.deprecated);
+                    for id in &result.deprecated_ids {
+                        println!("  {}", id);
+                    }
+                } else {
+                    println!("\u{2713} Pruned {} deprecated memories (TTL: {ttl}d)", result.pruned);
                 }
             }
             Ok(())
