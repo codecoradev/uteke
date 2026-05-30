@@ -7,11 +7,11 @@
 <div class="space-y-8 text-[var(--color-text-muted)] leading-relaxed">
 	<h2 id="install" class="text-xl font-semibold text-[var(--color-text)] !mt-0">Install</h2>
 
-	<p>Download from <a href="https://github.com/ajianaz/uteke/releases" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">GitHub Releases</a> or use the install script:</p>
+	<p>Install from source (requires <a href="https://rustup.rs" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">Rust</a>):</p>
 
-	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code>curl -fsSL https://uteke.dev/install.sh | sh</code></pre>
+	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code>cargo install --git https://github.com/ajianaz/uteke</code></pre>
 
-	<p>Available for Linux (x64/ARM64), macOS (Intel/ARM64), and Windows (x64).</p>
+	<p>Or download pre-built binaries from <a href="https://github.com/ajianaz/uteke/releases" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">GitHub Releases</a> — available for Linux (x64/ARM64), macOS (Apple Silicon), and Windows (x64).</p>
 
 	<h2 id="first-memory" class="text-xl font-semibold text-[var(--color-text)]">Your First Memory</h2>
 
@@ -21,14 +21,36 @@ uteke remember --tags project "My app uses SvelteKit 5 with Tailwind"
 # Recall by meaning (semantic search)
 uteke recall "What frontend framework do I use?"
 
-# Text search
-uteke search "SvelteKit"
+# Text search with tag filter
+uteke search "SvelteKit" --tags project
 
 # List all memories
 uteke list
 
 # Check system health
 uteke doctor</code></pre>
+
+	<h2 id="tags" class="text-xl font-semibold text-[var(--color-text)]">Tag Management</h2>
+
+	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># List all tags with usage counts
+uteke tags list --by-count
+
+# Rename a tag across all memories
+uteke tags rename old-name new-name
+
+# Delete a tag from all memories
+uteke tags delete unused-tag</code></pre>
+
+	<h2 id="aging" class="text-xl font-semibold text-[var(--color-text)]">Memory Aging</h2>
+
+	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># Show hot/warm/cold/never-accessed breakdown
+uteke aging status
+
+# Preview memories older than 90 days
+uteke aging preview --days 90
+
+# Delete stale memories older than 180 days
+uteke aging cleanup --days 180 --confirm</code></pre>
 
 	<h2 id="multi-agent" class="text-xl font-semibold text-[var(--color-text)]">Multi-Agent Isolation</h2>
 
@@ -44,15 +66,25 @@ uteke --namespace dev remember "Database connection string: postgres://localhost
 uteke --namespace architect recall "database"
 uteke --namespace dev recall "database"</code></pre>
 
+	<h2 id="shell-hooks" class="text-xl font-semibold text-[var(--color-text)]">Shell Hooks</h2>
+
+	<p>Auto-load project-scoped memory when you cd into a project directory:</p>
+
+	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># Install hook for your shell
+uteke hook install bash   # or zsh, fish
+
+# Now when you cd into a project with .uteke/uteke.db,
+# uteke auto-discovers it</code></pre>
+
 	<h2 id="export-import" class="text-xl font-semibold text-[var(--color-text)]">Export & Import</h2>
 
 	<p>Port your memories anywhere:</p>
 
 	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># Export to JSONL (no embeddings — small, portable)
-uteke export --output memories.jsonl
+uteke export > memories.jsonl
 
 # Import on another machine
-uteke import --input memories.jsonl</code></pre>
+uteke import memories.jsonl</code></pre>
 
 	<h2 id="troubleshooting" class="text-xl font-semibold text-[var(--color-text)]">Troubleshooting</h2>
 
@@ -72,10 +104,13 @@ uteke repair</code></pre>
 	<p>All data lives in <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">~/.uteke/</code>:</p>
 
 	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code>~/.uteke/
-├── uteke.db          # SQLite (memories + metadata)
-├── embeddings/       # Vector index
-├── model/            # Local ONNX embedding model
-└── uteke.log         # Rotated logs</code></pre>
+├── uteke.db                    # SQLite (memories + metadata)
+├── uteke_index.usearch         # Persistent vector index
+├── uteke_index.keys            # Index key mapping
+├── models/embeddinggemma/      # Local ONNX embedding model
+└── logs/
+    ├── uteke.log               # Current log
+    └── uteke.log.YYYY-MM-DD    # Rotated logs</code></pre>
 
 	<p>Copy the entire folder to back up or transfer to another machine.</p>
 </div>
