@@ -2,155 +2,110 @@
  * Uteke Memory Status Extension
  *
  * Shows uteke memory stats in the pi footer status bar.
- * Displays: 🧠 uteke: 3 hot | 2 warm | 4 cold (9 total)
- * 
- * Updates on session start and after memory-related tool calls.
- * 
- * Install: Place in ~/.pi/agent/extensions/uteke-status/index.ts
- * Or project-local: .pi/extensions/uteke-status/index.ts
+ * Displays: 🧠 uteke:  🔥 4 hot  🟡 0 warm  ❄️ 63 cold  (67 total)
+ *
+ * Also injects a system prompt reminder to use uteke for memory.
+ * Queries SQLite directly for cross-namespace totals.
+ *
+ * Install: ~/.pi/agent/extensions/uteke-status/index.ts
+ * Project-local: .pi/extensions/uteke-status/index.ts
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { execFile } from "node:child_process";
+import { execSync } from "node:child_process";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
-interface UtekeStats {
-	total_memories: number;
-	unique_tags: number;
-	db_size_bytes: number;
+interface Stats {
+	total: number;
 	hot: number;
 	warm: number;
 	cold: number;
 }
 
-function getStats(namespace?: string): Promise<UtekeStats | null> {
-	return new Promise((resolve) => {
-		const args = ["stats", "--json"];
-		if (namespace) args.push("--namespace", namespace);
+function getAllStats(): Stats | null {
+	const dbPath = join(homedir(), ".uteke", "uteke.db");
 
-		execFile("uteke", args, { timeout: 10000 }, (error, stdout) => {
-			if (error) {
-				resolve(null);
-				return;
-			}
-			try {
-				resolve(JSON.parse(stdout));
-			} catch {
-				resolve(null);
-			}
-		});
-	});
-}
+	const sql = [
+		"SELECT COUNT(*) as total,",
+		"SUM(CASE WHEN last_accessed >= datetime('now','-7 days') THEN 1 ELSE 0 END) as hot,",
+		"SUM(CASE WHEN last_accessed >= datetime('now','-30 days') AND last_accessed < datetime('now','-7 days') THEN 1 ELSE 0 END) as warm",
+		"FROM memories;",
+	].join(" ");
 
-function formatStats(stats: UtekeStats, theme: any): string {
-	const hot = theme.fg("red", `🔥${stats.hot}`);
-	const warm = theme.fg("yellow", `🟡${stats.warm}`);
-	const cold = theme.fg("blue", `❄️${stats.cold}`);
-	const total = theme.fg("dim", `(${stats.total_memories} total)`);
-	return `${hot} ${warm} ${cold} ${total}`;
+	try {
+		const out = execSync(`sqlite3 '${dbPath}' "${sql}"`, {
+			timeout: 5000,
+			encoding: "utf-8",
+		}).trim();
+
+		const parts = out.split("|");
+		if (parts.length < 3) return null;
+
+		const total = parseInt(parts[0], 10);
+		const hot = parseInt(parts[1], 10);
+		const warm = parseInt(parts[2], 10);
+		const cold = total - hot - warm;
+
+		return { total, hot, warm, cold };
+	} catch {
+		return null;
+	}
 }
 
 export default function (pi: ExtensionAPI) {
-	// Track if uteke is available
-	let utekeAvailable = false;
-	let lastStats: UtekeStats | null = null;
+	let available = false;
 
-	async function refreshStatus(ctx: any) {
-		if (!utekeAvailable) return;
-
-		const stats = await getStats();
-		if (!stats) return;
-
-		lastStats = stats;
-		const theme = ctx.ui.theme;
-		const brain = theme.fg("accent", "🧠 uteke:");
-		const statusText = `${brain} ${formatStats(stats, theme)}`;
-		ctx.ui.setStatus("uteke", statusText);
+	function updateStatus(ctx: any) {
+		const stats = getAllStats();
+		if (!stats) {
+			ctx.ui.setStatus("uteke", "🧠 uteke: not found");
+			return;
+		}
+		available = true;
+		ctx.ui.setStatus(
+			"uteke",
+			`🧠 uteke:   🔥 ${stats.hot} hot   🟡 ${stats.warm} warm   ❄️ ${stats.cold} cold   (${stats.total} total)`
+		);
 	}
 
+	// Inject system prompt to remind agent to use uteke
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (!available) return;
+
+		return {
+			systemPrompt:
+				event.systemPrompt +
+				"\n\n## uteke Memory\n" +
+				"You have access to uteke — a local persistent memory engine. Use it actively:\n" +
+				"- `uteke remember` — Save important context, decisions, progress, architecture notes\n" +
+				"- `uteke recall` — Search memories by meaning before asking the user\n" +
+				"- `uteke search` — Keyword search across memories\n" +
+				"- `uteke stats` — Check memory store status\n" +
+				"- `uteke remember --tags <tags> --namespace <ns>` — Organize by tags and namespace\n" +
+				"\n" +
+				"Rules:\n" +
+				"1. Save important context to uteke proactively (decisions, progress, architecture)\n" +
+				"2. Before starting a task, recall relevant memories to restore context\n" +
+				"3. Use namespaces to isolate memory per project or agent role\n" +
+				"4. Tag memories with descriptive tags for easy filtering\n" +
+				"5. When ending a session, save a summary of what was done\n",
+		};
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
-		// Check if uteke is available
-		const stats = await getStats();
-		if (stats) {
-			utekeAvailable = true;
-			lastStats = stats;
-			const theme = ctx.ui.theme;
-			const brain = theme.fg("accent", "🧠 uteke:");
-			ctx.ui.setStatus("uteke", `${brain} ${formatStats(stats, theme)}`);
-		} else {
-			utekeAvailable = false;
-			const theme = ctx.ui.theme;
-			ctx.ui.setStatus("uteke", theme.fg("dim", "🧠 uteke: not installed"));
-		}
+		updateStatus(ctx);
 	});
 
-	// Refresh after memory-related commands (remember, recall, forget, import, cleanup)
-	pi.on("tool_call", async (event, _ctx) => {
-		if (!utekeAvailable) return;
-		
-		const memoryCommands = ["bash"];
-		if (!memoryCommands.includes(event.toolName)) return;
-
-		const cmd = (event as any).input?.command || "";
-		const isMemoryOp = /\buteke\s+(remember|recall|forget|import|aging\s+cleanup)\b/.test(cmd);
-		if (!isMemoryOp) return;
+	pi.on("turn_end", async (_event, ctx) => {
+		if (!available) return;
+		updateStatus(ctx);
 	});
 
-	// Refresh stats after tool results that involve uteke
-	pi.on("tool_result", async (event, ctx) => {
-		if (!utekeAvailable) return;
-
-		const content = event.content;
-		const contentText = Array.isArray(content)
-			? content.map((c: any) => c.type === "text" ? c.text : "").join("")
-			: "";
-
-		// Check if this was a uteke operation
-		const isMemoryOp = /Memory stored|Memory forgotten|imported|cleanup|deleted/i.test(contentText);
-		if (!isMemoryOp) return;
-
-		// Refresh stats after a short delay to let the operation complete
-		setTimeout(() => refreshStatus(ctx), 500);
-	});
-
-	// Register a command to manually refresh
 	pi.registerCommand("uteke-stats", {
 		description: "Refresh uteke memory stats in status bar",
 		handler: async (_args, ctx) => {
-			if (!utekeAvailable) {
-				ctx.ui.notify("uteke is not installed or not in PATH", "error");
-				return;
-			}
-			await refreshStatus(ctx);
-			if (lastStats) {
-				ctx.ui.notify(`🧠 ${lastStats.total_memories} memories (${lastStats.hot} hot, ${lastStats.warm} warm, ${lastStats.cold} cold)`, "info");
-			}
+			updateStatus(ctx);
 		},
-	});
-
-	// Register a command to show detailed stats
-	pi.registerCommand("uteke", {
-		description: "Show detailed uteke memory statistics",
-		handler: async (args, ctx) => {
-			const cmd = args?.trim() || "stats";
-			
-			// Support subcommands: /uteke stats, /uteke aging, /uteke doctor
-			if (["stats", "aging status", "doctor", "tags list"].includes(cmd)) {
-				const { execFile } = await import("node:child_process");
-				const fullCmd = cmd === "stats" ? "stats" : cmd;
-				execFile("uteke", fullCmd.split(" "), { timeout: 15000 }, (error, stdout, stderr) => {
-					if (error) {
-						ctx.ui.notify(`uteke error: ${stderr || error.message}`, "error");
-						return;
-					}
-					ctx.ui.notify(stdout.trim(), "info");
-				});
-			} else {
-				ctx.ui.notify(`Usage: /uteke [stats|aging status|doctor|tags list]`, "info");
-			}
-		},
-	});
-
-	pi.on("session_shutdown", async (_event, _ctx) => {
-		// Cleanup status
 	});
 }
