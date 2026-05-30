@@ -113,11 +113,24 @@ pub struct ImportResult {
     pub skipped: usize,
 }
 
-/// A tag with its usage count.
+/// Aging status — breakdown of memories by access tier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TagInfo {
-    /// Tag name.
-    pub name: String,
-    /// Number of memories using this tag.
-    pub count: usize,
+pub struct AgingStatus {
+    /// Total memories in namespace.
+    pub total: usize,
+    /// Hot memories (accessed within 7 days).
+    pub hot: usize,
+    /// Warm memories (accessed within 30 days but not hot).
+    pub warm: usize,
+    /// Cold memories (not accessed in 30+ days).
+    pub cold: usize,
+    /// Memories that have never been accessed.
+    pub never_accessed: usize,
+}
+
+/// Result of a cleanup operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupResult {
+    /// Number of memories deleted.
+    pub deleted: usize,
 }

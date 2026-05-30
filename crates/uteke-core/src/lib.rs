@@ -13,8 +13,8 @@ mod embed;
 pub mod memory;
 
 pub use memory::types::{
-    ExportEntry, ImportResult, Memory, MemoryTier, SearchResult, StoreStats, TagInfo,
-    DEFAULT_NAMESPACE,
+    AgingStatus, CleanupResult, ExportEntry, ImportResult, Memory, MemoryTier, SearchResult,
+    StoreStats, DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -430,24 +430,67 @@ impl Uteke {
         })
     }
 
-    /// List all tags with their usage counts.
-    pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
-        self.store.tags_with_counts(namespace)
+    /// Get aging status — breakdown of memories by access tier.
+    pub fn aging_status(&self, namespace: Option<&str>) -> Result<AgingStatus, Error> {
+        let total = self.store.count(namespace)?;
+        let (hot, warm, cold) = self.store.tier_counts(namespace)?;
+        let never_accessed = self.store.count_never_accessed(namespace)?;
+
+        Ok(AgingStatus {
+            total,
+            hot,
+            warm,
+            cold,
+            never_accessed,
+        })
     }
 
-    /// Rename a tag across all memories. Returns count of memories updated.
-    pub fn rename_tag(
+    /// Preview aged memories eligible for cleanup (dry-run).
+    pub fn aging_preview(
         &self,
-        old: &str,
-        new: &str,
+        older_than_days: u32,
+        max_access_count: u32,
         namespace: Option<&str>,
-    ) -> Result<usize, Error> {
-        self.store.rename_tag(old, new, namespace)
+    ) -> Result<Vec<Memory>, Error> {
+        self.store
+            .find_aged(older_than_days, max_access_count, namespace)
     }
 
-    /// Delete a tag from all memories. Returns count of memories updated.
-    pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
-        self.store.delete_tag(tag, namespace)
+    /// Cleanup aged memories — deletes from SQLite AND removes from vector index.
+    pub fn aging_cleanup(
+        &self,
+        older_than_days: u32,
+        max_access_count: u32,
+        namespace: Option<&str>,
+    ) -> Result<CleanupResult, Error> {
+        // Find aged memories first to get IDs for vector index removal
+        let aged = self
+            .store
+            .find_aged(older_than_days, max_access_count, namespace)?;
+        let ids: Vec<String> = aged.into_iter().map(|m| m.id).collect();
+
+        if ids.is_empty() {
+            return Ok(CleanupResult { deleted: 0 });
+        }
+
+        // Delete from SQLite
+        let deleted = self
+            .store
+            .cleanup_aged(older_than_days, max_access_count, namespace)?;
+
+        // Remove from vector index
+        {
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            for id in &ids {
+                index.remove(id);
+            }
+            index.save().ok();
+        }
+
+        Ok(CleanupResult { deleted })
     }
 
     /// Export all memories to JSONL format (one JSON object per line).
