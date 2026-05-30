@@ -1,13 +1,19 @@
 @import 'tailwindcss';
 
 :root {
-	--color-bg: #0a0a0a;
-	--color-surface: #141414;
-	--color-border: #262626;
-	--color-text: #fafafa;
-	--color-text-muted: #a3a3a3;
-	--color-accent: #22d3ee;
-	--color-accent-dim: #0e7490;
+	--color-bg: #0c0a09;
+	--color-surface: #1c1917;
+	--color-surface-2: #292524;
+	--color-border: #3f3a36;
+	--color-border-subtle: #292524;
+	--color-text: #fafaf9;
+	--color-text-muted: #a8a29e;
+	--color-text-dim: #78716c;
+	--color-accent: #f59e0b;
+	--color-accent-bright: #fbbf24;
+	--color-accent-dim: #92400e;
+	--color-success: #22c55e;
+	--color-cyan: #22d3ee;
 }
 
 body {
@@ -23,56 +29,168 @@ body {
 	color: white;
 }
 
-/* Hero accent with glow */
-.hero-accent {
-	color: var(--color-accent);
-	background: linear-gradient(135deg, var(--color-accent), #67e8f9, var(--color-accent));
-	background-size: 200% 200%;
+/* Hero gradient text */
+.hero-gradient {
+	background: linear-gradient(135deg, #fbbf24, #f59e0b, #d97706);
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
 	background-clip: text;
-	text-shadow: none;
-	filter: drop-shadow(0 0 20px rgba(34, 211, 238, 0.3));
+}
+
+/* Subtle glow effect */
+.glow-amber {
+	box-shadow: 0 0 60px -12px rgba(245, 158, 11, 0.15);
+}
+
+.glow-text {
+	text-shadow: 0 0 40px rgba(245, 158, 11, 0.2);
+}
+
+/* Grid background pattern */
+.grid-bg {
+	background-image:
+		linear-gradient(rgba(245, 158, 11, 0.03) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(245, 158, 11, 0.03) 1px, transparent 1px);
+	background-size: 64px 64px;
+}
+
+/* Terminal code block */
+.terminal-block {
+	background: linear-gradient(135deg, var(--color-surface), var(--color-surface-2));
+	border: 1px solid var(--color-border);
+	position: relative;
+}
+
+.terminal-block::before {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
+	opacity: 0.3;
 }
 
 /* Feature card hover */
-.feature-card,
-.audience-card {
-	transition-property: transform, border-color;
-	transition-duration: 200ms;
-	transition-timing-function: ease-out;
+.feature-card {
+	transition: all 200ms ease-out;
 }
 
-.feature-card:hover,
-.audience-card:hover {
+.feature-card:hover {
 	transform: translateY(-2px);
 	border-color: var(--color-accent-dim);
+	background-color: var(--color-surface-2);
 }
 
 /* CTA button */
-.cta-button {
-	transition-property: transform, box-shadow, background-color;
-	transition-duration: 200ms;
-	transition-timing-function: ease-out;
+.cta-primary {
+	transition: all 200ms ease-out;
 }
 
-.cta-button:hover {
+.cta-primary:hover {
 	transform: translateY(-1px);
-	box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
-	background-color: #06b6d4;
+	box-shadow: 0 0 24px rgba(245, 158, 11, 0.3);
 }
 
-.cta-button:active {
+.cta-primary:active {
 	transform: translateY(0);
 }
 
+.cta-secondary {
+	transition: all 200ms ease-out;
+}
+
+.cta-secondary:hover {
+	border-color: var(--color-accent);
+	color: var(--color-accent);
+}
+
+/* Typing animation */
+@keyframes blink {
+	0%, 50% { opacity: 1; }
+	51%, 100% { opacity: 0; }
+}
+
+.cursor-blink {
+	animation: blink 1s step-end infinite;
+}
+
+/* Floating animation */
+@keyframes float {
+	0%, 100% { transform: translateY(0); }
+	50% { transform: translateY(-6px); }
+}
+
+.float-animation {
+	animation: float 3s ease-in-out infinite;
+}
+
+/* Fade in animation */
+@keyframes fadeInUp {
+	from {
+		opacity: 0;
+		transform: translateY(20px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.animate-fade-in {
+	animation: fadeInUp 0.6s ease-out forwards;
+}
+
+.animate-fade-in-delay-1 {
+	animation: fadeInUp 0.6s ease-out 0.1s forwards;
+	opacity: 0;
+}
+
+.animate-fade-in-delay-2 {
+	animation: fadeInUp 0.6s ease-out 0.2s forwards;
+	opacity: 0;
+}
+
+.animate-fade-in-delay-3 {
+	animation: fadeInUp 0.6s ease-out 0.3s forwards;
+	opacity: 0;
+}
+
 /* Code blocks */
-code {
+code, .font-mono {
 	font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
 
-/* Architecture diagram - uteke highlight box */
-.uteke-box {
-	border: 2px solid var(--color-accent);
-	background-color: color-mix(in srgb, var(--color-accent-dim) 10%, transparent);
+/* Command highlight */
+.cmd-highlight {
+	color: var(--color-accent-bright);
+}
+
+.cmd-flag {
+	color: var(--color-cyan);
+}
+
+.cmd-string {
+	color: #86efac;
+}
+
+.cmd-comment {
+	color: var(--color-text-dim);
+}
+
+/* Separator gradient */
+.separator-gradient {
+	height: 1px;
+	background: linear-gradient(90deg, transparent, var(--color-border), transparent);
+}
+
+/* Comparison table */
+.compare-table th.highlight-col {
+	background-color: var(--color-surface-2);
+	border-bottom: 2px solid var(--color-accent);
+}
+
+.compare-table td.highlight-col {
+	background-color: var(--color-surface);
 }
