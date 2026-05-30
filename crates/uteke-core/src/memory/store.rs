@@ -388,7 +388,208 @@ impl Store {
         Ok(())
     }
 
+    /// Find aged memories eligible for cleanup.
+    ///
+    /// Returns memories matching: older than `older_than_days`, access_count <= max_access_count,
+    /// and last_accessed older than `older_than_days` (or never accessed).
+    pub fn find_aged(
+        &self,
+        older_than_days: u32,
+        max_access_count: u32,
+        namespace: Option<&str>,
+    ) -> Result<Vec<Memory>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let sql = r#"
+            SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed
+            FROM memories
+            WHERE namespace = ?1
+              AND created_at < datetime('now', '-' || ?2 || ' days')
+              AND access_count <= ?3
+              AND (last_accessed IS NULL OR last_accessed < datetime('now', '-' || ?4 || ' days'))
+            ORDER BY created_at ASC
+        "#;
+
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(
+                params![ns, older_than_days, max_access_count, older_than_days],
+                row_to_memory,
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let mut memories = Vec::new();
+        for row in rows {
+            let m = row.map_err(|e| Error::Database(e.to_string()))?;
+            memories.push(m);
+        }
+        Ok(memories)
+    }
+
+    /// Delete aged memories from SQLite. Returns count of deleted rows.
+    ///
+    /// Same criteria as `find_aged`. Does NOT touch the vector index.
+    pub fn cleanup_aged(
+        &self,
+        older_than_days: u32,
+        max_access_count: u32,
+        namespace: Option<&str>,
+    ) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let sql = r#"
+            DELETE FROM memories
+            WHERE namespace = ?1
+              AND created_at < datetime('now', '-' || ?2 || ' days')
+              AND access_count <= ?3
+              AND (last_accessed IS NULL OR last_accessed < datetime('now', '-' || ?4 || ' days'))
+        "#;
+
+        let deleted = self
+            .conn
+            .execute(
+                sql,
+                params![ns, older_than_days, max_access_count, older_than_days],
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(deleted)
+    }
+
+    /// Count memories never accessed in a namespace.
+    pub fn count_never_accessed(&self, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let count: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND last_accessed IS NULL",
+                params![ns],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(count)
+    }
+
     /// Count memories by tier (hot/warm/cold) for a namespace.
+    /// List all tags with their usage counts.
+    pub fn tags_with_counts(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<crate::memory::types::TagInfo>, Error> {
+        let tags = self.unique_tags(namespace)?;
+        let mut result = Vec::new();
+        for tag in &tags {
+            let count = self.count_tag(tag, namespace)?;
+            result.push(crate::memory::types::TagInfo {
+                name: tag.clone(),
+                count,
+            });
+        }
+        Ok(result)
+    }
+
+    /// Count how many memories use a specific tag.
+    fn count_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{tag}\"%");
+        let count: usize = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND tags LIKE ?2",
+                rusqlite::params![ns, pattern],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))?;
+        Ok(count)
+    }
+
+    /// Rename a tag across all memories. Returns number updated.
+    pub fn rename_tag(
+        &self,
+        old: &str,
+        new: &str,
+        namespace: Option<&str>,
+    ) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{old}\"%");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND tags LIKE ?2")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params![ns, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut updated = 0;
+        for (id, tags_str) in &rows {
+            let mut tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            let mut changed = false;
+            for t in &mut tags {
+                if t == old {
+                    *t = new.to_string();
+                    changed = true;
+                }
+            }
+            if changed {
+                let new_tags_json =
+                    serde_json::to_string(&tags).map_err(|e| Error::Database(e.to_string()))?;
+                let now = chrono::Utc::now().to_rfc3339();
+                self.conn
+                    .execute(
+                        "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                        rusqlite::params![new_tags_json, now, id],
+                    )
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
+
+    /// Delete a tag from all memories. Returns number updated.
+    pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{tag}\"%");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND tags LIKE ?2")
+            .map_err(|e| Error::Database(e.to_string()))?;
+
+        let rows: Vec<(String, String)> = stmt
+            .query_map(rusqlite::params![ns, pattern], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut updated = 0;
+        for (id, tags_str) in &rows {
+            let mut tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            let before_len = tags.len();
+            tags.retain(|t| t != tag);
+            if tags.len() != before_len {
+                let new_tags_json =
+                    serde_json::to_string(&tags).map_err(|e| Error::Database(e.to_string()))?;
+                let now = chrono::Utc::now().to_rfc3339();
+                self.conn
+                    .execute(
+                        "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                        rusqlite::params![new_tags_json, now, id],
+                    )
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
+
     pub fn tier_counts(&self, namespace: Option<&str>) -> Result<(usize, usize, usize), Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let now = chrono::Utc::now();

@@ -20,3 +20,5 @@ dirs = "5"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 clap_complete = "4"
+ctrlc = "3"
+tracing-appender = "0.2"
