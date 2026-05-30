@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/uteke-core",
     "crates/uteke-cli",
+    "crates/uteke-server",
 ]
 
 [workspace.package]
