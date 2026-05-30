@@ -6,6 +6,7 @@
 		{ label: 'CLI Reference', href: '/docs/cli-reference' },
 		{ label: 'Configuration', href: '/docs/configuration' },
 		{ label: 'Multi-Agent', href: '/docs/multi-agent' },
+		{ label: 'Pi Extension', href: '/docs/extensions' },
 		{ label: 'Roadmap', href: '/docs/roadmap' }
 	];
 
