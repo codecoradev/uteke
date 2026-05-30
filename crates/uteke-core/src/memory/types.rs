@@ -91,6 +91,15 @@ pub struct StoreStats {
     pub cold: usize,
 }
 
+/// Result of a bulk delete operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkDeleteResult {
+    /// Number of memories deleted.
+    pub deleted: usize,
+    /// IDs of deleted memories.
+    pub ids: Vec<String>,
+}
+
 /// Lightweight export format — no embedding vector (re-embedded on import).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportEntry {

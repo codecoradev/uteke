@@ -625,9 +625,83 @@ impl Store {
 
         Ok((hot, warm, cold))
     }
-}
 
-/// Serialize an embedding vector to a byte blob.
+    /// Bulk delete memories by tag within a namespace.
+    pub fn bulk_delete_by_tag(
+        &self,
+        tag: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<String>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{tag}\"%");
+        let ids: Vec<String> = self
+            .conn
+            .prepare("SELECT id FROM memories WHERE namespace = ?1 AND tags LIKE ?2")
+            .map_err(|e| Error::Database(e.to_string()))?
+            .query_map(rusqlite::params![ns, pattern], |row| row.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for id in &ids {
+            self.conn
+                .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        Ok(ids)
+    }
+
+    /// Bulk delete all cold memories (not accessed in 30+ days or never accessed).
+    pub fn bulk_delete_cold(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let warm_cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let ids: Vec<String> = self
+            .conn
+            .prepare("SELECT id FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL)")
+            .map_err(|e| Error::Database(e.to_string()))?
+            .query_map(rusqlite::params![ns, warm_cutoff], |row| row.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for id in &ids {
+            self.conn
+                .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        Ok(ids)
+    }
+
+    /// Bulk delete all memories in a namespace.
+    pub fn bulk_delete_all(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let ids: Vec<String> = self
+            .conn
+            .prepare("SELECT id FROM memories WHERE namespace = ?1")
+            .map_err(|e| Error::Database(e.to_string()))?
+            .query_map(rusqlite::params![ns], |row| row.get(0))
+            .map_err(|e| Error::Database(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+        for id in &ids {
+            self.conn
+                .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
+                .map_err(|e| Error::Database(e.to_string()))?;
+        }
+        Ok(ids)
+    }
+
+    /// Count memories by tag in a namespace.
+    pub fn count_by_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let pattern = format!("%\"{tag}\"%");
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND tags LIKE ?2",
+                rusqlite::params![ns, pattern],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::Database(e.to_string()))
+    }
+}
 fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(embedding.len() * 4);
     for &val in embedding {

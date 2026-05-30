@@ -299,7 +299,19 @@ enum Commands {
     /// Delete a memory by ID
     Forget {
         /// Memory ID (UUID)
-        id: String,
+        id: Option<String>,
+        /// Delete all memories with this tag
+        #[arg(long)]
+        tag: Option<String>,
+        /// Delete all cold (not accessed in 30+ days) memories
+        #[arg(long)]
+        cold: bool,
+        /// Delete ALL memories in namespace (requires --confirm)
+        #[arg(long)]
+        all: bool,
+        /// Confirm destructive operations
+        #[arg(long)]
+        confirm: bool,
     },
     /// Show memory store statistics
     Stats,
@@ -765,16 +777,87 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             }
             Ok(())
         }
-        Commands::Forget { id } => {
-            tracing::info!("Forgetting memory: {id}");
-            uteke
-                .forget(id)
-                .map_err(|e| format!("Failed to delete memory: {e}"))?;
-            if cli.json {
-                let obj = serde_json::json!({"forgotten": id});
-                println!("{}", obj);
+        Commands::Forget {
+            id,
+            tag,
+            cold,
+            all,
+            confirm,
+        } => {
+            if let Some(id) = id {
+                // Single delete — confirm if no --confirm flag
+                if !confirm {
+                    println!("About to delete memory: {id}");
+                    print!("Are you sure? [y/N] ");
+                    io::Write::flush(&mut io::stdout()).ok();
+                    let mut input = String::new();
+                    io::stdin().read_line(&mut input).ok();
+                    if !input.trim().eq_ignore_ascii_case("y") {
+                        println!("Cancelled.");
+                        return Ok(());
+                    }
+                }
+                tracing::info!("Forgetting memory: {id}");
+                uteke
+                    .forget(id.as_str())
+                    .map_err(|e| format!("Failed to delete memory: {e}"))?;
+                if cli.json {
+                    print_json(&serde_json::json!({"forgotten": id}));
+                } else {
+                    println!("✓ Memory forgotten: {id}");
+                }
+            } else if let Some(tag) = tag {
+                // Bulk delete by tag
+                tracing::info!("Bulk forgetting by tag: {tag}");
+                let ns = cli.namespace.as_deref();
+                let count = uteke.store().count_by_tag(tag.as_str(), ns).unwrap_or(0);
+                if !confirm && count > 0 {
+                    println!("Found {count} memories with tag '{tag}'. Use --confirm to delete.");
+                    return Ok(());
+                }
+                let result = uteke
+                    .bulk_forget_by_tag(tag.as_str(), ns)
+                    .map_err(|e| format!("Failed: {e}"))?;
+                if cli.json {
+                    print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
+                } else {
+                    println!("✓ Deleted {} memories with tag '{}'", result.deleted, tag);
+                }
+            } else if *cold {
+                // Bulk delete cold memories
+                tracing::info!("Bulk forgetting cold memories");
+                let ns = cli.namespace.as_deref();
+                if !confirm {
+                    println!("This will delete all cold memories (>30 days or never accessed).");
+                    println!("Use --confirm to proceed.");
+                    return Ok(());
+                }
+                let result = uteke
+                    .bulk_forget_cold(ns)
+                    .map_err(|e| format!("Failed: {e}"))?;
+                if cli.json {
+                    print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
+                } else {
+                    println!("✓ Deleted {} cold memories", result.deleted);
+                }
+            } else if *all {
+                // Delete all in namespace
+                tracing::info!("Bulk forgetting all memories");
+                if !confirm {
+                    println!("⚠️  This will delete ALL memories in the namespace.");
+                    println!("Use --confirm to proceed.");
+                    return Ok(());
+                }
+                let result = uteke
+                    .bulk_forget_all(cli.namespace.as_deref())
+                    .map_err(|e| format!("Failed: {e}"))?;
+                if cli.json {
+                    print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
+                } else {
+                    println!("✓ Deleted {} memories", result.deleted);
+                }
             } else {
-                println!("✓ Memory forgotten: {id}");
+                return Err("Provide an ID, --tag, --cold, or --all".into());
             }
             Ok(())
         }
