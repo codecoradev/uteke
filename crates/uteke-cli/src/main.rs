@@ -354,6 +354,11 @@ enum Commands {
         /// Shell type: bash, zsh, fish
         shell: SupportedShell,
     },
+    /// Namespace management: list, stats
+    Namespace {
+        #[command(subcommand)]
+        command: NamespaceCommands,
+    },
     /// Manage tags: list, rename, delete
     Tags {
         #[command(subcommand)]
@@ -387,6 +392,22 @@ enum TagCommands {
 }
 
 // ── Agent Init ──────────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum NamespaceCommands {
+    /// List all namespaces with memory counts
+    List,
+    /// Show stats for a specific namespace
+    Stats {
+        /// Namespace name
+        name: String,
+    },
+    /// Set default namespace in config
+    Switch {
+        /// Namespace name to set as default
+        name: String,
+    },
+}
 
 #[derive(Subcommand)]
 enum AgingCommands {
@@ -677,7 +698,7 @@ fn main() {
     })
     .expect("Failed to set SIGINT handler");
 
-    let result = run_command(&cli, &uteke);
+    let result = run_command(&cli, &uteke, &config);
 
     // Graceful shutdown: save dirty index if needed
     if let Err(e) = uteke.shutdown() {
@@ -695,8 +716,30 @@ fn main() {
     }
 }
 
-fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
-    let ns = cli.namespace.as_deref();
+/// Resolve namespace: CLI flag > UTEKE_NAMESPACE env > config > "default"
+fn resolve_namespace(cli: &Cli, config: &Config) -> String {
+    // 1. CLI --namespace flag wins
+    if let Some(ns) = &cli.namespace {
+        return ns.clone();
+    }
+    // 2. Environment variable
+    if let Ok(env_ns) = std::env::var("UTEKE_NAMESPACE") {
+        if !env_ns.is_empty() {
+            return env_ns;
+        }
+    }
+    // 3. Config file
+    if config.store.namespace != "default" {
+        return config.store.namespace.clone();
+    }
+    // 4. Fallback
+    "default".to_string()
+}
+
+fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(), String> {
+    // Resolve effective namespace once: CLI > env > config > "default"
+    let resolved_ns = resolve_namespace(cli, config);
+    let ns: Option<&str> = Some(resolved_ns.as_str());
 
     match &cli.command {
         Commands::Remember { content, tags } => {
@@ -809,7 +852,6 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             } else if let Some(tag) = tag {
                 // Bulk delete by tag
                 tracing::info!("Bulk forgetting by tag: {tag}");
-                let ns = cli.namespace.as_deref();
                 let count = uteke.store().count_by_tag(tag.as_str(), ns).unwrap_or(0);
                 if !confirm && count > 0 {
                     println!("Found {count} memories with tag '{tag}'. Use --confirm to delete.");
@@ -826,7 +868,6 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             } else if *cold {
                 // Bulk delete cold memories
                 tracing::info!("Bulk forgetting cold memories");
-                let ns = cli.namespace.as_deref();
                 if !confirm {
                     println!("This will delete all cold memories (>30 days or never accessed).");
                     println!("Use --confirm to proceed.");
@@ -849,7 +890,7 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
                     return Ok(());
                 }
                 let result = uteke
-                    .bulk_forget_all(cli.namespace.as_deref())
+                    .bulk_forget_all(ns)
                     .map_err(|e| format!("Failed: {e}"))?;
                 if cli.json {
                     print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
@@ -1022,6 +1063,55 @@ fn run_command(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
             Ok(())
         }
         Commands::Init { agent } => run_init(agent, cli.json),
+        Commands::Namespace { command } => match command {
+            NamespaceCommands::List => {
+                tracing::info!("Listing namespaces");
+                let namespaces = uteke
+                    .list_namespaces()
+                    .map_err(|e| format!("Failed to list namespaces: {e}"))?;
+                if cli.json {
+                    print_json(&namespaces);
+                } else {
+                    if namespaces.is_empty() {
+                        println!("No namespaces found.");
+                    } else {
+                        println!("Namespaces ({} total):\n", namespaces.len());
+                        for ns_name in &namespaces {
+                            let count = uteke
+                                .store()
+                                .count(Some(ns_name.as_str()))
+                                .unwrap_or(0);
+                            println!("  {} ({} memories)", ns_name, count);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            NamespaceCommands::Stats { name } => {
+                tracing::info!("Namespace stats: {name}");
+                let stats = uteke
+                    .stats(Some(name.as_str()))
+                    .map_err(|e| format!("Failed to get namespace stats: {e}"))?;
+                if cli.json {
+                    print_json(&stats);
+                } else {
+                    println!("Namespace: {name}");
+                    print_stats_human(&stats);
+                }
+                Ok(())
+            }
+            NamespaceCommands::Switch { name } => {
+                tracing::info!("Switching default namespace to: {name}");
+                Config::set_default_namespace(name)
+                    .map_err(|e| format!("Failed to switch namespace: {e}"))?;
+                if cli.json {
+                    print_json(&serde_json::json!({"default_namespace": name}));
+                } else {
+                    println!("✓ Default namespace set to '{name}'");
+                }
+                Ok(())
+            }
+        }
         Commands::Aging { command } => match command {
             AgingCommands::Status => {
                 tracing::info!("Aging status");

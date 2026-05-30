@@ -277,6 +277,27 @@ impl Config {
             path.to_string()
         }
     }
+
+    /// Set the default namespace in the global config file.
+    /// Creates or updates the `[store]` section's `namespace` key.
+    pub fn set_default_namespace(name: &str) -> Result<(), String> {
+        let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
+        let config_path = home.join(".uteke").join("uteke.toml");
+
+        // Read existing config or start fresh
+        let content = if config_path.exists() {
+            std::fs::read_to_string(&config_path)
+                .map_err(|e| format!("Failed to read config: {e}"))?
+        } else {
+            String::new()
+        };
+
+        let updated = set_namespace_in_toml(&content, name);
+        std::fs::write(&config_path, updated)
+            .map_err(|e| format!("Failed to write config: {e}"))?;
+
+        Ok(())
+    }
 }
 
 // ── Legacy migration ────────────────────────────────────────────────────────
@@ -368,6 +389,44 @@ fn migrate_content(old: &str) -> String {
 /// Return the global config path `~/.uteke/uteke.toml` if home dir is known.
 fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".uteke").join("uteke.toml"))
+}
+
+/// Update or insert the namespace value in a TOML config string.
+/// Preserves all other content.
+fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
+    let mut in_store_section = false;
+    let mut found_namespace_key = false;
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+
+    for i in 0..lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed == "[store]" {
+            in_store_section = true;
+            continue;
+        }
+        if trimmed.starts_with('[') && trimmed != "[store]" {
+            in_store_section = false;
+        }
+        if in_store_section && trimmed.starts_with("namespace") {
+            lines[i] = format!("namespace = \"{namespace}\"");
+            found_namespace_key = true;
+            break;
+        }
+    }
+
+    if !found_namespace_key {
+        // Need to insert namespace into [store] section
+        if let Some(pos) = lines.iter().position(|l| l.trim() == "[store]") {
+            lines.insert(pos + 1, format!("namespace = \"{namespace}\""));
+        } else {
+            // No [store] section exists — append one
+            lines.push(String::new());
+            lines.push("[store]".to_string());
+            lines.push(format!("namespace = \"{namespace}\""));
+        }
+    }
+
+    lines.join("\n")
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
