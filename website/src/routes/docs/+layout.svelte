@@ -10,14 +10,16 @@
 	];
 
 	let currentPath = $derived($page.url.pathname);
+
+	let { children } = $props();
 </script>
 
 <div class="max-w-6xl mx-auto px-6">
 	<div class="flex gap-8">
 		<!-- Sidebar -->
-		<aside class="hidden md:block w-56 flex-shrink-0">
+		<aside class="hidden md:block w-56 flex-shrink-0 pt-8">
 			<nav class="sticky top-20 space-y-1">
-				<p class="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider mb-3">Documentation</p>
+				<p class="text-xs font-semibold text-[var(--color-text-dim)] uppercase tracking-wider mb-3">Documentation</p>
 				{#each docsNav as item}
 					<a
 						href={item.href}
@@ -32,16 +34,14 @@
 			</nav>
 
 			<div class="mt-8 px-3 py-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-				<p class="text-xs text-[var(--color-text-muted)] mb-2">On this page</p>
-				<div class="text-xs text-[var(--color-text-muted)]">
-					<slot name="toc" />
-				</div>
+				<p class="text-xs text-[var(--color-text-dim)] mb-1">Version</p>
+				<p class="text-xs text-[var(--color-accent)] font-mono">v0.0.3</p>
 			</div>
 		</aside>
 
 		<!-- Content -->
-		<div class="flex-1 min-w-0">
-			<slot />
+		<div class="flex-1 min-w-0 py-8">
+			{@render children()}
 		</div>
 	</div>
 </div>
