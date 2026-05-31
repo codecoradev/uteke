@@ -13,7 +13,7 @@ inputs:
   cora-version:
     description: 'cora-cli version tag (default: latest release)'
     required: false
-    default: 'v0.1.1'
+    default: 'v0.1.2'
   upload-sarif:
     description: 'Upload SARIF to GitHub Code Scanning (default: false)'
     required: false
@@ -90,7 +90,7 @@ runs:
           --format sarif \
           --severity ${{ inputs.severity }} \
           --quiet \
-          > cora-results.sarif 2>/dev/null
+          > cora-results.sarif 2>/dev/null || true
         echo "Cora review complete ($(wc -c < cora-results.sarif) bytes)"
 
     - name: Upload SARIF to GitHub Code Scanning
