@@ -48,12 +48,14 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p uteke-cli
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} -p uteke-cli -p uteke-server
 
-      - name: Strip binary (Unix)
+      - name: Strip binaries (Unix)
         if: runner.os != 'Windows'
-        run: strip target/${{ matrix.target }}/release/uteke
+        run: |
+          strip target/${{ matrix.target }}/release/uteke
+          strip target/${{ matrix.target }}/release/uteke-serve
 
       - name: Extract version
         id: version
@@ -64,18 +66,20 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p release
-          cp target/${{ matrix.target }}/release/uteke release/${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/uteke release/uteke
+          cp target/${{ matrix.target }}/release/uteke-serve release/uteke-serve
           cd release
-          tar czf ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} ${{ matrix.artifact }}
+          tar czf ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} uteke uteke-serve
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           mkdir release
-          cp target/${{ matrix.target }}/release/uteke.exe release/${{ matrix.artifact }}.exe
+          cp target/${{ matrix.target }}/release/uteke.exe release/uteke.exe
+          cp target/${{ matrix.target }}/release/uteke-serve.exe release/uteke-serve.exe
           cd release
-          7z a ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} ${{ matrix.artifact }}.exe
+          7z a ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} uteke.exe uteke-serve.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -113,29 +117,32 @@ jobs:
 
           ### 🔧 Features
 
-          - **Persistent vector index** — usearch replaces in-memory HNSW
-            - Cold start: ~5ms (was ~5s at 10K memories)
-            - Incremental delete: ~0.1ms (was full rebuild)
-            - Index persisted as `uteke_index.usearch` + `uteke_index.keys`
-            - Auto-migration from v0.0.1 databases
-          - **Multi-agent namespaces** — isolated memory per agent
-            - `--namespace` flag on all commands
-            - Fully isolated: recall, search, list, stats scoped
-            - Default: `"default"` (backward compatible)
-          - **Tiered memory** — Hot/Warm/Cold scoring
-            - Hot (7 days) gets +0.1 score boost in recall
-            - `uteke stats` shows tier breakdown
-          - **Health checks** — `uteke doctor`, `verify`, `repair`
-          - **Website** — https://uteke.ajianaz.dev
+          - **Daemon/server mode** — `uteke-serve` for persistent HTTP API
+            - Endpoints: `/health`, `/remember`, `/recall`, `/search`, `/list`, `/forget`, `/stats`, `/namespaces`
+            - CORS enabled, graceful shutdown (SIGINT)
+            - Warm recall: **~21ms** vs CLI cold start ~980ms (45x faster)
+          - **CLI auto-routes to server** — transparent HTTP routing when server is running
+            - Config: `[server] enabled = true` in `uteke.toml`
+            - Fallback to local store if server not running
+          - **Namespace switching & defaults** — `uteke namespace list/stats/switch`
+            - Layered resolution: CLI flag > env > config > default
+            - `UTEKE_NAMESPACE` environment variable
+          - **Auto-forget & temporal facts** — contradiction detection
+            - `--detect-contradiction` flag (threshold 0.65)
+            - `--type` flag: fact, procedure, preference, decision, context
+            - `--valid-from` / `--valid-until` for time-bounded memories
+            - `uteke prune --ttl N --dry-run`
+          - **Consolidation & deduplication** — `uteke consolidate --threshold 0.90 --dry-run`
+            - Pairwise cosine similarity comparison
+            - Merges duplicates, keeps newer memory
+          - **Bulk operations** — `forget --tag <tag>`, `forget --cold`, `forget --all`
+          - **CI: Cora AI code review** — automated PR review
 
-          ### 🔄 Changed
+          ### 📦 Binaries
 
-          - License: MIT → Apache 2.0
-          - Binary size: 26MB → 28MB (+usearch)
-          - CI: Infisical OIDC for CF Pages deploy
-          - Release matrix: 4 platforms (dropped macOS Intel, Windows ARM64)
-
-          ### 📦 Platforms
+          Each archive now contains **two binaries**:
+          - `uteke` — CLI tool
+          - `uteke-serve` — HTTP server daemon
 
           | Platform | File |
           |----------|------|
@@ -150,11 +157,14 @@ jobs:
           # Install
           curl -fsSL https://uteke.ajianaz.dev/install.sh | sh
 
-          # Remember
+          # Store a memory
           uteke remember "Important context" --tags project
 
           # Recall by meaning
           uteke recall "what was that context?"
+
+          # Start server for fast AI agent access
+          uteke-serve --port 8767
           ```
 
           **Full changelog:** https://github.com/ajianaz/uteke/blob/main/CHANGELOG.md

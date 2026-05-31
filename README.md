@@ -8,7 +8,7 @@
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.3-green.svg" alt="v0.0.3" />
+  <img src="https://img.shields.io/badge/status-v0.0.4-green.svg" alt="v0.0.4" />
 </p>
 
 <p align="center">
@@ -80,7 +80,11 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | `search` | Keyword text search (supports `--tags` filter) | `uteke search "monorepo" --tags rust,cli` |
 | `list` | List memories with pagination and tag filter | `uteke list --tag project --limit 20 --offset 10` |
 | `get` | Get a single memory by ID | `uteke get <uuid>` |
-| `forget` | Delete a memory by ID | `uteke forget <uuid>` |
+| `forget` | Delete a memory by ID, tag, tier, or all | `uteke forget <uuid>`, `uteke forget --tag stale` |
+| `consolidate` | Find and merge duplicate memories | `uteke consolidate --threshold 0.60 --dry-run` |
+| `prune` | Remove deprecated/expired temporal memories | `uteke prune --ttl 30 --dry-run` |
+| `namespace list` | List all namespaces with counts | `uteke namespace list` |
+| `namespace switch` | Set default namespace in config | `uteke namespace switch my-agent` |
 | `tags list` | List all tags with usage counts | `uteke tags list --by-count` |
 | `tags rename` | Rename a tag across all memories | `uteke tags rename old-name new-name` |
 | `tags delete` | Delete a tag from all memories | `uteke tags delete unused-tag` |
@@ -103,6 +107,8 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | `--config <path>` | Override config file path |
 | `--json` | Output as JSON (all commands) |
 | `--verbose` | Enable debug logging |
+| `--json` | Output as JSON (all commands) |
+| `--verbose` | Enable debug logging |
 
 ### JSON Output
 
@@ -117,6 +123,23 @@ uteke recall "hello" --json
 
 uteke stats --json
 # {"total_memories":42,"unique_tags":5,"db_size_bytes":102400}
+```
+
+### Server Mode
+
+Start a persistent HTTP server for fast AI agent access (21ms vs 980ms cold start):
+
+```bash
+# Start server
+uteke-serve --port 8767
+
+# Enable auto-routing in config
+# [server]
+# enabled = true
+
+# CLI commands now route via HTTP automatically
+uteke recall "what was that context?"  # 21ms!
+uteke remember "New finding" --tags research
 ```
 
 ### Multi-Agent Namespaces
@@ -145,14 +168,18 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 ```
 ┌─────────────────────────────────────────────────────┐
 │                    CLI (clap)                        │
-│                  uteke-cli crate                     │
+│  uteke-cli crate — auto-routes to server if running │
+├─────────────────────────────────────────────────────┤
+│              HTTP API (uteke-serve)                  │
+│  /health /remember /recall /search /list /forget    │
+│  /stats /namespaces — CORS enabled, ~21ms recall    │
 ├─────────────────────────────────────────────────────┤
 │                    Uteke API                         │
 │          uteke-core crate (lib)                      │
 ├──────────┬──────────────────┬────────────────────────┤
 │   ONNX   │     usearch      │       SQLite           │
 │ Embedding│  Vector Index    │    Metadata Store      │
-│ (768d)   │ (Persistent HNSW)│    (rusqlite)          │
+│ (256d)   │ (Persistent HNSW)│    (rusqlite)          │
 ├──────────┴──────────────────┴────────────────────────┤
 │              ~/.uteke/ (local storage)               │
 │ uteke.db │ uteke_index.usearch │ models/embeddinggemma/ │
@@ -164,13 +191,13 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 | Language | Rust (no unsafe) | Memory-safe, fast, single binary |
 | Vector Index | usearch | Persistent HNSW with incremental updates |
 | Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
-| Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
+| Embedding | EmbeddingGemma Q4 ONNX | 256d vectors, multilingual, downloaded on first run |
 | Namespaces | SQLite column | Multi-agent isolation, zero overhead |
 | Tiered Memory | Access tracking | Hot/Warm/Cold scoring boost |
 | CLI | clap | Standard Rust CLI framework |
 
 **How it works:**
-1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in usearch
+1. `remember` → text is embedded into a 256d vector via ONNX → stored in SQLite + indexed in usearch
 2. `recall` → query is embedded → usearch finds nearest neighbors → hot memories get +0.1 score boost → returns ranked results
 3. `search` → SQLite LIKE-based keyword search (fast, deterministic, scoped to namespace)
 4. `forget` → incremental delete from usearch + SQLite (no rebuild)
@@ -264,8 +291,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Uteke follows a demand-gated roadmap — we build what people actually use.
 
-**Now (v0.0.3):** Core engine + tag management, memory aging, shell hooks, config files, file logging, graceful shutdown
-**Phase A (100+ stars):** Better embeddings, dedup, import/export, remote embedding opt-in
+**Now (v0.0.4):** Server mode (21ms warm recall), contradiction detection, consolidation, bulk operations, namespace switching, CLI auto-routing to server
+**Phase A (100+ stars):** Better embeddings, import from external sources, Hermes plugin, benchmark
 **Phase B (500+ stars):** Python SDK (PyO3), Node.js SDK, editor integrations
 **Phase C (1000+ stars):** Team features, cloud sync (opt-in), knowledge graph
 

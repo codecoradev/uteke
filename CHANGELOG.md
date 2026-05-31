@@ -5,6 +5,56 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.4] — 2026-05-31
+
+### Added
+
+- **Daemon/server mode** — `uteke-serve` for persistent HTTP API (new `uteke-server` crate)
+  - Endpoints: `/health`, `/remember`, `/recall`, `/search`, `/list`, `/forget`, `/stats`, `/namespaces`
+  - CORS enabled for browser/extension access
+  - Graceful shutdown (SIGINT)
+  - Warm recall: **~21ms** vs CLI cold start ~980ms (45x faster)
+  - Configuration via `[server]` section in `uteke.toml`
+- **CLI auto-routes to server** — CLI detects running server and routes commands via HTTP
+  - Transparent fallback to local store if server is not running
+  - Config: `[server] enabled = true` in `uteke.toml`
+  - Latency: recall 21ms, stats 34ms, remember 32ms (via server)
+- **Namespace switching & defaults** — `uteke namespace list/stats/switch`
+  - Layered resolution: CLI flag > env `UTEKE_NAMESPACE` > config > default
+  - Config persistence in `uteke.toml` under `[store]`
+  - `uteke namespace switch <name>` sets default namespace
+- **Auto-forget & temporal facts** — contradiction detection and time-bounded memories
+  - `--detect-contradiction` flag on `remember` — detects conflicting memories (threshold 0.65)
+  - `--type` flag: fact, procedure, preference, decision, context
+  - `--valid-from` / `--valid-until` for temporal facts
+  - `uteke prune --ttl N --dry-run` — remove deprecated/expired memories
+  - DB migration: `deprecated`, `valid_from`, `valid_until`, `memory_type` columns
+- **Consolidation & deduplication** — `uteke consolidate --threshold 0.90 --dry-run`
+  - O(n²) cosine similarity pairwise comparison
+  - Merges duplicates: keeps newer memory, removes older
+  - `SimilarPair` and `ConsolidationResult` types
+- **Bulk operations** — mass delete by tag, cold tier, or all
+  - `forget --tag <tag>`, `forget --cold`, `forget --all`
+  - Confirmation flags: `--confirm` or `--dry-run`
+- **CI: Cora AI code review** — automated PR review via composite action
+
+### Changed
+
+- Version bumped from 0.0.3 → 0.0.4
+- Embedding model confirmed: embeddinggemma-q4 (256 dim)
+- Contradiction threshold calibrated at 0.65 for small embedding models
+- Consolidate default threshold 0.90 (recommend 0.60-0.70 for small models)
+
+### Stress Test Results
+
+| Test Suite | Operations | Result |
+|---|---|---|
+| CLI cold start (92 ops) | 92/92 | ✅ (avg ~950ms/op) |
+| Server warm (112 ops) | 112/112 | ✅ (avg ~35ms/op) |
+| Full functional retest | 15 phases | ✅ All pass |
+
+[0.0.4]: https://github.com/ajianaz/uteke/releases/tag/v0.0.4
+
 ## [0.0.2] — 2026-05-29
 
 ### Added
