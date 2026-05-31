@@ -2649,6 +2649,7 @@ dependencies = [
  "clap_complete",
  "ctrlc",
  "dirs 5.0.1",
+ "reqwest",
  "serde",
  "serde_json",
  "toml",

@@ -698,6 +698,23 @@ fn main() {
     Config::write_default_config();
     let config = Config::load();
 
+    // Check if uteke server is running — if so, route via HTTP for <50ms latency
+    let server_url = format!("http://{}:{}", config.server.host, config.server.port);
+    let server_available = config.server.enabled && is_server_running(&server_url);
+
+    if server_available {
+        tracing::info!("Server detected at {server_url}, routing via HTTP");
+        let result = run_via_server(&cli, &server_url);
+        if let Err(e) = result {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Fallback: open local store (cold start ~1s)
+    tracing::debug!("No server detected, using local store");
+
     // Determine store path: CLI > config > default
     let store_path = cli
         .store
@@ -741,6 +758,111 @@ fn main() {
 }
 
 /// Resolve namespace: CLI flag > UTEKE_NAMESPACE env > config > "default"
+/// Check if uteke server is reachable.
+fn is_server_running(url: &str) -> bool {
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(100))
+        .build()
+        .and_then(|c| Ok(c.get(format!("{url}/health")).send()))
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
+}
+
+/// Route CLI commands through the HTTP server for <50ms latency.
+fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> {
+    let client = reqwest::blocking::Client::new();
+    let ns = cli.namespace.as_deref().unwrap_or("default");
+
+    match &cli.command {
+        Commands::Remember { content, tags, r#type, detect_contradiction: _ } => {
+            let body = serde_json::json!({
+                "content": content,
+                "tags": tags,
+                "namespace": ns
+            });
+            let resp = client.post(format!("{server_url}/remember"))
+                .json(&body)
+                .send().map_err(|e| format!("Server error: {e}"))?;
+            let data: serde_json::Value = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            if cli.json { println!("{data}"); }
+            else { println!("\u{2713} Memory stored\n  ID: {}", data["id"]); }
+        }
+        Commands::Recall { query, limit, tags, .. } => {
+            let body = serde_json::json!({
+                "query": query,
+                "limit": limit,
+                "tags": tags,
+                "namespace": ns
+            });
+            let resp = client.post(format!("{server_url}/recall"))
+                .json(&body)
+                .send().map_err(|e| format!("Server error: {e}"))?;
+            let results: Vec<uteke_core::SearchResult> = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            if cli.json { print_json(&results); }
+            else { print_recall_human(&results); }
+        }
+        Commands::Search { query, limit, tags, .. } => {
+            let body = serde_json::json!({
+                "query": query,
+                "limit": limit,
+                "tags": tags,
+                "namespace": ns
+            });
+            let resp = client.post(format!("{server_url}/search"))
+                .json(&body)
+                .send().map_err(|e| format!("Server error: {e}"))?;
+            let results: Vec<uteke_core::SearchResult> = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            if cli.json { print_json(&results); }
+            else { print_search_human(&results); }
+        }
+        Commands::List { tag, limit, offset, .. } => {
+            let body = serde_json::json!({
+                "tag": tag,
+                "limit": limit,
+                "offset": offset,
+                "namespace": ns
+            });
+            let resp = client.post(format!("{server_url}/list"))
+                .json(&body)
+                .send().map_err(|e| format!("Server error: {e}"))?;
+            let memories: Vec<uteke_core::Memory> = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            if cli.json { print_json(&memories); }
+            else { print_list_human(&memories); }
+        }
+        Commands::Stats => {
+            let body = serde_json::json!({ "namespace": ns });
+            let resp = client.post(format!("{server_url}/stats"))
+                .json(&body)
+                .send().map_err(|e| format!("Server error: {e}"))?;
+            let stats: uteke_core::StoreStats = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            if cli.json { print_json(&stats); }
+            else { print_stats_human(&stats); }
+        }
+        Commands::Forget { id, tag, cold, all, confirm } => {
+            if let Some(id) = id {
+                let resp = client.delete(format!("{server_url}/forget?id={id}"))
+                    .send().map_err(|e| format!("Server error: {e}"))?;
+                let data: serde_json::Value = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+                if cli.json { println!("{data}"); }
+                else { println!("\u{2713} Memory forgotten: {id}"); }
+            } else if let Some(tag) = tag {
+                let resp = client.delete(format!("{server_url}/forget?tag={tag}&namespace={ns}"))
+                    .send().map_err(|e| format!("Server error: {e}"))?;
+                let data: serde_json::Value = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+                if cli.json { println!("{data}"); }
+                else { println!("\u{2713} Deleted {} memories with tag '{}'", data["deleted"], tag); }
+            } else {
+                return Err("Provide an ID, --tag, --cold, or --all".into());
+            }
+        }
+        // Commands not supported via server fall through to local
+        _ => {
+            return Err("This command requires local store. Disable server mode to use it.".into());
+        }
+    }
+    Ok(())
+}
+
 fn resolve_namespace(cli: &Cli, config: &Config) -> String {
     // 1. CLI --namespace flag wins
     if let Some(ns) = &cli.namespace {
