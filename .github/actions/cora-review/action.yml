@@ -85,13 +85,27 @@ runs:
         CORA_BASE_URL: ${{ env.CORA_BASE_URL }}
         CORA_MODEL: ${{ env.CORA_MODEL }}
       run: |
+        set +e
         cora review \
           --base ${{ inputs.base-branch }} \
           --format sarif \
           --severity ${{ inputs.severity }} \
           --quiet \
-          > cora-results.sarif 2>/dev/null || true
-        echo "Cora review complete ($(wc -c < cora-results.sarif) bytes)"
+          > cora-results.sarif 2>cora-stderr.log
+        CORA_EXIT=$?
+        set -e
+
+        if [ $CORA_EXIT -ne 0 ] && [ $CORA_EXIT -ne 2 ]; then
+          echo "::warning::cora exited with code $CORA_EXIT"
+          cat cora-stderr.log || true
+        fi
+
+        if [ -f cora-results.sarif ] && [ -s cora-results.sarif ]; then
+          echo "Cora review complete ($(wc -c < cora-results.sarif) bytes)"
+        else
+          echo "::warning::cora produced no SARIF output, skipping review"
+          echo '{}' > cora-results.sarif
+        fi
 
     - name: Upload SARIF to GitHub Code Scanning
       if: inputs.upload-sarif == 'true'
