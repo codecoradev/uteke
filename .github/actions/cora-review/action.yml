@@ -1,5 +1,5 @@
 name: 'Cora AI Code Review'
-description: 'Run cora AI code review on a PR diff — uploads SARIF to Code Scanning and posts a PR comment.'
+description: 'Run cora AI code review on a PR diff — posts a PR comment with findings. SARIF upload is optional.'
 
 inputs:
   base-branch:
@@ -14,6 +14,10 @@ inputs:
     description: 'cora-cli version tag (default: latest release)'
     required: false
     default: 'v0.1.1'
+  upload-sarif:
+    description: 'Upload SARIF to GitHub Code Scanning (default: false)'
+    required: false
+    default: 'false'
   infisical-identity-id:
     description: 'Infisical OIDC identity ID (from secret INFISICAL_IDENTITY_ID)'
     required: true
@@ -62,6 +66,7 @@ runs:
         cora --version
 
     - name: Run cora review
+      id: review
       shell: bash
       env:
         CORA_API_KEY: ${{ env.CORA_API_KEY }}
@@ -77,7 +82,8 @@ runs:
         echo "Cora review complete ($(wc -c < cora-results.sarif) bytes)"
 
     - name: Upload SARIF to GitHub Code Scanning
-      if: always() && hashFiles('cora-results.sarif') != ''
+      if: inputs.upload-sarif == 'true'
+      continue-on-error: true
       uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: cora-results.sarif
@@ -185,7 +191,7 @@ runs:
           " 2>/dev/null || echo "0")
 
           if [ "$ERRORS" -gt 0 ]; then
-            echo "::error::Cora found $ERRORS blocking issue(s). Review the Code Scanning results."
+            echo "::error::Cora found $ERRORS blocking issue(s)."
             exit 1
           fi
         fi
