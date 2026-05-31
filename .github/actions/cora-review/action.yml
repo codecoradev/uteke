@@ -49,6 +49,18 @@ runs:
         env-slug: ${{ inputs.infisical-env }}
         domain: ${{ inputs.infisical-domain }}
 
+    - name: Resolve cora-cli version
+      id: resolve
+      shell: bash
+      run: |
+        if [ "${{ inputs.cora-version }}" = "latest" ]; then
+          VERSION=$(curl -sL https://api.github.com/repos/ajianaz/cora-cli/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])")
+        else
+          VERSION="${{ inputs.cora-version }}"
+        fi
+        echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "Resolved cora-cli version: $VERSION"
+
     - name: Install cora-cli
       shell: bash
       run: |
@@ -61,7 +73,7 @@ runs:
           echo "Unsupported architecture: $ARCH"
           exit 1
         fi
-        curl -sL "https://github.com/ajianaz/cora-cli/releases/download/${{ inputs.cora-version }}/${ASSET}-${{ inputs.cora-version }}.tar.gz" | tar xz -C /usr/local/bin cora
+        curl -sL "https://github.com/ajianaz/cora-cli/releases/download/${{ steps.resolve.outputs.VERSION }}/${ASSET}-${{ steps.resolve.outputs.VERSION }}.tar.gz" | tar xz -C /usr/local/bin cora
         chmod +x /usr/local/bin/cora
         cora --version
 
