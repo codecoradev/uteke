@@ -38,7 +38,7 @@
 
 [store]
 # Store location (default: ~/.uteke)
-store_path = "~/.uteke"
+path = "~/.uteke"
 
 # Default namespace (default: "default")
 namespace = "default"
@@ -86,6 +86,26 @@ uteke stats</code></pre>
 		</div>
 	</section>
 
+	<!-- Migration -->
+	<section>
+		<h2 class="text-xl font-semibold text-[var(--color-text)] mb-4">Config Migration</h2>
+		<p class="mb-3">If you have an older flat-format config (pre-v0.0.4), uteke auto-migrates it on first run:</p>
+		<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># Old format (auto-detected and migrated)
+path = "~/.uteke"
+default_namespace = "default"
+log_level = "info"
+
+↓ Auto-migrated to ↓
+
+[store]
+path = "~/.uteke"
+namespace = "default"
+
+[log]
+level = "info"</code></pre>
+		<p class="mt-3 text-sm">No manual action needed — old config keys are automatically converted to the new sectioned format.</p>
+	</section>
+
 	<!-- Namespace Resolution -->
 	<section>
 		<h2 class="text-xl font-semibold text-[var(--color-text)] mb-4">Namespace Resolution</h2>
@@ -115,7 +135,7 @@ uteke stats</code></pre>
 		<p class="mb-3">Place a <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">uteke.toml</code> in your project root to override defaults for that project:</p>
 		<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># my-project/uteke.toml
 [store]
-store_path = "./.uteke"
+path = "./.uteke"
 namespace = "my-project"
 
 [log]

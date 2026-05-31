@@ -5,7 +5,6 @@
 
 use std::io::{Cursor, Read as IoRead};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
@@ -112,21 +111,26 @@ fn ok_response<T: Serialize>(body: &T) -> Response<Cursor<Vec<u8>>> {
     json_response(200, body)
 }
 
-fn read_body<T: serde::de::DeserializeOwned>(
-    reader: &mut dyn IoRead,
-) -> Result<T, String> {
+fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
     let mut body = String::new();
-    reader.read_to_string(&mut body).map_err(|e| format!("Failed to read body: {e}"))?;
+    reader
+        .read_to_string(&mut body)
+        .map_err(|e| format!("Failed to read body: {e}"))?;
     serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))
 }
 
-fn ns<'a>(ns: &'a Option<String>) -> Option<&'a str> {
+fn ns(ns: &Option<String>) -> Option<&str> {
     ns.as_deref()
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
 
-fn route(uteke: &Uteke, method: &Method, path: &str, body: &mut dyn IoRead) -> Response<Cursor<Vec<u8>>> {
+fn route(
+    uteke: &Uteke,
+    method: &Method,
+    path: &str,
+    body: &mut dyn IoRead,
+) -> Response<Cursor<Vec<u8>>> {
     // CORS preflight
     if method == &Method::Options {
         return Response::new(
@@ -166,7 +170,11 @@ fn route(uteke: &Uteke, method: &Method, path: &str, body: &mut dyn IoRead) -> R
         (&Method::Post, "/recall") => match read_body::<RecallRequest>(body) {
             Ok(req) => {
                 let tag_refs: Vec<&str> = req.tags.iter().map(|s| s.as_str()).collect();
-                let tags_filter = if tag_refs.is_empty() { None } else { Some(tag_refs.as_slice()) };
+                let tags_filter = if tag_refs.is_empty() {
+                    None
+                } else {
+                    Some(tag_refs.as_slice())
+                };
                 match uteke.recall(&req.query, req.limit, tags_filter, ns(&req.namespace)) {
                     Ok(results) => ok_response(&results),
                     Err(e) => error_response(500, format!("Failed: {e}")),
@@ -179,7 +187,11 @@ fn route(uteke: &Uteke, method: &Method, path: &str, body: &mut dyn IoRead) -> R
         (&Method::Post, "/search") => match read_body::<SearchRequest>(body) {
             Ok(req) => {
                 let tag_refs: Vec<&str> = req.tags.iter().map(|s| s.as_str()).collect();
-                let tags_filter = if tag_refs.is_empty() { None } else { Some(tag_refs.as_slice()) };
+                let tags_filter = if tag_refs.is_empty() {
+                    None
+                } else {
+                    Some(tag_refs.as_slice())
+                };
                 match uteke.search(&req.query, req.limit, tags_filter, ns(&req.namespace)) {
                     Ok(results) => ok_response(&results),
                     Err(e) => error_response(500, format!("Failed: {e}")),
@@ -191,7 +203,12 @@ fn route(uteke: &Uteke, method: &Method, path: &str, body: &mut dyn IoRead) -> R
         // ── List ────────────────────────────────────────────────────────
         (&Method::Post, "/list") => match read_body::<ListParams>(body) {
             Ok(req) => {
-                match uteke.list(req.tag.as_deref(), req.limit, req.offset, ns(&req.namespace)) {
+                match uteke.list(
+                    req.tag.as_deref(),
+                    req.limit,
+                    req.offset,
+                    ns(&req.namespace),
+                ) {
                     Ok(memories) => ok_response(&memories),
                     Err(e) => error_response(500, format!("Failed: {e}")),
                 }
@@ -233,7 +250,9 @@ fn route(uteke: &Uteke, method: &Method, path: &str, body: &mut dyn IoRead) -> R
         },
         (&Method::Post, "/stats") => {
             #[derive(Deserialize)]
-            struct StatsReq { namespace: Option<String> }
+            struct StatsReq {
+                namespace: Option<String>,
+            }
             match read_body::<StatsReq>(body) {
                 Ok(req) => match uteke.stats(ns(&req.namespace)) {
                     Ok(stats) => ok_response(&stats),
@@ -269,7 +288,9 @@ fn main() {
         match args[i].as_str() {
             "--host" => {
                 i += 1;
-                if i < args.len() { host = args[i].clone(); }
+                if i < args.len() {
+                    host = args[i].clone();
+                }
             }
             "--port" => {
                 i += 1;
@@ -295,7 +316,9 @@ fn main() {
                 println!("  POST /remember            → {{ content, tags? }} → {{ id }}");
                 println!("  POST /recall              → {{ query, limit? }} → {{ results }}");
                 println!("  POST /search              → {{ query, limit? }} → {{ results }}");
-                println!("  POST /list                → {{ tag?, limit?, offset? }} → {{ memories }}");
+                println!(
+                    "  POST /list                → {{ tag?, limit?, offset? }} → {{ memories }}"
+                );
                 println!("  DELETE /forget?id=UUID     → {{ forgotten }}");
                 println!("  DELETE /forget?tag=TAG     → {{ deleted }}");
                 println!("  GET  /stats               → {{ stats }}");
@@ -320,11 +343,15 @@ fn main() {
 
     // Open store
     let home = dirs::home_dir().expect("Cannot determine home directory");
-    let db_path = home.join(".uteke").join("uteke.db").to_string_lossy().to_string();
+    let db_path = home
+        .join(".uteke")
+        .join("uteke.db")
+        .to_string_lossy()
+        .to_string();
 
     info!("Opening store at: {db_path}");
     let uteke = match Uteke::open(&db_path) {
-        Ok(u) => Arc::new(u),
+        Ok(u) => u,
         Err(e) => {
             error!("Failed to open store: {e}");
             std::process::exit(1);
@@ -370,13 +397,8 @@ fn main() {
 
     // Graceful shutdown
     info!("Saving index and closing DB...");
-    match Arc::try_unwrap(uteke) {
-        Ok(u) => {
-            if let Err(e) = u.shutdown() {
-                error!("Shutdown error: {e}");
-            }
-        }
-        Err(_) => warn!("Store still referenced, skipping shutdown flush"),
+    if let Err(e) = uteke.shutdown() {
+        error!("Shutdown error: {e}");
     }
 
     info!("Goodbye.");

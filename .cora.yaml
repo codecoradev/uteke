@@ -1,0 +1,24 @@
+# cora code review config for uteke
+provider:
+  provider: custom
+  model: glm-5.1
+  base_url: https://llm.azfirazka.com/v1
+
+focus:
+  - security
+  - performance
+  - bugs
+  - best_practice
+
+ignore:
+  files:
+    - "target/**"
+    - "website/node_modules/**"
+    - "website/.svelte-kit/**"
+    - "*.lock"
+    - "Cargo.lock"
+
+hook:
+  mode: warn
+  min_severity: major
+  max_diff_size: 51200

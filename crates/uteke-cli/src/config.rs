@@ -437,8 +437,8 @@ fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
     let mut found_namespace_key = false;
     let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
 
-    for i in 0..lines.len() {
-        let trimmed = lines[i].trim();
+    for line in lines.iter_mut() {
+        let trimmed = line.trim();
         if trimmed == "[store]" {
             in_store_section = true;
             continue;
@@ -447,7 +447,7 @@ fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
             in_store_section = false;
         }
         if in_store_section && trimmed.starts_with("namespace") {
-            lines[i] = format!("namespace = \"{namespace}\"");
+            *line = format!("namespace = \"{namespace}\"");
             found_namespace_key = true;
             break;
         }

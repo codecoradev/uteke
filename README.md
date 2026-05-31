@@ -107,8 +107,6 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | `--config <path>` | Override config file path |
 | `--json` | Output as JSON (all commands) |
 | `--verbose` | Enable debug logging |
-| `--json` | Output as JSON (all commands) |
-| `--verbose` | Enable debug logging |
 
 ### JSON Output
 

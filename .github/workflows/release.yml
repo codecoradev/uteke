@@ -54,8 +54,8 @@ jobs:
       - name: Strip binaries (Unix)
         if: runner.os != 'Windows'
         run: |
-          strip target/${{ matrix.target }}/release/uteke
-          strip target/${{ matrix.target }}/release/uteke-serve
+          strip target/${{ matrix.target }}/release/uteke || true
+          strip target/${{ matrix.target }}/release/uteke-serve || true
 
       - name: Extract version
         id: version
@@ -69,7 +69,7 @@ jobs:
           cp target/${{ matrix.target }}/release/uteke release/uteke
           cp target/${{ matrix.target }}/release/uteke-serve release/uteke-serve
           cd release
-          tar czf ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} uteke uteke-serve
+          tar czf "${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}" uteke uteke-serve
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -79,7 +79,7 @@ jobs:
           cp target/${{ matrix.target }}/release/uteke.exe release/uteke.exe
           cp target/${{ matrix.target }}/release/uteke-serve.exe release/uteke-serve.exe
           cd release
-          7z a ${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }} uteke.exe uteke-serve.exe
+          7z a "${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}" uteke.exe uteke-serve.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
