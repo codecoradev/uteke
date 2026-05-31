@@ -237,3 +237,31 @@ impl MemoryType {
         matches!(self, Self::Fact | Self::Decision | Self::Context)
     }
 }
+
+/// Result of a consolidation (deduplication) operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsolidationResult {
+    /// Number of duplicate pairs found.
+    pub duplicates_found: usize,
+    /// Number of memories merged (older duplicates removed).
+    pub merged: usize,
+    /// IDs of removed duplicate memories.
+    pub removed_ids: Vec<String>,
+    /// Kept memory IDs (one per duplicate group).
+    pub kept_ids: Vec<String>,
+}
+
+/// A pair of similar memories (potential duplicate).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarPair {
+    /// ID of the first (older) memory.
+    pub id_a: String,
+    /// Content preview of the first memory.
+    pub content_a: String,
+    /// ID of the second (newer) memory.
+    pub id_b: String,
+    /// Content preview of the second memory.
+    pub content_b: String,
+    /// Cosine similarity score.
+    pub similarity: f32,
+}

@@ -379,6 +379,15 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Consolidate near-duplicate memories
+    Consolidate {
+        /// Similarity threshold (0.0-1.0) for detecting duplicates
+        #[arg(long, default_value = "0.90")]
+        threshold: f32,
+        /// Dry run — show duplicates without merging
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1069,6 +1078,42 @@ fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(), String> 
                     }
                 } else {
                     println!("\u{2713} Pruned {} deprecated memories (TTL: {ttl}d)", result.pruned);
+                }
+            }
+            Ok(())
+        }
+        Commands::Consolidate { threshold, dry_run } => {
+            tracing::info!("Consolidating (threshold: {threshold}, dry_run: {dry_run})");
+            if *dry_run {
+                let pairs = uteke
+                    .find_duplicates(ns, *threshold)
+                    .map_err(|e| format!("Failed to find duplicates: {e}"))?;
+                if cli.json {
+                    print_json(&pairs);
+                } else if pairs.is_empty() {
+                    println!("No duplicate pairs found (threshold: {threshold}).");
+                } else {
+                    println!("Found {} potential duplicate(s):\n", pairs.len());
+                    for (i, p) in pairs.iter().enumerate() {
+                        println!("  {}. sim={:.3}", i + 1, p.similarity);
+                        println!("     A: {}", p.content_a);
+                        println!("     B: {}", p.content_b);
+                    }
+                }
+            } else {
+                let result = uteke
+                    .consolidate(ns, *threshold, false)
+                    .map_err(|e| format!("Failed to consolidate: {e}"))?;
+                if cli.json {
+                    print_json(&result);
+                } else {
+                    println!("\u{2713} Consolidation complete:");
+                    println!("  Duplicates found: {}", result.duplicates_found);
+                    println!("  Merged: {}", result.merged);
+                    if !result.removed_ids.is_empty() {
+                        println!("  Removed:");
+                        for id in &result.removed_ids { println!("    {}", id); }
+                    }
                 }
             }
             Ok(())
