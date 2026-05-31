@@ -13,9 +13,9 @@ mod embed;
 pub mod memory;
 
 pub use memory::types::{
-    AgingStatus, BulkDeleteResult, CleanupResult, ContradictionResult, ExportEntry, ImportResult,
-    Memory, MemoryTier, MemoryType, PruneResult, SearchResult, StoreStats, TagInfo,
-    DEFAULT_NAMESPACE,
+    AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
+    ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, SearchResult,
+    SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
 
 use embed::EmbeddingEngine;
@@ -741,6 +741,71 @@ impl Uteke {
         })
     }
 
+    /// Find near-duplicate memory pairs (similarity > threshold).
+    pub fn find_duplicates(
+        &self,
+        namespace: Option<&str>,
+        threshold: f32,
+    ) -> Result<Vec<SimilarPair>, Error> {
+        let memories = self.store.load_all(namespace)?;
+        let mut pairs = Vec::new();
+        for i in 0..memories.len() {
+            for j in (i + 1)..memories.len() {
+                let sim = cosine_similarity(&memories[i].embedding, &memories[j].embedding);
+                if sim > threshold {
+                    pairs.push(SimilarPair {
+                        id_a: memories[i].id.clone(),
+                        content_a: memories[i].content.chars().take(80).collect(),
+                        id_b: memories[j].id.clone(),
+                        content_b: memories[j].content.chars().take(80).collect(),
+                        similarity: sim,
+                    });
+                }
+            }
+        }
+        pairs.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(pairs)
+    }
+
+    /// Consolidate near-duplicate memories (keeps newer, removes older).
+    pub fn consolidate(
+        &self,
+        namespace: Option<&str>,
+        threshold: f32,
+        dry_run: bool,
+    ) -> Result<ConsolidationResult, Error> {
+        let pairs = self.find_duplicates(namespace, threshold)?;
+        if pairs.is_empty() || dry_run {
+            return Ok(ConsolidationResult {
+                duplicates_found: pairs.len(),
+                merged: 0,
+                removed_ids: vec![],
+                kept_ids: vec![],
+            });
+        }
+        let mut removed_ids = Vec::new();
+        let mut kept_ids = Vec::new();
+        let mut already_removed = std::collections::HashSet::new();
+        for pair in &pairs {
+            if already_removed.contains(&pair.id_a) || already_removed.contains(&pair.id_b) {
+                continue;
+            }
+            self.store.delete(&pair.id_a).map_err(|e| Error::Database(e.to_string()))?;
+            let mut index = self.index.lock().map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            index.remove(&pair.id_a);
+            index.save().ok();
+            removed_ids.push(pair.id_a.clone());
+            kept_ids.push(pair.id_b.clone());
+            already_removed.insert(pair.id_a.clone());
+        }
+        Ok(ConsolidationResult {
+            duplicates_found: pairs.len(),
+            merged: removed_ids.len(),
+            removed_ids,
+            kept_ids,
+        })
+    }
+
     /// Export all memories to JSONL format (one JSON object per line).
     ///
     /// Embeddings are NOT exported — they will be re-computed on import.
@@ -1010,4 +1075,21 @@ mod tests {
         assert_eq!(restored.total_memories, 42);
         assert_eq!(restored.unique_tags, 5);
     }
+}
+
+/// Compute cosine similarity between two vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 { 0.0 } else { (dot / denom).clamp(0.0, 1.0) }
 }
