@@ -94,7 +94,9 @@ impl Store {
         // Migration: add temporal/deprecation columns
         if !self.column_exists("deprecated") {
             self.conn
-                .execute_batch("ALTER TABLE memories ADD COLUMN deprecated INTEGER NOT NULL DEFAULT 0;")
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN deprecated INTEGER NOT NULL DEFAULT 0;",
+                )
                 .map_err(|e| Error::Database(e.to_string()))?;
         }
         if !self.column_exists("valid_from") {
@@ -109,13 +111,17 @@ impl Store {
         }
         if !self.column_exists("memory_type") {
             self.conn
-                .execute_batch("ALTER TABLE memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'fact';")
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'fact';",
+                )
                 .map_err(|e| Error::Database(e.to_string()))?;
         }
 
         // Create deprecation index
         self.conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);")
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
+            )
             .map_err(|e| Error::Database(e.to_string()))?;
 
         Ok(())
@@ -752,11 +758,7 @@ impl Store {
 
     /// Find memories that contradict a new embedding (high similarity, same namespace).
     /// Returns memories with cosine similarity > threshold that are not already deprecated.
-    pub fn find_similar(
-        &self,
-        namespace: &str,
-        limit: usize,
-    ) -> Result<Vec<Memory>, Error> {
+    pub fn find_similar(&self, namespace: &str, limit: usize) -> Result<Vec<Memory>, Error> {
         let mut stmt = self
             .conn
             .prepare(

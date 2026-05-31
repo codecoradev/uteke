@@ -64,6 +64,25 @@ uteke remember "General knowledge" --tags misc</code></pre>
 		</div>
 	</section>
 
+	<!-- Namespace Switching -->
+	<section>
+		<h2 class="text-xl font-semibold text-[var(--color-text)] mb-4">Namespace Switching</h2>
+		<p class="mb-3">Switch the default namespace permanently, so you don't need <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">--namespace</code> on every call:</p>
+		<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code># List all namespaces
+uteke namespace list
+
+# See stats for a namespace
+uteke namespace stats my-agent
+
+# Switch default (saves to uteke.toml)
+uteke namespace switch my-agent
+
+# Now all commands use my-agent by default
+uteke remember "Project context" --tags ctx
+uteke recall "context"</code></pre>
+		<p class="mt-3 text-sm">Resolution order: <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">--namespace</code> flag → <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">UTEKE_NAMESPACE</code> env → <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">uteke.toml</code> → <code class="px-1.5 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-xs">"default"</code></p>
+	</section>
+
 	<!-- All commands scoped -->
 	<section>
 		<h2 class="text-xl font-semibold text-[var(--color-text)] mb-4">All Commands Are Scoped</h2>

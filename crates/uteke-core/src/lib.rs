@@ -763,7 +763,11 @@ impl Uteke {
                 }
             }
         }
-        pairs.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(pairs)
     }
 
@@ -790,8 +794,13 @@ impl Uteke {
             if already_removed.contains(&pair.id_a) || already_removed.contains(&pair.id_b) {
                 continue;
             }
-            self.store.delete(&pair.id_a).map_err(|e| Error::Database(e.to_string()))?;
-            let mut index = self.index.lock().map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            self.store
+                .delete(&pair.id_a)
+                .map_err(|e| Error::Database(e.to_string()))?;
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
             index.remove(&pair.id_a);
             index.save().ok();
             removed_ids.push(pair.id_a.clone());
@@ -999,6 +1008,27 @@ pub enum Error {
     Embedding(String),
 }
 
+/// Compute cosine similarity between two vectors.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f32;
+    let mut norm_a = 0.0f32;
+    let mut norm_b = 0.0f32;
+    for i in 0..a.len() {
+        dot += a[i] * b[i];
+        norm_a += a[i] * a[i];
+        norm_b += b[i] * b[i];
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        (dot / denom).clamp(0.0, 1.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1075,21 +1105,4 @@ mod tests {
         assert_eq!(restored.total_memories, 42);
         assert_eq!(restored.unique_tags, 5);
     }
-}
-
-/// Compute cosine similarity between two vectors.
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let mut dot = 0.0f32;
-    let mut norm_a = 0.0f32;
-    let mut norm_b = 0.0f32;
-    for i in 0..a.len() {
-        dot += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
-    }
-    let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom == 0.0 { 0.0 } else { (dot / denom).clamp(0.0, 1.0) }
 }
