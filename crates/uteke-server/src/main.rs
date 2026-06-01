@@ -6,6 +6,8 @@
 use std::io::{Cursor, Read as IoRead};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 use tiny_http::{Header, Method, Response, Server, StatusCode};
 use tracing::{error, info, warn};
@@ -436,14 +438,14 @@ struct ServerFileSection {
 fn load_uteke_toml() -> ServerFileConfig {
     let mut config = ServerFileConfig::default();
 
-    let paths = [
+    let mut paths: Vec<PathBuf> = vec![
         uteke_core::uteke_home().join("uteke.toml"),
-        std::env::current_dir()
-            .ok()
-            .map(|cwd| cwd.join(".uteke").join("uteke.toml")),
     ];
+    if let Ok(cwd) = std::env::current_dir() {
+        paths.push(cwd.join(".uteke").join("uteke.toml"));
+    }
 
-    for path in paths.into_iter().flatten() {
+    for path in paths {
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(parsed) = toml::from_str::<ServerFileConfig>(&content) {
