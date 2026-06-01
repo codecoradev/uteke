@@ -22,6 +22,14 @@ struct RememberRequest {
     tags: Vec<String>,
     #[serde(default)]
     namespace: Option<String>,
+    #[serde(default)]
+    r#type: Option<String>,
+    #[serde(default)]
+    valid_from: Option<String>,
+    #[serde(default)]
+    valid_until: Option<String>,
+    #[serde(default)]
+    detect_contradiction: bool,
 }
 
 #[derive(Deserialize)]
@@ -160,7 +168,39 @@ fn route(
         (&Method::Post, "/remember") => match read_body::<RememberRequest>(body) {
             Ok(req) => {
                 let tag_refs: Vec<&str> = req.tags.iter().map(|s| s.as_str()).collect();
-                match uteke.remember(&req.content, &tag_refs, None, ns(&req.namespace)) {
+
+                // Build metadata from optional fields
+                let mut meta = serde_json::Map::new();
+                if let Some(t) = &req.r#type {
+                    meta.insert("type".into(), serde_json::Value::String(t.clone()));
+                }
+                if let Some(vf) = &req.valid_from {
+                    meta.insert("valid_from".into(), serde_json::Value::String(vf.clone()));
+                }
+                if let Some(vu) = &req.valid_until {
+                    meta.insert("valid_until".into(), serde_json::Value::String(vu.clone()));
+                }
+                let metadata = if meta.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::Value::Object(meta))
+                };
+
+                let result = if req.detect_contradiction {
+                    uteke
+                        .remember_with_contradiction(
+                            &req.content,
+                            &tag_refs,
+                            ns(&req.namespace),
+                            req.r#type.as_deref(),
+                            true,
+                        )
+                        .map(|(id, _)| id)
+                } else {
+                    uteke.remember(&req.content, &tag_refs, metadata, ns(&req.namespace))
+                };
+
+                match result {
                     Ok(id) => ok_response(&serde_json::json!({"id": id})),
                     Err(e) => error_response(500, format!("Failed: {e}")),
                 }
@@ -270,6 +310,16 @@ fn route(
             Err(e) => error_response(500, format!("Failed: {e}")),
         },
 
+        // ── Get memory by ID ──────────────────────────────────────────
+        (&Method::Get, path) if path.starts_with("/memory?id=") => {
+            let id = path.trim_start_matches("/memory?id=");
+            match uteke.store().get_by_id(id) {
+                Ok(Some(memory)) => ok_response(&memory),
+                Ok(None) => error_response(404, format!("Memory not found: {id}")),
+                Err(e) => error_response(500, format!("Failed: {e}")),
+            }
+        }
+
         // ── 404 ─────────────────────────────────────────────────────────
         _ => error_response(404, format!("Not found: {path}")),
     }
@@ -329,6 +379,7 @@ fn main() {
                 );
                 println!("  DELETE /forget?id=UUID     → {{ forgotten }}");
                 println!("  DELETE /forget?tag=TAG     → {{ deleted }}");
+                println!("  GET  /memory?id=UUID       → {{ memory }}");
                 println!("  GET  /stats               → {{ stats }}");
                 println!("  GET  /namespaces           → {{ namespaces }}");
                 std::process::exit(0);
