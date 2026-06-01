@@ -33,7 +33,7 @@ RUN mkdir -p /models/onnx && \
     ls -lh /models/onnx/ /models/tokenizer.json
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────
-FROM debian:bookworm-slim@sha256:49a26f2a35ca268bbb3fefc6722c13b07e3ce320f9689e91b54c652e24a1ba20
+FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 && \
