@@ -110,67 +110,33 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VER="${{ steps.version.outputs.VERSION }}"
+          CLEAN_VER="${VER#v}"
+          awk "/^## \[${CLEAN_VER}\]/{found=1; next} /^## \[/{found=0} found && !/^\[.*\]: https:/" CHANGELOG.md > changelog-body.md
+          if [ ! -s changelog-body.md ]; then
+            echo "::warning::No CHANGELOG section found for [${CLEAN_VER}]"
+            echo "No changelog entry found for this version." > changelog-body.md
+          fi
+          echo "CLEAN_VER=${CLEAN_VER}" >> $GITHUB_OUTPUT
+
       - name: Generate release notes
         run: |
-          cat > release-notes.md << 'EOF'
-          ## What's New in VERSION
-
-          ### 🔧 Features
-
-          - **Daemon/server mode** — `uteke-serve` for persistent HTTP API
-            - Endpoints: `/health`, `/remember`, `/recall`, `/search`, `/list`, `/forget`, `/stats`, `/namespaces`
-            - CORS enabled, graceful shutdown (SIGINT)
-            - Warm recall: **~21ms** vs CLI cold start ~980ms (45x faster)
-          - **CLI auto-routes to server** — transparent HTTP routing when server is running
-            - Config: `[server] enabled = true` in `uteke.toml`
-            - Fallback to local store if server not running
-          - **Namespace switching & defaults** — `uteke namespace list/stats/switch`
-            - Layered resolution: CLI flag > env > config > default
-            - `UTEKE_NAMESPACE` environment variable
-          - **Auto-forget & temporal facts** — contradiction detection
-            - `--detect-contradiction` flag (threshold 0.65)
-            - `--type` flag: fact, procedure, preference, decision, context
-            - `--valid-from` / `--valid-until` for time-bounded memories
-            - `uteke prune --ttl N --dry-run`
-          - **Consolidation & deduplication** — `uteke consolidate --threshold 0.90 --dry-run`
-            - Pairwise cosine similarity comparison
-            - Merges duplicates, keeps newer memory
-          - **Bulk operations** — `forget --tag <tag>`, `forget --cold`, `forget --all`
-          - **CI: Cora AI code review** — automated PR review
-
-          ### 📦 Binaries
-
-          Each archive now contains **two binaries**:
-          - `uteke` — CLI tool
-          - `uteke-serve` — HTTP server daemon
-
-          | Platform | File |
-          |----------|------|
-          | Linux (x86_64) | `uteke-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
-          | Linux (ARM64) | `uteke-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
-          | macOS (Apple Silicon) | `uteke-VERSION-aarch64-apple-darwin.tar.gz` |
-          | Windows (x86_64) | `uteke-VERSION-x86_64-pc-windows-msvc.zip` |
-
-          ### 🚀 Quick Start
-
-          ```bash
-          # Install
-          curl -fsSL https://uteke.ajianaz.dev/install.sh | sh
-
-          # Store a memory
-          uteke remember "Important context" --tags project
-
-          # Recall by meaning
-          uteke recall "what was that context?"
-
-          # Start server for fast AI agent access
-          uteke-serve --port 8767
-          ```
-
-          **Full changelog:** https://github.com/ajianaz/uteke/blob/main/CHANGELOG.md
-
-          EOF
-          sed -i "s/VERSION/${{ steps.version.outputs.VERSION }}/g" release-notes.md
+          VER="${{ steps.version.outputs.VERSION }}"
+          echo "## What's New in ${VER}" > release-notes.md
+          echo "" >> release-notes.md
+          cat changelog-body.md >> release-notes.md
+          echo "" >> release-notes.md
+          printf '### 📦 Binaries\n\nEach archive contains **two binaries**:\n- `uteke` — CLI tool\n- `uteke-serve` — HTTP server daemon\n\n' >> release-notes.md
+          printf '| Platform | File |\n|----------|------|\n' >> release-notes.md
+          printf '| Linux (x86_64) | `uteke-%s-x86_64-unknown-linux-gnu.tar.gz` |\n' "${VER}" >> release-notes.md
+          printf '| Linux (ARM64) | `uteke-%s-aarch64-unknown-linux-gnu.tar.gz` |\n' "${VER}" >> release-notes.md
+          printf '| macOS (Apple Silicon) | `uteke-%s-aarch64-apple-darwin.tar.gz` |\n' "${VER}" >> release-notes.md
+          printf '| Windows (x86_64) | `uteke-%s-x86_64-pc-windows-msvc.zip` |\n\n' "${VER}" >> release-notes.md
+          printf '### 🚀 Quick Start\n\n```bash\n# Install\ncurl -fsSL https://uteke.ajianaz.dev/install.sh | sh\n\n# Store a memory\nuteke remember "Important context" --tags project\n\n# Recall by meaning\nuteke recall "what was that context?"\n\n# Start server for fast AI agent access\nuteke-serve --port 8767\n```\n\n' >> release-notes.md
+          printf '**Full changelog:** https://github.com/ajianaz/uteke/blob/main/CHANGELOG.md\n' >> release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
