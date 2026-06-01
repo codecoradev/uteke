@@ -1,7 +1,7 @@
 # ── Stage 1: Builder ────────────────────────────────────────────────────
-FROM debian:bookworm-slim@sha256:49a26f2a35ca268bbb3fefc6722c13b07e3ce320f9689e91b54c652e24a1ba20 AS builder
+FROM debian:bookworm-slim AS builder
 
-ARG VERSION=v0.0.4
+ARG VERSION=v0.0.5
 ARG TARGET=aarch64-unknown-linux-gnu
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
