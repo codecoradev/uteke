@@ -184,13 +184,19 @@ jobs:
       - name: Extract binaries for Docker context
         run: |
           mkdir -p binaries
+          # Artifacts are uploaded as release/*.tar.gz, so find them recursively
           cd release-artifacts
-          # Extract amd64
-          tar xzf uteke-x86_64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz -C ../binaries --strip-components=1
+          AMD64=$(find . -name "uteke-x86_64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz" | head -1)
+          ARM64=$(find . -name "uteke-aarch64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz" | head -1)
+          if [ -z "$AMD64" ] || [ -z "$ARM64" ]; then
+            echo "::error::Linux binary artifacts not found"
+            echo "Available files:" && find . -type f | head -20
+            exit 1
+          fi
+          tar xzf "$AMD64" -C ../binaries --strip-components=1
           mv ../binaries/uteke ../binaries/uteke-amd64
           mv ../binaries/uteke-serve ../binaries/uteke-serve-amd64
-          # Extract arm64
-          tar xzf uteke-aarch64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz -C ../binaries --strip-components=1
+          tar xzf "$ARM64" -C ../binaries --strip-components=1
           mv ../binaries/uteke ../binaries/uteke-arm64
           mv ../binaries/uteke-serve ../binaries/uteke-serve-arm64
           chmod +x ../binaries/*
