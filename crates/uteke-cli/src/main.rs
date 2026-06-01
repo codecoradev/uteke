@@ -704,12 +704,17 @@ fn main() {
 
     if server_available {
         tracing::info!("Server detected at {server_url}, routing via HTTP");
-        let result = run_via_server(&cli, &server_url);
-        if let Err(e) = result {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
+        match run_via_server(&cli, &server_url) {
+            Ok(()) => return,
+            Err(e) if e == "unsupported" => {
+                tracing::info!("Command not supported via server, using local store");
+                // Fall through to local store
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
         }
-        return;
     }
 
     // Fallback: open local store (cold start ~1s)
@@ -930,7 +935,7 @@ fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> {
         }
         // Commands not supported via server fall through to local
         _ => {
-            return Err("This command requires local store. Disable server mode to use it.".into());
+            return Err("unsupported".into());
         }
     }
     Ok(())
