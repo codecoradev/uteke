@@ -5,13 +5,12 @@ ARG TARGETARCH
 ARG VERSION=v0.0.5
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates && \
+    ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Select correct binary for target architecture
-# TARGETARCH is set by Docker buildx: amd64 or arm64
+# Copy CI-downloaded binaries (preferred).
 COPY binaries/ ./
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
       mv uteke-arm64 uteke && mv uteke-serve-arm64 uteke-serve && \
@@ -26,19 +25,23 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 && \
+    ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy binaries
 COPY --from=builder /build/uteke /usr/local/bin/uteke
 COPY --from=builder /build/uteke-serve /usr/local/bin/uteke-serve
 
-# Copy embedding model (downloaded in CI)
+# Copy embedding model (pre-baked by CI)
 COPY models/ /data/models/embeddinggemma-q4
 
-# Data directory (mount volume here)
+# Copy entrypoint script (handles lazy model download)
+COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Data directory (mount volume here for persistence)
 ENV UTEKE_HOME=/data
 
 EXPOSE 8767
 
-ENTRYPOINT ["uteke-serve"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

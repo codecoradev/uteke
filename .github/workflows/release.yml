@@ -152,7 +152,7 @@ jobs:
 
   docker:
     name: Build & Push Docker Image
-    needs: [release]
+    needs: [build-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -174,24 +174,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Download release binaries
+      - name: Download Linux binaries from build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: uteke-*-${{ github.ref_name }}
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Extract binaries for Docker context
         run: |
           mkdir -p binaries
-          VERSION="${{ github.ref_name }}"
-          # Download amd64 binary
-          curl -fSL --retry 3 --retry-delay 5 \
-            "https://github.com/ajianaz/uteke/releases/download/${VERSION}/uteke-x86_64-unknown-linux-gnu-${VERSION}.tar.gz" \
-            | tar xz -C binaries --strip-components=1
-          mv binaries/uteke binaries/uteke-amd64
-          mv binaries/uteke-serve binaries/uteke-serve-amd64
-          # Download arm64 binary
-          curl -fSL --retry 3 --retry-delay 5 \
-            "https://github.com/ajianaz/uteke/releases/download/${VERSION}/uteke-aarch64-unknown-linux-gnu-${VERSION}.tar.gz" \
-            | tar xz -C binaries --strip-components=1
-          mv binaries/uteke binaries/uteke-arm64
-          mv binaries/uteke-serve binaries/uteke-serve-arm64
-          chmod +x binaries/*
-          ls -lh binaries/
+          cd release-artifacts
+          # Extract amd64
+          tar xzf uteke-x86_64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz -C ../binaries --strip-components=1
+          mv ../binaries/uteke ../binaries/uteke-amd64
+          mv ../binaries/uteke-serve ../binaries/uteke-serve-amd64
+          # Extract arm64
+          tar xzf uteke-aarch64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz -C ../binaries --strip-components=1
+          mv ../binaries/uteke ../binaries/uteke-arm64
+          mv ../binaries/uteke-serve ../binaries/uteke-serve-arm64
+          chmod +x ../binaries/*
+          ls -lh ../binaries/
 
       - name: Download embedding model
         run: |
