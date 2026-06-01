@@ -13,7 +13,7 @@ inputs:
   cora-version:
     description: 'cora-cli version tag (default: latest release)'
     required: false
-    default: 'v0.1.2'
+    default: 'latest'
   upload-sarif:
     description: 'Upload SARIF to GitHub Code Scanning (default: false)'
     required: false
