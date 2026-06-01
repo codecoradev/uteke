@@ -174,6 +174,39 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Download release binaries
+        run: |
+          mkdir -p binaries
+          VERSION="${{ github.ref_name }}"
+          # Download amd64 binary
+          curl -fSL --retry 3 --retry-delay 5 \
+            "https://github.com/ajianaz/uteke/releases/download/${VERSION}/uteke-x86_64-unknown-linux-gnu-${VERSION}.tar.gz" \
+            | tar xz -C binaries --strip-components=1
+          mv binaries/uteke binaries/uteke-amd64
+          mv binaries/uteke-serve binaries/uteke-serve-amd64
+          # Download arm64 binary
+          curl -fSL --retry 3 --retry-delay 5 \
+            "https://github.com/ajianaz/uteke/releases/download/${VERSION}/uteke-aarch64-unknown-linux-gnu-${VERSION}.tar.gz" \
+            | tar xz -C binaries --strip-components=1
+          mv binaries/uteke binaries/uteke-arm64
+          mv binaries/uteke-serve binaries/uteke-serve-arm64
+          chmod +x binaries/*
+          ls -lh binaries/
+
+      - name: Download embedding model
+        run: |
+          mkdir -p models/onnx
+          curl -fSL --retry 3 --retry-delay 5 \
+            -o models/onnx/model_q4.onnx \
+            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx"
+          curl -fSL --retry 3 --retry-delay 5 \
+            -o models/onnx/model_q4.onnx_data \
+            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx_data"
+          curl -fSL --retry 3 --retry-delay 5 \
+            -o models/tokenizer.json \
+            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json"
+          ls -lh models/onnx/ models/tokenizer.json
+
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
@@ -184,28 +217,14 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push (linux/amd64)
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64/v8
           build-args: |
             VERSION=${{ github.ref_name }}
-            TARGET=x86_64-unknown-linux-gnu
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Build and push (linux/arm64)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/arm64/v8
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            TARGET=aarch64-unknown-linux-gnu
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
