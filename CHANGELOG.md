@@ -5,6 +5,46 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.5] — 2026-06-01
+
+### Added
+
+- **UTEKE_HOME environment variable** — single env var to override all `dirs::home_dir()` paths
+  - Affects: database path (`uteke.db`), vector index (`uteke_index.usearch`), model cache (`models/`)
+  - Default: `$HOME/.uteke` when not set
+  - Essential for Docker volume mounts and custom data directories
+- **Server reads uteke.toml config** — `uteke-serve` now respects configuration file
+  - Reads `[server]` section: `host`, `port`
+  - Default host changed to `0.0.0.0` (was `127.0.0.1`) for Docker/network compatibility
+  - Config loaded at startup, printed to logs
+- **Smart server fallback** — CLI auto-falls back to local mode for server-unsupported commands
+  - Commands not yet available via HTTP API gracefully fall back to local execution
+  - No more error when `server.enabled = true` and command lacks server endpoint
+- **API parity — expanded remember endpoint** — `POST /remember` now accepts all CLI fields
+  - `memory_type`, `detect_contradiction`, `valid_from`, `valid_until` parameters
+  - Returns contradiction detection result when enabled
+- **GET /memory endpoint** — retrieve single memory by ID via `GET /memory?id=<id>`
+- **DELETE /forget bulk operations** — `DELETE /forget?all=true&cold=true` for mass deletion
+- **Multi-stage Dockerfile** — production-ready Docker image for `uteke-serve`
+  - Base: `debian:bookworm-slim` (glibc/ONNX compatible)
+  - Model baked into image at build time (~208MB total)
+  - Non-root user, health check endpoint, configurable via env vars
+- **Docker image CI** — automatic build and push to GHCR on release
+  - Multi-platform: `linux/amd64` + `linux/arm64`
+  - Buildx with cache, tags: `latest` + version tag
+- **Release notes from CHANGELOG.md** — dynamic extraction via `awk` (no hardcoded notes)
+
+### Changed
+
+- Server default host: `127.0.0.1` → `0.0.0.0` (Docker/network accessible)
+- Cora review action: hardcoded version → `latest` (auto-updates)
+
+### Fixed
+
+- Pre-existing format issue: `.to_string_lossy().to_string()` chain cleaned up
+
+[0.0.5]: https://github.com/ajianaz/uteke/releases/tag/v0.0.5
+
 ## [0.0.4] — 2026-05-31
 
 ### Added
