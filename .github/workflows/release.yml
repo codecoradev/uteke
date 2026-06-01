@@ -193,10 +193,10 @@ jobs:
             echo "Available files:" && find . -type f | head -20
             exit 1
           fi
-          tar xzf "$AMD64" -C ../binaries --strip-components=1
+          tar xzf "$AMD64" -C ../binaries
           mv ../binaries/uteke ../binaries/uteke-amd64
           mv ../binaries/uteke-serve ../binaries/uteke-serve-amd64
-          tar xzf "$ARM64" -C ../binaries --strip-components=1
+          tar xzf "$ARM64" -C ../binaries
           mv ../binaries/uteke ../binaries/uteke-arm64
           mv ../binaries/uteke-serve ../binaries/uteke-serve-arm64
           chmod +x ../binaries/*
