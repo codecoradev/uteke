@@ -278,10 +278,10 @@ fn route(
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 fn main() {
-    // Parse CLI args
+    // Parse CLI args — these override config
     let args: Vec<String> = std::env::args().collect();
-    let mut host = "127.0.0.1".to_string();
-    let mut port: u16 = 8767;
+    let mut cli_host: Option<String> = None;
+    let mut cli_port: Option<u16> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -289,16 +289,16 @@ fn main() {
             "--host" => {
                 i += 1;
                 if i < args.len() {
-                    host = args[i].clone();
+                    cli_host = Some(args[i].clone());
                 }
             }
             "--port" => {
                 i += 1;
                 if i < args.len() {
-                    port = args[i].parse().unwrap_or_else(|e| {
+                    cli_port = Some(args[i].parse().unwrap_or_else(|e| {
                         eprintln!("Invalid port: {e}");
                         std::process::exit(1);
-                    });
+                    }));
                 }
             }
             "--help" | "-h" => {
@@ -307,9 +307,15 @@ fn main() {
                 println!("Usage: uteke-serve [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  --host <HOST>  Bind address (default: 127.0.0.1)");
+                println!("  --host <HOST>  Bind address (default: 0.0.0.0)");
                 println!("  --port <PORT>  Port number (default: 8767)");
                 println!("  -h, --help     Show this help");
+                println!();
+                println!("Config: reads [server] section from uteke.toml");
+                println!("  CLI args override config values.");
+                println!();
+                println!("Environment:");
+                println!("  UTEKE_HOME    Data directory (default: ~/.uteke)");
                 println!();
                 println!("API:");
                 println!("  GET  /health              → {{ status, memories }}");
@@ -332,6 +338,16 @@ fn main() {
         }
         i += 1;
     }
+
+    // Load config: defaults → uteke.toml → CLI args
+    let config = load_uteke_toml();
+    let config_host = config.server.as_ref().and_then(|s| s.host.clone())
+        .unwrap_or_else(|| "0.0.0.0".to_string());
+    let config_port = config.server.as_ref().and_then(|s| s.port)
+        .unwrap_or(8767);
+
+    let host = cli_host.unwrap_or(config_host);
+    let port = cli_port.unwrap_or(config_port);
 
     // Logging
     tracing_subscriber::fmt()
@@ -399,3 +415,44 @@ fn main() {
 
     info!("Goodbye.");
 }
+
+// ── Config Loading ────────────────────────────────────────────────────────
+
+/// Minimal [server] config section for parsing uteke.toml.
+#[derive(serde::Deserialize, Default)]
+struct ServerFileConfig {
+    server: Option<ServerFileSection>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct ServerFileSection {
+    host: Option<String>,
+    port: Option<u16>,
+}
+
+/// Find and parse the nearest uteke.toml, looking at:
+/// 1. $UTEKE_HOME/uteke.toml (or ~/.uteke/uteke.toml)
+/// 2. $CWD/.uteke/uteke.toml
+fn load_uteke_toml() -> ServerFileConfig {
+    let mut config = ServerFileConfig::default();
+
+    let paths = [
+        uteke_core::uteke_home().join("uteke.toml"),
+        std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join(".uteke").join("uteke.toml")),
+    ];
+
+    for path in paths.into_iter().flatten() {
+        if path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(parsed) = toml::from_str::<ServerFileConfig>(&content) {
+                    config = parsed;
+                }
+            }
+        }
+    }
+
+    config
+}
+
