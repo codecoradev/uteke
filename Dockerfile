@@ -13,8 +13,9 @@ WORKDIR /build
 # Download release binary (contains uteke + uteke-serve)
 RUN ARCHIVE="uteke-${TARGET}-${VERSION}.tar.gz" && \
     URL="https://github.com/ajianaz/uteke/releases/download/${VERSION}/${ARCHIVE}" && \
-    echo "Downloading ${ARCHIVE}..." && \
-    curl -fsSL "${URL}" -o "/tmp/${ARCHIVE}" && \
+    echo "Downloading ${ARCHIVE} from ${URL}..." && \
+    curl --retry 3 --retry-delay 5 --connect-timeout 30 -fSL "${URL}" -o "/tmp/${ARCHIVE}" && \
+    echo "Extracting..." && \
     tar xzf "/tmp/${ARCHIVE}" --strip-components=1 && \
     rm "/tmp/${ARCHIVE}" && \
     chmod +x uteke uteke-serve && \
@@ -23,12 +24,15 @@ RUN ARCHIVE="uteke-${TARGET}-${VERSION}.tar.gz" && \
 # Download embedding model (~208MB)
 RUN mkdir -p /models/onnx && \
     echo "Downloading embedding model (this may take a minute)..." && \
-    curl -fsSL -o /models/onnx/model_q4.onnx \
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx" && \
-    curl -fsSL -o /models/onnx/model_q4.onnx_data \
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx_data" && \
-    curl -fsSL -o /models/tokenizer.json \
-    "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json" && \
+    curl --retry 3 --retry-delay 5 --connect-timeout 30 -fSL \
+        -o /models/onnx/model_q4.onnx \
+        "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx" && \
+    curl --retry 3 --retry-delay 5 --connect-timeout 30 -fSL \
+        -o /models/onnx/model_q4.onnx_data \
+        "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx_data" && \
+    curl --retry 3 --retry-delay 5 --connect-timeout 30 -fSL \
+        -o /models/tokenizer.json \
+        "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json" && \
     echo "Model download complete." && \
     ls -lh /models/onnx/ /models/tokenizer.json
 
