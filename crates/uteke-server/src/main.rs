@@ -342,12 +342,8 @@ fn main() {
         .init();
 
     // Open store
-    let home = dirs::home_dir().expect("Cannot determine home directory");
-    let db_path = home
-        .join(".uteke")
-        .join("uteke.db")
-        .to_string_lossy()
-        .to_string();
+    let home = uteke_core::uteke_home();
+    let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
     let uteke = match Uteke::open(&db_path) {

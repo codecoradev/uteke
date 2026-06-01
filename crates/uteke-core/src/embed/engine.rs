@@ -124,9 +124,7 @@ impl EmbeddingEngine {
     }
 
     fn model_dir() -> Result<PathBuf, Error> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| Error::Embedding("Cannot determine home directory".into()))?;
-        Ok(home.join(".uteke").join("models").join(MODEL_DIR_NAME))
+        Ok(crate::uteke_home().join("models").join(MODEL_DIR_NAME))
     }
 }
 

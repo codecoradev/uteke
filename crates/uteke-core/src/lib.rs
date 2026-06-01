@@ -24,8 +24,28 @@ use memory::vector::euclidean_to_cosine;
 use memory::VectorIndex;
 
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// Resolve uteke data directory.
+///
+/// Uses `UTEKE_HOME` environment variable when set, otherwise falls back to
+/// `~/.uteke`. This allows Docker containers and custom deployments to
+/// override the default storage location.
+///
+/// ```text
+/// UTEKE_HOME=/data   → /data
+/// (not set)           → ~/.uteke
+/// ```
+pub fn uteke_home() -> PathBuf {
+    if let Ok(home) = std::env::var("UTEKE_HOME") {
+        PathBuf::from(home)
+    } else {
+        dirs::home_dir()
+            .expect("Cannot determine home directory. Set UTEKE_HOME or HOME.")
+            .join(".uteke")
+    }
+}
 
 /// Uteke — AI agent memory engine.
 ///
@@ -423,9 +443,7 @@ impl Uteke {
         }
 
         // 4. Embedding model
-        let model_dir = dirs::home_dir()
-            .map(|h| h.join(".uteke").join("models").join("embeddinggemma-q4"))
-            .unwrap_or_default();
+        let model_dir = uteke_home().join("models").join("embeddinggemma-q4");
         let model_file = model_dir.join("onnx").join("model_q4.onnx");
         let tokenizer_file = model_dir.join("tokenizer.json");
         let model_exists = model_file.exists() && tokenizer_file.exists();
