@@ -343,10 +343,12 @@ fn main() {
 
     // Load config: defaults → uteke.toml → CLI args
     let config = load_uteke_toml();
-    let config_host = config.server.as_ref().and_then(|s| s.host.clone())
+    let config_host = config
+        .server
+        .as_ref()
+        .and_then(|s| s.host.clone())
         .unwrap_or_else(|| "0.0.0.0".to_string());
-    let config_port = config.server.as_ref().and_then(|s| s.port)
-        .unwrap_or(8767);
+    let config_port = config.server.as_ref().and_then(|s| s.port).unwrap_or(8767);
 
     let host = cli_host.unwrap_or(config_host);
     let port = cli_port.unwrap_or(config_port);
@@ -438,9 +440,7 @@ struct ServerFileSection {
 fn load_uteke_toml() -> ServerFileConfig {
     let mut config = ServerFileConfig::default();
 
-    let mut paths: Vec<PathBuf> = vec![
-        uteke_core::uteke_home().join("uteke.toml"),
-    ];
+    let mut paths: Vec<PathBuf> = vec![uteke_core::uteke_home().join("uteke.toml")];
     if let Ok(cwd) = std::env::current_dir() {
         paths.push(cwd.join(".uteke").join("uteke.toml"));
     }
@@ -457,4 +457,3 @@ fn load_uteke_toml() -> ServerFileConfig {
 
     config
 }
-
