@@ -10,12 +10,6 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
-permissions:
-  contents: read
-  security-events: write
-  pull-requests: write
-  id-token: write
-
 jobs:
   check:
     name: Check
@@ -65,25 +59,3 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --workspace
 
-  cora-review:
-    name: Cora Review
-    runs-on: ubuntu-latest
-    needs: [check, fmt, clippy, test]
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      security-events: write
-      pull-requests: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-
-      - uses: ./.github/actions/cora-review
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          infisical-identity-id: ${{ secrets.INFISICAL_IDENTITY_ID }}
