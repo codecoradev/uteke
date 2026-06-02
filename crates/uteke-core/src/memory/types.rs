@@ -13,7 +13,7 @@ pub struct Memory {
     /// The text content of the memory.
     pub content: String,
     /// 768-dimensional embedding vector.
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub embedding: Vec<f32>,
     /// Tags for categorization.
     pub tags: Vec<String>,

@@ -1085,7 +1085,7 @@ mod tests {
 
         // Embedding is skipped in JSON output (skip_serializing)
         assert!(
-            !v.get("embedding").is_some(),
+            v.get("embedding").is_none(),
             "embedding should not be in JSON output"
         );
 
