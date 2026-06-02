@@ -1439,7 +1439,7 @@ mod tests {
         store.insert(&make_test_memory("1", "cold-1", &[])).unwrap();
         store.insert(&make_test_memory("2", "cold-2", &[])).unwrap();
 
-        let deleted = store.bulk_delete_cold(None).unwrap();
+        let deleted = store.bulk_delete_cold(None, 30).unwrap();
         assert_eq!(deleted.len(), 2);
         assert_eq!(store.count(None).unwrap(), 0);
     }
@@ -1472,7 +1472,7 @@ mod tests {
         store.insert(&make_test_memory("2", "b", &[])).unwrap();
         store.insert(&make_test_memory("3", "c", &[])).unwrap();
 
-        let (hot, warm, cold) = store.tier_counts(None).unwrap();
+        let (hot, warm, cold) = store.tier_counts(None, 7, 30).unwrap();
         assert_eq!(hot, 0);
         assert_eq!(warm, 0);
         assert_eq!(cold, 3);
@@ -1488,10 +1488,10 @@ mod tests {
             .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
             .unwrap();
 
-        let (_, _, cold_a) = store.tier_counts(Some("ns-a")).unwrap();
+        let (_, _, cold_a) = store.tier_counts(Some("ns-a"), 7, 30).unwrap();
         assert_eq!(cold_a, 1);
 
-        let (_, _, cold_b) = store.tier_counts(Some("ns-b")).unwrap();
+        let (_, _, cold_b) = store.tier_counts(Some("ns-b"), 7, 30).unwrap();
         assert_eq!(cold_b, 1);
     }
 
@@ -1855,7 +1855,7 @@ mod tests {
     #[test]
     fn test_bulk_delete_cold_empty() {
         let store = Store::open(":memory:").unwrap();
-        let deleted = store.bulk_delete_cold(None).unwrap();
+        let deleted = store.bulk_delete_cold(None, 30).unwrap();
         assert!(deleted.is_empty());
     }
 
