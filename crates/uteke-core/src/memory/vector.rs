@@ -248,7 +248,10 @@ impl VectorIndex {
             ..Default::default()
         };
 
-        Index::new(&options).expect("Failed to create usearch index")
+        match Index::new(&options) {
+            Ok(idx) => idx,
+            Err(e) => panic!("FATAL: Failed to create usearch index (dims={dims}): {e}. This is likely an out-of-memory condition."),
+        }
     }
 }
 

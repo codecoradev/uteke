@@ -28,6 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Create non-root user
+RUN groupadd --system --gid 1000 uteke && \
+    useradd --system --uid 1000 --gid uteke --home /data uteke
+
 # Copy binaries
 COPY --from=builder /build/uteke /usr/local/bin/uteke
 COPY --from=builder /build/uteke-serve /usr/local/bin/uteke-serve
@@ -41,6 +45,11 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 
 # Data directory (mount volume here for persistence)
 ENV UTEKE_HOME=/data
+
+# Create data directory with correct ownership
+RUN mkdir -p /data && chown uteke:uteke /data
+
+USER uteke
 
 EXPOSE 8767
 

@@ -935,6 +935,15 @@ impl Uteke {
             imported += 1;
         }
 
+        // Persist vector index after import completes
+        if imported > 0 {
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            index.save()?;
+        }
+
         Ok(ImportResult { imported, skipped })
     }
 }
@@ -1072,11 +1081,25 @@ mod tests {
         };
 
         let json = serde_json::to_string(&m).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // Embedding is skipped in JSON output (skip_serializing)
+        assert!(
+            v.get("embedding").is_none(),
+            "embedding should not be in JSON output"
+        );
+
+        // Other fields should serialize correctly
+        assert_eq!(v["id"], m.id);
+        assert_eq!(v["content"], m.content);
+        assert_eq!(v["tags"].as_array().unwrap().len(), 2);
+
+        // Deserialization produces empty embedding (expected — populated programmatically)
         let restored: Memory = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.id, m.id);
         assert_eq!(restored.content, m.content);
         assert_eq!(restored.tags, m.tags);
-        assert_eq!(restored.embedding.len(), 768);
+        assert!(restored.embedding.is_empty());
     }
 
     #[test]
