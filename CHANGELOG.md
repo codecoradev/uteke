@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.7] — 2026-06-02
+
+### Added
+
+- **Tag storage: `json_each()` queries** — All 8 tag query methods refactored from `LIKE '%\"tag\"%'` to `json_each()` for exact matching and performance (#120)
+- **Config wiring: tier thresholds** — `TierConfig` struct with configurable `hot_days`, `warm_days`, `hot_boost`; `Uteke::open_with_tier()` accepts custom config (#127)
+- **Test coverage: 34 → 94 tests** — Comprehensive tests for store, lib, and config modules (#129)
+- **Config tests** — 7 new tests for `merge_from_file`, `expand_tilde`, `set_namespace_in_toml` (#129)
+
+### Changed
+
+- **`MemoryTier::from_last_accessed()`** — Now accepts `hot_days` and `warm_days` parameters (was hardcoded 7/30)
+- **`tags_with_counts()`** — N+1 query pattern replaced with single `GROUP BY` via `json_each()`
+- **`unique_tags()`** — SQL returns individual tag values directly (no in-Rust JSON parsing)
+- **`tier_counts()` and `bulk_delete_cold()`** — Now accept configurable threshold parameters
+
+### Fixed
+
+- **Tag substring false positives** — Tag `"rust"` no longer matches memory tagged `"rustacean"`
+- **README configuration docs** — Fixed config search paths, removed non-existent `--config` flag, corrected TOML format (#128)
+
 ## [0.0.6] — 2026-06-02
 
 ### Fixed
@@ -247,6 +268,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
+[0.0.7]: https://github.com/ajianaz/uteke/releases/tag/v0.0.7
 [0.0.6]: https://github.com/ajianaz/uteke/releases/tag/v0.0.6
 [0.0.5]: https://github.com/ajianaz/uteke/releases/tag/v0.0.5
 [0.0.4]: https://github.com/ajianaz/uteke/releases/tag/v0.0.4
