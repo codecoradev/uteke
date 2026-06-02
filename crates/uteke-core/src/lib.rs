@@ -935,6 +935,15 @@ impl Uteke {
             imported += 1;
         }
 
+        // Persist vector index after import completes
+        if imported > 0 {
+            let mut index = self
+                .index
+                .lock()
+                .map_err(|_| Error::Database("Failed to acquire index lock".into()))?;
+            index.save()?;
+        }
+
         Ok(ImportResult { imported, skipped })
     }
 }
