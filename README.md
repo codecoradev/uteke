@@ -104,7 +104,6 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 |------|-------------|
 | `--store <path>` | Override store location (default: `~/.uteke`) |
 | `--namespace <name>` | Namespace for multi-agent isolation (default: `"default"`) |
-| `--config <path>` | Override config file path |
 | `--json` | Output as JSON (all commands) |
 | `--verbose` | Enable debug logging |
 
@@ -244,22 +243,31 @@ uteke completions fish  > ~/.config/fish/completions/uteke.fish
 
 Uteke supports `uteke.toml` configuration with layered resolution:
 
-1. `./uteke.toml` (current directory)
-2. Parent directories up to root
-3. `~/.config/uteke/uteke.toml` (user-level)
-4. Built-in defaults
+1. `.uteke/uteke.toml` (project-level, in cwd)
+2. `~/.uteke/uteke.toml` (global user-level)
+3. Built-in defaults
 
 ```toml
-store_path = "~/.uteke"
-log_level = "info"
-log_dir = "~/.uteke/logs"
-default_namespace = "default"
-```
+[store]
+path = "~/.uteke"
+namespace = "default"
 
-Override config file path with `--config`:
+[embedding]
+model = "embeddinggemma-q4"
+max_seq_length = 256
 
-```bash
-uteke --config ./my-config.toml remember "project-specific note"
+[tier]
+hot_days = 7
+warm_days = 30
+hot_boost = 0.1
+
+[logging]
+level = "warn"
+
+[server]
+enabled = false
+host = "127.0.0.1"
+port = 8767
 ```
 
 ---
