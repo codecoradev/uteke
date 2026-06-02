@@ -1289,13 +1289,16 @@ mod tests {
         let long_ago = now - chrono::Duration::days(60);
         let recent = now - chrono::Duration::days(3);
 
-        assert_eq!(MemoryTier::from_last_accessed(None), MemoryTier::Cold);
         assert_eq!(
-            MemoryTier::from_last_accessed(Some(recent)),
+            MemoryTier::from_last_accessed(None, 7, 30),
+            MemoryTier::Cold
+        );
+        assert_eq!(
+            MemoryTier::from_last_accessed(Some(recent), 7, 30),
             MemoryTier::Hot
         );
         assert_eq!(
-            MemoryTier::from_last_accessed(Some(long_ago)),
+            MemoryTier::from_last_accessed(Some(long_ago), 7, 30),
             MemoryTier::Cold
         );
     }

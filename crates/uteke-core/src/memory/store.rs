@@ -536,20 +536,6 @@ impl Store {
         Ok(result)
     }
 
-    /// Count how many memories use a specific tag.
-    fn count_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
-        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let count: usize = self
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
-                rusqlite::params![ns, tag],
-                |row| row.get(0),
-            )
-            .map_err(|e| Error::Database(e.to_string()))?;
-        Ok(count)
-    }
-
     /// Rename a tag across all memories. Returns number updated.
     ///
     /// Uses `json_each()` to find affected rows precisely, then updates the
