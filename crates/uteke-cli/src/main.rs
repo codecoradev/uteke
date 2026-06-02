@@ -730,7 +730,14 @@ fn main() {
     tracing::debug!("Opening store at: {store_path}");
 
     // Install SIGINT handler for graceful shutdown
-    let uteke = match Uteke::open(&store_path) {
+    let uteke = match Uteke::open_with_tier(
+        &store_path,
+        uteke_core::TierConfig {
+            hot_days: config.tier.hot_days as i64,
+            warm_days: config.tier.warm_days as i64,
+            hot_boost: config.tier.hot_boost,
+        },
+    ) {
         Ok(u) => u,
         Err(e) => {
             eprintln!("Error: Failed to open memory store: {e}");

@@ -27,6 +27,32 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// Configuration for memory tier thresholds.
+///
+/// Controls how memories are classified into hot/warm/cold tiers
+/// and how hot memories are boosted in recall scoring.
+///
+/// Defaults match the hardcoded values used before config wiring (#127).
+#[derive(Debug, Clone, Copy)]
+pub struct TierConfig {
+    /// Days before memory moves from hot → warm.
+    pub hot_days: i64,
+    /// Days before memory moves from warm → cold.
+    pub warm_days: i64,
+    /// Score boost added to hot memories during recall.
+    pub hot_boost: f64,
+}
+
+impl Default for TierConfig {
+    fn default() -> Self {
+        Self {
+            hot_days: 7,
+            warm_days: 30,
+            hot_boost: 0.1,
+        }
+    }
+}
+
 /// Resolve uteke data directory.
 ///
 /// Uses `UTEKE_HOME` environment variable when set, otherwise falls back to
@@ -55,6 +81,7 @@ pub struct Uteke {
     store: Store,
     index: Mutex<VectorIndex>,
     embedder: Mutex<EmbeddingEngine>,
+    tier_config: TierConfig,
 }
 
 impl Uteke {
@@ -66,7 +93,7 @@ impl Uteke {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder)
+        Self::finish_open(store, embedder, TierConfig::default())
     }
 
     /// Open with a custom embedder (for testing).
@@ -75,7 +102,17 @@ impl Uteke {
         embedder: EmbeddingEngine,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, embedder)
+        Self::finish_open(store, embedder, TierConfig::default())
+    }
+
+    /// Open with custom tier configuration.
+    ///
+    /// Allows overriding hot_days, warm_days, and hot_boost from the
+    /// default 7/30/0.1 values. See [`TierConfig`].
+    pub fn open_with_tier(path: impl AsRef<Path>, tier_config: TierConfig) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        let embedder = EmbeddingEngine::new()?;
+        Self::finish_open(store, embedder, tier_config)
     }
 
     fn open_store(path: impl AsRef<Path>) -> Result<(String, Store), Error> {
@@ -85,7 +122,11 @@ impl Uteke {
         Ok((db_str, store))
     }
 
-    fn finish_open(store: Store, embedder: EmbeddingEngine) -> Result<Self, Error> {
+    fn finish_open(
+        store: Store,
+        embedder: EmbeddingEngine,
+        tier_config: TierConfig,
+    ) -> Result<Self, Error> {
         // Determine index path: same directory as SQLite DB
         let index_path = store.path().map(|p| {
             let dir = p.parent().unwrap_or(Path::new("."));
@@ -114,6 +155,7 @@ impl Uteke {
             store,
             index: Mutex::new(index),
             embedder: Mutex::new(embedder),
+            tier_config,
         })
     }
 
@@ -221,10 +263,14 @@ impl Uteke {
 
             let score = euclidean_to_cosine(distance);
 
-            // Boost hot memories (+0.1 bonus)
-            let tier = MemoryTier::from_last_accessed(memory.last_accessed);
+            // Boost hot memories (configurable boost)
+            let tier = MemoryTier::from_last_accessed(
+                memory.last_accessed,
+                self.tier_config.hot_days,
+                self.tier_config.warm_days,
+            );
             let boosted_score = match tier {
-                MemoryTier::Hot => (score + 0.1).min(1.0),
+                MemoryTier::Hot => (score + self.tier_config.hot_boost as f32).min(1.0),
                 _ => score,
             };
 
@@ -316,7 +362,9 @@ impl Uteke {
 
     /// Bulk delete all cold memories. Also removes from index.
     pub fn bulk_forget_cold(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
-        let ids = self.store.bulk_delete_cold(namespace)?;
+        let ids = self
+            .store
+            .bulk_delete_cold(namespace, self.tier_config.warm_days)?;
         let mut index = self
             .index
             .lock()
@@ -524,7 +572,11 @@ impl Uteke {
     pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
         let total_memories = self.store.count(namespace)?;
         let unique_tags = self.store.unique_tags(namespace)?.len();
-        let (hot, warm, cold) = self.store.tier_counts(namespace)?;
+        let (hot, warm, cold) = self.store.tier_counts(
+            namespace,
+            self.tier_config.hot_days,
+            self.tier_config.warm_days,
+        )?;
 
         let db_size_bytes = self
             .store
@@ -546,7 +598,11 @@ impl Uteke {
     /// Get aging status — breakdown of memories by access tier.
     pub fn aging_status(&self, namespace: Option<&str>) -> Result<AgingStatus, Error> {
         let total = self.store.count(namespace)?;
-        let (hot, warm, cold) = self.store.tier_counts(namespace)?;
+        let (hot, warm, cold) = self.store.tier_counts(
+            namespace,
+            self.tier_config.hot_days,
+            self.tier_config.warm_days,
+        )?;
         let never_accessed = self.store.count_never_accessed(namespace)?;
 
         Ok(AgingStatus {
@@ -1145,5 +1201,271 @@ mod tests {
         let restored: StoreStats = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.total_memories, 42);
         assert_eq!(restored.unique_tags, 5);
+    }
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let v = vec![1.0, 0.0, 0.0, 0.0, 0.0];
+        assert!((cosine_similarity(&v, &v) - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        assert!((cosine_similarity(&a, &b)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty() {
+        assert_eq!(cosine_similarity(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_different_lengths() {
+        let a = vec![1.0, 2.0];
+        let b = vec![1.0];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_zero_vector() {
+        let a = vec![0.0, 0.0, 0.0];
+        let b = vec![1.0, 2.0, 3.0];
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_cosine_similarity_opposite() {
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![-1.0, 0.0, 0.0];
+        // cosine_similarity clamps to [0, 1]
+        assert_eq!(cosine_similarity(&a, &b), 0.0);
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(500), "500 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+        assert_eq!(format_bytes(1048576), "1.0 MB");
+        assert_eq!(format_bytes(1572864), "1.5 MB");
+    }
+
+    #[test]
+    fn test_resolve_db_path_memory() {
+        let path = std::path::Path::new(":memory:");
+        assert_eq!(resolve_db_path(path).unwrap(), ":memory:");
+    }
+
+    #[test]
+    fn test_uteke_home_with_env() {
+        std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
+        let home = uteke_home();
+        assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
+        std::env::remove_var("UTEKE_HOME");
+    }
+
+    #[test]
+    fn test_aging_status_type_serialization() {
+        let status = AgingStatus {
+            total: 100,
+            hot: 10,
+            warm: 20,
+            cold: 50,
+            never_accessed: 20,
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        let restored: AgingStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.total, 100);
+        assert_eq!(restored.never_accessed, 20);
+    }
+
+    #[test]
+    fn test_memory_tier_from_last_accessed() {
+        use crate::memory::types::MemoryTier;
+
+        let now = chrono::Utc::now();
+        let long_ago = now - chrono::Duration::days(60);
+        let recent = now - chrono::Duration::days(3);
+
+        assert_eq!(
+            MemoryTier::from_last_accessed(None, 7, 30),
+            MemoryTier::Cold
+        );
+        assert_eq!(
+            MemoryTier::from_last_accessed(Some(recent), 7, 30),
+            MemoryTier::Hot
+        );
+        assert_eq!(
+            MemoryTier::from_last_accessed(Some(long_ago), 7, 30),
+            MemoryTier::Cold
+        );
+    }
+
+    #[test]
+    fn test_export_entry_serialization() {
+        use crate::memory::types::ExportEntry;
+        let entry = ExportEntry {
+            content: "hello world".to_string(),
+            tags: vec!["greeting".to_string()],
+            metadata: serde_json::json!({}),
+            created_at: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let restored: ExportEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.content, "hello world");
+        assert_eq!(restored.tags.len(), 1);
+    }
+
+    #[test]
+    fn test_prune_result_serialization() {
+        use crate::memory::types::PruneResult;
+        let result = PruneResult {
+            pruned: 5,
+            ids: vec!["a".to_string(), "b".to_string()],
+            deprecated: 3,
+            deprecated_ids: vec!["c".to_string()],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: PruneResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.pruned, 5);
+        assert_eq!(restored.deprecated, 3);
+    }
+
+    #[test]
+    fn test_doctor_report_serialization() {
+        let report = DoctorReport {
+            checks: vec![
+                DoctorCheck {
+                    name: "DB".to_string(),
+                    status: DoctorStatus::Ok,
+                    detail: "ok".to_string(),
+                },
+                DoctorCheck {
+                    name: "Index".to_string(),
+                    status: DoctorStatus::Error,
+                    detail: "mismatch".to_string(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"DB\""));
+        assert!(json.contains("\"Error\""));
+    }
+
+    #[test]
+    fn test_verify_report_serialization() {
+        let report = VerifyReport {
+            db_count: 10,
+            index_count: 10,
+            consistent: true,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: VerifyReport = serde_json::from_str(&json).unwrap();
+        assert!(restored.consistent);
+    }
+
+    #[test]
+    fn test_repair_report_serialization() {
+        let report = RepairReport {
+            db_count: 10,
+            index_before: 5,
+            index_after: 10,
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        let restored: RepairReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.index_after, 10);
+    }
+
+    #[test]
+    fn test_consolidation_result_serialization() {
+        use crate::memory::types::ConsolidationResult;
+        let result = ConsolidationResult {
+            duplicates_found: 3,
+            merged: 2,
+            removed_ids: vec!["old1".to_string(), "old2".to_string()],
+            kept_ids: vec!["new1".to_string(), "new2".to_string()],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: ConsolidationResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.duplicates_found, 3);
+        assert_eq!(restored.merged, 2);
+    }
+
+    #[test]
+    fn test_similar_pair_serialization() {
+        use crate::memory::types::SimilarPair;
+        let pair = SimilarPair {
+            id_a: "a".to_string(),
+            content_a: "hello world foo bar baz extra long content preview".to_string(),
+            id_b: "b".to_string(),
+            content_b: "hello world different content".to_string(),
+            similarity: 0.95,
+        };
+        let json = serde_json::to_string(&pair).unwrap();
+        let restored: SimilarPair = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.similarity, 0.95);
+        assert!(restored.content_a.len() <= 80);
+    }
+
+    #[test]
+    fn test_memory_type_enum() {
+        use crate::memory::types::MemoryType;
+        assert_eq!(MemoryType::from_str_opt("fact"), Some(MemoryType::Fact));
+        assert_eq!(
+            MemoryType::from_str_opt("procedure"),
+            Some(MemoryType::Procedure)
+        );
+        assert_eq!(
+            MemoryType::from_str_opt("preference"),
+            Some(MemoryType::Preference)
+        );
+        assert_eq!(
+            MemoryType::from_str_opt("decision"),
+            Some(MemoryType::Decision)
+        );
+        assert_eq!(
+            MemoryType::from_str_opt("context"),
+            Some(MemoryType::Context)
+        );
+        assert_eq!(MemoryType::from_str_opt("unknown"), None);
+
+        assert_eq!(MemoryType::Fact.as_str(), "fact");
+        assert!(MemoryType::Fact.has_temporal_validity());
+        assert!(!MemoryType::Procedure.has_temporal_validity());
+    }
+
+    #[test]
+    fn test_bulk_delete_result_serialization() {
+        let result = BulkDeleteResult {
+            deleted: 3,
+            ids: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: BulkDeleteResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.deleted, 3);
+        assert_eq!(restored.ids.len(), 3);
+    }
+
+    #[test]
+    fn test_cleanup_result_serialization() {
+        let result = CleanupResult { deleted: 5 };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: CleanupResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.deleted, 5);
+    }
+
+    #[test]
+    fn test_contradiction_result_serialization() {
+        let result = ContradictionResult {
+            contradicted: true,
+            deprecated_id: Some("old-id".to_string()),
+            similarity: 0.85,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let restored: ContradictionResult = serde_json::from_str(&json).unwrap();
+        assert!(restored.contradicted);
+        assert_eq!(restored.similarity, 0.85);
     }
 }

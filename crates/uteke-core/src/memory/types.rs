@@ -75,15 +75,23 @@ pub enum MemoryTier {
 }
 
 impl MemoryTier {
-    /// Determine tier from last_accessed timestamp.
-    pub fn from_last_accessed(last_accessed: Option<chrono::DateTime<chrono::Utc>>) -> Self {
+    /// Determine tier from last_accessed timestamp and configurable thresholds.
+    ///
+    /// `hot_days`: memories accessed within this many days are Hot.
+    /// `warm_days`: memories accessed within this many days (but beyond hot) are Warm.
+    /// Beyond `warm_days` (or never accessed) → Cold.
+    pub fn from_last_accessed(
+        last_accessed: Option<chrono::DateTime<chrono::Utc>>,
+        hot_days: i64,
+        warm_days: i64,
+    ) -> Self {
         let Some(la) = last_accessed else {
             return MemoryTier::Cold;
         };
         let age = chrono::Utc::now() - la;
-        if age.num_days() <= 7 {
+        if age.num_days() <= hot_days {
             MemoryTier::Hot
-        } else if age.num_days() <= 30 {
+        } else if age.num_days() <= warm_days {
             MemoryTier::Warm
         } else {
             MemoryTier::Cold
