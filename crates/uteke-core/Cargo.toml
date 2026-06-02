@@ -17,7 +17,7 @@ thiserror = "1"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
 ndarray = "0.17"
 tokenizers = "0.23"
-dirs = "5"
+dirs = "6"
 tracing = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
