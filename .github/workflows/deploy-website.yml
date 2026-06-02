@@ -47,7 +47,7 @@ jobs:
           fi
 
       - name: Fetch secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.9
+        uses: Infisical/secrets-action@v1.0.16
         with:
           method: "oidc"
           identity-id: "6bd2b8d8-a9a3-4331-8b37-bf2764fc320b"
