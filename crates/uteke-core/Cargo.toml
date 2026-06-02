@@ -13,11 +13,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 usearch = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
-thiserror = "1"
+thiserror = "2"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
 ndarray = "0.17"
 tokenizers = "0.23"
-dirs = "5"
+dirs = "6"
 tracing = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
