@@ -230,7 +230,7 @@ impl Store {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
 
         let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE namespace = ?1 AND tags LIKE ?2 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
             None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         };
 
@@ -242,10 +242,7 @@ impl Store {
                     .prepare(sql)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 let rows = stmt
-                    .query_map(
-                        params![ns, format!("%\"{t}\"%"), limit, offset],
-                        row_to_memory,
-                    )
+                    .query_map(params![ns, t, limit, offset], row_to_memory)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::Database(e.to_string()))?;
@@ -358,12 +355,15 @@ impl Store {
     }
 
     /// Get all unique tags, optionally filtered by namespace.
+    ///
+    /// Uses `json_each()` to unnest the JSON array stored in `tags` so SQLite
+    /// returns individual tag values directly — no in-Rust JSON parsing needed.
     pub fn unique_tags(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
         let sql = match namespace {
             Some(_) => {
-                "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL AND namespace = ?1"
+                "SELECT DISTINCT je.value FROM memories, json_each(memories.tags) AS je WHERE namespace = ?1"
             }
-            None => "SELECT DISTINCT tags FROM memories WHERE tags IS NOT NULL",
+            None => "SELECT DISTINCT je.value FROM memories, json_each(memories.tags) AS je",
         };
 
         let mut stmt = self
@@ -371,27 +371,20 @@ impl Store {
             .prepare(sql)
             .map_err(|e| Error::Database(e.to_string()))?;
 
-        let rows: Vec<Result<String, rusqlite::Error>> = match namespace {
+        let rows = match namespace {
             Some(ns) => stmt
-                .query_map(params![ns], |row: &rusqlite::Row| row.get(0))
+                .query_map(params![ns], |row: &rusqlite::Row| row.get::<_, String>(0))
                 .map_err(|e| Error::Database(e.to_string()))?
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::Database(e.to_string()))?,
             None => stmt
-                .query_map([], |row: &rusqlite::Row| row.get(0))
+                .query_map([], |row: &rusqlite::Row| row.get::<_, String>(0))
                 .map_err(|e| Error::Database(e.to_string()))?
-                .collect(),
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::Database(e.to_string()))?,
         };
 
-        let mut all_tags = std::collections::HashSet::new();
-        for row in rows {
-            let tags_str = row.map_err(|e| Error::Database(e.to_string()))?;
-            if let Ok(tags) = serde_json::from_str::<Vec<String>>(&tags_str) {
-                for tag in tags {
-                    all_tags.insert(tag);
-                }
-            }
-        }
-        Ok(all_tags.into_iter().collect())
+        Ok(rows)
     }
 
     /// List all distinct namespaces.
@@ -515,18 +508,30 @@ impl Store {
 
     /// Count memories by tier (hot/warm/cold) for a namespace.
     /// List all tags with their usage counts.
+    ///
+    /// Single-query approach using `json_each()` — replaces the old N+1 pattern
+    /// that fetched each tag then ran a separate COUNT query per tag.
     pub fn tags_with_counts(
         &self,
         namespace: Option<&str>,
     ) -> Result<Vec<crate::memory::types::TagInfo>, Error> {
-        let tags = self.unique_tags(namespace)?;
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let sql = "SELECT je.value AS name, COUNT(*) AS count FROM memories, json_each(memories.tags) AS je WHERE namespace = ?1 GROUP BY je.value ORDER BY count DESC";
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![ns], |row| {
+                Ok(crate::memory::types::TagInfo {
+                    name: row.get(0)?,
+                    count: row.get(1)?,
+                })
+            })
+            .map_err(|e| Error::Database(e.to_string()))?;
         let mut result = Vec::new();
-        for tag in &tags {
-            let count = self.count_tag(tag, namespace)?;
-            result.push(crate::memory::types::TagInfo {
-                name: tag.clone(),
-                count,
-            });
+        for row in rows {
+            result.push(row.map_err(|e| Error::Database(e.to_string()))?);
         }
         Ok(result)
     }
@@ -534,12 +539,11 @@ impl Store {
     /// Count how many memories use a specific tag.
     fn count_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let pattern = format!("%\"{tag}\"%");
         let count: usize = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND tags LIKE ?2",
-                rusqlite::params![ns, pattern],
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
+                rusqlite::params![ns, tag],
                 |row| row.get(0),
             )
             .map_err(|e| Error::Database(e.to_string()))?;
@@ -547,6 +551,9 @@ impl Store {
     }
 
     /// Rename a tag across all memories. Returns number updated.
+    ///
+    /// Uses `json_each()` to find affected rows precisely, then updates the
+    /// JSON tags column with the renamed tag.
     pub fn rename_tag(
         &self,
         old: &str,
@@ -554,14 +561,13 @@ impl Store {
         namespace: Option<&str>,
     ) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let pattern = format!("%\"{old}\"%");
         let mut stmt = self
             .conn
-            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND tags LIKE ?2")
+            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let rows: Vec<(String, String)> = stmt
-            .query_map(rusqlite::params![ns, pattern], |row| {
+            .query_map(rusqlite::params![ns, old], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| Error::Database(e.to_string()))?
@@ -595,16 +601,17 @@ impl Store {
     }
 
     /// Delete a tag from all memories. Returns number updated.
+    ///
+    /// Uses `json_each()` to find affected rows precisely.
     pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let pattern = format!("%\"{tag}\"%");
         let mut stmt = self
             .conn
-            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND tags LIKE ?2")
+            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
             .map_err(|e| Error::Database(e.to_string()))?;
 
         let rows: Vec<(String, String)> = stmt
-            .query_map(rusqlite::params![ns, pattern], |row| {
+            .query_map(rusqlite::params![ns, tag], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| Error::Database(e.to_string()))?
@@ -632,11 +639,16 @@ impl Store {
         Ok(updated)
     }
 
-    pub fn tier_counts(&self, namespace: Option<&str>) -> Result<(usize, usize, usize), Error> {
+    pub fn tier_counts(
+        &self,
+        namespace: Option<&str>,
+        hot_days: i64,
+        warm_days: i64,
+    ) -> Result<(usize, usize, usize), Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let now = chrono::Utc::now();
-        let hot_cutoff = (now - chrono::Duration::days(7)).to_rfc3339();
-        let warm_cutoff = (now - chrono::Duration::days(30)).to_rfc3339();
+        let hot_cutoff = (now - chrono::Duration::days(hot_days)).to_rfc3339();
+        let warm_cutoff = (now - chrono::Duration::days(warm_days)).to_rfc3339();
 
         let hot: usize = self
             .conn
@@ -675,12 +687,11 @@ impl Store {
         namespace: Option<&str>,
     ) -> Result<Vec<String>, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let pattern = format!("%\"{tag}\"%");
         let ids: Vec<String> = self
             .conn
-            .prepare("SELECT id FROM memories WHERE namespace = ?1 AND tags LIKE ?2")
+            .prepare("SELECT id FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
             .map_err(|e| Error::Database(e.to_string()))?
-            .query_map(rusqlite::params![ns, pattern], |row| row.get(0))
+            .query_map(rusqlite::params![ns, tag], |row| row.get(0))
             .map_err(|e| Error::Database(e.to_string()))?
             .filter_map(|r| r.ok())
             .collect();
@@ -692,10 +703,14 @@ impl Store {
         Ok(ids)
     }
 
-    /// Bulk delete all cold memories (not accessed in 30+ days or never accessed).
-    pub fn bulk_delete_cold(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
+    /// Bulk delete all cold memories (not accessed in warm_days+ days or never accessed).
+    pub fn bulk_delete_cold(
+        &self,
+        namespace: Option<&str>,
+        warm_days: i64,
+    ) -> Result<Vec<String>, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let warm_cutoff = (chrono::Utc::now() - chrono::Duration::days(30)).to_rfc3339();
+        let warm_cutoff = (chrono::Utc::now() - chrono::Duration::days(warm_days)).to_rfc3339();
         let ids: Vec<String> = self
             .conn
             .prepare("SELECT id FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL)")
@@ -734,11 +749,10 @@ impl Store {
     /// Count memories by tag in a namespace.
     pub fn count_by_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
-        let pattern = format!("%\"{tag}\"%");
         self.conn
             .query_row(
-                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND tags LIKE ?2",
-                rusqlite::params![ns, pattern],
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
+                rusqlite::params![ns, tag],
                 |row| row.get(0),
             )
             .map_err(|e| Error::Database(e.to_string()))
@@ -1091,5 +1105,865 @@ mod tests {
         assert_eq!(ns.len(), 2);
         assert!(ns.contains(&"hermes".to_string()));
         assert!(ns.contains(&"pi".to_string()));
+    }
+
+    // ── json_each() tag query tests ──────────────────────────────────────
+
+    #[test]
+    fn test_tag_filter_with_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["python"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["rust", "ai"]))
+            .unwrap();
+
+        // Exact match via json_each: only memories truly containing "rust"
+        let rust_memories = store.list(Some("rust"), None, 10, 0).unwrap();
+        assert_eq!(rust_memories.len(), 2);
+        let ids: Vec<&str> = rust_memories.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"1"));
+        assert!(ids.contains(&"3"));
+
+        // "rust" substring should NOT match "rustlang" or similar
+        store
+            .insert(&make_test_memory("4", "d", &["rustlang"]))
+            .unwrap();
+        let rust_exact = store.list(Some("rust"), None, 10, 0).unwrap();
+        assert_eq!(rust_exact.len(), 2);
+        assert!(rust_exact.iter().all(|m| m.id != "4"));
+    }
+
+    #[test]
+    fn test_unique_tags_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "web"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
+
+        let tags = store.unique_tags(None).unwrap();
+        assert_eq!(tags.len(), 4);
+        assert!(tags.contains(&"rust".to_string()));
+        assert!(tags.contains(&"ai".to_string()));
+        assert!(tags.contains(&"web".to_string()));
+        assert!(tags.contains(&"python".to_string()));
+    }
+
+    #[test]
+    fn test_unique_tags_namespace_filtered_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory_ns("1", "a", &["rust", "ai"], "ns-alpha"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["rust", "web"], "ns-beta"))
+            .unwrap();
+
+        let alpha_tags = store.unique_tags(Some("ns-alpha")).unwrap();
+        assert_eq!(alpha_tags.len(), 2);
+        assert!(alpha_tags.contains(&"rust".to_string()));
+        assert!(alpha_tags.contains(&"ai".to_string()));
+
+        let beta_tags = store.unique_tags(Some("ns-beta")).unwrap();
+        assert_eq!(beta_tags.len(), 2);
+        assert!(beta_tags.contains(&"rust".to_string()));
+        assert!(beta_tags.contains(&"web".to_string()));
+    }
+
+    #[test]
+    fn test_tags_with_counts_single_query() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "web"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
+
+        let info = store.tags_with_counts(None).unwrap();
+        // rust appears in 2 memories (highest count, should be first due to ORDER BY count DESC)
+        assert_eq!(info[0].name, "rust");
+        assert_eq!(info[0].count, 2);
+        assert_eq!(info.len(), 4);
+
+        // Verify all counts sum correctly
+        let total: usize = info.iter().map(|t| t.count).sum();
+        assert_eq!(total, 5); // rust:2, ai:1, web:1, python:1 = 2+1+1+1 = 5
+    }
+
+    #[test]
+    fn test_tags_with_counts_namespace_filtered() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory_ns("1", "a", &["rust"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["rust"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("3", "c", &["python"], "ns-b"))
+            .unwrap();
+
+        let info_a = store.tags_with_counts(Some("ns-a")).unwrap();
+        assert_eq!(info_a.len(), 1);
+        assert_eq!(info_a[0].name, "rust");
+        assert_eq!(info_a[0].count, 2);
+
+        let info_b = store.tags_with_counts(Some("ns-b")).unwrap();
+        assert_eq!(info_b.len(), 1);
+        assert_eq!(info_b[0].name, "python");
+        assert_eq!(info_b[0].count, 1);
+    }
+
+    #[test]
+    fn test_rename_tag_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["old-tag"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["old-tag", "other"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["unrelated"]))
+            .unwrap();
+
+        let updated = store.rename_tag("old-tag", "new-tag", None).unwrap();
+        assert_eq!(updated, 2);
+
+        // old-tag should no longer match
+        let old_matches = store.list(Some("old-tag"), None, 10, 0).unwrap();
+        assert_eq!(old_matches.len(), 0);
+
+        // new-tag should match both updated memories
+        let new_matches = store.list(Some("new-tag"), None, 10, 0).unwrap();
+        assert_eq!(new_matches.len(), 2);
+    }
+
+    #[test]
+    fn test_delete_tag_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["remove-me", "keep"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["remove-me"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["other"]))
+            .unwrap();
+
+        let updated = store.delete_tag("remove-me", None).unwrap();
+        assert_eq!(updated, 2);
+
+        // "remove-me" should no longer appear anywhere
+        let remaining_tags = store.unique_tags(None).unwrap();
+        assert!(!remaining_tags.contains(&"remove-me".to_string()));
+        assert!(remaining_tags.contains(&"keep".to_string()));
+        assert!(remaining_tags.contains(&"other".to_string()));
+    }
+
+    #[test]
+    fn test_bulk_delete_by_tag_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["doom"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["doom", "safe"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["safe"]))
+            .unwrap();
+
+        let deleted_ids = store.bulk_delete_by_tag("doom", None).unwrap();
+        assert_eq!(deleted_ids.len(), 2);
+        assert!(deleted_ids.contains(&"1".to_string()));
+        assert!(deleted_ids.contains(&"2".to_string()));
+
+        // Only "3" should remain
+        let all = store.list(None, None, 10, 0).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "3");
+    }
+
+    #[test]
+    fn test_count_by_tag_json_each() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
+
+        assert_eq!(store.count_by_tag("rust", None).unwrap(), 2);
+        assert_eq!(store.count_by_tag("ai", None).unwrap(), 1);
+        assert_eq!(store.count_by_tag("python", None).unwrap(), 1);
+        assert_eq!(store.count_by_tag("nonexistent", None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_tag_with_special_chars() {
+        let store = Store::open(":memory:").unwrap();
+
+        // Tags that would break LIKE '%"tag"%' pattern matching
+        store
+            .insert(&make_test_memory("1", "a", &["tag-with-dash"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["tag.with.dots"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["tag_with_underscore"]))
+            .unwrap();
+
+        // All should be findable by exact match
+        assert_eq!(
+            store
+                .list(Some("tag-with-dash"), None, 10, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list(Some("tag.with.dots"), None, 10, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list(Some("tag_with_underscore"), None, 10, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let tags = store.unique_tags(None).unwrap();
+        assert_eq!(tags.len(), 3);
+    }
+
+    #[test]
+    fn test_tag_substring_not_matched() {
+        let store = Store::open(":memory:").unwrap();
+
+        // Insert a memory with tag "rust" and another with "rustacean"
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rustacean"]))
+            .unwrap();
+
+        // Searching for "rust" should NOT match "rustacean"
+        let rust_only = store.list(Some("rust"), None, 10, 0).unwrap();
+        assert_eq!(rust_only.len(), 1);
+        assert_eq!(rust_only[0].id, "1");
+
+        // Searching for "rustacean" should NOT match "rust"
+        let rustacean_only = store.list(Some("rustacean"), None, 10, 0).unwrap();
+        assert_eq!(rustacean_only.len(), 1);
+        assert_eq!(rustacean_only[0].id, "2");
+    }
+
+    // ── Additional coverage tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_bulk_delete_all() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("1", "a", &["x"])).unwrap();
+        store.insert(&make_test_memory("2", "b", &["y"])).unwrap();
+        store.insert(&make_test_memory("3", "c", &[])).unwrap();
+
+        let deleted_ids = store.bulk_delete_all(None).unwrap();
+        assert_eq!(deleted_ids.len(), 3);
+        assert_eq!(store.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_bulk_delete_all_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("3", "c", &[], "ns-b"))
+            .unwrap();
+
+        let deleted = store.bulk_delete_all(Some("ns-a")).unwrap();
+        assert_eq!(deleted.len(), 2);
+        assert_eq!(store.count(Some("ns-a")).unwrap(), 0);
+        assert_eq!(store.count(Some("ns-b")).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_bulk_delete_by_tag_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["doom"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["doom"], "ns-b"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("3", "c", &["safe"], "ns-a"))
+            .unwrap();
+
+        let deleted = store.bulk_delete_by_tag("doom", Some("ns-a")).unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0], "1");
+        // ns-b should still have its "doom" memory
+        assert_eq!(store.count(Some("ns-b")).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_bulk_delete_cold() {
+        let store = Store::open(":memory:").unwrap();
+        // All memories have no last_accessed → all are "cold"
+        store.insert(&make_test_memory("1", "cold-1", &[])).unwrap();
+        store.insert(&make_test_memory("2", "cold-2", &[])).unwrap();
+
+        let deleted = store.bulk_delete_cold(None).unwrap();
+        assert_eq!(deleted.len(), 2);
+        assert_eq!(store.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_deprecate() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("dep1", "will be deprecated", &[]))
+            .unwrap();
+
+        store.deprecate("dep1").unwrap();
+        let m = store.get_by_id("dep1").unwrap().unwrap();
+        assert!(m.deprecated);
+        assert!(m.valid_until.is_some());
+    }
+
+    #[test]
+    fn test_deprecate_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        // Should succeed (no-op) even if ID doesn't exist
+        store.deprecate("nonexistent").unwrap();
+    }
+
+    #[test]
+    fn test_tier_counts() {
+        let store = Store::open(":memory:").unwrap();
+        // Insert 3 memories — all cold (never accessed)
+        store.insert(&make_test_memory("1", "a", &[])).unwrap();
+        store.insert(&make_test_memory("2", "b", &[])).unwrap();
+        store.insert(&make_test_memory("3", "c", &[])).unwrap();
+
+        let (hot, warm, cold) = store.tier_counts(None).unwrap();
+        assert_eq!(hot, 0);
+        assert_eq!(warm, 0);
+        assert_eq!(cold, 3);
+    }
+
+    #[test]
+    fn test_tier_counts_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
+            .unwrap();
+
+        let (_, _, cold_a) = store.tier_counts(Some("ns-a")).unwrap();
+        assert_eq!(cold_a, 1);
+
+        let (_, _, cold_b) = store.tier_counts(Some("ns-b")).unwrap();
+        assert_eq!(cold_b, 1);
+    }
+
+    #[test]
+    fn test_count_never_accessed() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "never accessed", &[]))
+            .unwrap();
+
+        assert_eq!(store.count_never_accessed(None).unwrap(), 1);
+
+        // Touch it
+        store.touch_access("1").unwrap();
+        let m = store.get_by_id("1").unwrap().unwrap();
+        assert!(m.last_accessed.is_some());
+        assert_eq!(m.access_count, 1);
+
+        assert_eq!(store.count_never_accessed(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_count_never_accessed_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
+            .unwrap();
+
+        assert_eq!(store.count_never_accessed(Some("ns-a")).unwrap(), 1);
+        assert_eq!(store.count_never_accessed(Some("ns-b")).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_touch_access() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("t1", "test", &[])).unwrap();
+
+        store.touch_access("t1").unwrap();
+        store.touch_access("t1").unwrap();
+
+        let m = store.get_by_id("t1").unwrap().unwrap();
+        assert_eq!(m.access_count, 2);
+        assert!(m.last_accessed.is_some());
+    }
+
+    #[test]
+    fn test_search_content_edge_cases() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "Hello World", &[]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "hello world too", &[]))
+            .unwrap();
+
+        // Case-sensitive LIKE search
+        let results = store.search_content("Hello", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "1");
+
+        // Lowercase — LIKE is case-insensitive by default on SQLite
+        let lower = store.search_content("hello", None, 10).unwrap();
+        assert_eq!(lower.len(), 2);
+    }
+
+    #[test]
+    fn test_search_content_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "shared keyword", &[], "ns-x"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "shared keyword", &[], "ns-y"))
+            .unwrap();
+
+        let results = store.search_content("shared", Some("ns-x"), 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].namespace, "ns-x");
+    }
+
+    #[test]
+    fn test_search_content_empty_result() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("1", "hello", &[])).unwrap();
+
+        let results = store.search_content("xyznotfound", None, 10).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_content_limit() {
+        let store = Store::open(":memory:").unwrap();
+        for i in 0..20 {
+            store
+                .insert(&make_test_memory(
+                    &format!("m{i}"),
+                    &format!("common content {i}"),
+                    &[],
+                ))
+                .unwrap();
+        }
+
+        let results = store.search_content("common", None, 5).unwrap();
+        assert_eq!(results.len(), 5);
+    }
+
+    #[test]
+    fn test_load_all() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("1", "a", &[])).unwrap();
+        store.insert(&make_test_memory("2", "b", &[])).unwrap();
+        store.insert(&make_test_memory("3", "c", &[])).unwrap();
+
+        let all = store.load_all(None).unwrap();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_load_all_namespace_filtered() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "alpha"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "beta"))
+            .unwrap();
+
+        let alpha = store.load_all(Some("alpha")).unwrap();
+        assert_eq!(alpha.len(), 1);
+        assert_eq!(alpha[0].id, "1");
+    }
+
+    #[test]
+    fn test_load_all_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let all = store.load_all(None).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn test_list_pagination() {
+        let store = Store::open(":memory:").unwrap();
+        for i in 0..10 {
+            store
+                .insert(&make_test_memory(
+                    &format!("p{i}"),
+                    &format!("item {i}"),
+                    &[],
+                ))
+                .unwrap();
+        }
+
+        // First page
+        let page1 = store.list(None, None, 3, 0).unwrap();
+        assert_eq!(page1.len(), 3);
+
+        // Second page
+        let page2 = store.list(None, None, 3, 3).unwrap();
+        assert_eq!(page2.len(), 3);
+
+        // Total should be 10
+        assert_eq!(store.count(None).unwrap(), 10);
+    }
+
+    #[test]
+    fn test_delete_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        let deleted = store.delete("nonexistent").unwrap();
+        assert!(!deleted);
+    }
+
+    #[test]
+    fn test_get_by_id_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        let result = store.get_by_id("nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_count_empty_store() {
+        let store = Store::open(":memory:").unwrap();
+        assert_eq!(store.count(None).unwrap(), 0);
+        assert_eq!(store.count(Some("ns")).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_path_in_memory() {
+        let store = Store::open(":memory:").unwrap();
+        // In-memory store has no file path
+        assert!(store.path().is_none());
+    }
+
+    #[test]
+    fn test_list_namespaces_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let ns = store.list_namespaces().unwrap();
+        assert!(ns.is_empty());
+    }
+
+    #[test]
+    fn test_find_aged_empty() {
+        let store = Store::open(":memory:").unwrap();
+        // No memories → no aged
+        let aged = store.find_aged(30, 0, None).unwrap();
+        assert!(aged.is_empty());
+    }
+
+    #[test]
+    fn test_find_aged_with_recent_memories() {
+        let store = Store::open(":memory:").unwrap();
+        // Insert a very recent memory — should NOT be found as aged
+        store
+            .insert(&make_test_memory("recent", "recent memory", &[]))
+            .unwrap();
+
+        let aged = store.find_aged(999, 0, None).unwrap();
+        // Created right now, so it's not older than 999 days
+        assert!(aged.is_empty());
+    }
+
+    #[test]
+    fn test_cleanup_aged_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let deleted = store.cleanup_aged(30, 0, None).unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_find_aged_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
+            .unwrap();
+
+        // These are all recent so none should be aged, but namespace filtering should work
+        let aged_a = store.find_aged(999, 0, Some("ns-a")).unwrap();
+        assert!(aged_a.is_empty());
+    }
+
+    #[test]
+    fn test_prune_ttl_no_deprecated() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("1", "active", &[])).unwrap();
+
+        let pruned = store.prune_ttl(30, None).unwrap();
+        assert_eq!(pruned, 0);
+    }
+
+    #[test]
+    fn test_find_deprecated_for_prune() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("1", "active", &[])).unwrap();
+        store.deprecate("1").unwrap();
+
+        // Deprecated but very recent — should NOT be found for prune with high TTL
+        let found = store.find_deprecated_for_prune(999, None).unwrap();
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn test_find_similar() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "hello world", &[], "test-ns"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "foo bar", &[], "test-ns"))
+            .unwrap();
+
+        let similar = store.find_similar("test-ns", 10).unwrap();
+        // find_similar returns non-deprecated memories ordered by created_at DESC
+        assert_eq!(similar.len(), 2);
+        // Should be ordered by created_at DESC
+        assert_eq!(similar[0].id, "2");
+    }
+
+    #[test]
+    fn test_find_similar_empty_namespace() {
+        let store = Store::open(":memory:").unwrap();
+        let similar = store.find_similar("empty-ns", 10).unwrap();
+        assert!(similar.is_empty());
+    }
+
+    #[test]
+    fn test_rename_tag_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["old"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["old"], "ns-b"))
+            .unwrap();
+
+        // Rename only in ns-a
+        let updated = store.rename_tag("old", "new", Some("ns-a")).unwrap();
+        assert_eq!(updated, 1);
+
+        // ns-a should have "new"
+        let ns_a_tags = store.unique_tags(Some("ns-a")).unwrap();
+        assert!(ns_a_tags.contains(&"new".to_string()));
+        assert!(!ns_a_tags.contains(&"old".to_string()));
+
+        // ns-b should still have "old"
+        let ns_b_tags = store.unique_tags(Some("ns-b")).unwrap();
+        assert!(ns_b_tags.contains(&"old".to_string()));
+    }
+
+    #[test]
+    fn test_delete_tag_namespace_scoped() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["remove"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["remove"], "ns-b"))
+            .unwrap();
+
+        let updated = store.delete_tag("remove", Some("ns-a")).unwrap();
+        assert_eq!(updated, 1);
+
+        let ns_a_tags = store.unique_tags(Some("ns-a")).unwrap();
+        assert!(!ns_a_tags.contains(&"remove".to_string()));
+
+        let ns_b_tags = store.unique_tags(Some("ns-b")).unwrap();
+        assert!(ns_b_tags.contains(&"remove".to_string()));
+    }
+
+    #[test]
+    fn test_rename_tag_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        let updated = store.rename_tag("nope", "new", None).unwrap();
+        assert_eq!(updated, 0);
+    }
+
+    #[test]
+    fn test_delete_tag_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        let updated = store.delete_tag("nope", None).unwrap();
+        assert_eq!(updated, 0);
+    }
+
+    #[test]
+    fn test_count_by_tag_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        assert_eq!(store.count_by_tag("nope", None).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_bulk_delete_by_tag_nonexistent() {
+        let store = Store::open(":memory:").unwrap();
+        let deleted = store.bulk_delete_by_tag("nope", None).unwrap();
+        assert!(deleted.is_empty());
+    }
+
+    #[test]
+    fn test_bulk_delete_cold_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let deleted = store.bulk_delete_cold(None).unwrap();
+        assert!(deleted.is_empty());
+    }
+
+    #[test]
+    fn test_bulk_delete_all_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let deleted = store.bulk_delete_all(None).unwrap();
+        assert!(deleted.is_empty());
+    }
+
+    #[test]
+    fn test_unique_tags_empty_store() {
+        let store = Store::open(":memory:").unwrap();
+        let tags = store.unique_tags(None).unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn test_unique_tags_empty_namespace() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["tag"], "ns-a"))
+            .unwrap();
+
+        let tags = store.unique_tags(Some("ns-b")).unwrap();
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn test_tags_with_counts_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let info = store.tags_with_counts(None).unwrap();
+        assert!(info.is_empty());
+    }
+
+    #[test]
+    fn test_insert_and_retrieve_with_metadata() {
+        let store = Store::open(":memory:").unwrap();
+        let mut m = make_test_memory("meta1", "with metadata", &[]);
+        m.metadata = serde_json::json!({"key": "value", "number": 42});
+        store.insert(&m).unwrap();
+
+        let got = store.get_by_id("meta1").unwrap().unwrap();
+        assert_eq!(got.metadata["key"], "value");
+        assert_eq!(got.metadata["number"], 42);
+    }
+
+    #[test]
+    fn test_insert_with_memory_type() {
+        let store = Store::open(":memory:").unwrap();
+        let mut m = make_test_memory("mt1", "procedure memory", &[]);
+        m.memory_type = "procedure".to_string();
+        store.insert(&m).unwrap();
+
+        let got = store.get_by_id("mt1").unwrap().unwrap();
+        assert_eq!(got.memory_type, "procedure");
+    }
+
+    #[test]
+    fn test_insert_with_valid_from() {
+        let store = Store::open(":memory:").unwrap();
+        let now = chrono::Utc::now();
+        let mut m = make_test_memory("vf1", "temporal", &[]);
+        m.valid_from = Some(now);
+        store.insert(&m).unwrap();
+
+        let got = store.get_by_id("vf1").unwrap().unwrap();
+        assert!(got.valid_from.is_some());
+    }
+
+    #[test]
+    fn test_update_preserves_namespace() {
+        let store = Store::open(":memory:").unwrap();
+        let m = make_test_memory_ns("u1", "original", &[], "my-ns");
+        store.insert(&m).unwrap();
+
+        let mut m2 = make_test_memory_ns("u1", "updated", &[], "my-ns");
+        m2.content = "updated".to_string();
+        store.update(&m2).unwrap();
+
+        let got = store.get_by_id("u1").unwrap().unwrap();
+        assert_eq!(got.content, "updated");
+        assert_eq!(got.namespace, "my-ns");
+    }
+
+    #[test]
+    fn test_double_insert_same_id() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("dup", "first", &[]))
+            .unwrap();
+
+        // Second insert with same ID should fail (PRIMARY KEY constraint)
+        let result = store.insert(&make_test_memory("dup", "second", &[]));
+        assert!(result.is_err());
     }
 }

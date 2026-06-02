@@ -605,4 +605,119 @@ namespace = "agent1"
         assert!(migrated.contains("path = \"/data/mem\""));
         assert!(migrated.contains("namespace = \"agent1\""));
     }
+
+    #[test]
+    fn set_namespace_in_toml_existing_section() {
+        let content = "[store]\npath = \"~/.uteke\"\n# namespace = \"default\"\n\n[logging]\nlevel = \"warn\"\n";
+        let result = set_namespace_in_toml(content, "my-agent");
+        assert!(result.contains("namespace = \"my-agent\""));
+        assert!(result.contains("[store]"));
+        assert!(result.contains("[logging]"));
+    }
+
+    #[test]
+    fn set_namespace_in_toml_no_store_section() {
+        let content = "[logging]\nlevel = \"warn\"\n";
+        let result = set_namespace_in_toml(content, "new-ns");
+        assert!(result.contains("[store]"));
+        assert!(result.contains("namespace = \"new-ns\""));
+        assert!(result.contains("[logging]"));
+    }
+
+    #[test]
+    fn set_namespace_in_toml_empty_content() {
+        let content = "";
+        let result = set_namespace_in_toml(content, "empty-ns");
+        assert!(result.contains("[store]"));
+        assert!(result.contains("namespace = \"empty-ns\""));
+    }
+
+    #[test]
+    fn set_namespace_in_toml_update_existing() {
+        let content = "[store]\nnamespace = \"old-ns\"\npath = \"~/.uteke\"\n";
+        let result = set_namespace_in_toml(content, "new-ns");
+        assert!(result.contains("namespace = \"new-ns\""));
+        assert!(!result.contains("namespace = \"old-ns\""));
+    }
+
+    #[test]
+    fn merge_from_file_all_sections() {
+        let toml = r#"
+[store]
+path = "/custom/path"
+namespace = "full-test"
+
+[embedding]
+model = "custom-embed"
+max_seq_length = 512
+
+[tier]
+hot_days = 5
+warm_days = 21
+hot_boost = 0.3
+
+[logging]
+level = "trace"
+file = "/tmp/test.log"
+
+[aging]
+enabled = true
+max_age_days = 60
+max_cold_count = 2000
+
+[server]
+enabled = true
+host = "0.0.0.0"
+port = 9999
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_all_sections.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+
+        assert_eq!(merged.store.path, "/custom/path");
+        assert_eq!(merged.store.namespace, "full-test");
+        assert_eq!(merged.embedding.model, "custom-embed");
+        assert_eq!(merged.embedding.max_seq_length, 512);
+        assert_eq!(merged.tier.hot_days, 5);
+        assert_eq!(merged.tier.warm_days, 21);
+        assert!((merged.tier.hot_boost - 0.3).abs() < f64::EPSILON);
+        assert_eq!(merged.logging.level, "trace");
+        assert_eq!(merged.logging.file, "/tmp/test.log");
+        assert!(merged.aging.enabled);
+        assert_eq!(merged.aging.max_age_days, 60);
+        assert_eq!(merged.aging.max_cold_count, 2000);
+        assert!(merged.server.enabled);
+        assert_eq!(merged.server.host, "0.0.0.0");
+        assert_eq!(merged.server.port, 9999);
+    }
+
+    #[test]
+    fn merge_from_file_invalid_toml() {
+        let tmp = std::env::temp_dir().join("uteke_test_invalid.toml");
+        std::fs::write(&tmp, "this is not valid toml [[[[").unwrap();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        // Should return defaults when file is invalid
+        assert_eq!(merged.store.path, "~/.uteke");
+    }
+
+    #[test]
+    fn migrate_content_with_model_key() {
+        let old = r#"store_path = "/data/mem"
+model = "gemma-q4"
+max_seq_length = 128
+"#;
+        let migrated = migrate_content(old);
+        assert!(migrated.contains("[store]"));
+        assert!(migrated.contains("[embedding]"));
+        assert!(migrated.contains("model = \"gemma-q4\""));
+        assert!(migrated.contains("max_seq_length = 128"));
+    }
+
+    #[test]
+    fn expand_tilde_no_home() {
+        // Just verify it doesn't panic
+        let _ = Config::expand_tilde("/absolute/path");
+    }
 }
