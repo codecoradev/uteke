@@ -2617,7 +2617,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2636,7 +2636,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "chrono",
  "dirs",
@@ -2656,12 +2656,13 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "ctrlc",
  "serde",
  "serde_json",
  "tiny_http",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "uteke-core",
@@ -2687,9 +2688,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.1"
+version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
