@@ -57,7 +57,7 @@ impl VectorIndex {
     pub fn load(path: &Path) -> Result<Self, Error> {
         let path_str = path.to_string_lossy().to_string();
         let index = Index::restore(&path_str)
-            .map_err(|e| Error::Embedding(format!("Failed to load usearch index: {e}")))?;
+            .map_err(|e| Error::embed("load vector index", e))?;
 
         let _size = index.size();
 
@@ -70,7 +70,7 @@ impl VectorIndex {
         let mapping_path = path.with_extension("keys");
         if mapping_path.exists() {
             let data = std::fs::read_to_string(&mapping_path)
-                .map_err(|e| Error::Embedding(format!("Failed to read key mapping: {e}")))?;
+                .map_err(|e| Error::embed("read key mapping", e))?;
             for line in data.lines() {
                 let line = line.trim();
                 if line.is_empty() {
@@ -105,7 +105,7 @@ impl VectorIndex {
             let path_str = path.to_string_lossy().to_string();
             self.index
                 .save(&path_str)
-                .map_err(|e| Error::Embedding(format!("Failed to save usearch index: {e}")))?;
+                .map_err(|e| Error::embed("save vector index", e))?;
 
             // Save key→id mapping as sidecar file
             let mapping_path = path.with_extension("keys");
@@ -116,7 +116,7 @@ impl VectorIndex {
                 }
             }
             std::fs::write(&mapping_path, lines.join("\n"))
-                .map_err(|e| Error::Embedding(format!("Failed to save key mapping: {e}")))?;
+                .map_err(|e| Error::embed("save key mapping", e))?;
 
             self.dirty = false;
         }

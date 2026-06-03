@@ -23,11 +23,11 @@ impl EmbeddingEngine {
     pub fn new() -> Result<Self, Error> {
         let model_dir = Self::model_dir()?;
         std::fs::create_dir_all(&model_dir)
-            .map_err(|e| Error::Embedding(format!("Failed to create model dir: {e}")))?;
+            .map_err(|e| Error::embed("create model directory", e))?;
 
         let onnx_dir = model_dir.join("onnx");
         std::fs::create_dir_all(&onnx_dir)
-            .map_err(|e| Error::Embedding(format!("Failed to create onnx dir: {e}")))?;
+            .map_err(|e| Error::embed("create onnx directory", e))?;
 
         let model_path = onnx_dir.join(MODEL_FILE);
         let model_data_path = onnx_dir.join(MODEL_DATA_FILE);
@@ -47,11 +47,11 @@ impl EmbeddingEngine {
         // Load ONNX session
         let session = ort::session::Session::builder()
             .and_then(|mut b| b.commit_from_file(&model_path))
-            .map_err(|e| Error::Embedding(format!("Failed to load ONNX model: {e}")))?;
+            .map_err(|e| Error::embed("load ONNX model", e))?;
 
         // Load tokenizer
         let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-            .map_err(|e| Error::Embedding(format!("Failed to load tokenizer: {e}")))?;
+            .map_err(|e| Error::embed("load tokenizer", e))?;
 
         Ok(Self { session, tokenizer })
     }
@@ -62,7 +62,7 @@ impl EmbeddingEngine {
         let encoding = self
             .tokenizer
             .encode(text, true)
-            .map_err(|e| Error::Embedding(format!("Tokenization failed: {e}")))?;
+            .map_err(|e| Error::embed("tokenize text", e))?;
 
         let input_ids = encoding.get_ids();
         let attention_mask = encoding.get_attention_mask();
@@ -82,13 +82,13 @@ impl EmbeddingEngine {
             vec![1i64, seq_len as i64],
             input_ids_i64.into_boxed_slice(),
         ))
-        .map_err(|e| Error::Embedding(format!("Failed to create input_ids tensor: {e}")))?;
+        .map_err(|e| Error::embed("create input_ids tensor", e))?;
 
         let attention_mask_tensor = ort::value::Tensor::<i64>::from_array((
             vec![1i64, seq_len as i64],
             attention_mask_i64.into_boxed_slice(),
         ))
-        .map_err(|e| Error::Embedding(format!("Failed to create attention_mask tensor: {e}")))?;
+        .map_err(|e| Error::embed("create attention_mask tensor", e))?;
 
         // Run ONNX inference — EmbeddingGemma has 2 outputs:
         //   output[0] = last_hidden_state (1, seq_len, 768)
@@ -96,14 +96,14 @@ impl EmbeddingEngine {
         let outputs = self
             .session
             .run(ort::inputs![input_ids_tensor, attention_mask_tensor])
-            .map_err(|e| Error::Embedding(format!("ONNX inference failed: {e}")))?;
+            .map_err(|e| Error::embed("ONNX inference", e))?;
 
         // Use output[1] (sentence_embedding) — already pooled by the model
         let sentence_emb = &outputs[1];
 
         let emb_view = sentence_emb
             .try_extract_tensor::<f32>()
-            .map_err(|e| Error::Embedding(format!("Failed to extract sentence embedding: {e}")))?;
+            .map_err(|e| Error::embed("extract sentence embedding", e))?;
 
         let mut embedding: Vec<f32> = emb_view.1.to_vec();
 
@@ -140,10 +140,10 @@ fn download_hf_file(
     let response = reqwest::blocking::Client::new()
         .get(&url)
         .send()
-        .map_err(|e| Error::Embedding(format!("Failed to download {url}: {e}")))?;
+        .map_err(|e| Error::embed("download model file", e))?;
 
     if !response.status().is_success() {
-        return Err(Error::Embedding(format!(
+        return Err(Error::embed_msg(format!(
             "Download failed with status {} for {url}",
             response.status()
         )));
@@ -151,10 +151,10 @@ fn download_hf_file(
 
     let bytes = response
         .bytes()
-        .map_err(|e| Error::Embedding(format!("Failed to read download: {e}")))?;
+        .map_err(|e| Error::embed("read download response", e))?;
 
     std::fs::write(local_path, bytes.as_ref())
-        .map_err(|e| Error::Embedding(format!("Failed to write file: {e}")))?;
+        .map_err(|e| Error::embed("write downloaded file", e))?;
 
     Ok(())
 }

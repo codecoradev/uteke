@@ -8,7 +8,7 @@
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.4-green.svg" alt="v0.0.4" />
+  <img src="https://img.shields.io/badge/status-v0.0.7-green.svg" alt="v0.0.7" />
 </p>
 
 <p align="center">
@@ -59,6 +59,23 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | **Language** | Rust | Python | Python | Go + Python |
 | **Binary size** | Small | Large | Large | N/A |
 | **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | MIT |
+
+---
+
+## Design Philosophy
+
+### What Uteke Is
+- **Local-first memory store** — portable, offline, single binary
+- **Smart but focused** — semantic search, contradiction detection, temporal facts, consolidation
+- **Per-agent isolation** — namespaces, not shared graphs
+
+### What Uteke Is NOT
+- **NOT a knowledge graph** — no entity relationships, no cross-agent shared context
+  - For knowledge graphs, use dedicated tools (Qdrant, Neo4j, or fleet-level systems)
+- **NOT a vector database** — Uteke is a memory tool, not a DB engine
+  - For large-scale vector search, use Qdrant, Weaviate, or Pinecone
+- **NOT a cloud service** — no sync, no accounts, no subscriptions
+  - By design: your memory stays on your machine
 
 ---
 
@@ -124,20 +141,30 @@ uteke stats --json
 
 ### Server Mode
 
-Start a persistent HTTP server for fast AI agent access (21ms vs 980ms cold start):
+Start a persistent HTTP server to eliminate cold-start overhead. The ONNX embedding model loads once at startup — all subsequent requests skip the ~3s model load:
 
 ```bash
 # Start server
 uteke-serve --port 8767
 
-# Enable auto-routing in config
-# [server]
-# enabled = true
-
-# CLI commands now route via HTTP automatically
-uteke recall "what was that context?"  # 21ms!
+# API is now warm — all requests are fast
+uteke recall "what was that context?"   # ~42ms
 uteke remember "New finding" --tags research
 ```
+
+> **Why server mode?** The CLI loads the ONNX model from disk on every invocation (~3s). The server keeps the model in memory, making recall ~75x faster.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Status and memory count |
+| `/remember` | POST | Store a memory `{content, tags?, namespace?}` |
+| `/recall` | POST | Semantic search `{query, limit?, namespace?}` |
+| `/search` | POST | Keyword search `{query, limit?, namespace?}` |
+| `/list` | POST | List with filters `{tag?, limit?, offset?, namespace?}` |
+| `/forget` | DELETE | Delete by id, tag, or namespace |
+| `/memory` | GET | Get single memory by id |
+| `/stats` | GET | Store statistics |
+| `/namespaces` | GET | List all namespaces |
 
 ### Multi-Agent Namespaces
 
@@ -169,7 +196,7 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 ├─────────────────────────────────────────────────────┤
 │              HTTP API (uteke-serve)                  │
 │  /health /remember /recall /search /list /forget    │
-│  /stats /namespaces — CORS enabled, ~21ms recall    │
+│  /stats /namespaces — CORS enabled, ~42ms recall    │
 ├─────────────────────────────────────────────────────┤
 │                    Uteke API                         │
 │          uteke-core crate (lib)                      │
@@ -199,6 +226,53 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 3. `search` → SQLite LIKE-based keyword search (fast, deterministic, scoped to namespace)
 4. `forget` → incremental delete from usearch + SQLite (no rebuild)
 5. Everything lives in `~/.uteke/` — fully local, fully yours
+
+---
+
+## Performance
+
+Benchmarked on **Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU** — single `uteke-serve` instance.
+
+### CLI (cold process) vs Server (warm daemon)
+
+The ONNX embedding model is the bottleneck — it must load from disk (~3s on ARM) and run inference (~60ms per text). The server eliminates the per-request model loading.
+
+| Metric | CLI (cold) | Server (warm) | Speedup |
+|--------|-----------|---------------|---------|
+| **Insert 100** | ~316s (0.3/s) | 7.7s (13/s) | **41x** |
+| **Insert 1,000** | ~53 min (0.3/s) | 84s (12/s) | **38x** |
+| **Recall (avg/query)** | 3,158ms | 42ms | **75x** |
+| **Search (avg/query)** | 3,158ms | 9ms | **367x** |
+| **Model load** | Every invocation (~3s) | Once at startup (~2s) | — |
+| **Daemon init** | N/A | ~2s (one-time) | — |
+
+### Scaling (warm server)
+
+| Data Size | Recall (avg) | Search (avg) | Notes |
+|-----------|-------------|-------------|-------|
+| 100 memories | 42ms | 9ms | Baseline |
+| 1,000 memories | 49ms | 13ms | +7ms recall, +4ms search |
+| 10,000 memories* | ~55ms (est.) | ~20ms (est.) | HNSW scales logarithmically |
+
+*\*10K estimated — verified at 1K, HNSW vector search is O(log n)*
+
+### What's Fast
+
+- **Recall/search**: ~42ms end-to-end (embed + HNSW search + SQLite) — fast enough for real-time AI agent use
+- **HNSW indexing**: Incremental, no rebuild needed on insert/delete
+- **SQLite metadata**: Sub-millisecond tag filtering, pagination, namespace isolation
+
+### What's Not Fast (and Why)
+
+- **CLI cold start**: ~3s per invocation — ONNX model loading from disk (188MB)
+  - **Solution:** Run `uteke-serve` as a daemon — model stays in memory
+- **Bulk insert**: ~13/s — each memory needs ONNX inference (~60ms)
+  - **This is expected** for CPU-only embedding. GPU or batch embed would improve this.
+- **Consolidate at 1K**: ~11s — pairwise cosine similarity across all memories
+  - **This is expected** — O(n²) comparison. Use `--namespace` to scope to smaller sets.
+
+> 📊 Raw data and benchmark tool: `cargo run --release --bin memory-bench`
+> Environment: Oracle Cloud ARM Ampere Altra, 4 vCPU, 24GB RAM, Ubuntu, no GPU.
 
 ---
 
@@ -295,14 +369,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 ## Roadmap
 
-Uteke follows a demand-gated roadmap — we build what people actually use.
+Demand-gated — we build what people actually use.
 
-**Now (v0.0.4):** Server mode (21ms warm recall), contradiction detection, consolidation, bulk operations, namespace switching, CLI auto-routing to server
-**Phase A (100+ stars):** Better embeddings, import from external sources, Hermes plugin, benchmark
-**Phase B (500+ stars):** Python SDK (PyO3), Node.js SDK, editor integrations
-**Phase C (1000+ stars):** Team features, cloud sync (opt-in), knowledge graph
+**v0.0.8 (next):** Input validation, binary checksums, codebase modularization, benchmark
+**Phase A (100+ stars):** Better embeddings, import/export, Python SDK (PyO3), editor integrations
+**Phase B (500+ stars):** Cloud sync (opt-in), team collaboration, API gateway integration
+**Phase C (1000+ stars):** Plugin ecosystem, extended tooling, advanced consolidation
 
-See the [full blueprint](BLUEPRINT_V2.md) for details.
+> **Note:** Uteke intentionally does NOT include entity graphs or shared knowledge bases.
+> These are covered by dedicated tools. Uteke stays focused on portable, local-first memory.
 
 ---
 
