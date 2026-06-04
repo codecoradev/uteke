@@ -1,18 +1,13 @@
-<p align="center">
-  <img src="https://img.shields.io/badge/Uteke-🧠-blue" alt="Uteke" />
-</p>
-
 <h1 align="center">Uteke</h1>
-<p align="center"><strong>Local-first memory for AI agents — written in Rust</strong></p>
+<p align="center"><strong>Give your AI a memory that never leaves your machine.</strong></p>
+<p align="center">
+  <em>Offline-first semantic memory engine — single binary, zero config, 30ms recall.</em>
+</p>
 <p align="center">
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.7-green.svg" alt="v0.0.7" />
-</p>
-
-<p align="center">
-  <em>From Javanese: <strong>uteke</strong> (otak) = brain</em>
+  <img src="https://img.shields.io/badge/status-v0.0.8-green.svg" alt="v0.0.8" />
 </p>
 
 ---
@@ -20,45 +15,41 @@
 ## Quick Start
 
 ```bash
-# Install
-git clone https://github.com/ajianaz/uteke.git
-cd uteke
-cargo install --path crates/uteke-cli
+# Install (macOS, Linux, Windows)
+curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
 
 # Store a memory
 uteke remember "Deploy v2.1 to staging on Friday" --tags deploy,staging
 
-# Store in a specific namespace (multi-agent isolation)
-uteke --namespace hermes remember "Prod server on AWS us-east-1" --tags deploy
+# Semantic search
+uteke recall "when do we deploy?"
 
-# Semantic search (scoped to namespace)
-uteke --namespace hermes recall "server deployment"
-
-# Get stats
+# Stats
 uteke stats
 ```
 
-**That's it.** No API keys. No server. No config. First run downloads the embedding model (~188MB) and you're good to go.
+**That's it.** No API keys. No Docker. No Python. First run downloads the embedding model (~188MB) and you're good to go.
 
-> 📖 For more install options (pre-built binaries, quick install script), see [INSTALL.md](INSTALL.md).
+> 📖 More install options: [INSTALL.md](INSTALL.md) · [Pre-built binaries](https://github.com/ajianaz/uteke/releases) · [Docker](https://github.com/ajianaz/uteke/pkgs/container/uteke)
 
 ---
 
 ## Why Uteke?
 
-AI agents forget everything between sessions. Uteke gives them persistent, searchable memory — entirely local.
+AI agents forget everything between sessions. Uteke gives them persistent, searchable memory — entirely offline, in one binary.
 
-| | **Uteke** | MemGPT | ChromaDB | Zep |
-|---|---|---|---|---|
-| **Setup** | Single binary | Python + deps | Python + server | Cloud service |
-| **Cloud required** | ❌ No | ❌ No | ✅ Optional | ✅ Yes |
-| **Semantic search** | ✅ Built-in | ✅ | ✅ | ✅ |
-| **Embedding model** | Built-in (ONNX) | External | External | External |
-| **Zero config** | ✅ | ❌ | ❌ | ❌ |
-| **Offline** | ✅ Fully | ⚠️ Partial | ⚠️ Partial | ❌ |
-| **Language** | Rust | Python | Python | Go + Python |
-| **Binary size** | Small | Large | Large | N/A |
-| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | MIT |
+|| | **Uteke** | **Mem0** | **Letta** | **Zep** |
+||---|---|---|---|---|
+|| **Setup** | Single binary | pip + Docker + Qdrant | pip + Docker + Postgres | pip + Docker + Neo4j |
+|| **API keys needed** | ❌ None | ✅ OpenAI/LLM key | ✅ LLM key | ✅ LLM key |
+|| **Offline** | ✅ Fully | ❌ Cloud embedding | ❌ Needs LLM server | ❌ Needs LLM + vector DB |
+|| **Semantic search** | ✅ Local ONNX | ✅ Cloud embedding | ⚠️ Keyword + archival | ✅ GraphRAG |
+|| **Zero config** | ✅ Works instantly | ❌ Docker + env vars | ❌ Docker + env vars | ❌ Docker + env vars |
+|| **Embedding model** | Built-in (ONNX) | External (cloud) | External | External |
+|| **Recall speed** | ~30ms (library) | Network round-trip | Network round-trip | Network round-trip |
+|| **Privacy** | ✅ Data never leaves machine | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM |
+|| **Language** | Rust | Python | Python | Go + Python |
+|| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
 ---
 
@@ -85,6 +76,20 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - **🔬 Research Notes** — Store findings with semantic search. Find that insight you read 3 months ago.
 - **📝 Personal Knowledge** — A local, searchable second brain. No cloud, no subscriptions, no lock-in.
 - **🛠️ Developer Context** — Remember architecture decisions, debug notes, and project-specific knowledge.
+
+---
+
+## Who is Uteke for?
+
+| You are | You want | Uteke? |
+|---------|----------|--------|
+| AI agent builder | Persistent memory, no infra | ✅ Perfect fit |
+| CLI power user | Searchable personal knowledge base | ✅ Perfect fit |
+| Privacy-conscious dev | Memory tool that works offline | ✅ Perfect fit |
+| Team needing shared memory | Multi-user sync + collaboration | ❌ Not yet (Phase B) |
+| Enterprise needing graph RAG | Entity relationships, cross-agent knowledge | ❌ Use Mem0/Zep instead |
+
+> **Not sure?** Try it — `curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh` — uninstall is just `rm -rf ~/.uteke`.
 
 ---
 
@@ -231,6 +236,18 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 
 ## Performance
 
+> **TL;DR:** Library recall in ~30ms. Server recall in ~42ms. CLI in ~3s (cold start). Zero external dependencies. All on CPU.
+
+### The One Number That Matters
+
+| Mode | Recall | Setup |
+|------|--------|-------|
+| **Library (Rust)** | **~30ms** | In-process, no startup |
+| **Server (HTTP)** | **~42ms** | One-time ~2s init |
+| **CLI (binary)** | **~3s** | Per-invocation (model load) |
+
+For real-time agent use, run `uteke-serve` — model stays in memory, 75x faster than CLI.
+
 Benchmarked on **Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU** — single `uteke-serve` instance.
 
 ### CLI (cold process) vs Server (warm daemon)
@@ -371,13 +388,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Demand-gated — we build what people actually use.
 
-**v0.0.8 (next):** Input validation, binary checksums, codebase modularization, benchmark
-**Phase A (100+ stars):** Better embeddings, import/export, Python SDK (PyO3), editor integrations
-**Phase B (500+ stars):** Cloud sync (opt-in), team collaboration, API gateway integration
-**Phase C (1000+ stars):** Plugin ecosystem, extended tooling, advanced consolidation
-
-> **Note:** Uteke intentionally does NOT include entity graphs or shared knowledge bases.
-> These are covered by dedicated tools. Uteke stays focused on portable, local-first memory.
+**✅ v0.0.8 (current):** Multi-agent namespaces, server mode, memory aging, Docker, shell hooks, input validation, benchmarks
+**🔮 Phase A (100+ stars):** Better embeddings, import/export, Python SDK (PyO3), editor integrations (VS Code)
+**🔮 Phase B (500+ stars):** Cloud sync (opt-in), team collaboration, API gateway integration
+**🔮 Phase C (1000+ stars):** Plugin ecosystem, advanced consolidation, community extensions
 
 ---
 
@@ -388,5 +402,5 @@ Demand-gated — we build what people actually use.
 ---
 
 <p align="center">
-  <strong>Local-first. Zero config. Your memory, your machine.</strong>
+  <strong>Offline. Zero config. Your memory, your machine.</strong>
 </p>

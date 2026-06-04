@@ -61,14 +61,16 @@
 	];
 
 	const comparisons: Comparison[] = [
-		{ feature: 'Install', uteke: '1 binary', mem0: 'pip + Docker + Qdrant', letta: 'pip + Docker + Postgres', cognee: 'pip + Docker + Neo4j/pgvector' },
-		{ feature: 'Offline', uteke: '✅ Fully', mem0: '❌ Needs cloud embedding', letta: '❌ Needs server', cognee: '❌ Needs LLM + vector DB' },
+		{ feature: 'Install', uteke: '1 binary', mem0: 'pip + Docker + Qdrant', letta: 'pip + Docker + Postgres', cognee: 'pip + Docker + Neo4j' },
+		{ feature: 'API Keys', uteke: '✅ None needed', mem0: '❌ OpenAI/LLM key', letta: '❌ LLM key', cognee: '❌ LLM + vector DB' },
+		{ feature: 'Offline', uteke: '✅ Fully', mem0: '❌ Cloud embedding', letta: '❌ Needs server', cognee: '❌ Needs LLM + DB' },
 		{ feature: 'Semantic Search', uteke: '✅ Local ONNX', mem0: '✅ Cloud embedding', letta: '⚠️ Keyword + archival', cognee: '✅ GraphRAG' },
+		{ feature: 'Privacy', uteke: '✅ Data stays local', mem0: '⚠️ Sent to LLM', letta: '⚠️ Sent to LLM', cognee: '⚠️ Sent to LLM' },
+		{ feature: 'Recall Speed', uteke: '~30ms', mem0: 'Network RTT', letta: 'Network RTT', cognee: 'Network RTT' },
 		{ feature: 'Tag Management', uteke: '✅ list/rename/delete', mem0: '⚠️ Basic', letta: '❌', cognee: '⚠️ Basic' },
 		{ feature: 'Memory Aging', uteke: '✅ Auto-cleanup', mem0: '✅', letta: '✅ Core memory', cognee: '✅ TTL-based' },
 		{ feature: 'Shell Hooks', uteke: '✅ bash/zsh/fish', mem0: '❌', letta: '❌', cognee: '❌' },
-		{ feature: 'Config File', uteke: '✅ uteke.toml', mem0: '⚠️ .env', letta: '⚠️ .env', cognee: '⚠️ .env' },
-		{ feature: 'License', uteke: 'Apache-2.0', mem0: 'MIT', letta: 'Apache-2.0', cognee: 'Apache-2.0' }
+		{ feature: 'License', uteke: 'Apache-2.0', mem0: 'Apache-2.0', letta: 'Apache-2.0', cognee: 'Apache-2.0' }
 	];
 
 	const commands: Command[] = [
@@ -94,11 +96,16 @@
 </script>
 
 <svelte:head>
-	<title>uteke — Persistent Memory for AI Agents</title>
-	<meta name="description" content="uteke — Local-first semantic memory engine for AI agents. Single binary, zero infrastructure, fully offline. Tags, aging, shell hooks. Give your AI a memory that stays on your machine." />
-	<meta name="og:title" content="uteke — Persistent Memory for AI Agents" />
-	<meta name="og:description" content="Local-first semantic memory engine. Single Rust binary, zero infrastructure, fully offline." />
-	<meta name="og:type" content="website" />
+	<title>uteke — Give Your AI a Memory (Offline)</title>
+	<meta name="description" content="Local-first semantic memory engine. Single Rust binary, zero infrastructure, 30ms recall, fully offline. No API keys needed." />
+	<meta property="og:title" content="uteke — Give Your AI a Memory" />
+	<meta property="og:description" content="Offline-first semantic memory. Single binary. Zero config. 30ms recall." />
+	<meta property="og:type" content="website" />
+	<meta property="og:image" content="/og-image.png" />
+	<meta name="twitter:card" content="summary_large_image" />
+	<meta name="twitter:title" content="uteke — Give Your AI a Memory" />
+	<meta name="twitter:description" content="Offline-first semantic memory. Single binary. Zero config. 30ms recall." />
+	<meta name="twitter:image" content="/og-image.png" />
 </svelte:head>
 
 <!-- Hero -->
@@ -110,9 +117,9 @@
 		<!-- Badge -->
 		<div class="animate-fade-in inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-xs text-[var(--color-text-muted)] mb-8">
 			<span class="w-2 h-2 rounded-full bg-[var(--color-success)]"></span>
-			<span>v0.0.3 released</span>
+			<span>v0.0.8 released</span>
 			<span class="text-[var(--color-text-dim)]">—</span>
-			<a href="https://github.com/ajianaz/uteke/releases/tag/v0.0.3" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">release notes →</a>
+			<a href="https://github.com/ajianaz/uteke/releases/tag/v0.0.8" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">release notes →</a>
 		</div>
 
 		<!-- Headline -->
@@ -120,24 +127,24 @@
 			Your AI forgets<br />
 			everything<span class="text-[var(--color-text-dim)]">.</span>
 			<br />
-			<span class="hero-gradient glow-text">Fix that.</span>
+			<span class="hero-gradient glow-text">Give it a memory.</span>
 		</h1>
 
 		<!-- Subheadline -->
 		<p class="animate-fade-in-delay-2 text-base md:text-xl text-[var(--color-text-muted)] max-w-2xl mx-auto mb-10 leading-relaxed">
-			uteke gives AI agents persistent, searchable memory.<br class="hidden md:block" />
-			Fully local. Zero infrastructure. Single binary.
+			uteke gives AI agents persistent, searchable memory —<br class="hidden md:block" />
+			<strong class="text-[var(--color-text)]">fully offline, single binary, 30ms recall.</strong>
 		</p>
 
 		<!-- Install command -->
 		<div class="animate-fade-in-delay-3 inline-flex flex-col items-center gap-4">
 			<div class="terminal-block inline-flex items-center gap-3 px-5 py-3.5 rounded-xl font-mono text-sm glow-amber">
 				<span class="text-[var(--color-success)]">$</span>
-				<span class="hidden sm:inline text-[var(--color-text)]">cargo install --git https://github.com/ajianaz/uteke</span>
-				<span class="sm:hidden text-[var(--color-text)]">cargo install --git github.com/ajianaz/uteke</span>
+				<span class="hidden sm:inline text-[var(--color-text)]">curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh</span>
+				<span class="sm:hidden text-[var(--color-text)]">curl -sSL .../install.sh | sh</span>
 				<button
 					class="text-[var(--color-text-dim)] hover:text-[var(--color-accent)] transition-colors ml-2"
-					onclick={() => navigator.clipboard.writeText('cargo install --git https://github.com/ajianaz/uteke')}
+					onclick={() => navigator.clipboard.writeText('curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh')}
 					title="Copy"
 				>
 					<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -223,6 +230,36 @@
 	</div>
 </section>
 
+<!-- Social Proof -->
+<section class="max-w-6xl mx-auto px-6 py-10 text-center">
+	<div class="flex flex-wrap items-center justify-center gap-8 text-[var(--color-text-dim)]">
+		<div class="flex items-center gap-2">
+			<span class="text-xl">🦀</span>
+			<span class="text-sm">Built with Rust</span>
+		</div>
+		<div class="flex items-center gap-2">
+			<span class="text-xl">🔒</span>
+			<span class="text-sm">100% Offline</span>
+		</div>
+		<div class="flex items-center gap-2">
+			<span class="text-xl">⚡</span>
+			<span class="text-sm">30ms Recall</span>
+		</div>
+		<div class="flex items-center gap-2">
+			<span class="text-xl">📦</span>
+			<span class="text-sm">Single Binary</span>
+		</div>
+		<div class="flex items-center gap-2">
+			<span class="text-xl">🌍</span>
+			<span class="text-sm">Linux · macOS · Windows</span>
+		</div>
+		<div class="flex items-center gap-2">
+			<span class="text-xl">🐳</span>
+			<span class="text-sm">Docker Ready</span>
+		</div>
+	</div>
+</section>
+
 <div class="separator-gradient"></div>
 
 <!-- Problem → Solution -->
@@ -302,7 +339,7 @@
 			<div class="min-w-0 flex-1">
 				<p class="font-medium mb-2">Install</p>
 				<code class="block px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono text-[var(--color-text-dim)] overflow-x-auto">
-					<span class="cmd-highlight">cargo install</span> --git https://github.com/ajianaz/uteke
+					<span class="cmd-highlight">curl</span> -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh <span class="cmd-flag">|</span> sh
 				</code>
 			</div>
 		</div>
