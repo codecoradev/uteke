@@ -768,7 +768,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             checksums_file,
             binary,
         } => {
-            let checksums = std::fs::read_to_string(&checksums_file)
+            let checksums = std::fs::read_to_string(checksums_file)
                 .map_err(|e| format!("Failed to read checksums file: {e}"))?;
 
             let binary_filename = std::path::Path::new(&binary)
@@ -782,7 +782,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                 Some(line) => {
                     let expected_hash = line.split_whitespace().next().unwrap_or("");
                     let output = std::process::Command::new("sha256sum")
-                        .arg(&binary)
+                        .arg(binary)
                         .output()
                         .map_err(|e| format!("Failed to run sha256sum: {e}"))?;
                     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -808,9 +808,10 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                     }
                 }
                 None => {
-                    return Err(
-                        format!("Binary not found in checksums file: {}", binary_filename).into(),
-                    );
+                    return Err(format!(
+                        "Binary not found in checksums file: {}",
+                        binary_filename
+                    ));
                 }
             }
             Ok(())
