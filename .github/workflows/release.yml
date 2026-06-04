@@ -38,8 +38,7 @@ jobs:
             SHA=$(git rev-parse HEAD)
             gh api repos/${{ github.repository }}/git/refs/heads/main \
               -X PATCH \
-              -f sha="$SHA" \
-              -f force=true 2>/dev/null
+              --input - <<< '{"sha":"'"$SHA"'","force":true}'
             echo "✅ main synced to develop at $SHA via API"
           }
 
