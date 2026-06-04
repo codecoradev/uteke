@@ -6,8 +6,9 @@ use crate::memory::types::{ContradictionResult, Memory, DEFAULT_NAMESPACE};
 impl crate::Uteke {
     /// Check for contradictions when storing a new memory.
     ///
-    /// Compares new embedding against existing memories in the same namespace.
-    /// If similarity > threshold (0.65), marks the old memory as deprecated.
+    /// Read-only: searches the vector index for potential contradictions
+    /// but does NOT mutate anything. The caller is responsible for
+    /// deprecating the old memory after the new one is safely persisted.
     pub fn check_contradiction(
         &self,
         content: &str,
@@ -15,7 +16,6 @@ impl crate::Uteke {
         namespace: &str,
         threshold: f32,
     ) -> Result<ContradictionResult, Error> {
-        // Search the vector index for potential contradictions.
         let results = {
             let index = self
                 .index
@@ -23,29 +23,14 @@ impl crate::Uteke {
                 .map_err(|_| Error::lock("index lock during contradiction check"))?;
             index.search(embedding, 5, 50)
         };
-        // Lock released before we potentially re-acquire for mutation below.
 
         for (id, distance) in &results {
             let similarity = 1.0 - distance;
             if similarity > threshold {
                 if let Ok(Some(memory)) = self.store.get_by_id(id) {
                     if memory.namespace == namespace && !memory.deprecated {
-                        self.store.deprecate(id)?;
-                        // Also remove deprecated memory from vector index so
-                        // it doesn't appear in future similarity searches.
-                        // Re-acquire lock for mutation (safe: search lock was dropped above).
-                        let mut idx = self.index.lock().map_err(|_| {
-                            Error::lock("index lock during contradiction deprecation")
-                        })?;
-                        if idx.remove(id) {
-                            if let Err(e) = idx.save() {
-                                tracing::warn!(
-                                    "Failed to persist vector index after deprecating id={id}: {e}"
-                                );
-                            }
-                        }
                         tracing::info!(
-                            "Contradiction detected (sim={:.3}): deprecating '{}' → replaced by '{}'",
+                            "Contradiction detected (sim={:.3}): will deprecate '{}' → replace by '{}'",
                             similarity,
                             memory.content.chars().take(60).collect::<String>(),
                             content.chars().take(60).collect::<String>()
@@ -118,8 +103,6 @@ impl crate::Uteke {
         };
 
         // Write-ahead: vector index first (can be rolled back), then SQLite.
-        // Note: contradiction check above may have deprecated a memory and
-        // removed it from the vector index — that's done before this point.
         {
             let mut index = self
                 .index
@@ -143,6 +126,25 @@ impl crate::Uteke {
                 }
             }
             return Err(e);
+        }
+
+        // Only deprecate the old memory AFTER the new one is safely persisted.
+        // This ensures no data loss if the insert fails.
+        if contradiction.contradicted {
+            if let Some(ref deprecated_id) = contradiction.deprecated_id {
+                self.store.deprecate(deprecated_id)?;
+                // Remove from vector index so it won't appear in future searches.
+                let mut idx = self.index.lock().map_err(|_| {
+                    Error::lock("index lock during post-insert contradiction deprecation")
+                })?;
+                if idx.remove(deprecated_id) {
+                    if let Err(e) = idx.save() {
+                        tracing::warn!(
+                            "Failed to persist vector index after deprecating id={deprecated_id}: {e}"
+                        );
+                    }
+                }
+            }
         }
 
         Ok((id, contradiction))
