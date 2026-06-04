@@ -1,6 +1,8 @@
 # Uteke Go-to-Market: README Overhaul + Landing Page Refresh
 
-> **For Hermes:** Execute tasks sequentially, one PR per task group.
+> **Status:** Phase 1 ✅ Completed · Phase 2 ✅ Completed · Phase 3 🔜 Ready to execute
+>
+> **Merged:** PR #174 (2026-06-04) — squash merged to `develop`
 
 **Goal:** Transform Uteke from "developer tool" positioning to "must-have AI memory" — starting with README overhaul and landing page refresh to prepare for public launch (Hacker News, Reddit, X/Threads).
 
@@ -8,18 +10,20 @@
 
 **Tech Stack:** Markdown (README), SvelteKit 5 + Tailwind 4 (website, already built)
 
-**Current State:**
-- README v0.0.8: functional but not "selling" — comparison table is outdated (MemGPT bukan Mem0), hero tagline lemah
-- Website: sudah ada dengan hero, features, comparison, architecture, terminal demo — tapi version badge stale (v0.0.3), install CTA pakai `cargo install --git` bukan `install.sh`, beberapa content outdated
+**Current State (post-PR #174):**
+- README: ✅ Overhauled — benefit-first hero, updated comparison (Mem0/Letta/Zep), install.sh quick start, audience fit table, performance highlights
+- Website: ✅ Refreshed — version badge v0.0.8, install.sh CTA, social proof section, updated comparison table, OG meta tags
 - Install script: sudah ada (`install.sh`)
 
 ---
 
-## Phase 1: README Overhaul (P0 — 3 jam)
+## Phase 1: README Overhaul ✅ COMPLETED
+
+> **Merged in PR #174.** All 6 tasks executed in a single squash commit.
 
 README adalah halaman depan. Developer lihat README dulu sebelum star/download. Harus membuat orang langsung "I need this".
 
-### Task 1.1: Refresh README Hero + Tagline
+### Task 1.1: Refresh README Hero + Tagline ✅
 
 **Objective:** Hook pembaca dalam 5 detik pertama
 
@@ -59,7 +63,7 @@ With:
 
 ---
 
-### Task 1.2: Fix Quick Start — Use install.sh
+### Task 1.2: Fix Quick Start — Use install.sh ✅
 
 **Objective:** First install experience harus one-liner, bukan `git clone + cargo install`
 
@@ -98,7 +102,7 @@ uteke stats
 
 ---
 
-### Task 1.3: Update Comparison Table
+### Task 1.3: Update Comparison Table ✅
 
 **Objective:** Comparison table harus akurat vs kompetitor 2026 yang sebenarnya
 
@@ -136,7 +140,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ---
 
-### Task 1.4: Add "Who is this for" Section
+### Task 1.4: Add "Who is this for" Section ✅
 
 **Objective:** Orang harus langsung tahu apakah Uteke buat mereka
 
@@ -161,7 +165,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ---
 
-### Task 1.5: Refresh Performance Section
+### Task 1.5: Refresh Performance Section ✅
 
 **Objective:** Performance section harus punya "wow" factor dan konteks
 
@@ -192,7 +196,7 @@ For real-time agent use, run `uteke-serve` — model stays in memory, 75x faster
 
 ---
 
-### Task 1.6: Refresh Roadmap + Footer
+### Task 1.6: Refresh Roadmap + Footer ✅
 
 **Objective:** Roadmap harus menunjukkan momentum dan credibility
 
@@ -226,11 +230,13 @@ Demand-gated — we build what people actually use.
 
 ---
 
-## Phase 2: Landing Page Refresh (P0 — 1 hari)
+## Phase 2: Landing Page Refresh ✅ COMPLETED
+
+> **Merged in PR #174.** All 5 tasks executed alongside Phase 1 in the same commit.
 
 Website sudah ada dan bagus, tapi ada beberapa hal yang harus di-fix sebelum go-public.
 
-### Task 2.1: Fix Version Badge + Install CTA
+### Task 2.1: Fix Version Badge + Install CTA ✅
 
 **Objective:** Version badge dan install command harus current
 
@@ -246,7 +252,7 @@ Website sudah ada dan bagus, tapi ada beberapa hal yang harus di-fix sebelum go-
 
 ---
 
-### Task 2.2: Add "Trusted By" / Social Proof Section
+### Task 2.2: Add "Trusted By" / Social Proof Section ✅
 
 **Objective:** Tambah credibility signal untuk visitor baru
 
@@ -289,7 +295,7 @@ Website sudah ada dan bagus, tapi ada beberapa hal yang harus di-fix sebelum go-
 
 ---
 
-### Task 2.3: Update Comparison Table Data
+### Task 2.3: Update Comparison Table Data ✅
 
 **Objective:** Sync landing page comparison with README comparison (Task 1.3)
 
@@ -319,7 +325,7 @@ Added rows: "API Keys", "Privacy", "Recall Speed" — these are Uteke's stronges
 
 ---
 
-### Task 2.4: Add OG Image + Meta Tags
+### Task 2.4: Add OG Image + Meta Tags ✅
 
 **Objective:** Saat di-share ke Twitter/LinkedIn/Discord, preview card harus menarik
 
@@ -348,7 +354,7 @@ Added rows: "API Keys", "Privacy", "Recall Speed" — these are Uteke's stronges
 
 ---
 
-### Task 2.5: Fix Hero Headline for Clarity
+### Task 2.5: Fix Hero Headline for Clarity ✅
 
 **Objective:** Current headline "Your AI forgets everything. Fix that." bagus tapi kurang jelas WHAT Uteke is
 
@@ -377,9 +383,11 @@ Added rows: "API Keys", "Privacy", "Recall Speed" — these are Uteke's stronges
 
 ---
 
-## Phase 3: Distribution Prep (P1 — Setelah README + LP ready)
+## Phase 3: Distribution Prep 🔜 READY
 
-### Task 3.1: Prepare Hacker News "Show HN" Post
+> **Prerequisites met.** Phase 1 + 2 merged. Launch docs ready for review/update.
+
+### Task 3.1: Prepare Hacker News "Show HN" Post 🔜
 
 **File to create:** `/opt/data/repos/uteke/docs/plans/show-hn-draft.md`
 
@@ -402,7 +410,7 @@ Tech: Rust, ONNX Runtime, SQLite (rusqlite), usearch HNSW, EmbeddingGemma Q4
 https://github.com/ajianaz/uteke
 ```
 
-### Task 3.2: Prepare Reddit Posts
+### Task 3.2: Prepare Reddit Posts 🔜
 
 **Subreddits:** r/rust, r/CLI, r/selfhosted, r/LocalLLaMA, r/MachineLearning
 
@@ -412,7 +420,7 @@ https://github.com/ajianaz/uteke
 - r/selfhosted: "Self-hosted AI memory that works 100% offline — no Docker needed"
 - r/LocalLLaMA: "Local-first semantic memory for AI agents — no cloud, built-in embeddings"
 
-### Task 3.3: Record Terminal Demo (asciinema/vhs)
+### Task 3.3: Record Terminal Demo (asciinema/vhs) 🔜
 
 **Objective:** Record demo yang bisa di-embed di README dan landing page
 
@@ -430,16 +438,12 @@ https://github.com/ajianaz/uteke
 
 ## Summary
 
-| Phase | Tasks | Est. Effort | Dependency |
-|-------|-------|-------------|------------|
-| **Phase 1: README** | 1.1–1.6 | 3 jam | None |
-| **Phase 2: Landing Page** | 2.1–2.5 | 1 hari | None (parallel with Phase 1) |
-| **Phase 3: Distribution** | 3.1–3.3 | 3 jam | Phase 1 + 2 done |
+| Phase | Tasks | Status | Result |
+|-------|-------|--------|--------|
+| **Phase 1: README** | 1.1–1.6 | ✅ Completed | PR #174 merged |
+| **Phase 2: Landing Page** | 2.1–2.5 | ✅ Completed | PR #174 merged |
+| **Phase 3: Distribution** | 3.1–3.3 | 🔜 Ready | Awaits execution |
 
-**Execution order:**
-1. Phase 1 + 2 bisa paralel
-2. Phase 3 setelah keduanya selesai dan deploy
-
-**One PR per phase** — bukan per task. Phase 1 = 1 commit/PR, Phase 2 = 1 commit/PR.
-
-**Total est. effort:** 2 hari kerja
+**Next steps:**
+1. Review & update `docs/launch/hn-post.md` and `docs/launch/twitter-thread.md` to match current README/landing page content
+2. Execute distribution when ready
