@@ -7,11 +7,15 @@
 <div class="space-y-8 text-[var(--color-text-muted)] leading-relaxed">
 	<h2 id="install" class="text-xl font-semibold text-[var(--color-text)] !mt-0">Install</h2>
 
-	<p>Install from source (requires <a href="https://rustup.rs" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">Rust</a>):</p>
+	<p>One-liner install (macOS, Linux, Windows):</p>
+
+	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code>curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh</code></pre>
+
+	<p>Or install from source (requires <a href="https://rustup.rs" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">Rust</a>):</p>
 
 	<pre class="px-4 py-3 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] text-sm font-mono overflow-x-auto"><code>cargo install --git https://github.com/ajianaz/uteke</code></pre>
 
-	<p>Or download pre-built binaries from <a href="https://github.com/ajianaz/uteke/releases" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">GitHub Releases</a> — available for Linux (x64/ARM64), macOS (Apple Silicon), and Windows (x64).</p>
+	<p>Pre-built binaries and Docker image also available from <a href="https://github.com/ajianaz/uteke/releases" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">GitHub Releases</a> and <a href="https://github.com/ajianaz/uteke/pkgs/container/uteke" target="_blank" rel="noopener" class="text-[var(--color-accent)] hover:underline">GHCR</a>. First run downloads the embedding model (~188MB) — no API keys needed.</p>
 
 	<h2 id="first-memory" class="text-xl font-semibold text-[var(--color-text)]">Your First Memory</h2>
 
