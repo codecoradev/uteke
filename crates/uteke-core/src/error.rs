@@ -11,14 +11,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error("{message}")]
-    Database {
-        message: String,
-    },
+    Database { message: String },
 
     #[error("{message}")]
-    Embedding {
-        message: String,
-    },
+    Embedding { message: String },
 
     #[error("Validation error: {0}")]
     Validation(String),
@@ -39,7 +35,9 @@ impl Error {
 
     /// Database error with only a message (no source error).
     pub fn db_msg(message: impl Into<String>) -> Self {
-        Error::Database { message: message.into() }
+        Error::Database {
+            message: message.into(),
+        }
     }
 
     /// Embedding error — strips ONNX/usearch internals.
@@ -51,7 +49,9 @@ impl Error {
 
     /// Embedding error with only a message.
     pub fn embed_msg(message: impl Into<String>) -> Self {
-        Error::Embedding { message: message.into() }
+        Error::Embedding {
+            message: message.into(),
+        }
     }
 
     /// Lock error — includes which lock and what operation.
@@ -88,7 +88,9 @@ impl Error {
         if err_str.contains("out of memory") || err_str.contains("OOM") {
             format!("{context}: out of memory (reduce batch size or use a smaller model)")
         } else if err_str.contains("model") || err_str.contains("session") {
-            format!("{context}: failed to load embedding model (check model files with 'uteke doctor')")
+            format!(
+                "{context}: failed to load embedding model (check model files with 'uteke doctor')"
+            )
         } else if err_str.contains("dimension") || err_str.contains("dims") {
             format!("{context}: vector dimension mismatch")
         } else {
@@ -124,19 +126,34 @@ mod tests {
     #[test]
     fn test_db_error_sanitization() {
         // UNIQUE constraint
-        let e = Error::db("insert", std::io::Error::new(std::io::ErrorKind::Other, "UNIQUE constraint failed: memories.id"));
+        let e = Error::db(
+            "insert",
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "UNIQUE constraint failed: memories.id",
+            ),
+        );
         let msg = e.to_string();
         assert!(msg.contains("duplicate entry"), "got: {msg}");
-        assert!(!msg.contains("UNIQUE constraint failed"), "leaks internal: {msg}");
+        assert!(
+            !msg.contains("UNIQUE constraint failed"),
+            "leaks internal: {msg}"
+        );
 
         // Disk I/O
-        let e = Error::db("open", std::io::Error::new(std::io::ErrorKind::Other, "disk I/O error: /path/to/db"));
+        let e = Error::db(
+            "open",
+            std::io::Error::new(std::io::ErrorKind::Other, "disk I/O error: /path/to/db"),
+        );
         let msg = e.to_string();
         assert!(msg.contains("storage error"), "got: {msg}");
         assert!(!msg.contains("/path/to/db"), "leaks path: {msg}");
 
         // Generic
-        let e = Error::db("query", std::io::Error::new(std::io::ErrorKind::Other, "some random rusqlite error"));
+        let e = Error::db(
+            "query",
+            std::io::Error::new(std::io::ErrorKind::Other, "some random rusqlite error"),
+        );
         let msg = e.to_string();
         assert!(msg.contains("database operation failed"), "got: {msg}");
         assert!(!msg.contains("rusqlite"), "leaks internal: {msg}");
@@ -144,13 +161,25 @@ mod tests {
 
     #[test]
     fn test_embed_error_sanitization() {
-        let e = Error::embed("recall", std::io::Error::new(std::io::ErrorKind::Other, "Failed to initialize ONNX session for model embeddinggemma"));
+        let e = Error::embed(
+            "recall",
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Failed to initialize ONNX session for model embeddinggemma",
+            ),
+        );
         let msg = e.to_string();
         assert!(msg.contains("embedding model"), "got: {msg}");
         assert!(!msg.contains("ONNX session"), "leaks internal: {msg}");
         assert!(!msg.contains("embeddinggemma"), "leaks model name: {msg}");
 
-        let e = Error::embed("embed", std::io::Error::new(std::io::ErrorKind::Other, "out of memory allocating tensors"));
+        let e = Error::embed(
+            "embed",
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "out of memory allocating tensors",
+            ),
+        );
         let msg = e.to_string();
         assert!(msg.contains("out of memory"), "got: {msg}");
     }

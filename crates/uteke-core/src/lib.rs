@@ -12,9 +12,9 @@
 mod consolidate;
 mod embed;
 mod error;
-pub mod memory;
 mod import_export;
 mod maintenance;
+pub mod memory;
 mod operations;
 mod types;
 

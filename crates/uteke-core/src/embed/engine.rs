@@ -26,8 +26,7 @@ impl EmbeddingEngine {
             .map_err(|e| Error::embed("create model directory", e))?;
 
         let onnx_dir = model_dir.join("onnx");
-        std::fs::create_dir_all(&onnx_dir)
-            .map_err(|e| Error::embed("create onnx directory", e))?;
+        std::fs::create_dir_all(&onnx_dir).map_err(|e| Error::embed("create onnx directory", e))?;
 
         let model_path = onnx_dir.join(MODEL_FILE);
         let model_data_path = onnx_dir.join(MODEL_DATA_FILE);

@@ -458,7 +458,9 @@ fn main() {
 
         // Check payload size for POST requests
         if method == Method::Post {
-            let content_length = req.headers().iter()
+            let content_length = req
+                .headers()
+                .iter()
                 .find(|h| h.field.equiv("content-length"))
                 .and_then(|h| h.value.as_str().parse::<usize>().ok());
             if let Some(size) = content_length {

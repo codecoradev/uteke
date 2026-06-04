@@ -107,7 +107,10 @@ fn main() {
         } else {
             f64::INFINITY
         };
-        println!("  insert ({}):   {:>6} ms ({:.0}/s)", size, insert_ms, insert_per);
+        println!(
+            "  insert ({}):   {:>6} ms ({:.0}/s)",
+            size, insert_ms, insert_per
+        );
 
         // Recall — Uteke::recall(query, limit, tags_filter, namespace)
         let recall_start = Instant::now();

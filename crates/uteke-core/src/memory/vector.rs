@@ -56,8 +56,7 @@ impl VectorIndex {
     /// Load an existing index from disk.
     pub fn load(path: &Path) -> Result<Self, Error> {
         let path_str = path.to_string_lossy().to_string();
-        let index = Index::restore(&path_str)
-            .map_err(|e| Error::embed("load vector index", e))?;
+        let index = Index::restore(&path_str).map_err(|e| Error::embed("load vector index", e))?;
 
         let _size = index.size();
 

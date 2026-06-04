@@ -34,10 +34,9 @@ impl crate::Uteke {
                         // Also remove deprecated memory from vector index so
                         // it doesn't appear in future similarity searches.
                         // Re-acquire lock for mutation (safe: search lock was dropped above).
-                        let mut idx = self
-                            .index
-                            .lock()
-                            .map_err(|_| Error::lock("index lock during contradiction deprecation"))?;
+                        let mut idx = self.index.lock().map_err(|_| {
+                            Error::lock("index lock during contradiction deprecation")
+                        })?;
                         if idx.remove(id) {
                             if let Err(e) = idx.save() {
                                 tracing::warn!(
@@ -135,10 +134,9 @@ impl crate::Uteke {
         // Then insert into SQLite (source of truth for reads)
         if let Err(e) = self.store.insert(&memory) {
             // Rollback: remove from vector index
-            let mut index = self
-                .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during remember_with_contradiction rollback"))?;
+            let mut index = self.index.lock().map_err(|_| {
+                Error::lock("index lock during remember_with_contradiction rollback")
+            })?;
             if index.remove(&id) {
                 if let Err(e) = index.save() {
                     tracing::warn!("Failed to persist vector index during rollback: {e}");

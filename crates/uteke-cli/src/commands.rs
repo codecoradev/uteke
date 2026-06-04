@@ -360,7 +360,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                     .bulk_forget_by_tag(tag.as_str(), ns)
                     .map_err(|e| format!("Failed: {e}"))?;
                 if cli.json {
-                    output::print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
+                    output::print_json(
+                        &serde_json::json!({"deleted": result.deleted, "ids": result.ids}),
+                    );
                 } else {
                     println!("✓ Deleted {} memories with tag '{}'", result.deleted, tag);
                 }
@@ -376,7 +378,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                     .bulk_forget_cold(ns)
                     .map_err(|e| format!("Failed: {e}"))?;
                 if cli.json {
-                    output::print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
+                    output::print_json(
+                        &serde_json::json!({"deleted": result.deleted, "ids": result.ids}),
+                    );
                 } else {
                     println!("✓ Deleted {} cold memories", result.deleted);
                 }
@@ -392,7 +396,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                     .bulk_forget_all(ns)
                     .map_err(|e| format!("Failed: {e}"))?;
                 if cli.json {
-                    output::print_json(&serde_json::json!({"deleted": result.deleted, "ids": result.ids}));
+                    output::print_json(
+                        &serde_json::json!({"deleted": result.deleted, "ids": result.ids}),
+                    );
                 } else {
                     println!("✓ Deleted {} memories", result.deleted);
                 }
@@ -770,9 +776,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                 .and_then(|n| n.to_str())
                 .unwrap_or("binary");
 
-            let expected_line = checksums
-                .lines()
-                .find(|l| l.contains(binary_filename));
+            let expected_line = checksums.lines().find(|l| l.contains(binary_filename));
 
             match expected_line {
                 Some(line) => {
@@ -804,11 +808,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
                     }
                 }
                 None => {
-                    return Err(format!(
-                        "Binary not found in checksums file: {}",
-                        binary_filename
-                    )
-                    .into());
+                    return Err(
+                        format!("Binary not found in checksums file: {}", binary_filename).into(),
+                    );
                 }
             }
             Ok(())

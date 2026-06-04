@@ -22,7 +22,8 @@ impl crate::Uteke {
 
         let mut lines = Vec::with_capacity(entries.len());
         for entry in &entries {
-            let line = serde_json::to_string(entry).map_err(|e| Error::db("export serialization", e))?;
+            let line =
+                serde_json::to_string(entry).map_err(|e| Error::db("export serialization", e))?;
             lines.push(line);
         }
 

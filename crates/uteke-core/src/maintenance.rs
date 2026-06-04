@@ -2,9 +2,7 @@
 
 use crate::error::{format_bytes, Error};
 use crate::memory::store::Store;
-use crate::memory::types::{
-    AgingStatus, CleanupResult, Memory, PruneResult, StoreStats,
-};
+use crate::memory::types::{AgingStatus, CleanupResult, Memory, PruneResult, StoreStats};
 use crate::types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 use crate::uteke_home;
 

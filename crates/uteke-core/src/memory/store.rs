@@ -233,8 +233,8 @@ impl Store {
         let embedding_blob = serialize_embedding(&memory.embedding);
         let tags_json =
             serde_json::to_string(&memory.tags).map_err(|e| Error::db("database operation", e))?;
-        let metadata_json =
-            serde_json::to_string(&memory.metadata).map_err(|e| Error::db("database operation", e))?;
+        let metadata_json = serde_json::to_string(&memory.metadata)
+            .map_err(|e| Error::db("database operation", e))?;
 
         self.conn
             .execute(
@@ -292,8 +292,8 @@ impl Store {
         let embedding_blob = serialize_embedding(&memory.embedding);
         let tags_json =
             serde_json::to_string(&memory.tags).map_err(|e| Error::db("database operation", e))?;
-        let metadata_json =
-            serde_json::to_string(&memory.metadata).map_err(|e| Error::db("database operation", e))?;
+        let metadata_json = serde_json::to_string(&memory.metadata)
+            .map_err(|e| Error::db("database operation", e))?;
 
         self.conn
             .execute(
