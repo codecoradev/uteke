@@ -190,6 +190,7 @@ impl Store {
                 break;
             }
             tracing::warn!("applying schema migration v{version}");
+            #[allow(clippy::match_single_binding)]
             match version {
                 // Future migrations go here, e.g.:
                 // 2 => self.migrate_v1_to_v2()?,
