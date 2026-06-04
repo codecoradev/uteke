@@ -26,6 +26,9 @@ CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
 "#;
 
+/// Current schema version. Increment when adding migrations.
+const CURRENT_SCHEMA_VERSION: i32 = 1;
+
 /// Persistent SQLite store for memories.
 pub struct Store {
     conn: Connection,
@@ -40,12 +43,12 @@ impl Store {
         } else {
             Connection::open(path)
         }
-        .map_err(|e| Error::Database(e.to_string()))?;
+        .map_err(|e| Error::db("Failed to open database", e))?;
 
         conn.execute_batch("PRAGMA journal_mode=WAL;")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("Failed to set WAL mode", e))?;
         conn.execute_batch("PRAGMA busy_timeout=5000;")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("Failed to set busy timeout", e))?;
 
         let store = Self { conn };
         store.init_schema()?;
@@ -55,7 +58,7 @@ impl Store {
     fn init_schema(&self) -> Result<(), Error> {
         self.conn
             .execute_batch(SCHEMA)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         // Migration: add namespace column if missing (existing DBs)
         let has_namespace: bool = self
@@ -67,7 +70,7 @@ impl Store {
                 .execute_batch(
                     "ALTER TABLE memories ADD COLUMN namespace TEXT NOT NULL DEFAULT 'default';",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
 
         // Create namespace index (safe after column exists)
@@ -75,7 +78,7 @@ impl Store {
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         // Migration: add access tracking columns
         if !self.column_exists("access_count") {
@@ -83,12 +86,12 @@ impl Store {
                 .execute_batch(
                     "ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0;",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         if !self.column_exists("last_accessed") {
             self.conn
                 .execute_batch("ALTER TABLE memories ADD COLUMN last_accessed TEXT;")
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
 
         // Migration: add temporal/deprecation columns
@@ -97,24 +100,24 @@ impl Store {
                 .execute_batch(
                     "ALTER TABLE memories ADD COLUMN deprecated INTEGER NOT NULL DEFAULT 0;",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         if !self.column_exists("valid_from") {
             self.conn
                 .execute_batch("ALTER TABLE memories ADD COLUMN valid_from TEXT;")
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         if !self.column_exists("valid_until") {
             self.conn
                 .execute_batch("ALTER TABLE memories ADD COLUMN valid_until TEXT;")
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         if !self.column_exists("memory_type") {
             self.conn
                 .execute_batch(
                     "ALTER TABLE memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'fact';",
                 )
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
 
         // Create deprecation index
@@ -122,9 +125,101 @@ impl Store {
             .execute_batch(
                 "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
+
+        self.ensure_schema_version()?;
 
         Ok(())
+    }
+
+    /// Ensure the schema_version table exists and the database is at the
+    /// correct schema version, running migrations if necessary.
+    fn ensure_schema_version(&self) -> Result<(), Error> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL);",
+            )
+            .map_err(|e| Error::db("database operation", e))?;
+
+        let current: Option<i32> = self
+            .conn
+            .query_row(
+                "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("database operation", e))?;
+
+        match current {
+            None => {
+                // Fresh database — stamp version 1.
+                let now = chrono::Utc::now().to_rfc3339();
+                self.conn
+                    .execute(
+                        "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                        params![CURRENT_SCHEMA_VERSION, now],
+                    )
+                    .map_err(|e| Error::db("database operation", e))?;
+            }
+            Some(v) if v == CURRENT_SCHEMA_VERSION => {
+                // Already at the correct version — nothing to do.
+            }
+            Some(v) if v < CURRENT_SCHEMA_VERSION => {
+                // Run migrations from v to CURRENT_SCHEMA_VERSION.
+                self.run_migrations(v)?;
+            }
+            Some(v) => {
+                return Err(Error::db_msg(format!(
+                    "database schema version {v} is newer than supported version {CURRENT_SCHEMA_VERSION}; \
+                     please upgrade uteke"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run incremental migrations from `from_version` (exclusive) up to
+    /// `CURRENT_SCHEMA_VERSION` (inclusive).
+    fn run_migrations(&self, from_version: i32) -> Result<(), Error> {
+        let mut version = from_version;
+        loop {
+            version += 1;
+            if version > CURRENT_SCHEMA_VERSION {
+                break;
+            }
+            tracing::warn!("applying schema migration v{version}");
+            #[allow(clippy::match_single_binding)]
+            match version {
+                // Future migrations go here, e.g.:
+                // 2 => self.migrate_v1_to_v2()?,
+                _ => {
+                    // No-op for v1 (first versioned schema).
+                }
+            }
+            let now = chrono::Utc::now().to_rfc3339();
+            self.conn
+                .execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                    params![version, now],
+                )
+                .map_err(|e| Error::db("database operation", e))?;
+        }
+        Ok(())
+    }
+
+    /// Return the current schema version recorded in the database.
+    pub fn schema_version(&self) -> Result<i32, Error> {
+        let version: i32 = self
+            .conn
+            .query_row(
+                "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("database operation", e))?;
+        Ok(version)
     }
 
     fn column_exists(&self, column: &str) -> bool {
@@ -138,9 +233,9 @@ impl Store {
     pub fn insert(&self, memory: &Memory) -> Result<(), Error> {
         let embedding_blob = serialize_embedding(&memory.embedding);
         let tags_json =
-            serde_json::to_string(&memory.tags).map_err(|e| Error::Database(e.to_string()))?;
-        let metadata_json =
-            serde_json::to_string(&memory.metadata).map_err(|e| Error::Database(e.to_string()))?;
+            serde_json::to_string(&memory.tags).map_err(|e| Error::db("database operation", e))?;
+        let metadata_json = serde_json::to_string(&memory.metadata)
+            .map_err(|e| Error::db("database operation", e))?;
 
         self.conn
             .execute(
@@ -163,7 +258,7 @@ impl Store {
                     memory.memory_type,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("Failed to prepare statement for insert", e))?;
 
         Ok(())
     }
@@ -173,12 +268,12 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type FROM memories WHERE id = ?1")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("Failed to prepare statement for get_by_id", e))?;
 
         let result = stmt
             .query_row(params![id], row_to_memory)
             .optional()
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("Failed to get memory by ID", e))?;
 
         Ok(result)
     }
@@ -188,7 +283,7 @@ impl Store {
         let deleted = self
             .conn
             .execute("DELETE FROM memories WHERE id = ?1", params![id])
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("Failed to delete memory", e))?;
         Ok(deleted > 0)
     }
 
@@ -197,9 +292,9 @@ impl Store {
     pub fn update(&self, memory: &Memory) -> Result<(), Error> {
         let embedding_blob = serialize_embedding(&memory.embedding);
         let tags_json =
-            serde_json::to_string(&memory.tags).map_err(|e| Error::Database(e.to_string()))?;
-        let metadata_json =
-            serde_json::to_string(&memory.metadata).map_err(|e| Error::Database(e.to_string()))?;
+            serde_json::to_string(&memory.tags).map_err(|e| Error::db("database operation", e))?;
+        let metadata_json = serde_json::to_string(&memory.metadata)
+            .map_err(|e| Error::db("database operation", e))?;
 
         self.conn
             .execute(
@@ -215,7 +310,7 @@ impl Store {
                     memory.namespace,
                 ],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         Ok(())
     }
 
@@ -240,12 +335,12 @@ impl Store {
                 let mut stmt = self
                     .conn
                     .prepare(sql)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, t, limit, offset], row_to_memory)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::Database(e.to_string()))?;
+                    let m = row.map_err(|e| Error::db("database operation", e))?;
                     memories.push(m);
                 }
             }
@@ -253,12 +348,12 @@ impl Store {
                 let mut stmt = self
                     .conn
                     .prepare(sql)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, limit, offset], row_to_memory)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::Database(e.to_string()))?;
+                    let m = row.map_err(|e| Error::db("database operation", e))?;
                     memories.push(m);
                 }
             }
@@ -282,15 +377,15 @@ impl Store {
                  FROM memories WHERE namespace = ?1 AND content LIKE ?2
                  ORDER BY created_at DESC LIMIT ?3",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let rows = stmt
             .query_map(params![ns, pattern, limit], row_to_memory)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let mut memories = Vec::new();
         for row in rows {
-            let m = row.map_err(|e| Error::Database(e.to_string()))?;
+            let m = row.map_err(|e| Error::db("database operation", e))?;
             memories.push(m);
         }
         Ok(memories)
@@ -309,12 +404,12 @@ impl Store {
                 let mut stmt = self
                     .conn
                     .prepare(sql)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns], row_to_memory)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::Database(e.to_string()))?;
+                    let m = row.map_err(|e| Error::db("database operation", e))?;
                     memories.push(m);
                 }
             }
@@ -322,12 +417,12 @@ impl Store {
                 let mut stmt = self
                     .conn
                     .prepare(sql)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map([], row_to_memory)
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::Database(e.to_string()))?;
+                    let m = row.map_err(|e| Error::db("database operation", e))?;
                     memories.push(m);
                 }
             }
@@ -345,11 +440,11 @@ impl Store {
                     params![ns],
                     |row| row.get(0),
                 )
-                .map_err(|e| Error::Database(e.to_string()))?,
+                .map_err(|e| Error::db("database operation", e))?,
             None => self
                 .conn
                 .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
-                .map_err(|e| Error::Database(e.to_string()))?,
+                .map_err(|e| Error::db("database operation", e))?,
         };
         Ok(count)
     }
@@ -369,19 +464,19 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(sql)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let rows = match namespace {
             Some(ns) => stmt
                 .query_map(params![ns], |row: &rusqlite::Row| row.get::<_, String>(0))
-                .map_err(|e| Error::Database(e.to_string()))?
+                .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Error::Database(e.to_string()))?,
+                .map_err(|e| Error::db("database operation", e))?,
             None => stmt
                 .query_map([], |row: &rusqlite::Row| row.get::<_, String>(0))
-                .map_err(|e| Error::Database(e.to_string()))?
+                .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Error::Database(e.to_string()))?,
+                .map_err(|e| Error::db("database operation", e))?,
         };
 
         Ok(rows)
@@ -392,15 +487,15 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT DISTINCT namespace FROM memories ORDER BY namespace")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let rows = stmt
             .query_map([], |row: &rusqlite::Row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let mut namespaces = Vec::new();
         for row in rows {
-            namespaces.push(row.map_err(|e| Error::Database(e.to_string()))?);
+            namespaces.push(row.map_err(|e| Error::db("database operation", e))?);
         }
         Ok(namespaces)
     }
@@ -418,7 +513,7 @@ impl Store {
                 "UPDATE memories SET access_count = access_count + 1, last_accessed = ?1 WHERE id = ?2",
                 params![now, id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         Ok(())
     }
 
@@ -447,18 +542,18 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(sql)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let rows = stmt
             .query_map(
                 params![ns, older_than_days, max_access_count, older_than_days],
                 row_to_memory,
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let mut memories = Vec::new();
         for row in rows {
-            let m = row.map_err(|e| Error::Database(e.to_string()))?;
+            let m = row.map_err(|e| Error::db("database operation", e))?;
             memories.push(m);
         }
         Ok(memories)
@@ -488,7 +583,7 @@ impl Store {
                 sql,
                 params![ns, older_than_days, max_access_count, older_than_days],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         Ok(deleted)
     }
 
@@ -502,7 +597,7 @@ impl Store {
                 params![ns],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         Ok(count)
     }
 
@@ -520,7 +615,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(sql)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
             .query_map(params![ns], |row| {
                 Ok(crate::memory::types::TagInfo {
@@ -528,10 +623,10 @@ impl Store {
                     count: row.get(1)?,
                 })
             })
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         let mut result = Vec::new();
         for row in rows {
-            result.push(row.map_err(|e| Error::Database(e.to_string()))?);
+            result.push(row.map_err(|e| Error::db("database operation", e))?);
         }
         Ok(result)
     }
@@ -550,13 +645,13 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let rows: Vec<(String, String)> = stmt
             .query_map(rusqlite::params![ns, old], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -572,14 +667,14 @@ impl Store {
             }
             if changed {
                 let new_tags_json =
-                    serde_json::to_string(&tags).map_err(|e| Error::Database(e.to_string()))?;
+                    serde_json::to_string(&tags).map_err(|e| Error::db("database operation", e))?;
                 let now = chrono::Utc::now().to_rfc3339();
                 self.conn
                     .execute(
                         "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
                         rusqlite::params![new_tags_json, now, id],
                     )
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 updated += 1;
             }
         }
@@ -594,13 +689,13 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let rows: Vec<(String, String)> = stmt
             .query_map(rusqlite::params![ns, tag], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -611,14 +706,14 @@ impl Store {
             tags.retain(|t| t != tag);
             if tags.len() != before_len {
                 let new_tags_json =
-                    serde_json::to_string(&tags).map_err(|e| Error::Database(e.to_string()))?;
+                    serde_json::to_string(&tags).map_err(|e| Error::db("database operation", e))?;
                 let now = chrono::Utc::now().to_rfc3339();
                 self.conn
                     .execute(
                         "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
                         rusqlite::params![new_tags_json, now, id],
                     )
-                    .map_err(|e| Error::Database(e.to_string()))?;
+                    .map_err(|e| Error::db("database operation", e))?;
                 updated += 1;
             }
         }
@@ -643,7 +738,7 @@ impl Store {
                 params![ns, hot_cutoff],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let warm: usize = self
             .conn
@@ -652,7 +747,7 @@ impl Store {
                 params![ns, warm_cutoff, hot_cutoff],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         let cold: usize = self
             .conn
@@ -661,7 +756,7 @@ impl Store {
                 params![ns, warm_cutoff],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
 
         Ok((hot, warm, cold))
     }
@@ -676,15 +771,15 @@ impl Store {
         let ids: Vec<String> = self
             .conn
             .prepare("SELECT id FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .query_map(rusqlite::params![ns, tag], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
         for id in &ids {
             self.conn
                 .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         Ok(ids)
     }
@@ -700,15 +795,15 @@ impl Store {
         let ids: Vec<String> = self
             .conn
             .prepare("SELECT id FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL)")
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .query_map(rusqlite::params![ns, warm_cutoff], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
         for id in &ids {
             self.conn
                 .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         Ok(ids)
     }
@@ -719,15 +814,15 @@ impl Store {
         let ids: Vec<String> = self
             .conn
             .prepare("SELECT id FROM memories WHERE namespace = ?1")
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .query_map(rusqlite::params![ns], |row| row.get(0))
-            .map_err(|e| Error::Database(e.to_string()))?
+            .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
         for id in &ids {
             self.conn
                 .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
-                .map_err(|e| Error::Database(e.to_string()))?;
+                .map_err(|e| Error::db("database operation", e))?;
         }
         Ok(ids)
     }
@@ -741,7 +836,7 @@ impl Store {
                 rusqlite::params![ns, tag],
                 |row| row.get(0),
             )
-            .map_err(|e| Error::Database(e.to_string()))
+            .map_err(|e| Error::db("database operation", e))
     }
 
     /// Deprecate a memory by ID. Sets deprecated=1 and valid_until=now.
@@ -752,7 +847,7 @@ impl Store {
                 "UPDATE memories SET deprecated = 1, valid_until = ?1, updated_at = ?1 WHERE id = ?2",
                 params![now, id],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         Ok(())
     }
 
@@ -765,13 +860,13 @@ impl Store {
                 "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
                  FROM memories WHERE namespace = ?1 AND deprecated = 0 ORDER BY created_at DESC LIMIT ?2",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
             .query_map(params![namespace, limit], row_to_memory)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         let mut memories = Vec::new();
         for row in rows {
-            memories.push(row.map_err(|e| Error::Database(e.to_string()))?);
+            memories.push(row.map_err(|e| Error::db("database operation", e))?);
         }
         Ok(memories)
     }
@@ -788,7 +883,7 @@ impl Store {
                  AND datetime(updated_at) < datetime('now', '-' || ?2 || ' days')",
                 params![ns, ttl_days],
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         Ok(deleted)
     }
 
@@ -808,13 +903,13 @@ impl Store {
                  AND datetime(updated_at) < datetime('now', '-' || ?2 || ' days')
                  ORDER BY updated_at ASC",
             )
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
             .query_map(params![ns, ttl_days], row_to_memory)
-            .map_err(|e| Error::Database(e.to_string()))?;
+            .map_err(|e| Error::db("database operation", e))?;
         let mut memories = Vec::new();
         for row in rows {
-            memories.push(row.map_err(|e| Error::Database(e.to_string()))?);
+            memories.push(row.map_err(|e| Error::db("database operation", e))?);
         }
         Ok(memories)
     }
@@ -846,12 +941,24 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
     let tags_str: Option<String> = row.get(3)?;
     let tags = tags_str
         .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
+        .and_then(|s| match serde_json::from_str::<Vec<String>>(s) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                tracing::warn!("Corrupted tags JSON for memory (will use empty): {e}");
+                None
+            }
+        })
         .unwrap_or_default();
     let metadata_str: Option<String> = row.get(4)?;
     let metadata = metadata_str
         .as_deref()
-        .and_then(|s| serde_json::from_str(s).ok())
+        .and_then(|s| match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("Corrupted metadata JSON for memory (will use null): {e}");
+                None
+            }
+        })
         .unwrap_or(serde_json::Value::Null);
     let created_at_str: String = row.get(5)?;
     let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)

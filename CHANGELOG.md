@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] — 2026-06-04
+
+### Added
+
+- **Architecture: module split** — `lib.rs` (1471→352) and `main.rs` (1538→422) broken into focused modules: `operations`, `maintenance`, `consolidate`, `error`, `types`, `import_export`, `commands`, `init`, `output`, `bench`
+- **Input validation** — Max content 10K chars, max 20 tags, max server payload 1MB (#132)
+- **Binary checksums** — SHA256 checksums in release artifacts + `verify-checksums` subcommand (#134)
+- **Schema versioning** — `schema_version` table + migration framework for future DB upgrades (#138)
+- **Error handling rewrite** — `Error` enum with sanitized user-friendly messages, ~90 call sites migrated from raw rusqlite/usearch/ONNX errors (#144)
+- **Python wrapper expansion** — 7→21 methods covering all CLI commands, namespace support, type hints, Google-style docstrings (#137)
+- **Memory benchmark** — `memory-bench` binary for library-level timing across dataset sizes (#49)
+- **Memory consolidation** — `consolidate` command to find and merge near-duplicate memories
+- **Import/Export** — JSONL-based memory backup and restore via `import` / `export` commands
+
+### Changed
+
+- **Contradiction detection** — Now read-only during check; deprecation happens after new memory is safely persisted (prevents data loss on insert failure) (#139)
+- **README** — v0.0.8 badge, Design Philosophy section, Performance benchmarks
+
+### Fixed
+
+- **Deadlock in `check_contradiction`** — Mutex re-acquire pattern fixed by separating read-only check from mutation (#139)
+
+### Security
+
+- **Error sanitization** — Internal error details (file paths, SQL, model names, ONNX internals) no longer exposed to users (#144)
+
 ## [0.0.7] — 2026-06-02
 
 ### Added

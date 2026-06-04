@@ -456,6 +456,25 @@ fn main() {
         let url = req.url().to_string();
         info!("{method} {url}");
 
+        // Check payload size for POST requests
+        if method == Method::Post {
+            let content_length = req
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("content-length"))
+                .and_then(|h| h.value.as_str().parse::<usize>().ok());
+            if let Some(size) = content_length {
+                if size > uteke_core::MAX_PAYLOAD_SIZE {
+                    let response = error_response(
+                        413,
+                        serde_json::json!({"error": "Payload too large"}).to_string(),
+                    );
+                    req.respond(response).ok();
+                    continue;
+                }
+            }
+        }
+
         let response = route(&uteke, &method, &url, &mut req.as_reader());
         if let Err(e) = req.respond(response) {
             warn!("Response error: {e}");
