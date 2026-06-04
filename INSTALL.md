@@ -44,13 +44,19 @@ Download from [GitHub Releases](https://github.com/ajianaz/uteke/releases):
 ### Quick Install (Linux/macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/develop/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
 ```
 
-> Installs to `~/.local/bin`. Add to PATH if needed:
+> Installs `uteke` and `uteke-serve` to `~/.local/bin`. Add to PATH if needed:
 > ```bash
 > echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # or ~/.zshrc
 > ```
+
+Pin a specific version with `UTEKE_VERSION`:
+
+```bash
+UTEKE_VERSION=v0.0.7 curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+```
 
 ### Windows Setup
 

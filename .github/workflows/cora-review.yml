@@ -2,7 +2,7 @@ name: Cora AI Code Review
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [develop, main]
     types: [opened, synchronize, ready_for_review, reopened]
 
 concurrency:

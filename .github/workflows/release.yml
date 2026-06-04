@@ -10,7 +10,27 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  sync-main:
+    name: Sync main branch
+    runs-on: ubuntu-latest
+    # Only runs on v* tag pushes (release trigger). Uses force-push because main
+    # is a release-only mirror of develop — any commits on main not in develop
+    # are stale snapshots that should be overwritten by the current release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+
+      - name: Push to main
+        run: |
+          git push origin HEAD:main --force
+          echo "✅ main synced to develop at ${{ github.sha }}"
+
   build-release:
+    needs: sync-main
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -103,6 +123,12 @@ jobs:
       - name: List artifacts
         run: ls -la release-artifacts/
 
+      - name: Generate SHA256 checksums
+        run: |
+          cd release-artifacts
+          sha256sum * > checksums-sha256.txt
+          cat checksums-sha256.txt
+
       - name: Extract version from tag
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
@@ -132,7 +158,7 @@ jobs:
           printf '| Linux (ARM64) | `uteke-%s-aarch64-unknown-linux-gnu.tar.gz` |\n' "${VER}" >> release-notes.md
           printf '| macOS (Apple Silicon) | `uteke-%s-aarch64-apple-darwin.tar.gz` |\n' "${VER}" >> release-notes.md
           printf '| Windows (x86_64) | `uteke-%s-x86_64-pc-windows-msvc.zip` |\n\n' "${VER}" >> release-notes.md
-          printf '### 🚀 Quick Start\n\n```bash\n# Install\ncurl -fsSL https://uteke.ajianaz.dev/install.sh | sh\n\n# Store a memory\nuteke remember "Important context" --tags project\n\n# Recall by meaning\nuteke recall "what was that context?"\n\n# Start server for fast AI agent access\nuteke-serve --port 8767\n```\n\n' >> release-notes.md
+          printf '### 🚀 Quick Start\n\n```bash\n# Quick install (Linux / macOS)\ncurl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh\n\n# Pin a specific version\nUTEKE_VERSION=v%s curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh\n\n# Store a memory\nuteke remember "Important context" --tags project\n\n# Recall by meaning\nuteke recall "what was that context?"\n\n# Start server for fast AI agent access\nuteke-serve --port 8767\n```\n\n' >> release-notes.md
           printf '**Full changelog:** https://github.com/ajianaz/uteke/blob/main/CHANGELOG.md\n' >> release-notes.md
 
       - name: Create GitHub Release
