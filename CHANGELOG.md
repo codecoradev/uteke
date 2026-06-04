@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GTM Phase 1+2** — README overhaul + landing page refresh for public launch readiness (#174)
+  - README: benefit-first hero tagline, install.sh quick start, updated comparison table (Mem0/Letta/Zep), "Who is this for?" section, performance highlights
+  - Website: version badge v0.0.8, install.sh CTA, social proof section, updated comparison data, OG meta tags, refreshed hero headline
+  - GTM plan documented in `docs/plans/2026-06-04-readme-landing-page-gtm.md`
+
 ## [0.0.8] — 2026-06-04
 
 ### Added
@@ -295,6 +302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
+[0.0.8]: https://github.com/ajianaz/uteke/releases/tag/v0.0.8
 [0.0.7]: https://github.com/ajianaz/uteke/releases/tag/v0.0.7
 [0.0.6]: https://github.com/ajianaz/uteke/releases/tag/v0.0.6
 [0.0.5]: https://github.com/ajianaz/uteke/releases/tag/v0.0.5
