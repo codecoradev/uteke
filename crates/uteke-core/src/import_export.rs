@@ -122,8 +122,6 @@ impl crate::Uteke {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_export_entry_serialization() {
         use crate::memory::types::ExportEntry;

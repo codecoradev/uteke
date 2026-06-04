@@ -287,7 +287,6 @@ impl crate::Uteke {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::memory::types::AgingStatus;
 
     #[test]
