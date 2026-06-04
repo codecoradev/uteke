@@ -128,10 +128,7 @@ mod tests {
         // UNIQUE constraint
         let e = Error::db(
             "insert",
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "UNIQUE constraint failed: memories.id",
-            ),
+            std::io::Error::other("UNIQUE constraint failed: memories.id"),
         );
         let msg = e.to_string();
         assert!(msg.contains("duplicate entry"), "got: {msg}");
@@ -141,19 +138,13 @@ mod tests {
         );
 
         // Disk I/O
-        let e = Error::db(
-            "open",
-            std::io::Error::new(std::io::ErrorKind::Other, "disk I/O error: /path/to/db"),
-        );
+        let e = Error::db("open", std::io::Error::other("disk I/O error: /path/to/db"));
         let msg = e.to_string();
         assert!(msg.contains("storage error"), "got: {msg}");
         assert!(!msg.contains("/path/to/db"), "leaks path: {msg}");
 
         // Generic
-        let e = Error::db(
-            "query",
-            std::io::Error::new(std::io::ErrorKind::Other, "some random rusqlite error"),
-        );
+        let e = Error::db("query", std::io::Error::other("some random rusqlite error"));
         let msg = e.to_string();
         assert!(msg.contains("database operation failed"), "got: {msg}");
         assert!(!msg.contains("rusqlite"), "leaks internal: {msg}");
@@ -163,10 +154,7 @@ mod tests {
     fn test_embed_error_sanitization() {
         let e = Error::embed(
             "recall",
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Failed to initialize ONNX session for model embeddinggemma",
-            ),
+            std::io::Error::other("Failed to initialize ONNX session for model embeddinggemma"),
         );
         let msg = e.to_string();
         assert!(msg.contains("embedding model"), "got: {msg}");
@@ -175,10 +163,7 @@ mod tests {
 
         let e = Error::embed(
             "embed",
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "out of memory allocating tensors",
-            ),
+            std::io::Error::other("out of memory allocating tensors"),
         );
         let msg = e.to_string();
         assert!(msg.contains("out of memory"), "got: {msg}");
