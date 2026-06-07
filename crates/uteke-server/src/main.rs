@@ -100,7 +100,10 @@ fn cors_headers() -> Vec<Header> {
 }
 
 fn json_response<T: Serialize>(status: u16, body: &T) -> Response<Cursor<Vec<u8>>> {
-    let data = serde_json::to_string(body).unwrap_or_else(|e| format!(r#"{{"error":"{e}"}}"#));
+    let data = serde_json::to_string(body).unwrap_or_else(|e| {
+        // Use serde for fallback too — avoids broken JSON from format!
+        serde_json::json!({"error": e.to_string()}).to_string()
+    });
     let mut headers = cors_headers();
     headers.push(json_header());
     Response::new(
@@ -212,7 +215,10 @@ fn route(
 
                 match result {
                     Ok(id) => ok_response(&serde_json::json!({"id": id})),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 }
             }
             Err(e) => error_response(400, e),
@@ -229,7 +235,10 @@ fn route(
                 };
                 match uteke.recall(&req.query, req.limit, tags_filter, ns(&req.namespace)) {
                     Ok(results) => ok_response(&results),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 }
             }
             Err(e) => error_response(400, e),
@@ -246,7 +255,10 @@ fn route(
                 };
                 match uteke.search(&req.query, req.limit, tags_filter, ns(&req.namespace)) {
                     Ok(results) => ok_response(&results),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 }
             }
             Err(e) => error_response(400, e),
@@ -262,7 +274,10 @@ fn route(
                     ns(&req.namespace),
                 ) {
                     Ok(memories) => ok_response(&memories),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 }
             }
             Err(e) => error_response(400, e),
@@ -286,13 +301,19 @@ fn route(
                 }
                 match uteke.forget(id) {
                     Ok(()) => ok_response(&serde_json::json!({"forgotten": id})),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 }
             } else if let Some(tag) = params.get("tag") {
                 let namespace = params.get("namespace").map(|s| s.as_str());
                 match uteke.bulk_forget_by_tag(tag, namespace) {
                     Ok(result) => ok_response(&result),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 }
             } else {
                 error_response(400, "Provide ?id= or ?tag= parameter")
@@ -302,7 +323,10 @@ fn route(
         // ── Stats (GET = all, POST = by namespace) ─────────────────────
         (&Method::Get, "/stats") => match uteke.stats(None) {
             Ok(stats) => ok_response(&stats),
-            Err(e) => error_response(500, format!("Failed: {e}")),
+            Err(e) => {
+                error!("Internal error: {e}");
+                error_response(500, "Internal server error")
+            }
         },
         (&Method::Post, "/stats") => {
             #[derive(Deserialize)]
@@ -312,7 +336,10 @@ fn route(
             match read_body::<StatsReq>(body) {
                 Ok(req) => match uteke.stats(ns(&req.namespace)) {
                     Ok(stats) => ok_response(&stats),
-                    Err(e) => error_response(500, format!("Failed: {e}")),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        error_response(500, "Internal server error")
+                    }
                 },
                 Err(e) => error_response(400, e),
             }
@@ -321,7 +348,10 @@ fn route(
         // ── Namespaces ──────────────────────────────────────────────────
         (&Method::Get, "/namespaces") => match uteke.list_namespaces() {
             Ok(namespaces) => ok_response(&namespaces),
-            Err(e) => error_response(500, format!("Failed: {e}")),
+            Err(e) => {
+                error!("Internal error: {e}");
+                error_response(500, "Internal server error")
+            }
         },
 
         // ── Get memory by ID ──────────────────────────────────────────
@@ -334,7 +364,10 @@ fn route(
             match uteke.get_by_id(id) {
                 Ok(Some(memory)) => ok_response(&memory),
                 Ok(None) => error_response(404, format!("Memory not found: {id}")),
-                Err(e) => error_response(500, format!("Failed: {e}")),
+                Err(e) => {
+                    error!("Internal error: {e}");
+                    error_response(500, "Internal server error")
+                }
             }
         }
 

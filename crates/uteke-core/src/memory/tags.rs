@@ -96,6 +96,12 @@ impl super::Store {
         new: &str,
         namespace: Option<&str>,
     ) -> Result<usize, Error> {
+        // Start transaction BEFORE read to prevent TOCTOU race.
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin transaction", e))?;
+
         let (sql, ns_param): (&str, Option<&str>) = match namespace {
             Some(_) => ("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)", namespace),
             None => ("SELECT id, tags FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)", None),
@@ -121,11 +127,6 @@ impl super::Store {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
         };
-
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| Error::db("begin transaction", e))?;
         let mut updated = 0;
 
         for (id, tags_str) in &rows {
@@ -167,6 +168,12 @@ impl super::Store {
     /// Uses `json_each()` to find affected rows precisely. Wrapped in a
     /// transaction for atomicity.
     pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        // Start transaction BEFORE read to prevent TOCTOU race.
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin transaction", e))?;
+
         let (sql, ns_param): (&str, Option<&str>) = match namespace {
             Some(_) => ("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)", namespace),
             None => ("SELECT id, tags FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)", None),
@@ -192,11 +199,6 @@ impl super::Store {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
         };
-
-        let tx = self
-            .conn
-            .unchecked_transaction()
-            .map_err(|e| Error::db("begin transaction", e))?;
         let mut updated = 0;
 
         for (id, tags_str) in &rows {

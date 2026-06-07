@@ -148,4 +148,31 @@ impl super::Store {
         }
         Ok(memories)
     }
+
+    /// Delete memories by specific IDs. Returns count of deleted rows.
+    /// Use this instead of criteria-based delete to avoid TOCTOU races.
+    pub fn delete_by_ids(&self, ids: &[String]) -> Result<usize, Error> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        // Build parameterized IN clause: "WHERE id IN (?1, ?2, ?3)"
+        let placeholders: String = ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("DELETE FROM memories WHERE id IN ({placeholders})");
+        let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+            .iter()
+            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let deleted = self
+            .conn
+            .execute(&sql, rusqlite::params_from_iter(param_refs))
+            .map_err(|e| Error::db("database operation", e))?;
+        Ok(deleted)
+    }
 }

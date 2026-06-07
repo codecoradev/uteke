@@ -171,11 +171,11 @@ fn download_hf_file(
         .map_err(|e| Error::embed("read download response", e))?;
 
     // Atomic write: write to .tmp then rename — prevents corrupt files on crash.
-    let tmp_path = local_path.with_extension(format!(
+    let tmp_path = local_path.with_file_name(format!(
         "{}.tmp",
         local_path
-            .extension()
-            .map(|e| e.to_string_lossy().to_string())
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_default()
     ));
     std::fs::write(&tmp_path, bytes.as_ref())
