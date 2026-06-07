@@ -43,7 +43,11 @@ impl crate::Uteke {
             memory_type: "fact".to_string(),
         };
 
-        // Write-ahead: vector index first (can be rolled back), then SQLite.
+        // SQLite first (source of truth), then vector index.
+        // If vector index fails after SQLite commit, the data is safe in SQLite
+        // and the index entry can be rebuilt via `uteke repair`.
+        self.store.insert(&memory)?;
+
         {
             let mut index = self
                 .index
@@ -51,23 +55,11 @@ impl crate::Uteke {
                 .map_err(|_| Error::lock("index lock during remember"))?;
             index.insert(&id, &embedding);
             if let Err(e) = index.save() {
-                tracing::warn!("Failed to persist vector index after insert: {e}");
+                tracing::warn!(
+                    "Failed to persist vector index after remember for id={id}: {e}. \
+                     Index entry can be rebuilt via `uteke repair`."
+                );
             }
-        }
-
-        // Then insert into SQLite (source of truth for reads)
-        if let Err(e) = self.store.insert(&memory) {
-            // Rollback: remove from vector index
-            let mut index = self
-                .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during remember rollback"))?;
-            if index.remove(&id) {
-                if let Err(e) = index.save() {
-                    tracing::warn!("Failed to persist vector index during rollback: {e}");
-                }
-            }
-            return Err(e);
         }
 
         Ok(id)
