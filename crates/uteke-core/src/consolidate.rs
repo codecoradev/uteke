@@ -1,7 +1,7 @@
 //! Consolidation: contradiction detection, duplicate finding, and merging.
 
 use crate::error::Error;
-use crate::memory::types::{ContradictionResult, Memory, DEFAULT_NAMESPACE};
+use crate::memory::types::{ContradictionResult, DEFAULT_NAMESPACE};
 
 impl crate::Uteke {
     /// Check for contradictions when storing a new memory.
@@ -55,6 +55,8 @@ impl crate::Uteke {
     /// Store a memory with contradiction detection and temporal metadata.
     ///
     /// Returns the ID of the new memory and any contradiction result.
+    ///
+    /// Reuses `remember()` for the actual insert — single code path for persistence.
     pub fn remember_with_contradiction(
         &self,
         content: &str,
@@ -64,18 +66,17 @@ impl crate::Uteke {
         check_contradiction: bool,
     ) -> Result<(String, ContradictionResult), Error> {
         crate::validate_input(content, tags)?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now();
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Embed first to check for contradictions before persisting
         let embedding = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember_with_contradiction"))?
             .embed(content)?;
 
-        // Check for contradictions before inserting
+        // Check for contradictions (read-only)
         let contradiction = if check_contradiction {
-            // Release embedder lock first, then check
             self.check_contradiction(content, &embedding, ns, 0.65)?
         } else {
             ContradictionResult {
@@ -85,51 +86,17 @@ impl crate::Uteke {
             }
         };
 
-        let memory = Memory {
-            id: id.clone(),
-            content: content.to_string(),
-            embedding: embedding.clone(),
-            tags: tags.iter().map(|t| t.to_string()).collect(),
-            metadata: serde_json::Value::Null,
-            created_at: now,
-            updated_at: now,
-            namespace: ns.to_string(),
-            access_count: 0,
-            last_accessed: None,
-            deprecated: false,
-            valid_from: Some(now),
-            valid_until: None,
-            memory_type: memory_type.unwrap_or("fact").to_string(),
-        };
-
-        // Write-ahead: vector index first (can be rolled back), then SQLite.
-        {
-            let mut index = self
-                .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during remember_with_contradiction"))?;
-            index.insert(&id, &embedding);
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to persist vector index after insert: {e}");
-            }
-        }
-
-        // Then insert into SQLite (source of truth for reads)
-        if let Err(e) = self.store.insert(&memory) {
-            // Rollback: remove from vector index
-            let mut index = self.index.lock().map_err(|_| {
-                Error::lock("index lock during remember_with_contradiction rollback")
-            })?;
-            if index.remove(&id) {
-                if let Err(e) = index.save() {
-                    tracing::warn!("Failed to persist vector index during rollback: {e}");
-                }
-            }
-            return Err(e);
-        }
+        // Use remember_precomputed to avoid double-embedding
+        let id = self.remember_precomputed(
+            content,
+            tags,
+            None,
+            Some(ns),
+            memory_type.unwrap_or("fact"),
+            &embedding,
+        )?;
 
         // Only deprecate the old memory AFTER the new one is safely persisted.
-        // This ensures no data loss if the insert fails.
         if contradiction.contradicted {
             if let Some(ref deprecated_id) = contradiction.deprecated_id {
                 self.store.deprecate(deprecated_id)?;

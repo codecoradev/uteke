@@ -101,7 +101,9 @@ impl crate::Uteke {
                     .lock()
                     .map_err(|_| Error::lock("index lock during import rollback"))?;
                 index.remove(&id);
-                return Err(e);
+                tracing::warn!("Skipping import entry (id={id}): {e}");
+                skipped += 1;
+                continue;
             }
 
             imported += 1;
