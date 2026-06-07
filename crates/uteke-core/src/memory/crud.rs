@@ -147,7 +147,12 @@ impl super::Store {
         limit: usize,
     ) -> Result<Vec<Memory>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        let pattern = format!("%{query}%");
+        // Escape SQL LIKE wildcards so user input is treated as literal text
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
         let mut stmt = self
             .conn
             .prepare(
