@@ -136,14 +136,14 @@ uteke completions fish  > ~/.config/fish/completions/uteke.fish
 Zero-dependency wrapper (stdlib only, Python 3.8+):
 
 ```python
-from python_hermes import UtekeMemory
+from python_uteke import UtekeMemory
 
 mem = UtekeMemory()
 mid = mem.remember("Deploy v2.1 to staging", tags=["deploy"])
 results = mem.recall("deployment steps")
 ```
 
-See [`examples/python_hermes.py`](examples/python_hermes.py).
+See [`examples/python_uteke.py`](examples/python_uteke.py).
 
 ## Troubleshooting
 

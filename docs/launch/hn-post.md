@@ -20,12 +20,12 @@ uteke recall "what deployment is coming up?"
 - **Single binary** — `curl | sh` and you're done. No Python, no server, no Docker.
 - **Zero config** — First run downloads the embedding model (~188MB ONNX). That's it.
 - **Fully offline** — No API keys. No cloud. Data lives in `~/.uteke/`. SQLite + HNSW.
-- **Semantic search** — Uses EmbeddingGemma Q4 (256d) for vector similarity. ONNX runtime runs locally.
+- **Semantic search** — Uses EmbeddingGemma Q4 (768d) for vector similarity. ONNX runtime runs locally.
 - **~30ms recall** via library, ~42ms via HTTP server. CLI cold start ~3s (model load).
 - **JSON everywhere** — Every command supports `--json` output. Perfect for scripting and agent integration.
 
 **How it works:**
-1. Text goes in → embedded into 256d vector via ONNX → stored in SQLite + indexed in HNSW (usearch)
+1. Text goes in → embedded into 768d vector via ONNX → stored in SQLite + indexed in HNSW (usearch)
 2. Query goes in → embedded → usearch finds nearest neighbors → returns ranked results
 3. Everything is local. SQLite for metadata. usearch for persistent vector search. ONNX for embeddings.
 

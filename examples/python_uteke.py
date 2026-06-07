@@ -1,11 +1,11 @@
 """UtekeMemory — Python wrapper for the Uteke memory engine CLI.
 
-Designed for use with Hermes AI agents. Wraps the ``uteke`` binary via
+Python wrapper for the uteke CLI binary. Wraps ``uteke`` via
 subprocess calls with JSON output parsing. Covers **all** CLI commands
 including namespace isolation, tag management, memory aging, and diagnostics.
 
 Usage:
-    from python_hermes import UtekeMemory
+    from python_uteke import UtekeMemory
 
     mem = UtekeMemory()
     mid = mem.remember("Deploy v2.1 to staging", tags=["deploy", "staging"])
@@ -35,7 +35,7 @@ class UtekeError(Exception):
 
 
 class UtekeMemory:
-    """Python wrapper for Uteke memory engine — used by Hermes AI agents.
+    """Python wrapper for Uteke memory engine — used by AI agents.
 
     All methods invoke the ``uteke`` CLI binary with ``--json`` and parse
     the structured output. The binary is resolved from ``$UTEKE_BIN`` env

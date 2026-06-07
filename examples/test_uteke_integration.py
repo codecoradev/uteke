@@ -1,7 +1,7 @@
 """Integration tests for the UtekeMemory Python wrapper.
 
 Creates a temporary store, exercises all wrapper methods, and cleans up.
-Run with: python examples/test_hermes_integration.py
+Run with: python examples/test_uteke_integration.py
 
 Expects the ``uteke`` binary to be available on ``$PATH`` (or set
 ``$UTEKE_BIN`` to its location).
@@ -15,7 +15,7 @@ import unittest
 # Allow importing from examples/ when run from project root
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
-from python_hermes import UtekeError, UtekeMemory  # noqa: E402
+from python_uteke import UtekeError, UtekeMemory  # noqa: E402
 
 
 class TestUtekeMemoryIntegration(unittest.TestCase):
