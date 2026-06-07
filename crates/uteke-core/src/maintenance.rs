@@ -211,10 +211,8 @@ impl crate::Uteke {
             return Ok(CleanupResult { deleted: 0 });
         }
 
-        // Delete from SQLite
-        let deleted = self
-            .store
-            .cleanup_aged(older_than_days, max_access_count, namespace)?;
+        // Delete by specific IDs to avoid TOCTOU race (not re-query by criteria)
+        let deleted = self.store.delete_by_ids(&ids)?;
 
         // Remove from vector index
         {
@@ -253,8 +251,8 @@ impl crate::Uteke {
             });
         }
 
-        // Delete from SQLite
-        let pruned = self.store.prune_ttl(ttl_days, namespace)?;
+        // Delete by specific IDs to avoid TOCTOU race (not re-query by criteria)
+        let pruned = self.store.delete_by_ids(&ids)?;
 
         // Remove from vector index
         {
