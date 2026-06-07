@@ -55,7 +55,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 - [#129 Test coverage: 34 → 94 tests](https://github.com/ajianaz/uteke/issues/129) `✓ Done`
 - Tag substring false positive fix ("rust" ≠ "rustacean") `✓ Done`
 
-## v0.0.8 — Stability & Architecture `✓ Done` `Current`
+## v0.0.8 — Stability & Architecture `✓ Done`
 
 - [#130 Architecture: module split (1471→352 lib.rs)](https://github.com/ajianaz/uteke/issues/130) `✓ Done`
 - [#132 Input validation (max 10K chars, 20 tags, 1MB payload)](https://github.com/ajianaz/uteke/issues/132) `✓ Done`
@@ -67,6 +67,30 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 - Memory consolidation command `✓ Done`
 - Import/Export (JSONL backup and restore) `✓ Done`
 - [#174 README overhaul + landing page refresh (GTM Phase 1+2)](https://github.com/ajianaz/uteke/issues/174) `✓ Done`
+
+## v0.0.9 — Website Migration `✓ Done`
+
+- [#194 Website migrated to VitePress](https://github.com/ajianaz/uteke/issues/194) `✓ Done`
+  - SvelteKit (3,750 LOC, 10 deps) → VitePress (1,300 LOC markdown, 2 deps)
+  - Built-in full-text search
+  - Build time: ~15s → ~6s
+  - Brand theme (amber/dark) preserved
+
+## v0.0.10 — Codebase Quality `✓ Done` `Current`
+
+- [#187 Split commands.rs into per-command modules](https://github.com/ajianaz/uteke/issues/187) `✓ Done`
+- [#186 Split store.rs into focused modules](https://github.com/ajianaz/uteke/issues/186) `✓ Done`
+- [#178 Remove all Hermes branding](https://github.com/ajianaz/uteke/issues/178) `✓ Done`
+- [#196 Address all Cora code review findings](https://github.com/ajianaz/uteke/issues/196) `✓ Done`
+- Safe slice for deprecated IDs `✓ Done`
+- Index lock before SQLite write `✓ Done`
+- HTTP status checking in server proxy `✓ Done`
+- Aging cleanup filter fix `✓ Done`
+- Schema migration transactions `✓ Done`
+- Batch bulk deletes `✓ Done`
+- SQLite-first dual-write `✓ Done`
+- Embedding docs corrected (768d) `✓ Done`
+- Shell hook idempotency guards `✓ Done`
 
 ## Phase A — Growth (100+ stars) `Planned`
 

@@ -8,12 +8,11 @@ Uteke supports `uteke.toml` configuration with layered resolution.
 
 ## Resolution Order
 
-Uteke searches for config in this order. First match wins:
+Uteke searches for config in this order. Last match wins (highest priority):
 
-1. **`./uteke.toml`** — Current directory
-2. **`../uteke.toml`** — Parent directories (walks up to root)
-3. **`~/.config/uteke/uteke.toml`** — User-level config
-4. **(built-in defaults)** — Hardcoded defaults
+1. **(built-in defaults)** — Hardcoded defaults
+2. **`~/.uteke/uteke.toml`** — Global user-level config
+3. **`.uteke/uteke.toml`** — Project-level (in current working directory)
 
 Override the config file path with the `--config` flag.
 
@@ -104,10 +103,10 @@ Switch default namespace permanently with `uteke namespace switch <name>` — th
 
 ## Per-Project Config
 
-Place a `uteke.toml` in your project root to override defaults for that project:
+Place a `.uteke/uteke.toml` in your project root to override defaults for that project:
 
 ```toml
-# my-project/uteke.toml
+# my-project/.uteke/uteke.toml
 [store]
 path = "./.uteke"
 namespace = "my-project"

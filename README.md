@@ -7,7 +7,7 @@
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.8-green.svg" alt="v0.0.8" />
+  <img src="https://img.shields.io/badge/status-v0.0.10-green.svg" alt="v0.0.10" />
 </p>
 
 ---
@@ -388,7 +388,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Demand-gated — we build what people actually use.
 
-**✅ v0.0.8 (current):** Multi-agent namespaces, server mode, memory aging, Docker, shell hooks, input validation, benchmarks
+**✅ v0.0.10 (current):** Codebase refactor, VitePress docs migration, bug fixes, Hermes branding removed
+**✅ v0.0.8:** Multi-agent namespaces, server mode, memory aging, Docker, shell hooks, input validation, benchmarks
 **🔮 Phase A (100+ stars):** Better embeddings, import/export, Python SDK (PyO3), editor integrations (VS Code)
 **🔮 Phase B (500+ stars):** Cloud sync (opt-in), team collaboration, API gateway integration
 **🔮 Phase C (1000+ stars):** Plugin ecosystem, advanced consolidation, community extensions
