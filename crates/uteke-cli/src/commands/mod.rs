@@ -10,16 +10,10 @@ mod remember;
 mod server;
 mod tags;
 
-use std::io::{self, Read};
-
-use crate::output;
 use crate::resolve_namespace;
-use crate::AgingCommands;
 use crate::Cli;
 use crate::Commands;
 use crate::Config;
-use crate::NamespaceCommands;
-use crate::TagCommands;
 use uteke_core::Uteke;
 
 pub(crate) use server::{is_server_running, run_via_server};
@@ -94,9 +88,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         Commands::Hook { shell } => {
             use crate::SupportedShell;
             let script = match shell {
-                SupportedShell::Bash => include_str!("../../../scripts/shell/uteke-hook.bash"),
-                SupportedShell::Zsh => include_str!("../../../scripts/shell/uteke-hook.zsh"),
-                SupportedShell::Fish => include_str!("../../../scripts/shell/uteke-hook.fish"),
+                SupportedShell::Bash => include_str!("../../../../scripts/shell/uteke-hook.bash"),
+                SupportedShell::Zsh => include_str!("../../../../scripts/shell/uteke-hook.zsh"),
+                SupportedShell::Fish => include_str!("../../../../scripts/shell/uteke-hook.fish"),
             };
             print!("{script}");
             Ok(())
