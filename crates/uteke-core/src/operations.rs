@@ -247,12 +247,12 @@ impl crate::Uteke {
         tag: &str,
         namespace: Option<&str>,
     ) -> Result<BulkDeleteResult, Error> {
-        // SQLite first (source of truth), then vector index.
-        let ids = self.store.bulk_delete_by_tag(tag, namespace)?;
+        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
             .lock()
             .map_err(|_| Error::lock("index lock during bulk_forget_by_tag"))?;
+        let ids = self.store.bulk_delete_by_tag(tag, namespace)?;
         for id in &ids {
             if !index.remove(id) {
                 tracing::warn!(
@@ -274,14 +274,14 @@ impl crate::Uteke {
 
     /// Bulk delete all cold memories. Also removes from index.
     pub fn bulk_forget_cold(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
-        // SQLite first (source of truth), then vector index.
-        let ids = self
-            .store
-            .bulk_delete_cold(namespace, self.tier_config.warm_days)?;
+        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
             .lock()
             .map_err(|_| Error::lock("index lock during bulk_forget_cold"))?;
+        let ids = self
+            .store
+            .bulk_delete_cold(namespace, self.tier_config.warm_days)?;
         for id in &ids {
             if !index.remove(id) {
                 tracing::warn!("Vector index entry not found during bulk_forget_cold for id={id}");
@@ -301,12 +301,12 @@ impl crate::Uteke {
 
     /// Bulk delete all memories in a namespace. Also removes from index.
     pub fn bulk_forget_all(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
-        // SQLite first (source of truth), then vector index.
-        let ids = self.store.bulk_delete_all(namespace)?;
+        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
             .lock()
             .map_err(|_| Error::lock("index lock during bulk_forget_all"))?;
+        let ids = self.store.bulk_delete_all(namespace)?;
         for id in &ids {
             if !index.remove(id) {
                 tracing::warn!("Vector index entry not found during bulk_forget_all for id={id}");
