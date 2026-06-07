@@ -43,23 +43,22 @@ impl crate::Uteke {
             memory_type: "fact".to_string(),
         };
 
-        // SQLite first (source of truth), then vector index.
-        // If vector index fails after SQLite commit, the data is safe in SQLite
-        // and the index entry can be rebuilt via `uteke repair`.
+        // Acquire index lock BEFORE any writes so lock failures are detected early.
+        // If SQLite commit fails after index insert, the orphan index entry is harmless
+        // and will be cleaned up by verify/repair.
+        let mut index = self
+            .index
+            .lock()
+            .map_err(|_| Error::lock("index lock during remember"))?;
+
         self.store.insert(&memory)?;
 
-        {
-            let mut index = self
-                .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during remember"))?;
-            index.insert(&id, &embedding);
-            if let Err(e) = index.save() {
-                tracing::warn!(
-                    "Failed to persist vector index after remember for id={id}: {e}. \
-                     Index entry can be rebuilt via `uteke repair`."
-                );
-            }
+        index.insert(&id, &embedding);
+        if let Err(e) = index.save() {
+            tracing::warn!(
+                "Failed to persist vector index after remember for id={id}: {e}. \
+                 Index entry can be rebuilt via `uteke repair`."
+            );
         }
 
         Ok(id)

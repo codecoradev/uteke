@@ -13,6 +13,28 @@ pub(crate) fn is_server_running(url: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Send a request and check HTTP status before parsing JSON.
+fn parse_response<T: serde::de::DeserializeOwned>(
+    resp: reqwest::blocking::Response,
+) -> Result<T, String> {
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("Server returned {status}: {body}"));
+    }
+    resp.json::<T>().map_err(|e| format!("Parse error: {e}"))
+}
+
+/// Send a request and check HTTP status before parsing raw JSON value.
+fn parse_json_value(resp: reqwest::blocking::Response) -> Result<serde_json::Value, String> {
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("Server returned {status}: {body}"));
+    }
+    resp.json().map_err(|e| format!("Parse error: {e}"))
+}
+
 /// Route CLI commands through the HTTP server for <50ms latency.
 pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> {
     let client = reqwest::blocking::Client::new();
@@ -41,7 +63,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let data: serde_json::Value = resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            let data = parse_json_value(resp)?;
             if cli.json {
                 println!("{data}");
             } else {
@@ -62,8 +84,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let results: Vec<uteke_core::SearchResult> =
-                resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            let results = parse_response::<Vec<uteke_core::SearchResult>>(resp)?;
             if cli.json {
                 output::print_json(&results);
             } else {
@@ -84,8 +105,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let results: Vec<uteke_core::SearchResult> =
-                resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            let results = parse_response::<Vec<uteke_core::SearchResult>>(resp)?;
             if cli.json {
                 output::print_json(&results);
             } else {
@@ -106,8 +126,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let memories: Vec<uteke_core::Memory> =
-                resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            let memories = parse_response::<Vec<uteke_core::Memory>>(resp)?;
             if cli.json {
                 output::print_json(&memories);
             } else {
@@ -121,8 +140,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let stats: uteke_core::StoreStats =
-                resp.json().map_err(|e| format!("Parse error: {e}"))?;
+            let stats = parse_response::<uteke_core::StoreStats>(resp)?;
             if cli.json {
                 output::print_json(&stats);
             } else {
@@ -144,8 +162,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                     ))
                     .send()
                     .map_err(|e| format!("Server error: {e}"))?;
-                let data: serde_json::Value =
-                    resp.json().map_err(|e| format!("Parse error: {e}"))?;
+                let data = parse_json_value(resp)?;
                 if cli.json {
                     println!("{data}");
                 } else {
@@ -160,8 +177,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                     ))
                     .send()
                     .map_err(|e| format!("Server error: {e}"))?;
-                let data: serde_json::Value =
-                    resp.json().map_err(|e| format!("Parse error: {e}"))?;
+                let data = parse_json_value(resp)?;
                 if cli.json {
                     println!("{data}");
                 } else {

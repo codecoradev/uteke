@@ -8,29 +8,31 @@ use super::store::row_to_memory;
 
 impl super::Store {
     /// Bulk delete memories by tag within a namespace.
+    ///
+    /// Uses a single DELETE query with `RETURNING id` for efficiency.
     pub fn bulk_delete_by_tag(
         &self,
         tag: &str,
         namespace: Option<&str>,
     ) -> Result<Vec<String>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        let ids: Vec<String> = self
+        let mut stmt = self
             .conn
-            .prepare("SELECT id FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
-            .map_err(|e| Error::db("database operation", e))?
-            .query_map(rusqlite::params![ns, tag], |row| row.get(0))
+            .prepare(
+                "DELETE FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2) RETURNING id",
+            )
+            .map_err(|e| Error::db("database operation", e))?;
+        let ids: Vec<String> = stmt
+            .query_map(params![ns, tag], |row| row.get(0))
             .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
-        for id in &ids {
-            self.conn
-                .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
-                .map_err(|e| Error::db("database operation", e))?;
-        }
         Ok(ids)
     }
 
     /// Bulk delete all cold memories (not accessed in warm_days+ days or never accessed).
+    ///
+    /// Uses a single DELETE query with `RETURNING id` for efficiency.
     pub fn bulk_delete_cold(
         &self,
         namespace: Option<&str>,
@@ -38,38 +40,34 @@ impl super::Store {
     ) -> Result<Vec<String>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let warm_cutoff = (chrono::Utc::now() - chrono::Duration::days(warm_days)).to_rfc3339();
-        let ids: Vec<String> = self
+        let mut stmt = self
             .conn
-            .prepare("SELECT id FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL)")
-            .map_err(|e| Error::db("database operation", e))?
-            .query_map(rusqlite::params![ns, warm_cutoff], |row| row.get(0))
+            .prepare(
+                "DELETE FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL) RETURNING id",
+            )
+            .map_err(|e| Error::db("database operation", e))?;
+        let ids: Vec<String> = stmt
+            .query_map(params![ns, warm_cutoff], |row| row.get(0))
             .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
-        for id in &ids {
-            self.conn
-                .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
-                .map_err(|e| Error::db("database operation", e))?;
-        }
         Ok(ids)
     }
 
     /// Bulk delete all memories in a namespace.
+    ///
+    /// Uses a single DELETE query with `RETURNING id` for efficiency.
     pub fn bulk_delete_all(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        let ids: Vec<String> = self
+        let mut stmt = self
             .conn
-            .prepare("SELECT id FROM memories WHERE namespace = ?1")
-            .map_err(|e| Error::db("database operation", e))?
-            .query_map(rusqlite::params![ns], |row| row.get(0))
+            .prepare("DELETE FROM memories WHERE namespace = ?1 RETURNING id")
+            .map_err(|e| Error::db("database operation", e))?;
+        let ids: Vec<String> = stmt
+            .query_map(params![ns], |row| row.get(0))
             .map_err(|e| Error::db("database operation", e))?
             .filter_map(|r| r.ok())
             .collect();
-        for id in &ids {
-            self.conn
-                .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])
-                .map_err(|e| Error::db("database operation", e))?;
-        }
         Ok(ids)
     }
 

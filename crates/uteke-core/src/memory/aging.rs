@@ -63,7 +63,8 @@ impl super::Store {
 
     /// Delete aged memories from SQLite. Returns count of deleted rows.
     ///
-    /// Same criteria as `find_aged`. Does NOT touch the vector index.
+    /// Same criteria as `find_aged` (including `deprecated = 0` filter).
+    /// Does NOT touch the vector index.
     pub fn cleanup_aged(
         &self,
         older_than_days: u32,
@@ -74,6 +75,7 @@ impl super::Store {
         let sql = r#"
             DELETE FROM memories
             WHERE namespace = ?1
+              AND deprecated = 0
               AND created_at < datetime('now', '-' || ?2 || ' days')
               AND access_count <= ?3
               AND (last_accessed IS NULL OR last_accessed < datetime('now', '-' || ?4 || ' days'))
