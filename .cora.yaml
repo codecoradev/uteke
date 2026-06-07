@@ -1,8 +1,8 @@
 # cora code review config for uteke
 provider:
-  provider: custom
-  model: glm-5.1
-  base_url: https://llm.azfirazka.com/v1
+  provider: freemodel
+  model: gpt-5.4
+  base_url: https://api.freemodel.dev/v1
 
 focus:
   - security

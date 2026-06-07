@@ -114,13 +114,15 @@ impl Default for TierConfig {
 /// UTEKE_HOME=/data   → /data
 /// (not set)           → ~/.uteke
 /// ```
-pub fn uteke_home() -> PathBuf {
+pub fn uteke_home() -> Result<PathBuf, Error> {
     if let Ok(home) = std::env::var("UTEKE_HOME") {
-        PathBuf::from(home)
+        Ok(PathBuf::from(home))
     } else {
         dirs::home_dir()
-            .expect("Cannot determine home directory. Set UTEKE_HOME or HOME.")
-            .join(".uteke")
+            .ok_or_else(|| {
+                Error::generic("Cannot determine home directory. Set UTEKE_HOME or HOME.")
+            })
+            .map(|p| p.join(".uteke"))
     }
 }
 
@@ -186,7 +188,7 @@ impl Uteke {
 
         let mut index = match &index_path {
             Some(path) => VectorIndex::load_or_create(path, EmbeddingEngine::dims())?,
-            None => VectorIndex::new(EmbeddingEngine::dims()),
+            None => VectorIndex::new(EmbeddingEngine::dims())?,
         };
 
         // If index is empty but SQLite has memories, build from SQLite (migration)
@@ -328,7 +330,7 @@ mod tests {
     #[test]
     fn test_uteke_home_with_env() {
         std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
-        let home = uteke_home();
+        let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.uteke"));
         assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
         std::env::remove_var("UTEKE_HOME");
     }

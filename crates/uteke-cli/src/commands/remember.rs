@@ -13,7 +13,7 @@ pub(crate) fn run(
     r#type: &str,
     detect_contradiction: bool,
 ) -> Result<(), String> {
-    tracing::info!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
+    tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
 
     if detect_contradiction {

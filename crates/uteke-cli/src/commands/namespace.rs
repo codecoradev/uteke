@@ -21,7 +21,7 @@ pub(crate) fn run(cli: &Cli, uteke: &Uteke, command: &NamespaceCommands) -> Resu
                 } else {
                     println!("Namespaces ({} total):\n", namespaces.len());
                     for ns_name in &namespaces {
-                        let count = uteke.store().count(Some(ns_name.as_str())).unwrap_or(0);
+                        let count = uteke.count(Some(ns_name.as_str())).unwrap_or(0);
                         println!("  {} ({} memories)", ns_name, count);
                     }
                 }

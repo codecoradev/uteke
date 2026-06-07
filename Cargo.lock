@@ -1609,9 +1609,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.12"
+version = "0.11.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49df843a9161c85bb8aae55f101bc0bac8bcafd637a620d9122fd7e0b2f7422e"
+checksum = "434b42fec591c96ef50e21e886936e66d3cc3f737104fdb9b737c40ffb94c098"
 dependencies = [
  "bytes",
  "getrandom 0.3.4",
@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.0.8"
+version = "0.0.11"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.0.8"
+version = "0.0.11"
 dependencies = [
  "chrono",
  "dirs",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.0.8"
+version = "0.0.11"
 dependencies = [
  "ctrlc",
  "serde",
@@ -2644,6 +2644,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uteke-core",
+ "uuid",
 ]
 
 [[package]]

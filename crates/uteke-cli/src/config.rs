@@ -173,7 +173,8 @@ impl Config {
     }
 
     /// Merge values from a TOML file on top of this config.
-    /// Missing/empty values in the file don't overwrite existing ones.
+    /// Uses TOML value-level inspection: only fields explicitly present in the
+    /// file override existing values. Missing fields keep their current value.
     fn merge_from_file(mut self, path: &std::path::Path) -> Self {
         if !path.exists() {
             return self;
@@ -185,6 +186,22 @@ impl Config {
                 return self;
             }
         };
+
+        // Parse raw TOML table to inspect which keys are explicitly present
+        let raw: toml::Value = match toml::from_str(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Invalid config {}: {e}", path.display());
+                return self;
+            }
+        };
+
+        let table = match raw.as_table() {
+            Some(t) => t,
+            None => return self,
+        };
+
+        // Also parse as typed Config for safe value extraction
         let overlay: Config = match toml::from_str(&content) {
             Ok(c) => c,
             Err(e) => {
@@ -193,61 +210,73 @@ impl Config {
             }
         };
 
-        // Store: only override non-default values
-        if overlay.store.path != StoreConfig::default().path {
-            self.store.path = overlay.store.path;
-        }
-        if overlay.store.namespace != StoreConfig::default().namespace {
-            self.store.namespace = overlay.store.namespace;
-        }
-
-        // Embedding
-        if overlay.embedding.model != EmbeddingConfig::default().model {
-            self.embedding.model = overlay.embedding.model;
-        }
-        if overlay.embedding.max_seq_length != EmbeddingConfig::default().max_seq_length {
-            self.embedding.max_seq_length = overlay.embedding.max_seq_length;
+        // Merge store section
+        if let Some(store) = table.get("store").and_then(|v| v.as_table()) {
+            if store.contains_key("path") {
+                self.store.path = overlay.store.path;
+            }
+            if store.contains_key("namespace") {
+                self.store.namespace = overlay.store.namespace;
+            }
         }
 
-        // Tier
-        if overlay.tier.hot_days != TierConfig::default().hot_days {
-            self.tier.hot_days = overlay.tier.hot_days;
-        }
-        if overlay.tier.warm_days != TierConfig::default().warm_days {
-            self.tier.warm_days = overlay.tier.warm_days;
-        }
-        if (overlay.tier.hot_boost - TierConfig::default().hot_boost).abs() > f64::EPSILON {
-            self.tier.hot_boost = overlay.tier.hot_boost;
-        }
-
-        // Logging
-        if overlay.logging.level != LoggingConfig::default().level {
-            self.logging.level = overlay.logging.level;
-        }
-        if !overlay.logging.file.is_empty() {
-            self.logging.file = overlay.logging.file;
+        // Merge embedding section
+        if let Some(emb) = table.get("embedding").and_then(|v| v.as_table()) {
+            if emb.contains_key("model") {
+                self.embedding.model = overlay.embedding.model;
+            }
+            if emb.contains_key("max_seq_length") {
+                self.embedding.max_seq_length = overlay.embedding.max_seq_length;
+            }
         }
 
-        // Aging
-        if overlay.aging.enabled != AgingConfig::default().enabled {
-            self.aging.enabled = overlay.aging.enabled;
-        }
-        if overlay.aging.max_age_days != AgingConfig::default().max_age_days {
-            self.aging.max_age_days = overlay.aging.max_age_days;
-        }
-        if overlay.aging.max_cold_count != AgingConfig::default().max_cold_count {
-            self.aging.max_cold_count = overlay.aging.max_cold_count;
+        // Merge tier section
+        if let Some(tier) = table.get("tier").and_then(|v| v.as_table()) {
+            if tier.contains_key("hot_days") {
+                self.tier.hot_days = overlay.tier.hot_days;
+            }
+            if tier.contains_key("warm_days") {
+                self.tier.warm_days = overlay.tier.warm_days;
+            }
+            if tier.contains_key("hot_boost") {
+                self.tier.hot_boost = overlay.tier.hot_boost;
+            }
         }
 
-        // Server
-        if overlay.server.enabled != ServerConfig::default().enabled {
-            self.server.enabled = overlay.server.enabled;
+        // Merge logging section
+        if let Some(log) = table.get("logging").and_then(|v| v.as_table()) {
+            if log.contains_key("level") {
+                self.logging.level = overlay.logging.level;
+            }
+            if log.contains_key("file") {
+                self.logging.file = overlay.logging.file;
+            }
         }
-        if overlay.server.host != ServerConfig::default().host {
-            self.server.host = overlay.server.host;
+
+        // Merge aging section
+        if let Some(aging) = table.get("aging").and_then(|v| v.as_table()) {
+            if aging.contains_key("enabled") {
+                self.aging.enabled = overlay.aging.enabled;
+            }
+            if aging.contains_key("max_age_days") {
+                self.aging.max_age_days = overlay.aging.max_age_days;
+            }
+            if aging.contains_key("max_cold_count") {
+                self.aging.max_cold_count = overlay.aging.max_cold_count;
+            }
         }
-        if overlay.server.port != ServerConfig::default().port {
-            self.server.port = overlay.server.port;
+
+        // Merge server section
+        if let Some(server) = table.get("server").and_then(|v| v.as_table()) {
+            if server.contains_key("enabled") {
+                self.server.enabled = overlay.server.enabled;
+            }
+            if server.contains_key("host") {
+                self.server.host = overlay.server.host;
+            }
+            if server.contains_key("port") {
+                self.server.port = overlay.server.port;
+            }
         }
 
         self

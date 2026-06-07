@@ -30,14 +30,19 @@ impl super::Store {
         namespace: Option<&str>,
     ) -> Result<Vec<Memory>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Compute cutoffs in Rust using chrono (RFC3339) to match stored timestamp format.
+        // SQLite datetime('now') returns a different format than our RFC3339 strings,
+        // causing lexicographic comparison to fail.
+        let cutoff =
+            (chrono::Utc::now() - chrono::Duration::days(older_than_days as i64)).to_rfc3339();
         let sql = r#"
             SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
             FROM memories
             WHERE namespace = ?1
               AND deprecated = 0
-              AND created_at < datetime('now', '-' || ?2 || ' days')
+              AND created_at < ?2
               AND access_count <= ?3
-              AND (last_accessed IS NULL OR last_accessed < datetime('now', '-' || ?4 || ' days'))
+              AND (last_accessed IS NULL OR last_accessed < ?4)
             ORDER BY created_at ASC
         "#;
 
@@ -47,10 +52,7 @@ impl super::Store {
             .map_err(|e| Error::db("database operation", e))?;
 
         let rows = stmt
-            .query_map(
-                params![ns, older_than_days, max_access_count, older_than_days],
-                row_to_memory,
-            )
+            .query_map(params![ns, cutoff, max_access_count, cutoff], row_to_memory)
             .map_err(|e| Error::db("database operation", e))?;
 
         let mut memories = Vec::new();
@@ -72,21 +74,20 @@ impl super::Store {
         namespace: Option<&str>,
     ) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let cutoff =
+            (chrono::Utc::now() - chrono::Duration::days(older_than_days as i64)).to_rfc3339();
         let sql = r#"
             DELETE FROM memories
             WHERE namespace = ?1
               AND deprecated = 0
-              AND created_at < datetime('now', '-' || ?2 || ' days')
+              AND created_at < ?2
               AND access_count <= ?3
-              AND (last_accessed IS NULL OR last_accessed < datetime('now', '-' || ?4 || ' days'))
+              AND (last_accessed IS NULL OR last_accessed < ?4)
         "#;
 
         let deleted = self
             .conn
-            .execute(
-                sql,
-                params![ns, older_than_days, max_access_count, older_than_days],
-            )
+            .execute(sql, params![ns, cutoff, max_access_count, cutoff])
             .map_err(|e| Error::db("database operation", e))?;
         Ok(deleted)
     }

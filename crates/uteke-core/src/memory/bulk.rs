@@ -107,13 +107,15 @@ impl super::Store {
     /// Returns count of pruned memories.
     pub fn prune_ttl(&self, ttl_days: u32, namespace: Option<&str>) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Compute cutoff in Rust (RFC3339) to match stored timestamp format.
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(ttl_days as i64)).to_rfc3339();
         let deleted = self
             .conn
             .execute(
                 "DELETE FROM memories WHERE namespace = ?1
                  AND deprecated = 1
-                 AND datetime(updated_at) < datetime('now', '-' || ?2 || ' days')",
-                params![ns, ttl_days],
+                 AND updated_at < ?2",
+                params![ns, cutoff],
             )
             .map_err(|e| Error::db("database operation", e))?;
         Ok(deleted)
@@ -126,18 +128,19 @@ impl super::Store {
         namespace: Option<&str>,
     ) -> Result<Vec<Memory>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(ttl_days as i64)).to_rfc3339();
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
                  FROM memories WHERE namespace = ?1
                  AND deprecated = 1
-                 AND datetime(updated_at) < datetime('now', '-' || ?2 || ' days')
+                 AND updated_at < ?2
                  ORDER BY updated_at ASC",
             )
             .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
-            .query_map(params![ns, ttl_days], row_to_memory)
+            .query_map(params![ns, cutoff], row_to_memory)
             .map_err(|e| Error::db("database operation", e))?;
         let mut memories = Vec::new();
         for row in rows {

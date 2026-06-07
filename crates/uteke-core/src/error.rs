@@ -21,6 +21,9 @@ pub enum Error {
 
     #[error("Lock error: {context}")]
     Lock { context: String },
+
+    #[error("{0}")]
+    Generic(String),
 }
 
 impl Error {
@@ -59,6 +62,11 @@ impl Error {
         let context = context.into();
         tracing::warn!(%context, "lock error");
         Error::Lock { context }
+    }
+
+    /// Generic error with a message.
+    pub fn generic(msg: impl Into<String>) -> Self {
+        Error::Generic(msg.into())
     }
 
     // ── Sanitizers ─────────────────────────────────────────────────────

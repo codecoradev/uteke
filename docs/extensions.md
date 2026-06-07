@@ -4,7 +4,7 @@ title: Pi Extension
 
 # Pi Extension
 
-uteke provides a [pi coding agent](https://github.com/ajianaz/uteke) extension that shows memory stats in the footer and reminds the agent to use uteke actively.
+uteke provides a [pi coding agent](https://pi.dev) extension that shows memory stats in the footer and reminds the agent to use uteke actively.
 
 ## Status Bar
 

@@ -1,7 +1,6 @@
 //! Maintenance operations: doctor, verify, repair, stats, aging, prune, shutdown.
 
 use crate::error::{format_bytes, Error};
-use crate::memory::store::Store;
 use crate::memory::types::{AgingStatus, CleanupResult, Memory, PruneResult, StoreStats};
 use crate::types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 use crate::uteke_home;
@@ -56,7 +55,17 @@ impl crate::Uteke {
         }
 
         // 4. Embedding model
-        let model_dir = uteke_home().join("models").join("embeddinggemma-q4");
+        let model_dir = match uteke_home() {
+            Ok(p) => p.join("models").join("embeddinggemma-q4"),
+            Err(_) => {
+                checks.push(DoctorCheck {
+                    name: "Home directory".to_string(),
+                    status: DoctorStatus::Error,
+                    detail: "Cannot determine home directory. Set UTEKE_HOME.".to_string(),
+                });
+                return Ok(DoctorReport { checks });
+            }
+        };
         let model_file = model_dir.join("onnx").join("model_q4.onnx");
         let tokenizer_file = model_dir.join("tokenizer.json");
         let model_exists = model_file.exists() && tokenizer_file.exists();
@@ -129,11 +138,6 @@ impl crate::Uteke {
     }
 
     /// Get statistics about the memory store.
-    /// Access the underlying store (read-only reference).
-    pub fn store(&self) -> &Store {
-        &self.store
-    }
-
     pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
         let total_memories = self.store.count(namespace)?;
         let unique_tags = self.store.unique_tags(namespace)?.len();
