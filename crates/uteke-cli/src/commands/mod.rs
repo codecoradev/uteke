@@ -52,7 +52,18 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             cold,
             all,
             confirm,
-        } => forget::run(cli, uteke, ns, id, tag, *cold, *all, *confirm),
+        } => forget::run(
+            cli,
+            uteke,
+            ns,
+            id,
+            tag,
+            &forget::Flags {
+                cold: *cold,
+                all: *all,
+                confirm: *confirm,
+            },
+        ),
 
         Commands::Stats => list::run_stats(cli, uteke, ns),
 
