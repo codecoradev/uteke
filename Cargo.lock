@@ -2595,7 +2595,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2614,7 +2614,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "chrono",
  "dirs",
@@ -2634,7 +2634,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.0.10"
+version = "0.0.11"
 dependencies = [
  "ctrlc",
  "serde",

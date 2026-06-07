@@ -32,6 +32,10 @@ impl EmbeddingEngine {
         let model_data_path = onnx_dir.join(MODEL_DATA_FILE);
         let tokenizer_path = model_dir.join(TOKENIZER_FILE);
 
+        // Clean up leftover .tmp files from interrupted downloads
+        clean_tmp_files(&onnx_dir);
+        clean_tmp_files(&model_dir);
+
         // Download model files if not present
         if !model_path.exists() {
             download_hf_file(HF_REPO, "onnx/model_q4.onnx", &model_path)?;
@@ -123,11 +127,25 @@ impl EmbeddingEngine {
     }
 
     fn model_dir() -> Result<PathBuf, Error> {
-        Ok(crate::uteke_home().join("models").join(MODEL_DIR_NAME))
+        crate::uteke_home().map(|p| p.join("models").join(MODEL_DIR_NAME))
+    }
+}
+
+/// Delete leftover .tmp files from interrupted atomic downloads.
+fn clean_tmp_files(dir: &std::path::Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "tmp") {
+                tracing::debug!("Cleaning up temp file: {}", path.display());
+                std::fs::remove_file(&path).ok();
+            }
+        }
     }
 }
 
 /// Download a file from HuggingFace repo to local path.
+/// Uses atomic write (.tmp + rename) to prevent corrupt files on crash.
 fn download_hf_file(
     repo: &str,
     path_in_repo: &str,
@@ -152,8 +170,18 @@ fn download_hf_file(
         .bytes()
         .map_err(|e| Error::embed("read download response", e))?;
 
-    std::fs::write(local_path, bytes.as_ref())
-        .map_err(|e| Error::embed("write downloaded file", e))?;
+    // Atomic write: write to .tmp then rename — prevents corrupt files on crash.
+    let tmp_path = local_path.with_extension(format!(
+        "{}.tmp",
+        local_path
+            .extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default()
+    ));
+    std::fs::write(&tmp_path, bytes.as_ref())
+        .map_err(|e| Error::embed("write temporary file", e))?;
+    std::fs::rename(&tmp_path, local_path)
+        .map_err(|e| Error::embed("rename temp to final path", e))?;
 
     Ok(())
 }

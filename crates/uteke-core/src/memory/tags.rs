@@ -1,6 +1,6 @@
 //! Tag operations — unique tags, counts, rename, delete, namespaces.
 
-use crate::memory::types::{TagInfo, DEFAULT_NAMESPACE};
+use crate::memory::types::TagInfo;
 use crate::Error;
 use rusqlite::params;
 
@@ -43,23 +43,44 @@ impl super::Store {
     /// Single-query approach using `json_each()` — replaces the old N+1 pattern
     /// that fetched each tag then ran a separate COUNT query per tag.
     pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        let sql = "SELECT je.value AS name, COUNT(*) AS count FROM memories, json_each(memories.tags) AS je WHERE namespace = ?1 GROUP BY je.value ORDER BY count DESC";
-        let mut stmt = self
-            .conn
-            .prepare(sql)
-            .map_err(|e| Error::db("database operation", e))?;
-        let rows = stmt
-            .query_map(params![ns], |row| {
-                Ok(TagInfo {
-                    name: row.get(0)?,
-                    count: row.get(1)?,
-                })
-            })
-            .map_err(|e| Error::db("database operation", e))?;
         let mut result = Vec::new();
-        for row in rows {
-            result.push(row.map_err(|e| Error::db("database operation", e))?);
+        match namespace {
+            Some(ns) => {
+                let sql = "SELECT je.value AS name, COUNT(*) AS count FROM memories, json_each(memories.tags) AS je WHERE namespace = ?1 GROUP BY je.value ORDER BY count DESC";
+                let mut stmt = self
+                    .conn
+                    .prepare(sql)
+                    .map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![ns], |row| {
+                        Ok(TagInfo {
+                            name: row.get(0)?,
+                            count: row.get(1)?,
+                        })
+                    })
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    result.push(row.map_err(|e| Error::db("database operation", e))?);
+                }
+            }
+            None => {
+                let sql = "SELECT je.value AS name, COUNT(*) AS count FROM memories, json_each(memories.tags) AS je GROUP BY je.value ORDER BY count DESC";
+                let mut stmt = self
+                    .conn
+                    .prepare(sql)
+                    .map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map([], |row| {
+                        Ok(TagInfo {
+                            name: row.get(0)?,
+                            count: row.get(1)?,
+                        })
+                    })
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    result.push(row.map_err(|e| Error::db("database operation", e))?);
+                }
+            }
         }
         Ok(result)
     }
@@ -75,19 +96,31 @@ impl super::Store {
         new: &str,
         namespace: Option<&str>,
     ) -> Result<usize, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let (sql, ns_param): (&str, Option<&str>) = match namespace {
+            Some(_) => ("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)", namespace),
+            None => ("SELECT id, tags FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)", None),
+        };
         let mut stmt = self
             .conn
-            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
+            .prepare(sql)
             .map_err(|e| Error::db("database operation", e))?;
 
-        let rows: Vec<(String, String)> = stmt
-            .query_map(params![ns, old], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| Error::db("database operation", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| Error::db("database operation", e))?;
+        let rows: Vec<(String, String)> = match ns_param {
+            Some(ns) => stmt
+                .query_map(params![ns, old], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| Error::db("database operation", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("database operation", e))?,
+            None => stmt
+                .query_map(params![old], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| Error::db("database operation", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("database operation", e))?,
+        };
 
         let tx = self
             .conn
@@ -134,19 +167,31 @@ impl super::Store {
     /// Uses `json_each()` to find affected rows precisely. Wrapped in a
     /// transaction for atomicity.
     pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let (sql, ns_param): (&str, Option<&str>) = match namespace {
+            Some(_) => ("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)", namespace),
+            None => ("SELECT id, tags FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)", None),
+        };
         let mut stmt = self
             .conn
-            .prepare("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)")
+            .prepare(sql)
             .map_err(|e| Error::db("database operation", e))?;
 
-        let rows: Vec<(String, String)> = stmt
-            .query_map(params![ns, tag], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| Error::db("database operation", e))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| Error::db("database operation", e))?;
+        let rows: Vec<(String, String)> = match ns_param {
+            Some(ns) => stmt
+                .query_map(params![ns, tag], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| Error::db("database operation", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("database operation", e))?,
+            None => stmt
+                .query_map(params![tag], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| Error::db("database operation", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("database operation", e))?,
+        };
 
         let tx = self
             .conn
@@ -185,14 +230,24 @@ impl super::Store {
 
     /// Count memories by tag in a namespace.
     pub fn count_by_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        self.conn
-            .query_row(
-                "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
-                params![ns, tag],
-                |row| row.get(0),
-            )
-            .map_err(|e| Error::db("database operation", e))
+        match namespace {
+            Some(ns) => self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
+                    params![ns, tag],
+                    |row| row.get(0),
+                )
+                .map_err(|e| Error::db("database operation", e)),
+            None => self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)",
+                    params![tag],
+                    |row| row.get(0),
+                )
+                .map_err(|e| Error::db("database operation", e)),
+        }
     }
 
     /// List all distinct namespaces.
