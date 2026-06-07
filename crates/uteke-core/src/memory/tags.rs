@@ -1,6 +1,6 @@
 //! Tag operations — unique tags, counts, rename, delete, namespaces.
 
-use crate::memory::types::{DEFAULT_NAMESPACE, TagInfo};
+use crate::memory::types::{TagInfo, DEFAULT_NAMESPACE};
 use crate::Error;
 
 impl super::Store {
@@ -23,7 +23,9 @@ impl super::Store {
 
         let rows = match namespace {
             Some(ns) => stmt
-                .query_map(rusqlite::params![ns], |row: &rusqlite::Row| row.get::<_, String>(0))
+                .query_map(rusqlite::params![ns], |row: &rusqlite::Row| {
+                    row.get::<_, String>(0)
+                })
                 .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,

@@ -222,9 +222,15 @@ mod tests {
     fn test_store_list_with_tag_filter() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["rust"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["python"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["rust", "ai"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["python"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["rust", "ai"]))
+            .unwrap();
 
         let rust_memories = store.list(Some("rust"), None, 10, 0).unwrap();
         assert_eq!(rust_memories.len(), 2);
@@ -237,8 +243,12 @@ mod tests {
     fn test_store_search_content() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "rust programming language", &[])).unwrap();
-        store.insert(&make_test_memory("2", "python machine learning", &[])).unwrap();
+        store
+            .insert(&make_test_memory("1", "rust programming language", &[]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "python machine learning", &[]))
+            .unwrap();
 
         let results = store.search_content("rust", None, 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -270,8 +280,12 @@ mod tests {
     #[test]
     fn test_unique_tags() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory("1", "a", &["rust", "ai"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["rust", "web"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "web"]))
+            .unwrap();
 
         let tags = store.unique_tags(None).unwrap();
         assert_eq!(tags.len(), 3);
@@ -281,9 +295,30 @@ mod tests {
     fn test_namespace_isolation() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory_ns("a1", "app deploy", &["deploy"], "app-alpha")).unwrap();
-        store.insert(&make_test_memory_ns("a2", "app config", &["config"], "app-alpha")).unwrap();
-        store.insert(&make_test_memory_ns("b1", "cli preference", &["pref"], "cli-beta")).unwrap();
+        store
+            .insert(&make_test_memory_ns(
+                "a1",
+                "app deploy",
+                &["deploy"],
+                "app-alpha",
+            ))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns(
+                "a2",
+                "app config",
+                &["config"],
+                "app-alpha",
+            ))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns(
+                "b1",
+                "cli preference",
+                &["pref"],
+                "cli-beta",
+            ))
+            .unwrap();
 
         assert_eq!(store.count(Some("app-alpha")).unwrap(), 2);
         assert_eq!(store.count(Some("cli-beta")).unwrap(), 1);
@@ -296,10 +331,14 @@ mod tests {
         assert_eq!(beta_list.len(), 1);
         assert_eq!(beta_list[0].content, "cli preference");
 
-        let alpha_search = store.search_content("deploy", Some("app-alpha"), 10).unwrap();
+        let alpha_search = store
+            .search_content("deploy", Some("app-alpha"), 10)
+            .unwrap();
         assert_eq!(alpha_search.len(), 1);
 
-        let beta_search = store.search_content("deploy", Some("cli-beta"), 10).unwrap();
+        let beta_search = store
+            .search_content("deploy", Some("cli-beta"), 10)
+            .unwrap();
         assert_eq!(beta_search.len(), 0);
 
         let ns = store.list_namespaces().unwrap();
@@ -314,9 +353,15 @@ mod tests {
     fn test_tag_filter_with_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["rust"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["python"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["rust", "ai"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["python"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["rust", "ai"]))
+            .unwrap();
 
         let rust_memories = store.list(Some("rust"), None, 10, 0).unwrap();
         assert_eq!(rust_memories.len(), 2);
@@ -324,7 +369,9 @@ mod tests {
         assert!(ids.contains(&"1"));
         assert!(ids.contains(&"3"));
 
-        store.insert(&make_test_memory("4", "d", &["rustlang"])).unwrap();
+        store
+            .insert(&make_test_memory("4", "d", &["rustlang"]))
+            .unwrap();
         let rust_exact = store.list(Some("rust"), None, 10, 0).unwrap();
         assert_eq!(rust_exact.len(), 2);
         assert!(rust_exact.iter().all(|m| m.id != "4"));
@@ -334,9 +381,15 @@ mod tests {
     fn test_unique_tags_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["rust", "ai"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["rust", "web"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["python"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "web"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
 
         let tags = store.unique_tags(None).unwrap();
         assert_eq!(tags.len(), 4);
@@ -350,8 +403,12 @@ mod tests {
     fn test_unique_tags_namespace_filtered_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory_ns("1", "a", &["rust", "ai"], "ns-alpha")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &["rust", "web"], "ns-beta")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["rust", "ai"], "ns-alpha"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["rust", "web"], "ns-beta"))
+            .unwrap();
 
         let alpha_tags = store.unique_tags(Some("ns-alpha")).unwrap();
         assert_eq!(alpha_tags.len(), 2);
@@ -368,9 +425,15 @@ mod tests {
     fn test_tags_with_counts_single_query() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["rust", "ai"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["rust", "web"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["python"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "web"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
 
         let info = store.tags_with_counts(None).unwrap();
         assert_eq!(info[0].name, "rust");
@@ -385,9 +448,15 @@ mod tests {
     fn test_tags_with_counts_namespace_filtered() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory_ns("1", "a", &["rust"], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &["rust"], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("3", "c", &["python"], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["rust"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["rust"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("3", "c", &["python"], "ns-b"))
+            .unwrap();
 
         let info_a = store.tags_with_counts(Some("ns-a")).unwrap();
         assert_eq!(info_a.len(), 1);
@@ -404,9 +473,15 @@ mod tests {
     fn test_rename_tag_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["old-tag"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["old-tag", "other"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["unrelated"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["old-tag"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["old-tag", "other"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["unrelated"]))
+            .unwrap();
 
         let updated = store.rename_tag("old-tag", "new-tag", None).unwrap();
         assert_eq!(updated, 2);
@@ -422,9 +497,15 @@ mod tests {
     fn test_delete_tag_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["remove-me", "keep"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["remove-me"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["other"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["remove-me", "keep"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["remove-me"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["other"]))
+            .unwrap();
 
         let updated = store.delete_tag("remove-me", None).unwrap();
         assert_eq!(updated, 2);
@@ -439,9 +520,15 @@ mod tests {
     fn test_bulk_delete_by_tag_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["doom"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["doom", "safe"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["safe"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["doom"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["doom", "safe"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["safe"]))
+            .unwrap();
 
         let deleted_ids = store.bulk_delete_by_tag("doom", None).unwrap();
         assert_eq!(deleted_ids.len(), 2);
@@ -457,9 +544,15 @@ mod tests {
     fn test_count_by_tag_json_each() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["rust"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["rust", "ai"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["python"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rust", "ai"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["python"]))
+            .unwrap();
 
         assert_eq!(store.count_by_tag("rust", None).unwrap(), 2);
         assert_eq!(store.count_by_tag("ai", None).unwrap(), 1);
@@ -471,13 +564,37 @@ mod tests {
     fn test_tag_with_special_chars() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["tag-with-dash"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["tag.with.dots"])).unwrap();
-        store.insert(&make_test_memory("3", "c", &["tag_with_underscore"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["tag-with-dash"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["tag.with.dots"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("3", "c", &["tag_with_underscore"]))
+            .unwrap();
 
-        assert_eq!(store.list(Some("tag-with-dash"), None, 10, 0).unwrap().len(), 1);
-        assert_eq!(store.list(Some("tag.with.dots"), None, 10, 0).unwrap().len(), 1);
-        assert_eq!(store.list(Some("tag_with_underscore"), None, 10, 0).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .list(Some("tag-with-dash"), None, 10, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list(Some("tag.with.dots"), None, 10, 0)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .list(Some("tag_with_underscore"), None, 10, 0)
+                .unwrap()
+                .len(),
+            1
+        );
 
         let tags = store.unique_tags(None).unwrap();
         assert_eq!(tags.len(), 3);
@@ -487,8 +604,12 @@ mod tests {
     fn test_tag_substring_not_matched() {
         let store = Store::open(":memory:").unwrap();
 
-        store.insert(&make_test_memory("1", "a", &["rust"])).unwrap();
-        store.insert(&make_test_memory("2", "b", &["rustacean"])).unwrap();
+        store
+            .insert(&make_test_memory("1", "a", &["rust"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "b", &["rustacean"]))
+            .unwrap();
 
         let rust_only = store.list(Some("rust"), None, 10, 0).unwrap();
         assert_eq!(rust_only.len(), 1);
@@ -516,9 +637,15 @@ mod tests {
     #[test]
     fn test_bulk_delete_all_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &[], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &[], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("3", "c", &[], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("3", "c", &[], "ns-b"))
+            .unwrap();
 
         let deleted = store.bulk_delete_all(Some("ns-a")).unwrap();
         assert_eq!(deleted.len(), 2);
@@ -529,9 +656,15 @@ mod tests {
     #[test]
     fn test_bulk_delete_by_tag_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &["doom"], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &["doom"], "ns-b")).unwrap();
-        store.insert(&make_test_memory_ns("3", "c", &["safe"], "ns-a")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["doom"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["doom"], "ns-b"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("3", "c", &["safe"], "ns-a"))
+            .unwrap();
 
         let deleted = store.bulk_delete_by_tag("doom", Some("ns-a")).unwrap();
         assert_eq!(deleted.len(), 1);
@@ -553,7 +686,9 @@ mod tests {
     #[test]
     fn test_deprecate() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory("dep1", "will be deprecated", &[])).unwrap();
+        store
+            .insert(&make_test_memory("dep1", "will be deprecated", &[]))
+            .unwrap();
 
         store.deprecate("dep1").unwrap();
         let m = store.get_by_id("dep1").unwrap().unwrap();
@@ -583,8 +718,12 @@ mod tests {
     #[test]
     fn test_tier_counts_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &[], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &[], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
+            .unwrap();
 
         let (_, _, cold_a) = store.tier_counts(Some("ns-a"), 7, 30).unwrap();
         assert_eq!(cold_a, 1);
@@ -596,7 +735,9 @@ mod tests {
     #[test]
     fn test_count_never_accessed() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory("1", "never accessed", &[])).unwrap();
+        store
+            .insert(&make_test_memory("1", "never accessed", &[]))
+            .unwrap();
 
         assert_eq!(store.count_never_accessed(None).unwrap(), 1);
 
@@ -611,8 +752,12 @@ mod tests {
     #[test]
     fn test_count_never_accessed_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &[], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &[], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
+            .unwrap();
 
         assert_eq!(store.count_never_accessed(Some("ns-a")).unwrap(), 1);
         assert_eq!(store.count_never_accessed(Some("ns-b")).unwrap(), 1);
@@ -634,8 +779,12 @@ mod tests {
     #[test]
     fn test_search_content_edge_cases() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory("1", "Hello World", &[])).unwrap();
-        store.insert(&make_test_memory("2", "hello world too", &[])).unwrap();
+        store
+            .insert(&make_test_memory("1", "Hello World", &[]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "hello world too", &[]))
+            .unwrap();
 
         let results = store.search_content("Hello", None, 10).unwrap();
         assert_eq!(results.len(), 2);
@@ -647,8 +796,12 @@ mod tests {
     #[test]
     fn test_search_content_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "shared keyword", &[], "ns-x")).unwrap();
-        store.insert(&make_test_memory_ns("2", "shared keyword", &[], "ns-y")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "shared keyword", &[], "ns-x"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "shared keyword", &[], "ns-y"))
+            .unwrap();
 
         let results = store.search_content("shared", Some("ns-x"), 10).unwrap();
         assert_eq!(results.len(), 1);
@@ -668,7 +821,13 @@ mod tests {
     fn test_search_content_limit() {
         let store = Store::open(":memory:").unwrap();
         for i in 0..20 {
-            store.insert(&make_test_memory(&format!("m{i}"), &format!("common content {i}"), &[])).unwrap();
+            store
+                .insert(&make_test_memory(
+                    &format!("m{i}"),
+                    &format!("common content {i}"),
+                    &[],
+                ))
+                .unwrap();
         }
 
         let results = store.search_content("common", None, 5).unwrap();
@@ -689,8 +848,12 @@ mod tests {
     #[test]
     fn test_load_all_namespace_filtered() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &[], "alpha")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &[], "beta")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "alpha"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "beta"))
+            .unwrap();
 
         let alpha = store.load_all(Some("alpha")).unwrap();
         assert_eq!(alpha.len(), 1);
@@ -708,7 +871,13 @@ mod tests {
     fn test_list_pagination() {
         let store = Store::open(":memory:").unwrap();
         for i in 0..10 {
-            store.insert(&make_test_memory(&format!("p{i}"), &format!("item {i}"), &[])).unwrap();
+            store
+                .insert(&make_test_memory(
+                    &format!("p{i}"),
+                    &format!("item {i}"),
+                    &[],
+                ))
+                .unwrap();
         }
 
         let page1 = store.list(None, None, 3, 0).unwrap();
@@ -767,7 +936,9 @@ mod tests {
     #[test]
     fn test_find_aged_with_recent_memories() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory("recent", "recent memory", &[])).unwrap();
+        store
+            .insert(&make_test_memory("recent", "recent memory", &[]))
+            .unwrap();
 
         let aged = store.find_aged(999, 0, None).unwrap();
         assert!(aged.is_empty());
@@ -783,8 +954,12 @@ mod tests {
     #[test]
     fn test_find_aged_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &[], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &[], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &[], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &[], "ns-b"))
+            .unwrap();
 
         let aged_a = store.find_aged(999, 0, Some("ns-a")).unwrap();
         assert!(aged_a.is_empty());
@@ -812,8 +987,12 @@ mod tests {
     #[test]
     fn test_find_similar() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "hello world", &[], "test-ns")).unwrap();
-        store.insert(&make_test_memory_ns("2", "foo bar", &[], "test-ns")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "hello world", &[], "test-ns"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "foo bar", &[], "test-ns"))
+            .unwrap();
 
         let similar = store.find_similar("test-ns", 10).unwrap();
         assert_eq!(similar.len(), 2);
@@ -830,8 +1009,12 @@ mod tests {
     #[test]
     fn test_rename_tag_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &["old"], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &["old"], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["old"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["old"], "ns-b"))
+            .unwrap();
 
         let updated = store.rename_tag("old", "new", Some("ns-a")).unwrap();
         assert_eq!(updated, 1);
@@ -847,8 +1030,12 @@ mod tests {
     #[test]
     fn test_delete_tag_namespace_scoped() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &["remove"], "ns-a")).unwrap();
-        store.insert(&make_test_memory_ns("2", "b", &["remove"], "ns-b")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["remove"], "ns-a"))
+            .unwrap();
+        store
+            .insert(&make_test_memory_ns("2", "b", &["remove"], "ns-b"))
+            .unwrap();
 
         let updated = store.delete_tag("remove", Some("ns-a")).unwrap();
         assert_eq!(updated, 1);
@@ -911,7 +1098,9 @@ mod tests {
     #[test]
     fn test_unique_tags_empty_namespace() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory_ns("1", "a", &["tag"], "ns-a")).unwrap();
+        store
+            .insert(&make_test_memory_ns("1", "a", &["tag"], "ns-a"))
+            .unwrap();
 
         let tags = store.unique_tags(Some("ns-b")).unwrap();
         assert!(tags.is_empty());
@@ -977,7 +1166,9 @@ mod tests {
     #[test]
     fn test_double_insert_same_id() {
         let store = Store::open(":memory:").unwrap();
-        store.insert(&make_test_memory("dup", "first", &[])).unwrap();
+        store
+            .insert(&make_test_memory("dup", "first", &[]))
+            .unwrap();
 
         let result = store.insert(&make_test_memory("dup", "second", &[]));
         assert!(result.is_err());
