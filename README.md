@@ -208,7 +208,7 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 ├──────────┬──────────────────┬────────────────────────┤
 │   ONNX   │     usearch      │       SQLite           │
 │ Embedding│  Vector Index    │    Metadata Store      │
-│ (256d)   │ (Persistent HNSW)│    (rusqlite)          │
+│ (768d)   │ (Persistent HNSW)│    (rusqlite)          │
 ├──────────┴──────────────────┴────────────────────────┤
 │              ~/.uteke/ (local storage)               │
 │ uteke.db │ uteke_index.usearch │ models/embeddinggemma/ │
@@ -220,13 +220,13 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 | Language | Rust (no unsafe) | Memory-safe, fast, single binary |
 | Vector Index | usearch | Persistent HNSW with incremental updates |
 | Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
-| Embedding | EmbeddingGemma Q4 ONNX | 256d vectors, multilingual, downloaded on first run |
+| Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
 | Namespaces | SQLite column | Multi-agent isolation, zero overhead |
 | Tiered Memory | Access tracking | Hot/Warm/Cold scoring boost |
 | CLI | clap | Standard Rust CLI framework |
 
 **How it works:**
-1. `remember` → text is embedded into a 256d vector via ONNX → stored in SQLite + indexed in usearch
+1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in usearch
 2. `recall` → query is embedded → usearch finds nearest neighbors → hot memories get +0.1 score boost → returns ranked results
 3. `search` → SQLite LIKE-based keyword search (fast, deterministic, scoped to namespace)
 4. `forget` → incremental delete from usearch + SQLite (no rebuild)
@@ -298,7 +298,7 @@ The ONNX embedding model is the bottleneck — it must load from disk (~3s on AR
 Uteke comes with a zero-dependency Python wrapper (stdlib only, Python 3.8+):
 
 ```python
-from python_hermes import UtekeMemory
+from python_uteke import UtekeMemory
 
 mem = UtekeMemory()
 
@@ -316,7 +316,7 @@ mem.forget(mid)
 
 The wrapper calls the `uteke` binary via subprocess with `--json` — no FFI, no bindings, works everywhere.
 
-See [`examples/python_hermes.py`](examples/python_hermes.py) for the full implementation.
+See [`examples/python_uteke.py`](examples/python_uteke.py) for the full implementation.
 
 ---
 

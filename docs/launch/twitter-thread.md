@@ -45,7 +45,7 @@ Under the hood:
 
 🔹 SQLite — metadata & structured storage
 🔹 usearch — persistent HNSW vector search
-🔹 ONNX — EmbeddingGemma Q4 embeddings (256d)
+🔹 ONNX — EmbeddingGemma Q4 embeddings (768d)
 🔹 Rust — memory safe, no unsafe code
 
 Everything lives in ~/.uteke/

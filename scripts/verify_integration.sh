@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# verify_integration.sh — Smoke-test the Uteke CLI + Python Hermes wrapper.
+# verify_integration.sh — Smoke-test the Uteke CLI + Python wrapper.
 #
 # Exits 0 on success, 1 on failure.
 # Can be used as a daily validation / CI check.
@@ -102,11 +102,11 @@ log "stats after forget → $TOTAL memories"
 
 # ── 3. Python wrapper test ──────────────────────────────────────────────────
 
-log "--- Python Hermes wrapper tests ---"
+log "--- Python wrapper tests ---"
 
 export UTEKE_BIN="$BINARY"
 
-if ! python3 "$PROJECT_ROOT/examples/test_hermes_integration.py" 2>&1; then
+if ! python3 "$PROJECT_ROOT/examples/test_uteke_integration.py" 2>&1; then
     fail "Python integration tests failed"
 fi
 
