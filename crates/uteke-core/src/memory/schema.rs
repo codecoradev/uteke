@@ -134,6 +134,8 @@ impl super::Store {
 
     /// Run incremental migrations from `from_version` (exclusive) up to
     /// `CURRENT_SCHEMA_VERSION` (inclusive).
+    ///
+    /// Each migration step + version stamp is wrapped in a transaction for atomicity.
     fn run_migrations(&self, from_version: i32) -> Result<(), Error> {
         let mut version = from_version;
         loop {
@@ -142,6 +144,12 @@ impl super::Store {
                 break;
             }
             tracing::warn!("applying schema migration v{version}");
+
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| Error::db("begin migration transaction", e))?;
+
             #[allow(clippy::match_single_binding)]
             match version {
                 // Future migrations go here, e.g.:
@@ -150,28 +158,34 @@ impl super::Store {
                     // No-op for v1 (first versioned schema).
                 }
             }
+
             let now = chrono::Utc::now().to_rfc3339();
-            self.conn
-                .execute(
-                    "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
-                    params![version, now],
-                )
-                .map_err(|e| Error::db("database operation", e))?;
+            tx.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                params![version, now],
+            )
+            .map_err(|e| Error::db("database operation", e))?;
+
+            tx.commit()
+                .map_err(|e| Error::db("commit migration transaction", e))?;
         }
         Ok(())
     }
 
     /// Return the current schema version recorded in the database.
+    ///
+    /// Returns an error if no version is recorded (shouldn't happen after init_schema).
     pub fn schema_version(&self) -> Result<i32, Error> {
-        let version: i32 = self
+        let version: Option<i32> = self
             .conn
             .query_row(
                 "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
                 [],
                 |row| row.get(0),
             )
+            .optional()
             .map_err(|e| Error::db("database operation", e))?;
-        Ok(version)
+        version.ok_or_else(|| Error::db_msg("no schema version recorded"))
     }
 
     pub(super) fn column_exists(&self, column: &str) -> bool {

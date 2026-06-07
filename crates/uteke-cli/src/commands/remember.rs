@@ -38,7 +38,7 @@ pub(crate) fn run(
                     println!(
                         "  \u{26a0} Contradiction detected (sim: {:.3}): deprecated {}",
                         contradiction.similarity,
-                        &dep_id[..8]
+                        dep_id.get(..8).unwrap_or(dep_id)
                     );
                 }
             }
