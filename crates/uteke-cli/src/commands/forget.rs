@@ -46,7 +46,7 @@ pub(crate) fn run(
     } else if let Some(tag) = tag {
         // Bulk delete by tag
         tracing::info!("Bulk forgetting by tag: {tag}");
-        let count = uteke.count_by_tag(tag.as_str(), ns).unwrap_or(0);
+        let count = uteke.store().count_by_tag(tag.as_str(), ns).unwrap_or(0);
         if !flags.confirm && count > 0 {
             println!("Found {count} memories with tag '{tag}'. Use --confirm to delete.");
             return Ok(());

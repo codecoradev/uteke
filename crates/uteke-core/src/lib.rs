@@ -186,7 +186,7 @@ impl Uteke {
 
         let mut index = match &index_path {
             Some(path) => VectorIndex::load_or_create(path, EmbeddingEngine::dims())?,
-            None => VectorIndex::new(EmbeddingEngine::dims())?,
+            None => VectorIndex::new(EmbeddingEngine::dims()),
         };
 
         // If index is empty but SQLite has memories, build from SQLite (migration)

@@ -1,6 +1,7 @@
 //! Maintenance operations: doctor, verify, repair, stats, aging, prune, shutdown.
 
 use crate::error::{format_bytes, Error};
+use crate::memory::store::Store;
 use crate::memory::types::{AgingStatus, CleanupResult, Memory, PruneResult, StoreStats};
 use crate::types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 use crate::uteke_home;
@@ -128,6 +129,11 @@ impl crate::Uteke {
     }
 
     /// Get statistics about the memory store.
+    /// Access the underlying store (read-only reference).
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
     pub fn stats(&self, namespace: Option<&str>) -> Result<StoreStats, Error> {
         let total_memories = self.store.count(namespace)?;
         let unique_tags = self.store.unique_tags(namespace)?.len();

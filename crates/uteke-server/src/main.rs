@@ -122,20 +122,10 @@ fn ok_response<T: Serialize>(body: &T) -> Response<Cursor<Vec<u8>>> {
 }
 
 fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
-    // Enforce payload size limit at the reader level — works regardless of
-    // Content-Length header presence (handles chunked transfer, missing header, etc.)
-    let mut limited = reader.take(uteke_core::MAX_PAYLOAD_SIZE as u64 + 1);
     let mut body = String::new();
-    limited
+    reader
         .read_to_string(&mut body)
         .map_err(|e| format!("Failed to read body: {e}"))?;
-    if body.len() > uteke_core::MAX_PAYLOAD_SIZE {
-        return Err(format!(
-            "Payload too large: {} bytes (max {})",
-            body.len(),
-            uteke_core::MAX_PAYLOAD_SIZE
-        ));
-    }
     serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))
 }
 
@@ -165,7 +155,7 @@ fn route(
     match (method, path) {
         // ── Health ──────────────────────────────────────────────────────
         (&Method::Get, "/health") => {
-            let total = uteke.count(None).unwrap_or(0);
+            let total = uteke.store().count(None).unwrap_or(0);
             let namespaces = uteke.list_namespaces().unwrap_or_default().len();
             ok_response(&HealthResponse {
                 status: "ok",
@@ -280,10 +270,6 @@ fn route(
                 .collect();
 
             if let Some(id) = params.get("id") {
-                // Validate UUID format
-                if uuid::Uuid::parse_str(id).is_err() {
-                    return error_response(400, format!("Invalid UUID format: {id}"));
-                }
                 match uteke.forget(id) {
                     Ok(()) => ok_response(&serde_json::json!({"forgotten": id})),
                     Err(e) => error_response(500, format!("Failed: {e}")),
@@ -327,11 +313,7 @@ fn route(
         // ── Get memory by ID ──────────────────────────────────────────
         (&Method::Get, path) if path.starts_with("/memory?id=") => {
             let id = path.trim_start_matches("/memory?id=");
-            // Validate UUID format
-            if uuid::Uuid::parse_str(id).is_err() {
-                return error_response(400, format!("Invalid UUID format: {id}"));
-            }
-            match uteke.get_by_id(id) {
+            match uteke.store().get_by_id(id) {
                 Ok(Some(memory)) => ok_response(&memory),
                 Ok(None) => error_response(404, format!("Memory not found: {id}")),
                 Err(e) => error_response(500, format!("Failed: {e}")),
@@ -473,6 +455,25 @@ fn main() {
         let method = req.method().clone();
         let url = req.url().to_string();
         info!("{method} {url}");
+
+        // Check payload size for POST requests
+        if method == Method::Post {
+            let content_length = req
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("content-length"))
+                .and_then(|h| h.value.as_str().parse::<usize>().ok());
+            if let Some(size) = content_length {
+                if size > uteke_core::MAX_PAYLOAD_SIZE {
+                    let response = error_response(
+                        413,
+                        serde_json::json!({"error": "Payload too large"}).to_string(),
+                    );
+                    req.respond(response).ok();
+                    continue;
+                }
+            }
+        }
 
         let response = route(&uteke, &method, &url, &mut req.as_reader());
         if let Err(e) = req.respond(response) {
