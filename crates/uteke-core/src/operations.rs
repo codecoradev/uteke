@@ -17,19 +17,49 @@ impl crate::Uteke {
         metadata: Option<serde_json::Value>,
         namespace: Option<&str>,
     ) -> Result<String, Error> {
+        self.remember_typed(content, tags, metadata, namespace, "fact")
+    }
+
+    /// Store a new memory with explicit type.
+    ///
+    /// Returns the UUID of the created memory.
+    pub fn remember_typed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+    ) -> Result<String, Error> {
         crate::validate_input(content, tags)?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = chrono::Utc::now();
         let embedding = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?
             .embed(content)?;
+        self.remember_precomputed(content, tags, metadata, namespace, memory_type, &embedding)
+    }
+
+    /// Store a new memory with a pre-computed embedding.
+    ///
+    /// Use when the embedding has already been computed (e.g., contradiction check).
+    /// Returns the UUID of the created memory.
+    pub(crate) fn remember_precomputed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+        embedding: &[f32],
+    ) -> Result<String, Error> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
 
         let memory = Memory {
             id: id.clone(),
             content: content.to_string(),
-            embedding: embedding.clone(),
+            embedding: embedding.to_vec(),
             tags: tags.iter().map(|t| t.to_string()).collect(),
             metadata: metadata.unwrap_or(serde_json::Value::Null),
             created_at: now,
@@ -40,7 +70,7 @@ impl crate::Uteke {
             deprecated: false,
             valid_from: Some(now),
             valid_until: None,
-            memory_type: "fact".to_string(),
+            memory_type: memory_type.to_string(),
         };
 
         // Acquire index lock BEFORE any writes so lock failures are detected early.
@@ -333,5 +363,20 @@ impl crate::Uteke {
     /// Delete a tag from all memories in a namespace.
     pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
         self.store.delete_tag(tag, namespace)
+    }
+
+    /// Count memories by tag in a namespace.
+    pub fn count_by_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
+        self.store.count_by_tag(tag, namespace)
+    }
+
+    /// Count total memories, optionally filtered by namespace.
+    pub fn count(&self, namespace: Option<&str>) -> Result<usize, Error> {
+        self.store.count(namespace)
+    }
+
+    /// Get a memory by ID (without touching access count — used for internal lookups).
+    pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
+        self.store.get_by_id(id)
     }
 }

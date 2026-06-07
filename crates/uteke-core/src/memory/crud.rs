@@ -147,12 +147,15 @@ impl super::Store {
         limit: usize,
     ) -> Result<Vec<Memory>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        let pattern = format!("%{query}%");
+        // Escape SQL LIKE wildcards so user input is treated as literal text
+        // Using '!' as escape character — unambiguous on all platforms
+        let escaped = query.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+        let pattern = format!("%{escaped}%");
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
-                 FROM memories WHERE namespace = ?1 AND content LIKE ?2
+                 FROM memories WHERE namespace = ?1 AND content LIKE ?2 ESCAPE '!'
                  ORDER BY created_at DESC LIMIT ?3",
             )
             .map_err(|e| Error::db("database operation", e))?;
