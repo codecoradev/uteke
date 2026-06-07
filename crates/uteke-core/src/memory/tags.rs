@@ -2,6 +2,7 @@
 
 use crate::memory::types::{TagInfo, DEFAULT_NAMESPACE};
 use crate::Error;
+use rusqlite::params;
 
 impl super::Store {
     /// Get all unique tags, optionally filtered by namespace.
@@ -23,9 +24,7 @@ impl super::Store {
 
         let rows = match namespace {
             Some(ns) => stmt
-                .query_map(rusqlite::params![ns], |row: &rusqlite::Row| {
-                    row.get::<_, String>(0)
-                })
+                .query_map(params![ns], |row: &rusqlite::Row| row.get::<_, String>(0))
                 .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
@@ -51,7 +50,7 @@ impl super::Store {
             .prepare(sql)
             .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
-            .query_map(rusqlite::params![ns], |row| {
+            .query_map(params![ns], |row| {
                 Ok(TagInfo {
                     name: row.get(0)?,
                     count: row.get(1)?,
@@ -68,7 +67,8 @@ impl super::Store {
     /// Rename a tag across all memories. Returns number updated.
     ///
     /// Uses `json_each()` to find affected rows precisely, then updates the
-    /// JSON tags column with the renamed tag.
+    /// JSON tags column with the renamed tag. Wrapped in a transaction for
+    /// atomicity — either all renames succeed or none do.
     pub fn rename_tag(
         &self,
         old: &str,
@@ -82,16 +82,27 @@ impl super::Store {
             .map_err(|e| Error::db("database operation", e))?;
 
         let rows: Vec<(String, String)> = stmt
-            .query_map(rusqlite::params![ns, old], |row| {
+            .query_map(params![ns, old], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| Error::db("database operation", e))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("database operation", e))?;
 
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin transaction", e))?;
         let mut updated = 0;
+
         for (id, tags_str) in &rows {
-            let mut tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            let mut tags: Vec<String> = match serde_json::from_str(tags_str) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Skipping rename for memory {id}: corrupted tags JSON: {e}");
+                    continue;
+                }
+            };
             let mut changed = false;
             for t in &mut tags {
                 if t == old {
@@ -106,18 +117,22 @@ impl super::Store {
                 self.conn
                     .execute(
                         "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
-                        rusqlite::params![new_tags_json, now, id],
+                        params![new_tags_json, now, id],
                     )
                     .map_err(|e| Error::db("database operation", e))?;
                 updated += 1;
             }
         }
+
+        tx.commit()
+            .map_err(|e| Error::db("commit transaction", e))?;
         Ok(updated)
     }
 
     /// Delete a tag from all memories. Returns number updated.
     ///
-    /// Uses `json_each()` to find affected rows precisely.
+    /// Uses `json_each()` to find affected rows precisely. Wrapped in a
+    /// transaction for atomicity.
     pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let mut stmt = self
@@ -126,16 +141,27 @@ impl super::Store {
             .map_err(|e| Error::db("database operation", e))?;
 
         let rows: Vec<(String, String)> = stmt
-            .query_map(rusqlite::params![ns, tag], |row| {
+            .query_map(params![ns, tag], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
             .map_err(|e| Error::db("database operation", e))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("database operation", e))?;
 
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin transaction", e))?;
         let mut updated = 0;
+
         for (id, tags_str) in &rows {
-            let mut tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            let mut tags: Vec<String> = match serde_json::from_str(tags_str) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!("Skipping delete_tag for memory {id}: corrupted tags JSON: {e}");
+                    continue;
+                }
+            };
             let before_len = tags.len();
             tags.retain(|t| t != tag);
             if tags.len() != before_len {
@@ -145,12 +171,15 @@ impl super::Store {
                 self.conn
                     .execute(
                         "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
-                        rusqlite::params![new_tags_json, now, id],
+                        params![new_tags_json, now, id],
                     )
                     .map_err(|e| Error::db("database operation", e))?;
                 updated += 1;
             }
         }
+
+        tx.commit()
+            .map_err(|e| Error::db("commit transaction", e))?;
         Ok(updated)
     }
 
@@ -160,7 +189,7 @@ impl super::Store {
         self.conn
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
-                rusqlite::params![ns, tag],
+                params![ns, tag],
                 |row| row.get(0),
             )
             .map_err(|e| Error::db("database operation", e))
