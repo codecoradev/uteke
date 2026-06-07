@@ -2,7 +2,10 @@
 FROM debian:bookworm-slim AS builder
 
 ARG TARGETARCH
-ARG VERSION=v0.0.5
+ARG VERSION=v0.0.10
+
+LABEL version=${VERSION}
+LABEL org.opencontainers.image.version=${VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && \

@@ -29,16 +29,16 @@ pub struct VectorIndex {
 
 impl VectorIndex {
     /// Create a new empty vector index.
-    pub fn new(dims: usize) -> Self {
-        let index = Self::create_index(dims);
-        Self {
+    pub fn new(dims: usize) -> Result<Self, Error> {
+        let index = Self::create_index(dims)?;
+        Ok(Self {
             index,
             key_to_id: Vec::new(),
             id_to_key: std::collections::HashMap::new(),
             next_key: 0,
             path: None,
             dirty: false,
-        }
+        })
     }
 
     /// Load index from disk, or create empty if file doesn't exist.
@@ -47,7 +47,7 @@ impl VectorIndex {
         if path.exists() {
             Self::load(path)
         } else {
-            let mut idx = Self::new(dims);
+            let mut idx = Self::new(dims)?;
             idx.path = Some(path.to_path_buf());
             Ok(idx)
         }
@@ -131,7 +131,13 @@ impl VectorIndex {
         } else {
             items[0].1.len()
         };
-        self.index = Self::create_index(dims);
+        self.index = match Self::create_index(dims) {
+            Ok(idx) => idx,
+            Err(e) => {
+                tracing::error!("Failed to rebuild index: {e}");
+                return;
+            }
+        };
         self.key_to_id.clear();
         self.id_to_key.clear();
         self.next_key = 0;
@@ -239,7 +245,7 @@ impl VectorIndex {
         self.dirty
     }
 
-    fn create_index(dims: usize) -> Index {
+    fn create_index(dims: usize) -> Result<Index, Error> {
         let options = IndexOptions {
             dimensions: dims,
             metric: MetricKind::Cos,
@@ -247,16 +253,17 @@ impl VectorIndex {
             ..Default::default()
         };
 
-        match Index::new(&options) {
-            Ok(idx) => idx,
-            Err(e) => panic!("FATAL: Failed to create usearch index (dims={dims}): {e}. This is likely an out-of-memory condition."),
-        }
+        Index::new(&options).map_err(|e| {
+            Error::embed_msg(format!(
+                "Failed to create usearch index (dims={dims}): {e}. This is likely an out-of-memory condition."
+            ))
+        })
     }
 }
 
 impl Default for VectorIndex {
     fn default() -> Self {
-        Self::new(DEFAULT_DIMS)
+        Self::new(DEFAULT_DIMS).expect("Failed to create default vector index")
     }
 }
 
@@ -282,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_empty_index() {
-        let idx = VectorIndex::new(768);
+        let idx = VectorIndex::new(768).unwrap();
         assert!(idx.is_empty());
         let results = idx.search(&[0.0; 768], 5, 50);
         assert!(results.is_empty());
@@ -290,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_insert_and_search() {
-        let mut idx = VectorIndex::new(768);
+        let mut idx = VectorIndex::new(768).unwrap();
 
         let v1 = make_vec(768, 0);
         let v2 = make_vec(768, 1);
@@ -313,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut idx = VectorIndex::new(768);
+        let mut idx = VectorIndex::new(768).unwrap();
 
         let v1 = make_vec(768, 0);
         let v2 = make_vec(768, 1);
@@ -338,7 +345,7 @@ mod tests {
         let path = dir.path().join("test.usearch");
 
         // Create and insert
-        let mut idx = VectorIndex::new(64);
+        let mut idx = VectorIndex::new(64).unwrap();
         idx.path = Some(path.clone());
 
         let v1: Vec<f32> = {
@@ -376,7 +383,7 @@ mod tests {
             })
             .collect();
 
-        let mut idx = VectorIndex::new(768);
+        let mut idx = VectorIndex::new(768).unwrap();
         idx.build(&items);
         assert_eq!(idx.len(), 10);
 
