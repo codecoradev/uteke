@@ -7,12 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.0.10] — 2026-06-07
 
-- **GTM Phase 1+2** — README overhaul + landing page refresh for public launch readiness (#174)
-  - README: benefit-first hero tagline, install.sh quick start, updated comparison table (Mem0/Letta/Zep), "Who is this for?" section, performance highlights
-  - Website: version badge v0.0.8, install.sh CTA, social proof section, updated comparison data, OG meta tags, refreshed hero headline
-  - GTM plan documented in `docs/plans/2026-06-04-readme-landing-page-gtm.md`
+### Fixed
+
+- **Safe slice for deprecated IDs** — `dep_id.get(..8).unwrap_or(dep_id)` prevents panic on short IDs (#192)
+- **Index lock before SQLite write** — Acquire vector index lock before any SQLite writes so lock failures are detected early, preventing false errors (#191)
+- **HTTP status checking** — Server proxy now validates response status codes, returning proper error messages instead of silently accepting failures (#193)
+- **Aging cleanup filter** — `cleanup_aged` now includes `deprecated = 0` filter matching `find_aged` criteria (#189)
+- **Schema migration transactions** — Each migration step + version stamp wrapped in SQLite transaction (#188)
+- **Batch bulk deletes** — Replace N individual DELETE statements with single batched query for better performance (#190)
+
+### Changed
+
+- **Store module split** — `store.rs` (2,065 LOC) split into 8 focused modules: schema, crud, tags, aging, bulk, vector, types, store (#179)
+- **Commands module split** — `commands.rs` (820 LOC) split into 9 per-command modules (#180)
+- **SQLite-first dual-write** — `remember()` now writes to SQLite before vector index, matching `forget()` pattern (#182)
+- **Embedding docs corrected** — All docs now correctly state 768d (not 256d) for EmbeddingGemma (#183)
+- **Shell hook guards** — Bash `PROMPT_COMMAND` and Zsh `chpwd_functions` now have idempotency guards (#143)
+- **Hermes branding removed** — All product-specific branding replaced with generic names; only `--namespace` examples remain (#178)
+
+## [0.0.9] — 2026-06-07
+
+### Changed
+
+- **Website migrated to VitePress** — SvelteKit (3,750 LOC, 10 deps) → VitePress (1,300 LOC markdown, 2 deps) (#194)
+  - Built-in full-text search (previously missing)
+  - Build time: ~15s → ~6s
+  - Content now editable via markdown
+  - Brand theme (amber/dark) preserved
 
 ## [0.0.8] — 2026-06-04
 
@@ -302,6 +325,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
+[0.0.10]: https://github.com/ajianaz/uteke/releases/tag/v0.0.10
+[0.0.9]: https://github.com/ajianaz/uteke/releases/tag/v0.0.9
 [0.0.8]: https://github.com/ajianaz/uteke/releases/tag/v0.0.8
 [0.0.7]: https://github.com/ajianaz/uteke/releases/tag/v0.0.7
 [0.0.6]: https://github.com/ajianaz/uteke/releases/tag/v0.0.6
