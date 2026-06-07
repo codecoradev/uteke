@@ -332,11 +332,11 @@ uteke completions fish  > ~/.config/fish/completions/uteke.fish
 
 ## Configuration
 
-Uteke supports `uteke.toml` configuration with layered resolution:
+Uteke supports `uteke.toml` configuration with layered resolution (last match wins):
 
-1. `.uteke/uteke.toml` (project-level, in cwd)
+1. Built-in defaults
 2. `~/.uteke/uteke.toml` (global user-level)
-3. Built-in defaults
+3. `.uteke/uteke.toml` (project-level, in cwd)
 
 ```toml
 [store]
