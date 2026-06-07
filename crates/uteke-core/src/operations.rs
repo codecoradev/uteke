@@ -32,6 +32,12 @@ impl crate::Uteke {
         memory_type: &str,
     ) -> Result<String, Error> {
         crate::validate_input(content, tags)?;
+        // Validate memory_type against known variants
+        crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
+            Error::Validation(format!(
+                "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context"
+            ))
+        })?;
         let embedding = self
             .embedder
             .lock()
@@ -214,15 +220,14 @@ impl crate::Uteke {
 
     /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
-        // SQLite first (source of truth), then vector index.
-        // If vector index remove fails, the orphan is harmless —
-        // verify/repair can clean it up later.
-        self.store.delete(id)?;
-
+        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
             .lock()
             .map_err(|_| Error::lock("index lock during forget"))?;
+        // SQLite delete (source of truth)
+        self.store.delete(id)?;
+        // Vector index remove — orphan is harmless if fails (verify/repair cleans up)
         if !index.remove(id) {
             tracing::warn!("Vector index entry not found during forget for id={id}");
         }

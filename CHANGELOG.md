@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] — 2026-06-07
+
+### Fixed
+
+- **[CRITICAL] Timestamp format mismatch** — Aging/pruning queries never matched because SQLite `datetime('now')` format differs from stored RFC3339 timestamps. Now computes cutoffs in Rust using `chrono` (#221)
+- **Namespace=None inconsistency** — Tag operations (`tags_with_counts`, `rename_tag`, `delete_tag`, `count_by_tag`) treated `None` as "default" namespace instead of "all namespaces". Now consistent with `unique_tags` behavior (#222)
+- **Non-atomic model file write** — Model downloads now use atomic write (`.tmp` + rename) to prevent corrupt files on crash. Cleans up leftover `.tmp` files on startup (#225)
+- **`uteke_home()` panic** — Replaced `.expect()` with `Result` return type to prevent crashes in minimal Docker/CI environments (#226)
+- **Server path matching** — `DELETE /forget` now uses exact path match, preventing false matches on `/forgetful` etc. (#228)
+- **Query param parsing** — Use `splitn(2, '=')` to preserve values containing `=` (#228)
+- **Missing CLI arg value** — `--host`/`--port` without value now prints error instead of silently ignoring (#228)
+- **404 path reflection** — Generic "Not found" message instead of echoing request path (#228)
+- **SQLite/index inconsistency** — `forget()` now acquires index lock before SQLite delete to narrow the inconsistency window (#231)
+- **Memory type validation** — `remember_typed()` now validates `memory_type` against known variants (#229)
+
+### Added
+
+- **Security scanning workflow** — New `security.yml` CI workflow with `cargo audit` + Trivy filesystem scan. Runs on push, PRs, and daily schedule (#177, #220)
+- **quinn-proto update** — Updated to v0.11.14 fixing CVE-2026-31812 (DoS via crafted QUIC packet)
+- **`Error::Generic` variant** — New error type for general-purpose errors
+
+### Changed
+
+- **`uteke_home()` returns `Result`** — All callers updated to handle potential failure
+
 ## [0.0.10] — 2026-06-07
 
 ### Fixed

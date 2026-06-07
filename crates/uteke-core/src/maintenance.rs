@@ -55,7 +55,17 @@ impl crate::Uteke {
         }
 
         // 4. Embedding model
-        let model_dir = uteke_home().join("models").join("embeddinggemma-q4");
+        let model_dir = match uteke_home() {
+            Ok(p) => p.join("models").join("embeddinggemma-q4"),
+            Err(_) => {
+                checks.push(DoctorCheck {
+                    name: "Home directory".to_string(),
+                    status: DoctorStatus::Error,
+                    detail: "Cannot determine home directory. Set UTEKE_HOME.".to_string(),
+                });
+                return Ok(DoctorReport { checks });
+            }
+        };
         let model_file = model_dir.join("onnx").join("model_q4.onnx");
         let tokenizer_file = model_dir.join("tokenizer.json");
         let model_exists = model_file.exists() && tokenizer_file.exists();

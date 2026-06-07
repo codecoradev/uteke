@@ -269,12 +269,12 @@ fn route(
         },
 
         // ── Forget by ID or tag (DELETE /forget?id=xxx or ?tag=xxx) ────
-        (&Method::Delete, path) if path.starts_with("/forget") => {
+        (&Method::Delete, path) if path == "/forget" || path.starts_with("/forget?") => {
             let query = path.split('?').nth(1).unwrap_or("");
             let params: std::collections::HashMap<String, String> = query
                 .split('&')
                 .filter_map(|pair| {
-                    let mut kv = pair.split('=');
+                    let mut kv = pair.splitn(2, '=');
                     Some((kv.next()?.to_string(), kv.next()?.to_string()))
                 })
                 .collect();
@@ -339,7 +339,7 @@ fn route(
         }
 
         // ── 404 ─────────────────────────────────────────────────────────
-        _ => error_response(404, format!("Not found: {path}")),
+        _ => error_response(404, "Not found"),
     }
 }
 
@@ -360,6 +360,9 @@ fn main() {
                 i += 1;
                 if i < args.len() {
                     cli_host = Some(args[i].clone());
+                } else {
+                    eprintln!("Error: --host requires a value");
+                    std::process::exit(1);
                 }
             }
             "--port" => {
@@ -369,6 +372,9 @@ fn main() {
                         eprintln!("Invalid port: {e}");
                         std::process::exit(1);
                     }));
+                } else {
+                    eprintln!("Error: --port requires a value");
+                    std::process::exit(1);
                 }
             }
             "--help" | "-h" => {
@@ -431,7 +437,13 @@ fn main() {
         .init();
 
     // Open store
-    let home = uteke_core::uteke_home();
+    let home = match uteke_core::uteke_home() {
+        Ok(h) => h,
+        Err(e) => {
+            error!("Failed to determine home directory: {e}");
+            std::process::exit(1);
+        }
+    };
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
@@ -509,7 +521,10 @@ struct ServerFileSection {
 fn load_uteke_toml() -> ServerFileConfig {
     let mut config = ServerFileConfig::default();
 
-    let mut paths: Vec<PathBuf> = vec![uteke_core::uteke_home().join("uteke.toml")];
+    let mut paths: Vec<PathBuf> = vec![match uteke_core::uteke_home() {
+        Ok(h) => h.join("uteke.toml"),
+        Err(_) => PathBuf::new(),
+    }];
     if let Ok(cwd) = std::env::current_dir() {
         paths.push(cwd.join(".uteke").join("uteke.toml"));
     }
