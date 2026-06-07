@@ -109,9 +109,7 @@ impl crate::Uteke {
                 } else {
                     // Remove from vector index so it won't appear in future searches.
                     let mut idx = self.index.lock().map_err(|_| {
-                        Error::lock(
-                            "index lock during post-insert contradiction deprecation",
-                        )
+                        Error::lock("index lock during post-insert contradiction deprecation")
                     })?;
                     if idx.remove(deprecated_id) {
                         if let Err(e) = idx.save() {
