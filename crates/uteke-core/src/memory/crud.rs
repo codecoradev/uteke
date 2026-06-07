@@ -157,7 +157,7 @@ impl super::Store {
             .conn
             .prepare(
                 "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
-                 FROM memories WHERE namespace = ?1 AND content LIKE ?2
+                 FROM memories WHERE namespace = ?1 AND content LIKE ?2 ESCAPE '\\'
                  ORDER BY created_at DESC LIMIT ?3",
             )
             .map_err(|e| Error::db("database operation", e))?;
