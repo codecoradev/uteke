@@ -24,4 +24,7 @@ uteke_prompt_hook() {
         fi
     fi
 }
-PROMPT_COMMAND="uteke_prompt_hook;${PROMPT_COMMAND}"
+# Guard against duplicate sourcing
+if [[ ":${PROMPT_COMMAND}:" != *":uteke_prompt_hook:"* ]]; then
+    PROMPT_COMMAND="uteke_prompt_hook;${PROMPT_COMMAND}"
+fi

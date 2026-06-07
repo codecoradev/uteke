@@ -20,4 +20,7 @@ uteke_chpwd() {
         unset UTEKE_PROJECT_STORE
     fi
 }
-chpwd_functions+=(uteke_chpwd)
+# Guard against duplicate sourcing
+if [[ " ${chpwd_functions[@]} " != *" uteke_chpwd "* ]]; then
+    chpwd_functions+=(uteke_chpwd)
+fi
