@@ -149,7 +149,10 @@ impl super::Store {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         // Escape SQL LIKE wildcards so user input is treated as literal text
         // Using '!' as escape character — unambiguous on all platforms
-        let escaped = query.replace('!', "!!").replace('%', "!%").replace('_', "!_");
+        let escaped = query
+            .replace('!', "!!")
+            .replace('%', "!%")
+            .replace('_', "!_");
         let pattern = format!("%{escaped}%");
         let mut stmt = self
             .conn
