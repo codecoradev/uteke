@@ -120,6 +120,13 @@ impl crate::Uteke {
             index.save()?;
         }
 
+        if skipped > 0 {
+            tracing::warn!(
+                "Import completed with {imported} imported and {skipped} skipped entries. \
+                 Check logs above for individual entry errors."
+            );
+        }
+
         Ok(ImportResult { imported, skipped })
     }
 }

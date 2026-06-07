@@ -97,18 +97,28 @@ impl crate::Uteke {
         )?;
 
         // Only deprecate the old memory AFTER the new one is safely persisted.
+        // If deprecation fails, the new memory is still valid — the old one will
+        // be deprecated on the next contradiction check. Non-fatal.
         if contradiction.contradicted {
             if let Some(ref deprecated_id) = contradiction.deprecated_id {
-                self.store.deprecate(deprecated_id)?;
-                // Remove from vector index so it won't appear in future searches.
-                let mut idx = self.index.lock().map_err(|_| {
-                    Error::lock("index lock during post-insert contradiction deprecation")
-                })?;
-                if idx.remove(deprecated_id) {
-                    if let Err(e) = idx.save() {
-                        tracing::warn!(
-                            "Failed to persist vector index after deprecating id={deprecated_id}: {e}"
-                        );
+                if let Err(e) = self.store.deprecate(deprecated_id) {
+                    tracing::warn!(
+                        "Failed to deprecate {deprecated_id} after contradiction (new id={id}): {e}. \
+                         New memory is safe. Old memory may be deprecated on next check."
+                    );
+                } else {
+                    // Remove from vector index so it won't appear in future searches.
+                    let mut idx = self.index.lock().map_err(|_| {
+                        Error::lock(
+                            "index lock during post-insert contradiction deprecation",
+                        )
+                    })?;
+                    if idx.remove(deprecated_id) {
+                        if let Err(e) = idx.save() {
+                            tracing::warn!(
+                                "Failed to persist vector index after deprecating id={deprecated_id}: {e}"
+                            );
+                        }
                     }
                 }
             }
