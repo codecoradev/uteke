@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use tracing::{error, info, warn};
 use uteke_core::Uteke;
@@ -91,14 +92,36 @@ fn json_header() -> Header {
     Header::from_bytes("Content-Type", "application/json").unwrap()
 }
 
+/// Build a 401 Unauthorized response with CORS and WWW-Authenticate headers.
+fn unauthorized_response(
+    ctx: &ReqCtx,
+    req: &Request,
+    error_msg: &str,
+) -> Response<Cursor<Vec<u8>>> {
+    let mut hdrs = ctx.cors_headers_for(req);
+    hdrs.push(Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap());
+    hdrs.push(json_header());
+    let body = ErrorResponse {
+        error: error_msg.to_string(),
+    };
+    let data = serde_json::to_string(&body).unwrap();
+    Response::new(
+        StatusCode::from(401),
+        hdrs,
+        Cursor::new(data.into_bytes()),
+        None,
+        None,
+    )
+}
+
 /// Check bearer token auth on a request.
 /// Returns Ok(()) if auth passes or is disabled.
 /// Returns Err(response) with 401 if auth fails.
 fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>>>> {
-    let token = match &ctx.auth_token {
+    let token_hash = match &ctx.auth_token_hash {
         // No token configured — auth disabled
         None => return Ok(()),
-        Some(t) => t,
+        Some(h) => h,
     };
 
     // Look for Authorization: Bearer <token>
@@ -109,72 +132,46 @@ fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>
 
     match auth_header {
         Some(h) => {
-            let val = h.value.as_str();
-            if let Some(provided) = val.strip_prefix("Bearer ") {
-                // Constant-time comparison to prevent timing attacks
-                if constant_time_eq(provided.as_bytes(), token.as_bytes()) {
+            let val = h.value.as_str().trim();
+            // RFC 7235: scheme is case-insensitive, exactly 2 parts expected
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            if parts.len() != 2 {
+                return Err(unauthorized_response(
+                    ctx,
+                    req,
+                    "Invalid auth header format. Use: Authorization: Bearer <token>",
+                ));
+            }
+            if parts[0].eq_ignore_ascii_case("Bearer") {
+                // Constant-time comparison of precomputed SHA-256 digests.
+                // Only the incoming token is hashed per-request; the configured
+                // token's hash was precomputed at startup.
+                let provided_hash: [u8; 32] = Sha256::digest(parts[1].as_bytes()).into();
+                if constant_time_eq_digest(&provided_hash, token_hash) {
                     Ok(())
                 } else {
-                    let mut hdrs = ctx.cors_headers_for(req);
-                    hdrs.push(
-                        Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap(),
-                    );
-                    hdrs.push(json_header());
-                    let body = ErrorResponse {
-                        error: "Invalid or expired token".into(),
-                    };
-                    let data = serde_json::to_string(&body).unwrap();
-                    Err(Response::new(
-                        StatusCode::from(401),
-                        hdrs,
-                        Cursor::new(data.into_bytes()),
-                        None,
-                        None,
-                    ))
+                    Err(unauthorized_response(ctx, req, "Invalid or expired token"))
                 }
             } else {
-                let mut hdrs = ctx.cors_headers_for(req);
-                hdrs.push(
-                    Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap(),
-                );
-                hdrs.push(json_header());
-                let body = ErrorResponse {
-                    error: "Invalid auth scheme. Use: Authorization: Bearer <token>".into(),
-                };
-                let data = serde_json::to_string(&body).unwrap();
-                Err(Response::new(
-                    StatusCode::from(401),
-                    hdrs,
-                    Cursor::new(data.into_bytes()),
-                    None,
-                    None,
+                Err(unauthorized_response(
+                    ctx,
+                    req,
+                    "Invalid auth scheme. Use: Authorization: Bearer <token>",
                 ))
             }
         }
-        None => {
-            let mut hdrs = ctx.cors_headers_for(req);
-            hdrs.push(Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap());
-            hdrs.push(json_header());
-            let body = ErrorResponse {
-                error: "Authentication required. Provide Authorization: Bearer <token>".into(),
-            };
-            let data = serde_json::to_string(&body).unwrap();
-            Err(Response::new(
-                StatusCode::from(401),
-                hdrs,
-                Cursor::new(data.into_bytes()),
-                None,
-                None,
-            ))
-        }
+        None => Err(unauthorized_response(
+            ctx,
+            req,
+            "Authentication required. Provide Authorization: Bearer <token>",
+        )),
     }
 }
 
-/// Constant-time byte comparison to resist timing attacks.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
+/// Constant-time comparison of two fixed-length SHA-256 digests.
+/// The configured token's digest is precomputed at startup,
+/// so only the incoming token is hashed per-request.
+fn constant_time_eq_digest(a: &[u8; 32], b: &[u8; 32]) -> bool {
     let mut result: u8 = 0;
     for (x, y) in a.iter().zip(b.iter()) {
         result |= x ^ y;
@@ -183,7 +180,9 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 struct ReqCtx {
-    auth_token: Option<String>,
+    /// Hashed auth token for constant-time comparison.
+    /// If None, auth is disabled.
+    auth_token_hash: Option<[u8; 32]>,
     /// Allowed CORS origins from config. Empty = wildcard.
     cors_origins: Vec<String>,
 }
@@ -219,7 +218,7 @@ impl ReqCtx {
         }
         // When auth is enabled but CORS is wildcard, omit Authorization
         // from allowed headers to prevent browser-origin auth abuse.
-        let allowed_headers = if self.auth_token.is_some() && self.cors_origins.is_empty() {
+        let allowed_headers = if self.auth_token_hash.is_some() && self.cors_origins.is_empty() {
             "Content-Type"
         } else {
             "Content-Type, Authorization"
@@ -243,7 +242,7 @@ impl ReqCtx {
         // Fixed allowlist of headers we accept in cross-origin requests
         // When auth is enabled but CORS is wildcard, restrict to prevent browser abuse
         let allowed_headers_set: &[&str] =
-            if self.auth_token.is_some() && self.cors_origins.is_empty() {
+            if self.auth_token_hash.is_some() && self.cors_origins.is_empty() {
                 &["Content-Type", "Accept", "X-Requested-With"]
             } else {
                 &[
@@ -271,13 +270,9 @@ impl ReqCtx {
                     .collect::<Vec<_>>()
                     .join(", ")
             })
-            .unwrap_or_else(|| "Content-Type".to_string());
-        // Fallback if no requested headers matched
-        let allow_headers = if allow_headers.is_empty() {
-            allowed_headers_set.join(", ")
-        } else {
-            allow_headers
-        };
+            .unwrap_or_else(String::new);
+        // If no requested headers matched the allowlist, browser gets no
+        // Access-Control-Allow-Headers — it will block the request as intended.
         vec![
             Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
             Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
@@ -763,16 +758,20 @@ fn main() {
         }
     };
 
+    // Precompute auth token hash at startup so only incoming tokens
+    // need hashing per-request (avoids double-hash on every auth check).
+    let auth_token_hash = auth_token.as_deref().map(|t| Sha256::digest(t).into());
+
     // Build request context
     // Warn if auth is configured but CORS origins are not — this is safe for
     // non-browser clients (curl, SDKs, agents) but risky if browser access is needed.
-    if auth_token.is_some() && cors_origins.is_empty() {
+    if auth_token_hash.is_some() && cors_origins.is_empty() {
         warn!("Security: auth token is set but cors_origins is not configured.");
         warn!("  For browser access, set cors_origins in uteke.toml or --cors-origin.");
         warn!("  Non-browser clients (curl, agents) are unaffected by CORS.");
     }
     let ctx = ReqCtx {
-        auth_token: auth_token.clone(),
+        auth_token_hash,
         cors_origins: cors_origins.clone(),
     };
 
