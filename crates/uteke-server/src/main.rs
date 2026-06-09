@@ -94,10 +94,7 @@ fn json_header() -> Header {
 /// Check bearer token auth on a request.
 /// Returns Ok(()) if auth passes or is disabled.
 /// Returns Err(response) with 401 if auth fails.
-fn check_auth(
-    req: &Request,
-    ctx: &ReqCtx,
-) -> Result<(), Response<Cursor<Vec<u8>>>> {
+fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>>>> {
     let token = match &ctx.auth_token {
         // No token configured — auth disabled
         None => return Ok(()),
@@ -156,9 +153,7 @@ fn check_auth(
         }
         None => {
             let mut hdrs = ctx.cors_headers_for(req);
-            hdrs.push(
-                Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap(),
-            );
+            hdrs.push(Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap());
             hdrs.push(json_header());
             let body = ErrorResponse {
                 error: "Authentication required. Provide Authorization: Bearer <token>".into(),
@@ -231,7 +226,8 @@ impl ReqCtx {
         };
         vec![
             Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
-            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS").unwrap(),
+            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+                .unwrap(),
             Header::from_bytes("Access-Control-Allow-Headers", allowed_headers).unwrap(),
         ]
     }
@@ -246,21 +242,32 @@ impl ReqCtx {
         }
         // Fixed allowlist of headers we accept in cross-origin requests
         // When auth is enabled but CORS is wildcard, restrict to prevent browser abuse
-        let allowed_headers_set: &[&str] = if self.auth_token.is_some() && self.cors_origins.is_empty() {
-            &["Content-Type", "Accept", "X-Requested-With"]
-        } else {
-            &["Content-Type", "Authorization", "Accept", "X-Requested-With"]
-        };
+        let allowed_headers_set: &[&str] =
+            if self.auth_token.is_some() && self.cors_origins.is_empty() {
+                &["Content-Type", "Accept", "X-Requested-With"]
+            } else {
+                &[
+                    "Content-Type",
+                    "Authorization",
+                    "Accept",
+                    "X-Requested-With",
+                ]
+            };
         let allow_headers = req
             .headers()
             .iter()
             .find(|h| h.field.equiv("Access-Control-Request-Headers"))
             .map(|h| {
                 // Only echo back headers that are in our allowlist
-                h.value.as_str()
+                h.value
+                    .as_str()
                     .split(',')
                     .map(|s| s.trim())
-                    .filter(|s| allowed_headers_set.iter().any(|a| a.eq_ignore_ascii_case(s)))
+                    .filter(|s| {
+                        allowed_headers_set
+                            .iter()
+                            .any(|a| a.eq_ignore_ascii_case(s))
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             })
@@ -273,13 +280,19 @@ impl ReqCtx {
         };
         vec![
             Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
-            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS").unwrap(),
+            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+                .unwrap(),
             Header::from_bytes("Access-Control-Allow-Headers", allow_headers).unwrap(),
         ]
     }
 
     /// Build an error response with CORS headers specific to a request.
-    fn error_response_for(&self, req: &Request, status: u16, msg: impl Into<String>) -> Response<Cursor<Vec<u8>>> {
+    fn error_response_for(
+        &self,
+        req: &Request,
+        status: u16,
+        msg: impl Into<String>,
+    ) -> Response<Cursor<Vec<u8>>> {
         let body = ErrorResponse { error: msg.into() };
         let data = serde_json::to_string(&body).unwrap();
         let mut headers = self.cors_headers_for(req);
@@ -295,9 +308,8 @@ impl ReqCtx {
 
     /// Build an OK response with CORS headers specific to a request.
     fn ok_response_for<T: Serialize>(&self, req: &Request, body: &T) -> Response<Cursor<Vec<u8>>> {
-        let data = serde_json::to_string(body).unwrap_or_else(|e| {
-            serde_json::json!({"error": e.to_string()}).to_string()
-        });
+        let data = serde_json::to_string(body)
+            .unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}).to_string());
         let mut headers = self.cors_headers_for(req);
         headers.push(json_header());
         Response::new(
@@ -334,11 +346,7 @@ fn ns(ns: &Option<String>) -> Option<&str> {
 
 // ── Router ──────────────────────────────────────────────────────────────────
 
-fn route(
-    uteke: &Uteke,
-    ctx: &ReqCtx,
-    req: &mut Request,
-) -> Response<Cursor<Vec<u8>>> {
+fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
     let method = req.method().clone();
     let path = req.url().to_string();
 
@@ -368,11 +376,14 @@ fn route(
         (Method::Get, "/health") => {
             let total = uteke.count(None).unwrap_or(0);
             let namespaces = uteke.list_namespaces().unwrap_or_default().len();
-            ctx.ok_response_for(req, &HealthResponse {
-                status: "ok",
-                memories: total,
-                namespaces,
-            })
+            ctx.ok_response_for(
+                req,
+                &HealthResponse {
+                    status: "ok",
+                    memories: total,
+                    namespaces,
+                },
+            )
         }
 
         // ── Remember ───────────────────────────────────────────────────
@@ -413,7 +424,12 @@ fn route(
                         )
                         .map(|(id, _)| id)
                 } else {
-                    uteke.remember(&req_data.content, &tag_refs, metadata, ns(&req_data.namespace))
+                    uteke.remember(
+                        &req_data.content,
+                        &tag_refs,
+                        metadata,
+                        ns(&req_data.namespace),
+                    )
                 };
 
                 match result {
@@ -436,7 +452,12 @@ fn route(
                 } else {
                     Some(tag_refs.as_slice())
                 };
-                match uteke.recall(&req_data.query, req_data.limit, tags_filter, ns(&req_data.namespace)) {
+                match uteke.recall(
+                    &req_data.query,
+                    req_data.limit,
+                    tags_filter,
+                    ns(&req_data.namespace),
+                ) {
                     Ok(results) => ctx.ok_response_for(req, &results),
                     Err(e) => {
                         error!("Internal error: {e}");
@@ -456,7 +477,12 @@ fn route(
                 } else {
                     Some(tag_refs.as_slice())
                 };
-                match uteke.search(&req_data.query, req_data.limit, tags_filter, ns(&req_data.namespace)) {
+                match uteke.search(
+                    &req_data.query,
+                    req_data.limit,
+                    tags_filter,
+                    ns(&req_data.namespace),
+                ) {
                     Ok(results) => ctx.ok_response_for(req, &results),
                     Err(e) => {
                         error!("Internal error: {e}");
