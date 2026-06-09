@@ -117,60 +117,75 @@ impl crate::Uteke {
             .map_err(|_| Error::lock("embedder lock during recall"))?
             .embed(query)?;
 
-        // Search usearch index
+        // Search usearch index with retry: if post-filtering removes too many
+        // results, increase k and try again (up to 3 attempts).
         let index = self
             .index
             .lock()
             .map_err(|_| Error::lock("index lock during recall"))?;
-        // Cap k to index size
         let index_len = index.len();
-        let k = (limit * 3).min(index_len).max(1);
-        let candidates = index.search(&query_embedding, k, limit * 4);
-
-        // Fetch full memories and apply tag filter
         let mut results = Vec::new();
-        for (memory_id, distance) in candidates {
-            if results.len() >= limit {
+        let mut attempt = 0;
+        let mut multiplier = 3usize;
+
+        while results.len() < limit && attempt < 3 {
+            let k = (limit * multiplier).min(index_len).max(1);
+            let ef = (limit * multiplier * 4).max(50);
+            let candidates = index.search(&query_embedding, k, ef);
+
+            results.clear();
+            for (memory_id, distance) in &candidates {
+                if results.len() >= limit {
+                    break;
+                }
+
+                let memory = match self.store.get_by_id(memory_id)? {
+                    Some(m) => m,
+                    None => continue,
+                };
+
+                // Apply namespace filter
+                if memory.namespace != ns {
+                    continue;
+                }
+
+                // Apply tag filter
+                if let Some(filter_tags) = tags_filter {
+                    let has_tag = filter_tags
+                        .iter()
+                        .any(|ft| memory.tags.iter().any(|t| t == ft));
+                    if !has_tag {
+                        continue;
+                    }
+                }
+
+                let score = euclidean_to_cosine(*distance);
+
+                // Boost hot memories (configurable boost)
+                let tier = MemoryTier::from_last_accessed(
+                    memory.last_accessed,
+                    self.tier_config.hot_days,
+                    self.tier_config.warm_days,
+                );
+                let boosted_score = match tier {
+                    MemoryTier::Hot => (score + self.tier_config.hot_boost as f32).min(1.0),
+                    _ => score,
+                };
+
+                results.push(SearchResult {
+                    memory,
+                    score: boosted_score,
+                });
+            }
+
+            // If we have enough results or searched the entire index, stop
+            if results.len() >= limit || k >= index_len {
                 break;
             }
 
-            let memory = match self.store.get_by_id(&memory_id)? {
-                Some(m) => m,
-                None => continue,
-            };
-
-            // Apply namespace filter
-            if memory.namespace != ns {
-                continue;
-            }
-
-            // Apply tag filter
-            if let Some(filter_tags) = tags_filter {
-                let has_tag = filter_tags
-                    .iter()
-                    .any(|ft| memory.tags.iter().any(|t| t == ft));
-                if !has_tag {
-                    continue;
-                }
-            }
-
-            let score = euclidean_to_cosine(distance);
-
-            // Boost hot memories (configurable boost)
-            let tier = MemoryTier::from_last_accessed(
-                memory.last_accessed,
-                self.tier_config.hot_days,
-                self.tier_config.warm_days,
-            );
-            let boosted_score = match tier {
-                MemoryTier::Hot => (score + self.tier_config.hot_boost as f32).min(1.0),
-                _ => score,
-            };
-
-            results.push(SearchResult {
-                memory,
-                score: boosted_score,
-            });
+            // Increase search scope for next attempt
+            attempt += 1;
+            multiplier *= 3;
         }
 
         // Sort by score descending
