@@ -1,7 +1,7 @@
 //! Uteke HTTP Server — persistent warm memory for AI agents.
 //!
 //! Keeps the embedding model loaded in RAM for <50ms recall.
-//! Usage: `uteke-serve [--port 8767] [--host 127.0.0.1]`
+//! Usage: `uteke-serve [--port 8767] [--host 127.0.0.1] [--auth-token <TOKEN>]`
 
 use std::io::{Cursor, Read as IoRead};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tiny_http::{Header, Method, Response, Server, StatusCode};
+use sha2::{Digest, Sha256};
+use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use tracing::{error, info, warn};
 use uteke_core::Uteke;
 
@@ -91,37 +92,229 @@ fn json_header() -> Header {
     Header::from_bytes("Content-Type", "application/json").unwrap()
 }
 
-fn cors_headers() -> Vec<Header> {
-    vec![
-        Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
-        Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS").unwrap(),
-        Header::from_bytes("Access-Control-Allow-Headers", "Content-Type").unwrap(),
-    ]
-}
-
-fn json_response<T: Serialize>(status: u16, body: &T) -> Response<Cursor<Vec<u8>>> {
-    let data = serde_json::to_string(body).unwrap_or_else(|e| {
-        // Use serde for fallback too — avoids broken JSON from format!
-        serde_json::json!({"error": e.to_string()}).to_string()
-    });
-    let mut headers = cors_headers();
-    headers.push(json_header());
+/// Build a 401 Unauthorized response with CORS and WWW-Authenticate headers.
+fn unauthorized_response(
+    ctx: &ReqCtx,
+    req: &Request,
+    error_msg: &str,
+) -> Response<Cursor<Vec<u8>>> {
+    let mut hdrs = ctx.cors_headers_for(req);
+    hdrs.push(Header::from_bytes("WWW-Authenticate", "Bearer realm=\"uteke\"").unwrap());
+    hdrs.push(json_header());
+    let body = ErrorResponse {
+        error: error_msg.to_string(),
+    };
+    let data = serde_json::to_string(&body).unwrap();
     Response::new(
-        StatusCode::from(status),
-        headers,
+        StatusCode::from(401),
+        hdrs,
         Cursor::new(data.into_bytes()),
         None,
         None,
     )
 }
 
-fn error_response(status: u16, msg: impl Into<String>) -> Response<Cursor<Vec<u8>>> {
-    let body = ErrorResponse { error: msg.into() };
-    json_response(status, &body)
+/// Check bearer token auth on a request.
+/// Returns Ok(()) if auth passes or is disabled.
+/// Returns Err(response) with 401 if auth fails.
+fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>>>> {
+    let token_hash = match &ctx.auth_token_hash {
+        // No token configured — auth disabled
+        None => return Ok(()),
+        Some(h) => h,
+    };
+
+    // Look for Authorization: Bearer <token>
+    let auth_header = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Authorization"));
+
+    match auth_header {
+        Some(h) => {
+            let val = h.value.as_str().trim();
+            // RFC 7235: scheme is case-insensitive, exactly 2 parts expected
+            let parts: Vec<&str> = val.split_whitespace().collect();
+            if parts.len() != 2 {
+                return Err(unauthorized_response(
+                    ctx,
+                    req,
+                    "Invalid auth header format. Use: Authorization: Bearer <token>",
+                ));
+            }
+            if parts[0].eq_ignore_ascii_case("Bearer") {
+                // Constant-time comparison of precomputed SHA-256 digests.
+                // Only the incoming token is hashed per-request; the configured
+                // token's hash was precomputed at startup.
+                let provided_hash: [u8; 32] = Sha256::digest(parts[1].as_bytes()).into();
+                if constant_time_eq_digest(&provided_hash, token_hash) {
+                    Ok(())
+                } else {
+                    Err(unauthorized_response(ctx, req, "Invalid or expired token"))
+                }
+            } else {
+                Err(unauthorized_response(
+                    ctx,
+                    req,
+                    "Invalid auth scheme. Use: Authorization: Bearer <token>",
+                ))
+            }
+        }
+        None => Err(unauthorized_response(
+            ctx,
+            req,
+            "Authentication required. Provide Authorization: Bearer <token>",
+        )),
+    }
 }
 
-fn ok_response<T: Serialize>(body: &T) -> Response<Cursor<Vec<u8>>> {
-    json_response(200, body)
+/// Constant-time comparison of two fixed-length SHA-256 digests.
+/// The configured token's digest is precomputed at startup,
+/// so only the incoming token is hashed per-request.
+fn constant_time_eq_digest(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    let mut result: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}
+
+struct ReqCtx {
+    /// Hashed auth token for constant-time comparison.
+    /// If None, auth is disabled.
+    auth_token_hash: Option<[u8; 32]>,
+    /// Allowed CORS origins from config. Empty = wildcard.
+    cors_origins: Vec<String>,
+}
+
+impl ReqCtx {
+    /// Resolve the allowed origin for a specific request by matching
+    /// its `Origin` header against the configured origins list.
+    /// Returns "*" if no origins configured (backward compatible).
+    /// Returns the matching origin if found, or "*" as fallback.
+    fn resolve_origin_for(&self, req: &Request) -> String {
+        if self.cors_origins.is_empty() {
+            return "*".to_string();
+        }
+        // Check if request has an Origin header
+        if let Some(origin_header) = req.headers().iter().find(|h| h.field.equiv("Origin")) {
+            let origin = origin_header.value.as_str();
+            if self.cors_origins.iter().any(|o| o == origin) {
+                return origin.to_string();
+            }
+        }
+        // No matching origin — return empty string so CORS headers are omitted.
+        // Browser will block cross-origin requests from untrusted origins.
+        // Non-browser clients (API users) are unaffected by CORS.
+        String::new()
+    }
+
+    fn cors_headers_for(&self, req: &Request) -> Vec<Header> {
+        let origin = self.resolve_origin_for(req);
+        if origin.is_empty() {
+            // Origin not in allowlist — omit CORS headers entirely.
+            // Browser will block cross-origin reads.
+            return vec![];
+        }
+        // When auth is enabled but CORS is wildcard, omit Authorization
+        // from allowed headers to prevent browser-origin auth abuse.
+        let allowed_headers = if self.auth_token_hash.is_some() && self.cors_origins.is_empty() {
+            "Content-Type"
+        } else {
+            "Content-Type, Authorization"
+        };
+        vec![
+            Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
+            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+                .unwrap(),
+            Header::from_bytes("Access-Control-Allow-Headers", allowed_headers).unwrap(),
+        ]
+    }
+
+    /// Build CORS headers for preflight, validating requested headers
+    /// against an explicit allowlist.
+    fn preflight_headers(&self, req: &Request) -> Vec<Header> {
+        let origin = self.resolve_origin_for(req);
+        if origin.is_empty() {
+            // Origin not in allowlist — return minimal headers so browser blocks.
+            return vec![];
+        }
+        // Fixed allowlist of headers we accept in cross-origin requests
+        // When auth is enabled but CORS is wildcard, restrict to prevent browser abuse
+        let allowed_headers_set: &[&str] =
+            if self.auth_token_hash.is_some() && self.cors_origins.is_empty() {
+                &["Content-Type", "Accept", "X-Requested-With"]
+            } else {
+                &[
+                    "Content-Type",
+                    "Authorization",
+                    "Accept",
+                    "X-Requested-With",
+                ]
+            };
+        let allow_headers = req
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("Access-Control-Request-Headers"))
+            .map(|h| {
+                // Only echo back headers that are in our allowlist
+                h.value
+                    .as_str()
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| {
+                        allowed_headers_set
+                            .iter()
+                            .any(|a| a.eq_ignore_ascii_case(s))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_else(String::new);
+        // If no requested headers matched the allowlist, browser gets no
+        // Access-Control-Allow-Headers — it will block the request as intended.
+        vec![
+            Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
+            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+                .unwrap(),
+            Header::from_bytes("Access-Control-Allow-Headers", allow_headers).unwrap(),
+        ]
+    }
+
+    /// Build an error response with CORS headers specific to a request.
+    fn error_response_for(
+        &self,
+        req: &Request,
+        status: u16,
+        msg: impl Into<String>,
+    ) -> Response<Cursor<Vec<u8>>> {
+        let body = ErrorResponse { error: msg.into() };
+        let data = serde_json::to_string(&body).unwrap();
+        let mut headers = self.cors_headers_for(req);
+        headers.push(json_header());
+        Response::new(
+            StatusCode::from(status),
+            headers,
+            Cursor::new(data.into_bytes()),
+            None,
+            None,
+        )
+    }
+
+    /// Build an OK response with CORS headers specific to a request.
+    fn ok_response_for<T: Serialize>(&self, req: &Request, body: &T) -> Response<Cursor<Vec<u8>>> {
+        let data = serde_json::to_string(body)
+            .unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}).to_string());
+        let mut headers = self.cors_headers_for(req);
+        headers.push(json_header());
+        Response::new(
+            StatusCode::from(200),
+            headers,
+            Cursor::new(data.into_bytes()),
+            None,
+            None,
+        )
+    }
 }
 
 fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
@@ -148,49 +341,65 @@ fn ns(ns: &Option<String>) -> Option<&str> {
 
 // ── Router ──────────────────────────────────────────────────────────────────
 
-fn route(
-    uteke: &Uteke,
-    method: &Method,
-    path: &str,
-    body: &mut dyn IoRead,
-) -> Response<Cursor<Vec<u8>>> {
-    // CORS preflight
-    if method == &Method::Options {
+fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
+    let method = req.method().clone();
+    let path = req.url().to_string();
+
+    // CORS preflight — no auth required
+    if method == Method::Options {
         return Response::new(
             StatusCode::from(204),
-            cors_headers(),
+            ctx.preflight_headers(req),
             Cursor::new(Vec::new()),
             None,
             None,
         );
     }
 
-    match (method, path) {
+    // Health endpoint — no auth required (useful for load balancers)
+    let is_health = matches!((&method, path.as_str()), (Method::Get, "/health"));
+
+    // Authenticate all non-health requests
+    if !is_health {
+        if let Err(resp) = check_auth(req, ctx) {
+            return resp;
+        }
+    }
+
+    match (method, path.as_str()) {
         // ── Health ──────────────────────────────────────────────────────
-        (&Method::Get, "/health") => {
+        (Method::Get, "/health") => {
             let total = uteke.count(None).unwrap_or(0);
             let namespaces = uteke.list_namespaces().unwrap_or_default().len();
-            ok_response(&HealthResponse {
-                status: "ok",
-                memories: total,
-                namespaces,
-            })
+            ctx.ok_response_for(
+                req,
+                &HealthResponse {
+                    status: "ok",
+                    memories: total,
+                    namespaces,
+                },
+            )
         }
 
         // ── Remember ───────────────────────────────────────────────────
-        (&Method::Post, "/remember") => match read_body::<RememberRequest>(body) {
-            Ok(req) => {
-                let tag_refs: Vec<&str> = req.tags.iter().map(|s| s.as_str()).collect();
+        (Method::Post, "/remember") => match read_body::<RememberRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                // Validate input
+                if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
+                    return ctx.error_response_for(req, 400, e.to_string());
+                }
+
+                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
 
                 // Build metadata from optional fields
                 let mut meta = serde_json::Map::new();
-                if let Some(t) = &req.r#type {
+                if let Some(t) = &req_data.r#type {
                     meta.insert("type".into(), serde_json::Value::String(t.clone()));
                 }
-                if let Some(vf) = &req.valid_from {
+                if let Some(vf) = &req_data.valid_from {
                     meta.insert("valid_from".into(), serde_json::Value::String(vf.clone()));
                 }
-                if let Some(vu) = &req.valid_until {
+                if let Some(vu) = &req_data.valid_until {
                     meta.insert("valid_until".into(), serde_json::Value::String(vu.clone()));
                 }
                 let metadata = if meta.is_empty() {
@@ -199,93 +408,108 @@ fn route(
                     Some(serde_json::Value::Object(meta))
                 };
 
-                let result = if req.detect_contradiction {
+                let result = if req_data.detect_contradiction {
                     uteke
                         .remember_with_contradiction(
-                            &req.content,
+                            &req_data.content,
                             &tag_refs,
-                            ns(&req.namespace),
-                            req.r#type.as_deref(),
+                            ns(&req_data.namespace),
+                            req_data.r#type.as_deref(),
                             true,
                         )
                         .map(|(id, _)| id)
                 } else {
-                    uteke.remember(&req.content, &tag_refs, metadata, ns(&req.namespace))
+                    uteke.remember(
+                        &req_data.content,
+                        &tag_refs,
+                        metadata,
+                        ns(&req_data.namespace),
+                    )
                 };
 
                 match result {
-                    Ok(id) => ok_response(&serde_json::json!({"id": id})),
+                    Ok(id) => ctx.ok_response_for(req, &serde_json::json!({"id": id})),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             }
-            Err(e) => error_response(400, e),
+            Err(e) => ctx.error_response_for(req, 400, e),
         },
 
         // ── Recall (semantic search) ────────────────────────────────────
-        (&Method::Post, "/recall") => match read_body::<RecallRequest>(body) {
-            Ok(req) => {
-                let tag_refs: Vec<&str> = req.tags.iter().map(|s| s.as_str()).collect();
+        (Method::Post, "/recall") => match read_body::<RecallRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
                 let tags_filter = if tag_refs.is_empty() {
                     None
                 } else {
                     Some(tag_refs.as_slice())
                 };
-                match uteke.recall(&req.query, req.limit, tags_filter, ns(&req.namespace)) {
-                    Ok(results) => ok_response(&results),
+                match uteke.recall(
+                    &req_data.query,
+                    req_data.limit,
+                    tags_filter,
+                    ns(&req_data.namespace),
+                ) {
+                    Ok(results) => ctx.ok_response_for(req, &results),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             }
-            Err(e) => error_response(400, e),
+            Err(e) => ctx.error_response_for(req, 400, e),
         },
 
         // ── Search (keyword) ────────────────────────────────────────────
-        (&Method::Post, "/search") => match read_body::<SearchRequest>(body) {
-            Ok(req) => {
-                let tag_refs: Vec<&str> = req.tags.iter().map(|s| s.as_str()).collect();
+        (Method::Post, "/search") => match read_body::<SearchRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
                 let tags_filter = if tag_refs.is_empty() {
                     None
                 } else {
                     Some(tag_refs.as_slice())
                 };
-                match uteke.search(&req.query, req.limit, tags_filter, ns(&req.namespace)) {
-                    Ok(results) => ok_response(&results),
+                match uteke.search(
+                    &req_data.query,
+                    req_data.limit,
+                    tags_filter,
+                    ns(&req_data.namespace),
+                ) {
+                    Ok(results) => ctx.ok_response_for(req, &results),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             }
-            Err(e) => error_response(400, e),
+            Err(e) => ctx.error_response_for(req, 400, e),
         },
 
         // ── List ────────────────────────────────────────────────────────
-        (&Method::Post, "/list") => match read_body::<ListParams>(body) {
-            Ok(req) => {
+        (Method::Post, "/list") => match read_body::<ListParams>(req.as_reader()) {
+            Ok(req_data) => {
                 match uteke.list(
-                    req.tag.as_deref(),
-                    req.limit,
-                    req.offset,
-                    ns(&req.namespace),
+                    req_data.tag.as_deref(),
+                    req_data.limit,
+                    req_data.offset,
+                    ns(&req_data.namespace),
                 ) {
-                    Ok(memories) => ok_response(&memories),
+                    Ok(memories) => ctx.ok_response_for(req, &memories),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             }
-            Err(e) => error_response(400, e),
+            Err(e) => ctx.error_response_for(req, 400, e),
         },
 
         // ── Forget by ID or tag (DELETE /forget?id=xxx or ?tag=xxx) ────
-        (&Method::Delete, path) if path == "/forget" || path.starts_with("/forget?") => {
-            let query = path.split('?').nth(1).unwrap_or("");
+        (Method::Delete, p) if p == "/forget" || p.starts_with("/forget?") => {
+            let query = p.split('?').nth(1).unwrap_or("");
             let params: std::collections::HashMap<String, String> = query
                 .split('&')
                 .filter_map(|pair| {
@@ -297,82 +521,82 @@ fn route(
             if let Some(id) = params.get("id") {
                 // Validate UUID format
                 if uuid::Uuid::parse_str(id).is_err() {
-                    return error_response(400, format!("Invalid UUID format: {id}"));
+                    return ctx.error_response_for(req, 400, format!("Invalid UUID format: {id}"));
                 }
                 match uteke.forget(id) {
-                    Ok(()) => ok_response(&serde_json::json!({"forgotten": id})),
+                    Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"forgotten": id})),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             } else if let Some(tag) = params.get("tag") {
                 let namespace = params.get("namespace").map(|s| s.as_str());
                 match uteke.bulk_forget_by_tag(tag, namespace) {
-                    Ok(result) => ok_response(&result),
+                    Ok(result) => ctx.ok_response_for(req, &result),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             } else {
-                error_response(400, "Provide ?id= or ?tag= parameter")
+                ctx.error_response_for(req, 400, "Provide ?id= or ?tag= parameter")
             }
         }
 
         // ── Stats (GET = all, POST = by namespace) ─────────────────────
-        (&Method::Get, "/stats") => match uteke.stats(None) {
-            Ok(stats) => ok_response(&stats),
+        (Method::Get, "/stats") => match uteke.stats(None) {
+            Ok(stats) => ctx.ok_response_for(req, &stats),
             Err(e) => {
                 error!("Internal error: {e}");
-                error_response(500, "Internal server error")
+                ctx.error_response_for(req, 500, "Internal server error")
             }
         },
-        (&Method::Post, "/stats") => {
+        (Method::Post, "/stats") => {
             #[derive(Deserialize)]
             struct StatsReq {
                 namespace: Option<String>,
             }
-            match read_body::<StatsReq>(body) {
-                Ok(req) => match uteke.stats(ns(&req.namespace)) {
-                    Ok(stats) => ok_response(&stats),
+            match read_body::<StatsReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.stats(ns(&req_data.namespace)) {
+                    Ok(stats) => ctx.ok_response_for(req, &stats),
                     Err(e) => {
                         error!("Internal error: {e}");
-                        error_response(500, "Internal server error")
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 },
-                Err(e) => error_response(400, e),
+                Err(e) => ctx.error_response_for(req, 400, e),
             }
         }
 
         // ── Namespaces ──────────────────────────────────────────────────
-        (&Method::Get, "/namespaces") => match uteke.list_namespaces() {
-            Ok(namespaces) => ok_response(&namespaces),
+        (Method::Get, "/namespaces") => match uteke.list_namespaces() {
+            Ok(namespaces) => ctx.ok_response_for(req, &namespaces),
             Err(e) => {
                 error!("Internal error: {e}");
-                error_response(500, "Internal server error")
+                ctx.error_response_for(req, 500, "Internal server error")
             }
         },
 
         // ── Get memory by ID ──────────────────────────────────────────
-        (&Method::Get, path) if path.starts_with("/memory?id=") => {
-            let id = path.trim_start_matches("/memory?id=");
+        (Method::Get, p) if p.starts_with("/memory?id=") => {
+            let id = p.trim_start_matches("/memory?id=");
             // Validate UUID format
             if uuid::Uuid::parse_str(id).is_err() {
-                return error_response(400, format!("Invalid UUID format: {id}"));
+                return ctx.error_response_for(req, 400, format!("Invalid UUID format: {id}"));
             }
             match uteke.get_by_id(id) {
-                Ok(Some(memory)) => ok_response(&memory),
-                Ok(None) => error_response(404, format!("Memory not found: {id}")),
+                Ok(Some(memory)) => ctx.ok_response_for(req, &memory),
+                Ok(None) => ctx.error_response_for(req, 404, format!("Memory not found: {id}")),
                 Err(e) => {
                     error!("Internal error: {e}");
-                    error_response(500, "Internal server error")
+                    ctx.error_response_for(req, 500, "Internal server error")
                 }
             }
         }
 
         // ── 404 ─────────────────────────────────────────────────────────
-        _ => error_response(404, "Not found"),
+        _ => ctx.error_response_for(req, 404, "Not found"),
     }
 }
 
@@ -385,6 +609,8 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut cli_host: Option<String> = None;
     let mut cli_port: Option<u16> = None;
+    let mut cli_auth_token: Option<String> = None;
+    let mut cli_cors_origins: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -410,21 +636,47 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--auth-token" => {
+                i += 1;
+                if i < args.len() {
+                    cli_auth_token = Some(args[i].clone());
+                } else {
+                    eprintln!("Error: --auth-token requires a value");
+                    std::process::exit(1);
+                }
+            }
+            "--cors-origin" => {
+                i += 1;
+                if i < args.len() {
+                    cli_cors_origins.push(args[i].clone());
+                } else {
+                    eprintln!("Error: --cors-origin requires a value");
+                    std::process::exit(1);
+                }
+            }
             "--help" | "-h" => {
                 println!("uteke-serve — persistent warm memory server");
                 println!();
                 println!("Usage: uteke-serve [OPTIONS]");
                 println!();
                 println!("Options:");
-                println!("  --host <HOST>  Bind address (default: 0.0.0.0)");
-                println!("  --port <PORT>  Port number (default: 8767)");
-                println!("  -h, --help     Show this help");
+                println!("  --host <HOST>        Bind address (default: 127.0.0.1)");
+                println!("  --port <PORT>        Port number (default: 8767)");
+                println!("  --auth-token <TOKEN> Bearer token for API auth");
+                println!("  --cors-origin <URL>  Allowed CORS origin (repeatable)");
+                println!("  -h, --help           Show this help");
                 println!();
                 println!("Config: reads [server] section from uteke.toml");
                 println!("  CLI args override config values.");
                 println!();
                 println!("Environment:");
-                println!("  UTEKE_HOME    Data directory (default: ~/.uteke)");
+                println!("  UTEKE_HOME          Data directory (default: ~/.uteke)");
+                println!("  UTEKE_AUTH_TOKEN     Bearer token (alternative to --auth-token)");
+                println!();
+                println!("Security:");
+                println!("  If --auth-token or UTEKE_AUTH_TOKEN is set, all endpoints");
+                println!("  (except GET /health) require Authorization: Bearer <TOKEN>.");
+                println!("  Configure CORS origins in uteke.toml [server].cors_origins.");
                 println!();
                 println!("API:");
                 println!("  GET  /health              → {{ status, memories }}");
@@ -449,17 +701,35 @@ fn main() {
         i += 1;
     }
 
-    // Load config: defaults → uteke.toml → CLI args
+    // Load config: defaults → uteke.toml → CLI args (env vars fill gaps where CLI is absent)
     let config = load_uteke_toml();
     let config_host = config
         .server
         .as_ref()
         .and_then(|s| s.host.clone())
-        .unwrap_or_else(|| "0.0.0.0".to_string());
+        .unwrap_or_else(|| "127.0.0.1".to_string());
     let config_port = config.server.as_ref().and_then(|s| s.port).unwrap_or(8767);
+    let config_auth_token = config.server.as_ref().and_then(|s| s.auth_token.clone());
+    let config_cors_origins = config
+        .server
+        .as_ref()
+        .and_then(|s| s.cors_origins.clone())
+        .unwrap_or_default();
+
+    // Merge CORS origins: CLI flags override config
+    let cors_origins = if !cli_cors_origins.is_empty() {
+        cli_cors_origins
+    } else {
+        config_cors_origins
+    };
 
     let host = cli_host.unwrap_or(config_host);
     let port = cli_port.unwrap_or(config_port);
+
+    // Auth token precedence: CLI flag > environment variable > config file
+    let auth_token = cli_auth_token
+        .or_else(|| std::env::var("UTEKE_AUTH_TOKEN").ok())
+        .or(config_auth_token);
 
     // Logging
     tracing_subscriber::fmt()
@@ -488,6 +758,23 @@ fn main() {
         }
     };
 
+    // Precompute auth token hash at startup so only incoming tokens
+    // need hashing per-request (avoids double-hash on every auth check).
+    let auth_token_hash = auth_token.as_deref().map(|t| Sha256::digest(t).into());
+
+    // Build request context
+    // Warn if auth is configured but CORS origins are not — this is safe for
+    // non-browser clients (curl, SDKs, agents) but risky if browser access is needed.
+    if auth_token_hash.is_some() && cors_origins.is_empty() {
+        warn!("Security: auth token is set but cors_origins is not configured.");
+        warn!("  For browser access, set cors_origins in uteke.toml or --cors-origin.");
+        warn!("  Non-browser clients (curl, agents) are unaffected by CORS.");
+    }
+    let ctx = ReqCtx {
+        auth_token_hash,
+        cors_origins: cors_origins.clone(),
+    };
+
     // Start server
     let addr = format!("{host}:{port}");
     let server = Server::http(&addr).unwrap_or_else(|e| {
@@ -496,6 +783,18 @@ fn main() {
     });
     info!("Uteke server listening on http://{addr}");
     info!("Embedding model warm. Ready for <50ms recall.");
+
+    // Security info
+    if auth_token.is_some() {
+        info!("Authentication: enabled (Bearer token)");
+    } else {
+        warn!("Authentication: disabled — set --auth-token or UTEKE_AUTH_TOKEN for production");
+    }
+    if cors_origins.is_empty() {
+        warn!("CORS: wildcard (*) — restrict cors_origins in uteke.toml for production");
+    } else {
+        info!("CORS: allowing origins: {:?}", cors_origins);
+    }
 
     // SIGINT handler
     ctrlc::set_handler(|| {
@@ -519,7 +818,7 @@ fn main() {
         let url = req.url().to_string();
         info!("{method} {url}");
 
-        let response = route(&uteke, &method, &url, &mut req.as_reader());
+        let response = route(&uteke, &ctx, &mut req);
         if let Err(e) = req.respond(response) {
             warn!("Response error: {e}");
         }
@@ -546,6 +845,13 @@ struct ServerFileConfig {
 struct ServerFileSection {
     host: Option<String>,
     port: Option<u16>,
+    /// Bearer token for API authentication.
+    /// If set, all endpoints except GET /health require Authorization: Bearer <token>.
+    auth_token: Option<String>,
+    /// Allowed CORS origins. Defaults to empty (wildcard `*`).
+    /// Set to specific origins like ["http://localhost:3000"] for production.
+    /// Each request's `Origin` header is matched against this list.
+    cors_origins: Option<Vec<String>>,
 }
 
 /// Find and parse the nearest uteke.toml, looking at:
