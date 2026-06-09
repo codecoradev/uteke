@@ -1,6 +1,7 @@
 //! Persistent vector index using usearch (HNSW with disk persistence).
 
 use crate::Error;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
@@ -16,9 +17,9 @@ const DEFAULT_DIMS: usize = 768;
 pub struct VectorIndex {
     index: Index,
     /// Maps integer key (u64) → memory UUID string.
-    key_to_id: Vec<String>,
+    key_to_id: HashMap<u64, String>,
     /// Maps memory UUID → integer key.
-    id_to_key: std::collections::HashMap<String, u64>,
+    id_to_key: HashMap<String, u64>,
     /// Next available integer key.
     next_key: u64,
     /// Path to the usearch index file.
@@ -33,8 +34,8 @@ impl VectorIndex {
         let index = Self::create_index(dims)?;
         Ok(Self {
             index,
-            key_to_id: Vec::new(),
-            id_to_key: std::collections::HashMap::new(),
+            key_to_id: HashMap::new(),
+            id_to_key: HashMap::new(),
             next_key: 0,
             path: None,
             dirty: false,
@@ -60,12 +61,11 @@ impl VectorIndex {
 
         let _size = index.size();
 
-        // Rebuild key mappings from the loaded index
-        let mut key_to_id = Vec::new();
-        let mut id_to_key = std::collections::HashMap::new();
+        // Rebuild key mappings from the sidecar file
+        let mut key_to_id = HashMap::new();
+        let mut id_to_key = HashMap::new();
         let mut next_key = 0u64;
 
-        // We store key→id mapping in a sidecar file
         let mapping_path = path.with_extension("keys");
         if mapping_path.exists() {
             let data = std::fs::read_to_string(&mapping_path)
@@ -77,10 +77,7 @@ impl VectorIndex {
                 }
                 if let Some((key_str, id)) = line.split_once('\t') {
                     if let Ok(key) = key_str.parse::<u64>() {
-                        if key as usize >= key_to_id.len() {
-                            key_to_id.resize(key as usize + 1, String::new());
-                        }
-                        key_to_id[key as usize] = id.to_string();
+                        key_to_id.insert(key, id.to_string());
                         id_to_key.insert(id.to_string(), key);
                         next_key = next_key.max(key + 1);
                     }
@@ -109,10 +106,8 @@ impl VectorIndex {
             // Save key→id mapping as sidecar file
             let mapping_path = path.with_extension("keys");
             let mut lines = Vec::new();
-            for (key, id) in self.key_to_id.iter().enumerate() {
-                if !id.is_empty() {
-                    lines.push(format!("{key}\t{id}"));
-                }
+            for (&key, id) in &self.key_to_id {
+                lines.push(format!("{key}\t{id}"));
             }
             std::fs::write(&mapping_path, lines.join("\n"))
                 .map_err(|e| Error::embed("save key mapping", e))?;
@@ -155,15 +150,21 @@ impl VectorIndex {
     }
 
     /// Insert a single item into the index.
+    /// If the ID already exists, removes the old entry first to prevent duplicates.
     pub fn insert(&mut self, id: &str, embedding: &[f32]) {
+        // Guard: remove old entry if ID already exists (prevents duplicate + stale slot)
+        if let Some(old_key) = self.id_to_key.get(id) {
+            let old_key = *old_key;
+            self.key_to_id.remove(&old_key);
+            if let Err(e) = self.index.remove(old_key) {
+                tracing::warn!("Failed to remove old entry for duplicate ID {id}: {e}");
+            }
+        }
+
         let key = self.next_key;
         self.next_key += 1;
 
-        // Ensure key_to_id is large enough
-        if key as usize >= self.key_to_id.len() {
-            self.key_to_id.resize(key as usize + 1, String::new());
-        }
-        self.key_to_id[key as usize] = id.to_string();
+        self.key_to_id.insert(key, id.to_string());
         self.id_to_key.insert(id.to_string(), key);
 
         // Auto-reserve if at capacity
@@ -184,11 +185,9 @@ impl VectorIndex {
     /// Remove an item by memory ID. Incremental — no rebuild.
     pub fn remove(&mut self, id: &str) -> bool {
         if let Some(key) = self.id_to_key.remove(id) {
+            self.key_to_id.remove(&key);
             if let Err(e) = self.index.remove(key) {
                 tracing::error!("Failed to remove from usearch index: {e}");
-            }
-            if (key as usize) < self.key_to_id.len() {
-                self.key_to_id[key as usize] = String::new();
             }
             self.dirty = true;
             true
@@ -217,14 +216,7 @@ impl VectorIndex {
             .keys
             .iter()
             .zip(results.distances.iter())
-            .filter(|(key, _)| {
-                let k = **key as usize;
-                k < self.key_to_id.len() && !self.key_to_id[k].is_empty()
-            })
-            .map(|(key, dist)| {
-                let id = self.key_to_id[*key as usize].clone();
-                (id, *dist)
-            })
+            .filter_map(|(key, dist)| self.key_to_id.get(key).map(|id| (id.clone(), *dist)))
             .collect()
     }
 
