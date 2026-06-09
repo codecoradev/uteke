@@ -126,27 +126,73 @@ impl crate::Uteke {
     }
 
     /// Find near-duplicate memory pairs (similarity > threshold).
+    /// Uses the HNSW vector index for approximate search — O(n·k) instead of O(n²).
     pub fn find_duplicates(
         &self,
         namespace: Option<&str>,
         threshold: f32,
     ) -> Result<Vec<crate::memory::types::SimilarPair>, Error> {
         let memories = self.store.load_all(namespace)?;
+        if memories.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let index = self
+            .index
+            .lock()
+            .map_err(|_| Error::lock("index lock during find_duplicates"))?;
+
+        let mut seen = std::collections::HashSet::new();
         let mut pairs = Vec::new();
-        for i in 0..memories.len() {
-            for j in (i + 1)..memories.len() {
-                let sim = cosine_similarity(&memories[i].embedding, &memories[j].embedding);
-                if sim > threshold {
-                    pairs.push(crate::memory::types::SimilarPair {
-                        id_a: memories[i].id.clone(),
-                        content_a: memories[i].content.chars().take(80).collect(),
-                        id_b: memories[j].id.clone(),
-                        content_b: memories[j].content.chars().take(80).collect(),
-                        similarity: sim,
-                    });
+
+        for memory in &memories {
+            if memory.embedding.is_empty() {
+                continue;
+            }
+
+            // Search for top-2 nearest neighbors (first result may be self)
+            let candidates = index.search(&memory.embedding, 5, 50);
+
+            for (candidate_id, distance) in &candidates {
+                if candidate_id == &memory.id {
+                    continue;
                 }
+                let sim = 1.0 - distance;
+                if sim <= threshold {
+                    continue;
+                }
+
+                // Canonical pair ordering to avoid duplicates
+                let (id_a, id_b) = if memory.id < *candidate_id {
+                    (memory.id.clone(), candidate_id.clone())
+                } else {
+                    (candidate_id.clone(), memory.id.clone())
+                };
+                let pair_key = format!("{id_a}:{id_b}");
+                if seen.contains(&pair_key) {
+                    continue;
+                }
+
+                // Fetch candidate content for preview
+                let content_b = self
+                    .store
+                    .get_by_id(candidate_id)
+                    .ok()
+                    .flatten()
+                    .map(|m| m.content.chars().take(80).collect())
+                    .unwrap_or_default();
+
+                seen.insert(pair_key);
+                pairs.push(crate::memory::types::SimilarPair {
+                    id_a: id_a.clone(),
+                    content_a: memory.content.chars().take(80).collect(),
+                    id_b: id_b.clone(),
+                    content_b,
+                    similarity: sim,
+                });
             }
         }
+
         pairs.sort_by(|a, b| {
             b.similarity
                 .partial_cmp(&a.similarity)
@@ -230,6 +276,7 @@ impl crate::Uteke {
 }
 
 /// Compute cosine similarity between two vectors.
+#[allow(dead_code)]
 pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
