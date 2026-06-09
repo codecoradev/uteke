@@ -178,18 +178,36 @@ impl crate::Uteke {
             if already_removed.contains(&pair.id_a) || already_removed.contains(&pair.id_b) {
                 continue;
             }
+
+            // Explicitly compare timestamps — delete the older memory, keep the newer.
+            // Falls back to id_a if timestamps are equal.
+            let (to_remove, to_keep) = {
+                let mem_a = self.store.get_by_id(&pair.id_a);
+                let mem_b = self.store.get_by_id(&pair.id_b);
+                match (mem_a, mem_b) {
+                    (Ok(Some(a)), Ok(Some(b))) => {
+                        if b.created_at < a.created_at {
+                            (&pair.id_b, &pair.id_a) // b is older → remove b
+                        } else {
+                            (&pair.id_a, &pair.id_b) // a is older or equal → remove a
+                        }
+                    }
+                    _ => (&pair.id_a, &pair.id_b), // fallback: remove id_a
+                }
+            };
+
             self.store
-                .delete(&pair.id_a)
+                .delete(to_remove)
                 .map_err(|e| Error::db("consolidate delete", e))?;
             // SQLite first (source of truth), then vector index.
             let mut index = self
                 .index
                 .lock()
                 .map_err(|_| Error::lock("index lock during consolidate"))?;
-            if !index.remove(&pair.id_a) {
+            if !index.remove(to_remove) {
                 tracing::warn!(
                     "Vector index entry not found during consolidate for id={}",
-                    pair.id_a
+                    to_remove
                 );
             }
             if let Err(e) = index.save() {
@@ -198,9 +216,9 @@ impl crate::Uteke {
                      Orphan entries will be cleaned up by verify/repair."
                 );
             }
-            removed_ids.push(pair.id_a.clone());
-            kept_ids.push(pair.id_b.clone());
-            already_removed.insert(pair.id_a.clone());
+            removed_ids.push(to_remove.clone());
+            kept_ids.push(to_keep.clone());
+            already_removed.insert(to_remove.clone());
         }
         Ok(crate::memory::types::ConsolidationResult {
             duplicates_found: pairs.len(),
