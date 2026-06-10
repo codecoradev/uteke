@@ -16,13 +16,13 @@ hero:
 features:
   - icon: 🧠
     title: Semantic Memory
-    details: AI remembers by meaning, not keywords. Local ONNX embeddings (768d) with usearch persistent HNSW index.
+    details: AI remembers by meaning, not keywords. Local ONNX embeddings (768d) with usearch persistent HNSW index. Hybrid search via FTS5 + RRF.
   - icon: 📦
     title: Single Binary
     details: Zero dependencies. No Docker, no database server, no Python, no API keys.
   - icon: 🏷️
-    title: Tags + Namespaces
-    details: Multi-agent isolation built-in. Tag management with list/rename/delete.
+    title: Tags + Namespaces + Metadata
+    details: Multi-agent isolation built-in. Entity, category, and key:value metadata enrichment. Tag management with list/rename/delete.
   - icon: 🕰️
     title: Memory Aging
     details: Hot/Warm/Cold tier tracking. Auto-cleanup stale memories.

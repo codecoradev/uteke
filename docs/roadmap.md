@@ -76,7 +76,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
   - Build time: ~15s → ~6s
   - Brand theme (amber/dark) preserved
 
-## v0.0.10 — Codebase Quality `✓ Done` `Current`
+## v0.0.10 — Codebase Quality `✓ Done`
 
 - [#187 Split commands.rs into per-command modules](https://github.com/ajianaz/uteke/issues/187) `✓ Done`
 - [#186 Split store.rs into focused modules](https://github.com/ajianaz/uteke/issues/186) `✓ Done`
@@ -91,6 +91,28 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 - SQLite-first dual-write `✓ Done`
 - Embedding docs corrected (768d) `✓ Done`
 - Shell hook idempotency guards `✓ Done`
+
+## v0.0.12 — Search & Concurrency `✓ Done` `Current`
+
+- [#250 FTS5 hybrid search with RRF](https://github.com/ajianaz/uteke/issues/250) `✓ Done`
+  - FTS5 full-text search as parallel retrieval channel
+  - Reciprocal Rank Fusion (k=60) merges vector + FTS5 results
+  - `RecallStrategy` enum: hybrid (default), vector, fts5
+  - Schema migration v1→v2 (auto, zero data loss)
+  - Phrase search + token-OR fallback
+  - Deprecated memories excluded from FTS5
+- [#251 Metadata enrichment via CLI flags](https://github.com/ajianaz/uteke/issues/251) `✓ Done`
+  - `--entity`, `--category`, `--meta key:value,...` on remember
+  - Post-filter on `recall` and `list` by entity/category
+  - Auto type detection for meta values (string/number/bool)
+- [#209 Concurrent reads via RwLock](https://github.com/ajianaz/uteke/issues/209) `✓ Done`
+  - `Mutex<VectorIndex>` → `RwLock<VectorIndex>` for read-heavy workload
+  - Multiple concurrent recalls share read lock
+  - Embedder lock scope minimized
+- [#139 Vector index consistency](https://github.com/ajianaz/uteke/issues/139) `✓ Done`
+  - Atomic save for `.keys` sidecar file (temp + rename)
+  - `insert()` and `build()` now return `Result` (error propagation)
+  - HashMap already used for key mapping
 
 ## Phase A — Growth (100+ stars) `Planned`
 

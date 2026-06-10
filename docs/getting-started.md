@@ -23,11 +23,16 @@ Pre-built binaries and Docker image also available from [GitHub Releases](https:
 ## Your First Memory
 
 ```bash
-# Store a memory
-uteke remember --tags project "My app uses SvelteKit 5 with Tailwind"
+# Store a memory with metadata enrichment
+uteke remember --tags project "My app uses SvelteKit 5 with Tailwind" \
+  --entity my-app --category frontend
 
-# Recall by meaning (semantic search)
+# Hybrid search (vector + FTS5, ranked by RRF)
 uteke recall "What frontend framework do I use?"
+
+# Filter by entity or category
+uteke recall "frontend" --entity my-app
+uteke list --category frontend
 
 # Text search with tag filter
 uteke search "SvelteKit" --tags project

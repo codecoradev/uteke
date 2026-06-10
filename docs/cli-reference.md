@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.0.10**.
+Complete reference for all uteke commands. Version **0.0.12**.
 
 ## Global Flags
 
@@ -24,6 +24,13 @@ Store a new memory with optional tags, metadata, and contradiction detection.
 # Basic
 uteke remember "Deploy v2.1 to staging Friday" --tags deploy,staging
 
+# With metadata enrichment
+uteke remember "Deploy staging to AWS us-east-1" \
+  --tags deploy,aws \
+  --entity staging-server \
+  --category infrastructure \
+  --meta "source:meeting-note,confidence:0.9"
+
 # With contradiction detection
 uteke remember "Server runs on port 8080" --tags config --detect-contradiction
 
@@ -37,6 +44,9 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | Flag | Description |
 |------|-------------|
 | `--tags <tags>` | Comma-separated tags |
+| `--entity <name>` | Associate memory with an entity (e.g. "staging-server") |
+| `--category <cat>` | Categorize the memory (e.g. "infrastructure") |
+| `--meta <pairs>` | Key:value pairs, comma-separated. Auto-detects type (string/number/bool) |
 | `--metadata <json>` | Arbitrary JSON metadata |
 | `--detect-contradiction` | Detect conflicting memories (threshold 0.65) |
 | `--type <type>` | Memory type: fact, procedure, preference, decision, context |
@@ -46,17 +56,21 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 
 ## uteke recall
 
-Semantic search using vector similarity. Hot memories (accessed within 7 days) get a score boost.
+Hybrid search combining vector similarity with FTS5 full-text search, ranked by Reciprocal Rank Fusion (RRF). Hot memories (accessed within 7 days) get a score boost.
 
 ```bash
 uteke recall "What framework does the API use?"
 uteke recall "deployment" --limit 10
 uteke recall "database config" --namespace hermes --json
+uteke recall "server" --entity staging-server --json
+uteke recall "config" --category infrastructure --limit 5
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--limit <n>` | Max results (default: 5) |
+| `--entity <name>` | Filter results to a specific entity |
+| `--category <cat>` | Filter results to a specific category |
 | `--json` | Output as JSON array |
 
 ## uteke search
@@ -77,17 +91,21 @@ uteke search "api" --namespace backend --json
 
 ## uteke list
 
-List memories with optional tag filter and pagination.
+List memories with optional tag, entity, category filter and pagination.
 
 ```bash
 uteke list --limit 20
 uteke list --tag deploy --offset 10 --json
+uteke list --entity staging-server --json
+uteke list --category infrastructure --limit 10
 uteke list --namespace hermes
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--tag <tag>` | Filter by single tag |
+| `--entity <name>` | Filter by entity name |
+| `--category <cat>` | Filter by category |
 | `--limit <n>` | Max results (default: 20) |
 | `--offset <n>` | Skip first N results |
 | `--json` | Output as JSON |
