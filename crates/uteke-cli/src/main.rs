@@ -68,6 +68,15 @@ enum Commands {
         /// Enable contradiction detection (auto-deprecate conflicting memories)
         #[arg(long)]
         detect_contradiction: bool,
+        /// Entity identifier for structured metadata
+        #[arg(long)]
+        entity: Option<String>,
+        /// Category classification
+        #[arg(long)]
+        category: Option<String>,
+        /// Arbitrary key:value metadata pairs (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        meta: Vec<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -79,6 +88,12 @@ enum Commands {
         /// Filter by tags (comma-separated)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Filter by entity name
+        #[arg(long)]
+        entity: Option<String>,
+        /// Filter by category
+        #[arg(long)]
+        category: Option<String>,
     },
     /// Search memories by content keywords (text search)
     Search {
@@ -102,6 +117,12 @@ enum Commands {
         /// Offset for pagination
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Filter by entity name
+        #[arg(long)]
+        entity: Option<String>,
+        /// Filter by category
+        #[arg(long)]
+        category: Option<String>,
     },
     /// Get a single memory by ID
     Get {

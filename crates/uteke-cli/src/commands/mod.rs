@@ -30,19 +30,59 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             tags,
             r#type,
             detect_contradiction,
-        } => remember::run(cli, uteke, ns, content, tags, r#type, *detect_contradiction),
+            entity,
+            category,
+            meta,
+        } => remember::run(
+            cli,
+            uteke,
+            ns,
+            content,
+            tags,
+            r#type,
+            *detect_contradiction,
+            entity.as_deref(),
+            category.as_deref(),
+            meta,
+        ),
 
-        Commands::Recall { query, limit, tags } => {
-            recall::run_recall(cli, uteke, ns, query, *limit, tags)
-        }
+        Commands::Recall {
+            query,
+            limit,
+            tags,
+            entity,
+            category,
+        } => recall::run_recall(
+            cli,
+            uteke,
+            ns,
+            query,
+            *limit,
+            tags,
+            entity.as_deref(),
+            category.as_deref(),
+        ),
 
         Commands::Search { query, limit, tags } => {
             recall::run_search(cli, uteke, ns, query, *limit, tags)
         }
 
-        Commands::List { tag, limit, offset } => {
-            list::run_list(cli, uteke, ns, tag, *limit, *offset)
-        }
+        Commands::List {
+            tag,
+            limit,
+            offset,
+            entity,
+            category,
+        } => list::run_list(
+            cli,
+            uteke,
+            ns,
+            tag,
+            *limit,
+            *offset,
+            entity.as_deref(),
+            category.as_deref(),
+        ),
 
         Commands::Get { id } => list::run_get(cli, uteke, id),
 
