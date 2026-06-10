@@ -253,7 +253,7 @@ impl crate::Uteke {
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
                 tracing::warn!("FTS5 search failed, falling back to vector: {e}");
-                return self.recall(query, limit, tags_filter, namespace, 0.0);
+                return self.recall(query, limit, tags_filter, namespace, min_score);
             }
         };
 
@@ -394,7 +394,10 @@ impl crate::Uteke {
             })
             .collect();
 
-        // Filter by minimum similarity score (on normalized RRF score)
+        // Filter by minimum score (on normalized RRF score 0..1).
+        // Note: RRF normalized scores are not directly comparable to cosine
+        // similarity. A lower min_score may be needed for hybrid recall.
+        // Consider using a separate recall.min_score config for hybrid vs vector.
         let mut results = results;
         if min_score > 0.0 {
             results.retain(|r| r.score >= min_score);
