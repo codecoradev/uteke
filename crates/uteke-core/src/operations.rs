@@ -112,6 +112,7 @@ impl crate::Uteke {
         limit: usize,
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
+        min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
@@ -203,6 +204,11 @@ impl crate::Uteke {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        // Filter by minimum similarity score
+        if min_score > 0.0 {
+            results.retain(|r| r.score >= min_score);
+        }
+
         // Touch access for returned results
         for r in &results {
             self.store.touch_access(&r.memory.id).ok();
@@ -221,11 +227,12 @@ impl crate::Uteke {
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
         strategy: RecallStrategy,
+        min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         match strategy {
-            RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace),
-            RecallStrategy::Fts5 => self.recall_fts5_only(query, limit, tags_filter, namespace),
-            RecallStrategy::Hybrid => self.recall_rrf(query, limit, tags_filter, namespace),
+            RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace, min_score),
+            RecallStrategy::Fts5 => self.recall_fts5_only(query, limit, tags_filter, namespace, min_score),
+            RecallStrategy::Hybrid => self.recall_rrf(query, limit, tags_filter, namespace, min_score),
         }
     }
 
@@ -236,6 +243,7 @@ impl crate::Uteke {
         limit: usize,
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
+        min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
@@ -245,7 +253,7 @@ impl crate::Uteke {
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
                 tracing::warn!("FTS5 search failed, falling back to vector: {e}");
-                return self.recall(query, limit, tags_filter, namespace);
+                return self.recall(query, limit, tags_filter, namespace, 0.0);
             }
         };
 
@@ -279,6 +287,12 @@ impl crate::Uteke {
             .take(limit)
             .collect();
 
+        // Filter by minimum score
+        let mut results = results;
+        if min_score > 0.0 {
+            results.retain(|r| r.score >= min_score);
+        }
+
         // Touch access for returned results
         for r in &results {
             self.store.touch_access(&r.memory.id).ok();
@@ -297,15 +311,16 @@ impl crate::Uteke {
         limit: usize,
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
+        min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         const RRF_K: u32 = 60;
 
-        // Run vector search
-        let vector_results = match self.recall(query, limit * 3, tags_filter, namespace) {
+        // Run vector search (pass 0.0 for min_score since RRF does its own filtering)
+        let vector_results = match self.recall(query, limit * 3, tags_filter, namespace, 0.0) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Vector search failed in hybrid: {e}");
-                return self.recall_fts5_only(query, limit, tags_filter, namespace);
+                return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
             }
         };
 
@@ -378,6 +393,12 @@ impl crate::Uteke {
                 }
             })
             .collect();
+
+        // Filter by minimum similarity score (on normalized RRF score)
+        let mut results = results;
+        if min_score > 0.0 {
+            results.retain(|r| r.score >= min_score);
+        }
 
         // Touch access for returned results
         for r in &results {

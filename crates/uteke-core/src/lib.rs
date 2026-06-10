@@ -104,6 +104,19 @@ impl Default for TierConfig {
     }
 }
 
+/// Configuration for recall threshold.
+#[derive(Debug, Clone, Copy)]
+pub struct RecallConfig {
+    /// Minimum cosine similarity score for recall results. 0.0 = no filter.
+    pub min_score: f32,
+}
+
+impl Default for RecallConfig {
+    fn default() -> Self {
+        Self { min_score: 0.0 }
+    }
+}
+
 /// Resolve uteke data directory.
 ///
 /// Uses `UTEKE_HOME` environment variable when set, otherwise falls back to
@@ -135,6 +148,7 @@ pub struct Uteke {
     index: RwLock<VectorIndex>,
     embedder: Mutex<EmbeddingEngine>,
     tier_config: TierConfig,
+    recall_config: RecallConfig,
 }
 
 impl Uteke {
@@ -146,7 +160,7 @@ impl Uteke {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, TierConfig::default())
+        Self::finish_open(store, embedder, TierConfig::default(), RecallConfig::default())
     }
 
     /// Open with a custom embedder (for testing).
@@ -155,7 +169,7 @@ impl Uteke {
         embedder: EmbeddingEngine,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, embedder, TierConfig::default())
+        Self::finish_open(store, embedder, TierConfig::default(), RecallConfig::default())
     }
 
     /// Open with custom tier configuration.
@@ -165,7 +179,17 @@ impl Uteke {
     pub fn open_with_tier(path: impl AsRef<Path>, tier_config: TierConfig) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, tier_config)
+        Self::finish_open(store, embedder, tier_config, RecallConfig::default())
+    }
+
+    /// Open with custom recall configuration.
+    pub fn open_with_recall(
+        path: impl AsRef<Path>,
+        recall_config: RecallConfig,
+    ) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        let embedder = EmbeddingEngine::new()?;
+        Self::finish_open(store, embedder, TierConfig::default(), recall_config)
     }
 
     fn open_store(path: impl AsRef<Path>) -> Result<(String, Store), Error> {
@@ -179,6 +203,7 @@ impl Uteke {
         store: Store,
         embedder: EmbeddingEngine,
         tier_config: TierConfig,
+        recall_config: RecallConfig,
     ) -> Result<Self, Error> {
         // Determine index path: same directory as SQLite DB
         let index_path = store.path().map(|p| {
@@ -209,6 +234,7 @@ impl Uteke {
             index: RwLock::new(index),
             embedder: Mutex::new(embedder),
             tier_config,
+            recall_config,
         })
     }
 }
@@ -382,6 +408,12 @@ mod tests {
         assert_eq!(MemoryType::Fact.as_str(), "fact");
         assert!(MemoryType::Fact.has_temporal_validity());
         assert!(!MemoryType::Procedure.has_temporal_validity());
+    }
+
+    #[test]
+    fn test_recall_config_default() {
+        let config = RecallConfig::default();
+        assert!((config.min_score - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
