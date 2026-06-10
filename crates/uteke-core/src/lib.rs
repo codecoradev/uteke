@@ -427,4 +427,92 @@ mod tests {
         assert_eq!(restored.deleted, 3);
         assert_eq!(restored.ids.len(), 3);
     }
+
+    #[test]
+    fn test_recall_threshold_filters_low_scores() {
+        let uteke = Uteke::open(":memory:").unwrap();
+
+        // Store a memory
+        let _id = uteke
+            .remember("test content about rust programming", &[], None, None)
+            .unwrap();
+
+        // Recall with min_score=0.0 should return results
+        let results = uteke.recall("rust programming", 5, None, None, 0.0).unwrap();
+        assert!(!results.is_empty());
+
+        // Recall with very high min_score should return empty
+        let results = uteke
+            .recall("completely unrelated quantum physics", 5, None, None, 0.99)
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "Expected empty results with 0.99 threshold, got {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    fn test_recall_threshold_zero_returns_all() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let _id = uteke.remember("some content here", &[], None, None).unwrap();
+
+        // min_score=0.0 should return results (backward compatible)
+        let results = uteke.recall("content", 5, None, None, 0.0).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected results with 0.0 threshold"
+        );
+    }
+
+    #[test]
+    fn test_recall_threshold_specific_score() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let _id = uteke
+            .remember(
+                "Rust is a systems programming language focused on safety",
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Same content query should have high score and pass moderate threshold
+        let results = uteke
+            .recall("Rust programming language safety", 5, None, None, 0.5)
+            .unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected results with 0.5 threshold for matching query"
+        );
+
+        // Verify each result actually meets the threshold
+        for r in &results {
+            assert!(
+                r.score >= 0.5,
+                "Result score {} is below threshold 0.5",
+                r.score
+            );
+        }
+    }
+
+    #[test]
+    fn test_recall_config_stored_but_override_per_call() {
+        // Open with recall config min_score=0.5
+        let config = RecallConfig { min_score: 0.5 };
+        let uteke = Uteke::open_with_recall(":memory:", config).unwrap();
+
+        let _id = uteke
+            .remember(
+                "test content about rust programming",
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Per-call min_score=0.0 should still work (overrides config)
+        let results = uteke.recall("rust programming", 5, None, None, 0.0).unwrap();
+        assert!(!results.is_empty());
+    }
 }

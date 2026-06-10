@@ -42,6 +42,12 @@ struct RecallRequest {
     tags: Vec<String>,
     #[serde(default)]
     namespace: Option<String>,
+    /// Minimum similarity score. Results below are filtered.
+    #[serde(default)]
+    min_score: Option<f32>,
+    /// Use strict threshold (defaults to 0.5 if min_score not set).
+    #[serde(default)]
+    strict: bool,
 }
 
 #[derive(Deserialize)]
@@ -447,13 +453,29 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                 } else {
                     Some(tag_refs.as_slice())
                 };
+                // Resolve threshold: min_score > strict (→ 0.5) > 0.0
+                let min_score = req_data.min_score.unwrap_or_else(|| {
+                    if req_data.strict { 0.5 } else { 0.0 }
+                });
                 match uteke.recall(
                     &req_data.query,
                     req_data.limit,
                     tags_filter,
                     ns(&req_data.namespace),
+                    min_score,
                 ) {
-                    Ok(results) => ctx.ok_response_for(req, &results),
+                    Ok(results) => {
+                        if results.is_empty() && min_score > 0.0 {
+                            ctx.ok_response_for(req, &serde_json::json!({
+                                "results": [],
+                                "total": 0,
+                                "threshold": min_score,
+                                "message": "No memories above similarity threshold"
+                            }))
+                        } else {
+                            ctx.ok_response_for(req, &results)
+                        }
+                    }
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
