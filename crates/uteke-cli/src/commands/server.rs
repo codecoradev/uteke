@@ -46,9 +46,9 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             tags,
             r#type,
             detect_contradiction,
-            entity: _,
-            category: _,
-            meta: _,
+            entity,
+            category,
+            meta,
         } => {
             let mut body = serde_json::json!({
                 "content": content,
@@ -60,6 +60,25 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
             if *detect_contradiction {
                 body["detect_contradiction"] = serde_json::json!(true);
+            }
+            // Build metadata from entity/category/meta flags
+            let mut meta_map = serde_json::Map::new();
+            if let Some(e) = entity {
+                meta_map.insert("entity".to_string(), serde_json::Value::String(e.clone()));
+            }
+            if let Some(c) = category {
+                meta_map.insert("category".to_string(), serde_json::Value::String(c.clone()));
+            }
+            for pair in meta {
+                if let Some((key, value)) = pair.split_once(':') {
+                    meta_map.insert(
+                        key.to_string(),
+                        serde_json::Value::String(value.to_string()),
+                    );
+                }
+            }
+            if !meta_map.is_empty() {
+                body["metadata"] = serde_json::Value::Object(meta_map);
             }
             let resp = client
                 .post(format!("{server_url}/remember"))
