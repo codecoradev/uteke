@@ -274,3 +274,41 @@ pub struct SimilarPair {
     /// Cosine similarity score.
     pub similarity: f32,
 }
+
+/// Recall strategy for hybrid search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecallStrategy {
+    /// Vector similarity only (original behavior).
+    Vector,
+    /// FTS5 full-text search only.
+    Fts5,
+    /// Hybrid: vector + FTS5 merged via Reciprocal Rank Fusion.
+    Hybrid,
+}
+
+impl Default for RecallStrategy {
+    fn default() -> Self {
+        Self::Hybrid
+    }
+}
+
+impl RecallStrategy {
+    /// Parse from string, with fallback to Hybrid for unknown values.
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s {
+            "vector" => Some(Self::Vector),
+            "fts5" => Some(Self::Fts5),
+            "hybrid" => Some(Self::Hybrid),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Vector => "vector",
+            Self::Fts5 => "fts5",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}

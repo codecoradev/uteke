@@ -152,10 +152,10 @@ impl super::Store {
 
             #[allow(clippy::match_single_binding)]
             match version {
-                // Future migrations go here, e.g.:
-                // 2 => self.migrate_v1_to_v2()?,
+                // v2: FTS5 full-text search virtual table + sync triggers
+                2 => self.migrate_v1_to_v2()?,
                 _ => {
-                    // No-op for v1 (first versioned schema).
+                    // No-op for future versions.
                 }
             }
 
@@ -186,6 +186,25 @@ impl super::Store {
             .optional()
             .map_err(|e| Error::db("database operation", e))?;
         version.ok_or_else(|| Error::db_msg("no schema version recorded"))
+    }
+
+    /// Migration v1 → v2: Add FTS5 virtual table for hybrid search.
+    fn migrate_v1_to_v2(&self) -> Result<(), Error> {
+        self.init_fts5()?;
+
+        // Rebuild FTS5 index from existing memories
+        let count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+            .map_err(|e| Error::db("count memories for FTS5 migration", e))?;
+
+        if count > 0 {
+            tracing::info!("Rebuilding FTS5 index for {count} existing memories...");
+            self.rebuild_fts5()?;
+            tracing::info!("FTS5 index rebuilt successfully.");
+        }
+
+        Ok(())
     }
 
     pub(super) fn column_exists(&self, column: &str) -> bool {

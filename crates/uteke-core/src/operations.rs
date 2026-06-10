@@ -2,7 +2,8 @@
 
 use crate::error::Error;
 use crate::memory::types::{
-    BulkDeleteResult, Memory, MemoryTier, SearchResult, TagInfo, DEFAULT_NAMESPACE,
+    BulkDeleteResult, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo,
+    DEFAULT_NAMESPACE,
 };
 use crate::memory::vector::euclidean_to_cosine;
 
@@ -202,6 +203,178 @@ impl crate::Uteke {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+
+        // Touch access for returned results
+        for r in &results {
+            self.store.touch_access(&r.memory.id).ok();
+        }
+
+        Ok(results)
+    }
+
+    /// Recall memories using hybrid search: vector + FTS5 merged via RRF.
+    ///
+    /// Falls back to vector-only if FTS5 is not available.
+    pub fn recall_hybrid(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        strategy: RecallStrategy,
+    ) -> Result<Vec<SearchResult>, Error> {
+        match strategy {
+            RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace),
+            RecallStrategy::Fts5 => {
+                self.recall_fts5_only(query, limit, tags_filter, namespace)
+            }
+            RecallStrategy::Hybrid => {
+                self.recall_rrf(query, limit, tags_filter, namespace)
+            }
+        }
+    }
+
+    /// FTS5-only recall.
+    fn recall_fts5_only(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<SearchResult>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Try phrase search first, fall back to token search
+        let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
+            Ok(r) if !r.is_empty() => r,
+            Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
+            Err(e) => {
+                tracing::warn!("FTS5 search failed, falling back to vector: {e}");
+                return self.recall(query, limit, tags_filter, namespace);
+            }
+        };
+
+        let results: Vec<SearchResult> = fts_results
+            .into_iter()
+            .filter(|(memory, _)| {
+                // Namespace filter (FTS5 may return cross-namespace if not filtered)
+                if memory.namespace != ns {
+                    return false;
+                }
+                // Tag filter
+                if let Some(filter_tags) = tags_filter {
+                    let has_tag = filter_tags
+                        .iter()
+                        .any(|ft| memory.tags.iter().any(|t| t == ft));
+                    if !has_tag {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|(memory, rank)| {
+                // Convert FTS5 rank (negative bm25, more negative = better) to 0..1 score
+                // bm25 returns negative values; map to positive similarity
+                let score = ((1.0 + rank).clamp(0.0, 1.0)) as f32;
+                SearchResult { memory, score }
+            })
+            .take(limit)
+            .collect();
+
+        // Touch access for returned results
+        for r in &results {
+            self.store.touch_access(&r.memory.id).ok();
+        }
+
+        Ok(results)
+    }
+
+    /// Hybrid recall using Reciprocal Rank Fusion (RRF).
+    ///
+    /// Runs both vector search and FTS5 search in sequence, then merges
+    /// results using RRF: `score = 1/(k + rank_vector) + 1/(k + rank_fts5)`
+    fn recall_rrf(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+    ) -> Result<Vec<SearchResult>, Error> {
+        const RRF_K: u32 = 60;
+
+        // Run vector search
+        let vector_results =
+            match self.recall(query, limit * 3, tags_filter, namespace) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Vector search failed in hybrid: {e}");
+                    return self.recall_fts5_only(query, limit, tags_filter, namespace);
+                }
+            };
+
+        // Run FTS5 search
+        let fts_results = match self
+            .store
+            .search_fts5(query, namespace, limit * 3)
+        {
+            Ok(r) if !r.is_empty() => r,
+            Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
+            Err(e) => {
+                tracing::warn!("FTS5 search failed in hybrid, using vector only: {e}");
+                return Ok(vector_results.into_iter().take(limit).collect());
+            }
+        };
+
+        // RRF merge
+        let mut rrf_scores: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        let mut memories: std::collections::HashMap<String, Memory> =
+            std::collections::HashMap::new();
+
+        // Score vector results by rank
+        for (rank, sr) in vector_results.iter().enumerate() {
+            let rrf = 1.0 / (RRF_K as f64 + rank as f64 + 1.0);
+            *rrf_scores.entry(sr.memory.id.clone()).or_default() += rrf;
+            memories.entry(sr.memory.id.clone()).or_insert_with(|| sr.memory.clone());
+        }
+
+        // Score FTS5 results by rank
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        for (rank, (memory, _rank_val)) in fts_results.iter().enumerate() {
+            // Apply namespace + tag filter
+            if memory.namespace != ns {
+                continue;
+            }
+            if let Some(filter_tags) = tags_filter {
+                let has_tag = filter_tags
+                    .iter()
+                    .any(|ft| memory.tags.iter().any(|t| t == ft));
+                if !has_tag {
+                    continue;
+                }
+            }
+            let rrf = 1.0 / (RRF_K as f64 + rank as f64 + 1.0);
+            *rrf_scores.entry(memory.id.clone()).or_default() += rrf;
+            memories.entry(memory.id.clone()).or_insert_with(|| memory.clone());
+        }
+
+        // Sort by RRF score descending, take top `limit`
+        let mut scored: Vec<(String, f64)> = rrf_scores.into_iter().collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        let results: Vec<SearchResult> = scored
+            .into_iter()
+            .take(limit)
+            .map(|(id, score)| {
+                let memory = memories.remove(&id).unwrap();
+                // Normalize RRF score to 0..1 range for consistency
+                let normalized = (score / (2.0 / (RRF_K as f64 + 1.0))).min(1.0);
+                SearchResult {
+                    memory,
+                    score: normalized as f32,
+                }
+            })
+            .collect();
 
         // Touch access for returned results
         for r in &results {
