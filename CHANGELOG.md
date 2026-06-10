@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.13] — 2026-06-10
+
 ### Added
 
 - **FTS5 hybrid search with RRF** — Full-text search (FTS5) as parallel retrieval channel merged with vector search via Reciprocal Rank Fusion (RRF, k=60). New `RecallStrategy` enum: `hybrid` (default), `vector`, `fts5`. FTS5 virtual table auto-created; existing DBs get schema migration v1→v2. Phrase search + token-OR fallback. Deprecated memories excluded from FTS5. 6 new tests (#250, PR #261)
@@ -21,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`memories.remove().unwrap()`** — Replaced with `.expect()` for meaningful panic message (PR #264)
 - **Server-mode metadata support** — `remember` via HTTP API now includes entity, category, and meta in request body (PR #264)
 - **Clippy `collapsible_else_if`** — 2 pre-existing warnings fixed (PR #260)
+
+### Changed
+
+- **Repository transferred** — `ajianaz/uteke` → `codecoradev/uteke`. All references updated across 16 files
+- **Cora Review CI** — switched from local Infisical OIDC action to `codecoradev/cora-review-action@v1` with GitHub Secrets. Removed `.cora.yaml` project config
+- **README simplified** — 400 → 97 lines. Detailed content moved to VitePress docs (`docs/architecture.md`, `docs/cli-reference.md`, etc.)
+- **Roadmap cleaned** — consolidated old versions, removed speculative Phase B/C phases
+- **CONTRIBUTING.md** — added Cora CLI integration docs, CI checks table, architecture updated to 3 crates, Key Design Decisions section
+- **AGENT.md** — new file with persistent AI agent context: critical rules, architecture, lessons learned, proven workflow
+- **docs/architecture.md** — new VitePress page with system overview, data flow diagrams, performance benchmarks, design decisions
+- **docs/roadmap.md** — v0.0.12 section added, old versions consolidated, "What's Next" list
+- **Star History chart** added to README (cora-cli + uteke)
 
 ## [0.0.12] — 2026-06-07
 
@@ -380,6 +394,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
+[0.0.13]: https://github.com/codecoradev/uteke/releases/tag/v0.0.13
+[0.0.12]: https://github.com/codecoradev/uteke/releases/tag/v0.0.12
 [0.0.10]: https://github.com/codecoradev/uteke/releases/tag/v0.0.10
 [0.0.9]: https://github.com/codecoradev/uteke/releases/tag/v0.0.9
 [0.0.8]: https://github.com/codecoradev/uteke/releases/tag/v0.0.8

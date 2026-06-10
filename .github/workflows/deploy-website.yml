@@ -2,7 +2,8 @@ name: Deploy Website to Cloudflare Pages
 
 on:
   push:
-    branches: [develop]
+    branches: [main]
+    tags: ['v*']
     paths:
       - 'docs/**'
       - '.github/workflows/deploy-website.yml'
@@ -13,8 +14,8 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  id-token: write
   contents: read
+  deployments: write
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -46,19 +47,10 @@ jobs:
             exit 1
           fi
 
-      - name: Fetch secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.16
-        with:
-          method: "oidc"
-          identity-id: "6bd2b8d8-a9a3-4331-8b37-bf2764fc320b"
-          project-slug: "github-actions"
-          env-slug: "prod"
-          domain: "https://infisical.ajianaz.dev"
-
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v4
         with:
-          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
-          preCommands: npx wrangler pages project create uteke --production-branch=develop || true
-          command: pages deploy docs/.vitepress/dist/ --project-name=uteke --commit-dirty=true --branch=develop
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          preCommands: npx wrangler pages project create uteke --production-branch=main || true
+          command: pages deploy docs/.vitepress/dist/ --project-name=uteke --commit-dirty=true --branch=main

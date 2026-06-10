@@ -7,7 +7,7 @@
 **Uteke** adalah local-first semantic memory engine untuk AI agents. Single Rust binary, fully offline, ~30ms recall. Tidak butuh API key, Docker, atau cloud service.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local di `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Versi:** 0.0.12
+- **Versi:** 0.0.13
 - **Lisensi:** Apache 2.0
 - **Branch utama:** `develop` ( semua PR ke sini), `main` (release)
 
@@ -148,6 +148,28 @@ fs::rename(&tmp_path, &path)?;
 - `forget()`: Acquire index lock **dulu**, baru SQLite delete
 - Pattern ini mencegah inconsistency antara DB dan index
 
+### 8. Selalu Update CHANGELOG dan Docs Sebelum Commit
+
+Setiap commit yang menambah/mengubah fitur atau fix **wajib** diikuti update:
+
+1. **CHANGELOG.md** — Tambah entry di bawah `[Unreleased]` (Added/Fixed/Changed)
+2. **docs/cli-reference.md** — Kalau ada CLI flag baru atau behavior berubah
+3. **docs/roadmap.md** — Kalau ada issue yang selesai
+4. **README.md** — Kalau ada perubahan signifikan di features atau quick start
+5. **AGENT.md** — Kalau ada perubahan arsitektur, limitation baru, atau lesson learned
+6. **Version badge** — Kalau akan rilis, update badge di README
+
+Dokumentasi yang outdated lebih berbahaya dari tidak ada dokumentasi.
+
+### 9. VitePress Docs Deploy Otomatis Saat Rilis
+
+Workflow `deploy-website.yml` otomatis deploy ke Cloudflare Pages saat:
+- Push ke `main` (setelah release workflow sync dari develop)
+- Push tag `v*` (rilis baru)
+- Manual trigger via GitHub UI
+
+Pastikan docs sudah up-to-date **sebelum** push tag rilis. Docs deploy dari branch `main`, bukan `develop`.
+
 ---
 
 ## Lessons Learned — Dari Pengalaman Nyata
@@ -204,7 +226,7 @@ Jalankan stress test manual setelah perubahan signifikan.
 
 ### Dokumentasi Cepat Outdated
 
-CONTRIBUTING.md pernah bilang "2 crates" padahal sudah 3 sejak v0.0.4. Badge version tertinggal. Setelah merge ke develop, **selalu cek** apakah docs perlu update.
+CONTRIBUTING.md pernah bilang "2 crates" padahal sudah 3 sejak v0.0.4. Badge version tertinggal. **Selalu update docs sebelum commit** — lihat Critical Rule #8.
 
 ---
 
@@ -213,21 +235,22 @@ CONTRIBUTING.md pernah bilang "2 crates" padahal sudah 3 sejak v0.0.4. Badge ver
 ### Per-Issue Workflow
 
 ```
-1. git checkout develop && git pull
-2. git checkout -b <type>/<short-description>
-3. Implementasi (baca modul terkait dulu)
-4. cargo fmt && cargo clippy && cargo test
-5. cora review --base origin/develop --format text  (local review)
-6. Fix semua findings dari Cora
-7. git add -A && git commit -m "type: description"
-8. git push origin <branch>
-9. gh pr create --base develop
-10. Monitor CI (gh pr checks <number>)
-11. Review PR comments (Cora, CodeRabbit)
-12. Fix kalau ada findings baru
-13. gh pr merge <number> --squash --delete-branch
-14. Update docs kalau perlu
-15. Pick next issue
+ 1. git checkout develop && git pull
+ 2. git checkout -b <type>/<short-description>
+ 3. Implementasi (baca modul terkait dulu)
+ 4. cargo fmt && cargo clippy && cargo test
+ 5. cora review --base origin/develop --format text  (local review)
+ 6. Fix semua findings dari Cora
+ 7. Update CHANGELOG.md (tambah di [Unreleased])
+ 8. Update docs/ kalau ada fitur/flag baru (lihat Critical Rule #8)
+ 9. git add -A && git commit -m "type: description"
+10. git push origin <branch>
+11. gh pr create --base develop
+12. Monitor CI (gh pr checks <number>)
+13. Review PR comments (Cora, CodeRabbit)
+14. Fix kalau ada findings baru
+15. gh pr merge <number> --squash --delete-branch
+16. Pick next issue
 ```
 
 ### Branch Naming Convention
