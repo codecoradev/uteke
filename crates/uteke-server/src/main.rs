@@ -453,9 +453,16 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                 } else {
                     Some(tag_refs.as_slice())
                 };
-                // Resolve threshold: min_score > strict (→ 0.5) > 0.0
+                // Resolve threshold: min_score > strict (→ from config or 0.5) > 0.0
+                // Note: server uses its own config loading which doesn't include
+                // [recall] section. Fallback to 0.5 for strict mode.
+                // Users should prefer --min for explicit control via server API.
                 let min_score = req_data.min_score.unwrap_or_else(|| {
-                    if req_data.strict { 0.5 } else { 0.0 }
+                    if req_data.strict {
+                        crate::STRICT_THRESHOLD
+                    } else {
+                        0.0
+                    }
                 });
                 match uteke.recall(
                     &req_data.query,
@@ -625,6 +632,11 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
 // ── Main ────────────────────────────────────────────────────────────────────
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Default strict mode threshold for server recall.
+/// Kept as a constant since server has its own config loading.
+/// Value matches CLI default `min_score_strict = 0.5`.
+const STRICT_THRESHOLD: f32 = 0.5;
 
 fn main() {
     // Parse CLI args — these override config

@@ -98,6 +98,8 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             tags,
             min,
             strict,
+            entity,
+            category,
             ..
         } => {
             let mut body = serde_json::json!({
@@ -106,6 +108,12 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 "tags": tags,
                 "namespace": ns
             });
+            if let Some(e) = entity {
+                body["entity"] = serde_json::json!(e);
+            }
+            if let Some(c) = category {
+                body["category"] = serde_json::json!(c);
+            }
             if let Some(m) = min {
                 body["min_score"] = serde_json::json!(m);
             }
