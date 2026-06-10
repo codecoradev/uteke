@@ -158,7 +158,9 @@ impl VectorIndex {
             let old_key = *old_key;
             self.key_to_id.remove(&old_key);
             self.index.remove(old_key).map_err(|e| {
-                Error::embed_msg(format!("Failed to remove old entry for duplicate ID {id}: {e}"))
+                Error::embed_msg(format!(
+                    "Failed to remove old entry for duplicate ID {id}: {e}"
+                ))
             })?;
         }
 
@@ -176,9 +178,9 @@ impl VectorIndex {
             })?;
         }
 
-        self.index.add(key, embedding).map_err(|e| {
-            Error::embed_msg(format!("Failed to insert into usearch index: {e}"))
-        })?;
+        self.index
+            .add(key, embedding)
+            .map_err(|e| Error::embed_msg(format!("Failed to insert into usearch index: {e}")))?;
 
         self.dirty = true;
         Ok(())
@@ -275,7 +277,8 @@ pub fn euclidean_to_cosine(distance: f32) -> f32 {
 fn atomic_write(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
     let tmp_path = path.with_extension("keys.tmp");
     std::fs::write(&tmp_path, data).map_err(|e| Error::embed("write temp key mapping", e))?;
-    std::fs::rename(&tmp_path, path).map_err(|e| Error::embed("rename temp to final key mapping", e))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| Error::embed("rename temp to final key mapping", e))?;
     Ok(())
 }
 
