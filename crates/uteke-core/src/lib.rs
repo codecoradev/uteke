@@ -20,8 +20,8 @@ mod types;
 
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
-    ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, SearchResult,
-    SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
+    ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
+    SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
 
 pub use error::{format_bytes, Error};
