@@ -7,7 +7,7 @@
   <a href="https://github.com/ajianaz/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/ajianaz/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.10-green.svg" alt="v0.0.10" />
+  <img src="https://img.shields.io/badge/status-v0.0.12-green.svg" alt="v0.0.12" />
 </p>
 
 ---
@@ -19,9 +19,9 @@
 curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
 
 # Store a memory
-uteke remember "Deploy v2.1 to staging on Friday" --tags deploy,staging
+uteke remember "Deploy v2.1 to staging on Friday" --tags deploy,staging --entity staging-server --category infrastructure
 
-# Semantic search
+# Hybrid search (vector + FTS5, ranked by RRF)
 uteke recall "when do we deploy?"
 
 # Stats
@@ -38,18 +38,19 @@ uteke stats
 
 AI agents forget everything between sessions. Uteke gives them persistent, searchable memory — entirely offline, in one binary.
 
-|| | **Uteke** | **Mem0** | **Letta** | **Zep** |
-||---|---|---|---|---|
-|| **Setup** | Single binary | pip + Docker + Qdrant | pip + Docker + Postgres | pip + Docker + Neo4j |
-|| **API keys needed** | ❌ None | ✅ OpenAI/LLM key | ✅ LLM key | ✅ LLM key |
-|| **Offline** | ✅ Fully | ❌ Cloud embedding | ❌ Needs LLM server | ❌ Needs LLM + vector DB |
-|| **Semantic search** | ✅ Local ONNX | ✅ Cloud embedding | ⚠️ Keyword + archival | ✅ GraphRAG |
-|| **Zero config** | ✅ Works instantly | ❌ Docker + env vars | ❌ Docker + env vars | ❌ Docker + env vars |
-|| **Embedding model** | Built-in (ONNX) | External (cloud) | External | External |
-|| **Recall speed** | ~30ms (library) | Network round-trip | Network round-trip | Network round-trip |
-|| **Privacy** | ✅ Data never leaves machine | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM |
-|| **Language** | Rust | Python | Python | Go + Python |
-|| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| | **Uteke** | **Mem0** | **Letta** | **Zep** |
+|---|---|---|---|---|
+| **Setup** | Single binary | pip + Docker + Qdrant | pip + Docker + Postgres | pip + Docker + Neo4j |
+| **API keys needed** | ❌ None | ✅ OpenAI/LLM key | ✅ LLM key | ✅ LLM key |
+| **Offline** | ✅ Fully | ❌ Cloud embedding | ❌ Needs LLM server | ❌ Needs LLM + vector DB |
+| **Semantic search** | ✅ Local ONNX + FTS5 hybrid | ✅ Cloud embedding | ⚠️ Keyword + archival | ✅ GraphRAG |
+| **Full-text search** | ✅ FTS5 built-in | ❌ | ⚠️ Keyword only | ❌ |
+| **Zero config** | ✅ Works instantly | ❌ Docker + env vars | ❌ Docker + env vars | ❌ Docker + env vars |
+| **Embedding model** | Built-in (ONNX) | External (cloud) | External | External |
+| **Recall speed** | ~30ms (library) | Network round-trip | Network round-trip | Network round-trip |
+| **Privacy** | ✅ Data never leaves machine | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM |
+| **Language** | Rust | Python | Python | Go + Python |
+| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
 ---
 
@@ -57,7 +58,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ### What Uteke Is
 - **Local-first memory store** — portable, offline, single binary
-- **Smart but focused** — semantic search, contradiction detection, temporal facts, consolidation
+- **Smart but focused** — semantic search, FTS5 hybrid search, contradiction detection, temporal facts, consolidation, metadata enrichment
 - **Per-agent isolation** — namespaces, not shared graphs
 
 ### What Uteke Is NOT
@@ -97,10 +98,10 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `remember` | Store a new memory with optional tags | `uteke remember "text" --tags a,b` |
-| `recall` | Semantic search using vector similarity | `uteke recall "query" --limit 5` |
+| `remember` | Store a new memory with tags, entity, category, metadata | `uteke remember "text" --tags a,b --entity my-server --category infra` |
+| `recall` | Hybrid search (vector + FTS5 via RRF) | `uteke recall "query" --limit 5` |
 | `search` | Keyword text search (supports `--tags` filter) | `uteke search "monorepo" --tags rust,cli` |
-| `list` | List memories with pagination and tag filter | `uteke list --tag project --limit 20 --offset 10` |
+| `list` | List memories with pagination, entity/category filter | `uteke list --entity my-server --category infra --limit 20` |
 | `get` | Get a single memory by ID | `uteke get <uuid>` |
 | `forget` | Delete a memory by ID, tag, tier, or all | `uteke forget <uuid>`, `uteke forget --tag stale` |
 | `consolidate` | Find and merge duplicate memories | `uteke consolidate --threshold 0.60 --dry-run` |
@@ -190,6 +191,32 @@ uteke remember "General knowledge" --tags misc
 
 Existing databases are auto-migrated — the `namespace` column is added on first run with zero data loss.
 
+### Hybrid Search (Vector + FTS5)
+
+Uteke combines vector similarity with FTS5 full-text search using Reciprocal Rank Fusion (RRF). This gives you the best of both worlds: semantic understanding AND exact keyword matching.
+
+```bash
+# Default: hybrid (vector + FTS5, merged by RRF)
+uteke recall "deployment config"
+
+# Metadata-enriched storage
+uteke remember "Deploy staging to AWS us-east-1" \
+  --tags deploy,aws \
+  --entity staging-server \
+  --category infrastructure \
+  --meta "source:meeting-note,confidence:0.9"
+
+# Filter recall by entity or category
+uteke recall "server" --entity staging-server
+uteke recall "config" --category infrastructure
+
+# List by entity or category
+uteke list --entity staging-server
+uteke list --category infrastructure
+```
+
+The FTS5 virtual table is auto-created on first run. Existing databases are migrated automatically — no manual action needed.
+
 ---
 
 ## Architecture
@@ -205,11 +232,13 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 ├─────────────────────────────────────────────────────┤
 │                    Uteke API                         │
 │          uteke-core crate (lib)                      │
-├──────────┬──────────────────┬────────────────────────┤
-│   ONNX   │     usearch      │       SQLite           │
-│ Embedding│  Vector Index    │    Metadata Store      │
-│ (768d)   │ (Persistent HNSW)│    (rusqlite)          │
-├──────────┴──────────────────┴────────────────────────┤
+├──────────┬──────────┬───────────┬────────────────────┤
+│   ONNX   │  usearch │   FTS5    │      SQLite        │
+│ Embedding│ Vector   │ Full-Text │   Metadata Store   │
+│ (768d)   │ Index    │  Search   │    (rusqlite)      │
+│          │ (HNSW)   │ (virtual  │                    │
+│          │ RwLock   │   table)  │                    │
+├──────────┴──────────┴───────────┴────────────────────┤
 │              ~/.uteke/ (local storage)               │
 │ uteke.db │ uteke_index.usearch │ models/embeddinggemma/ │
 └─────────────────────────────────────────────────────┘
@@ -218,7 +247,9 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 | Component | Technology | Detail |
 |-----------|-----------|--------|
 | Language | Rust (no unsafe) | Memory-safe, fast, single binary |
-| Vector Index | usearch | Persistent HNSW with incremental updates |
+| Vector Index | usearch + RwLock | Persistent HNSW, concurrent reads via RwLock |
+| Full-Text Search | SQLite FTS5 | Built-in, auto-created, phrase + token-OR fallback |
+| Hybrid Search | RRF (k=60) | Merges vector + FTS5 via Reciprocal Rank Fusion |
 | Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
 | Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
 | Namespaces | SQLite column | Multi-agent isolation, zero overhead |
@@ -227,8 +258,8 @@ Existing databases are auto-migrated — the `namespace` column is added on firs
 
 **How it works:**
 1. `remember` → text is embedded into a 768d vector via ONNX → stored in SQLite + indexed in usearch
-2. `recall` → query is embedded → usearch finds nearest neighbors → hot memories get +0.1 score boost → returns ranked results
-3. `search` → SQLite LIKE-based keyword search (fast, deterministic, scoped to namespace)
+2. `recall` → query is embedded → usearch finds nearest neighbors + FTS5 finds keyword matches → RRF merges both result sets → hot memories get +0.1 score boost → returns ranked results
+3. `search` → SQLite FTS5 keyword search (phrase match + token-OR fallback, scoped to namespace)
 4. `forget` → incremental delete from usearch + SQLite (no rebuild)
 5. Everything lives in `~/.uteke/` — fully local, fully yours
 
@@ -388,7 +419,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide.
 
 Demand-gated — we build what people actually use.
 
-**✅ v0.0.10 (current):** Codebase refactor, VitePress docs migration, bug fixes, Hermes branding removed
+**✅ v0.0.12 (current):** FTS5 hybrid search with RRF, metadata enrichment (entity/category/meta), RwLock concurrent reads, vector index consistency
+**✅ v0.0.10:** Codebase refactor, VitePress docs migration, bug fixes, Hermes branding removed
 **✅ v0.0.8:** Multi-agent namespaces, server mode, memory aging, Docker, shell hooks, input validation, benchmarks
 **🔮 Phase A (100+ stars):** Better embeddings, import/export, Python SDK (PyO3), editor integrations (VS Code)
 **🔮 Phase B (500+ stars):** Cloud sync (opt-in), team collaboration, API gateway integration
