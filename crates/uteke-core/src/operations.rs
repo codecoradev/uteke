@@ -89,7 +89,7 @@ impl crate::Uteke {
 
         self.store.insert(&memory)?;
 
-        index.insert(&id, embedding);
+        index.insert(&id, embedding)?;
         if let Err(e) = index.save() {
             tracing::warn!(
                 "Failed to persist vector index after remember for id={id}: {e}. \

@@ -126,7 +126,7 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during repair (rebuild)"))?;
-            index.build(&items);
+            index.build(&items)?;
             index.save().ok();
         }
 
