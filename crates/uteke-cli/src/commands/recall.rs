@@ -4,6 +4,7 @@ use crate::output;
 use crate::Cli;
 use uteke_core::Uteke;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_recall(
     cli: &Cli,
     uteke: &Uteke,
@@ -11,6 +12,8 @@ pub(crate) fn run_recall(
     query: &str,
     limit: usize,
     tags: &[String],
+    entity: Option<&str>,
+    category: Option<&str>,
 ) -> Result<(), String> {
     tracing::info!("Recalling: {query} (limit: {limit})");
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
@@ -22,10 +25,35 @@ pub(crate) fn run_recall(
     let results = uteke
         .recall(query, limit, tags_filter, ns)
         .map_err(|e| format!("Failed to recall: {e}"))?;
+
+    // Post-filter by entity/category metadata
+    let filtered: Vec<_> = results
+        .into_iter()
+        .filter(|sr| {
+            if let Some(ent) = entity {
+                let matches = sr.memory.metadata.get("entity")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|e| e == ent);
+                if !matches {
+                    return false;
+                }
+            }
+            if let Some(cat) = category {
+                let matches = sr.memory.metadata.get("category")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|c| c == cat);
+                if !matches {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+
     if cli.json {
-        output::print_json(&results);
+        output::print_json(&filtered);
     } else {
-        output::print_recall_human(&results);
+        output::print_recall_human(&filtered);
     }
     Ok(())
 }

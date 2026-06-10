@@ -46,6 +46,9 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             tags,
             r#type,
             detect_contradiction,
+            entity: _,
+            category: _,
+            meta: _,
         } => {
             let mut body = serde_json::json!({
                 "content": content,
