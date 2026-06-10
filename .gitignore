@@ -8,3 +8,7 @@
 *.pdb
 __pycache__/
 milestone*.md
+
+# Runtime index files
+uteke_index.keys
+uteke_index.usearch

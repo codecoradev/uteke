@@ -148,6 +148,7 @@ pub struct Uteke {
     index: RwLock<VectorIndex>,
     embedder: Mutex<EmbeddingEngine>,
     tier_config: TierConfig,
+    #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
 }
 
@@ -160,7 +161,12 @@ impl Uteke {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, TierConfig::default(), RecallConfig::default())
+        Self::finish_open(
+            store,
+            embedder,
+            TierConfig::default(),
+            RecallConfig::default(),
+        )
     }
 
     /// Open with a custom embedder (for testing).
@@ -169,7 +175,12 @@ impl Uteke {
         embedder: EmbeddingEngine,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, embedder, TierConfig::default(), RecallConfig::default())
+        Self::finish_open(
+            store,
+            embedder,
+            TierConfig::default(),
+            RecallConfig::default(),
+        )
     }
 
     /// Open with custom tier configuration.
@@ -438,7 +449,9 @@ mod tests {
             .unwrap();
 
         // Recall with min_score=0.0 should return results
-        let results = uteke.recall("rust programming", 5, None, None, 0.0).unwrap();
+        let results = uteke
+            .recall("rust programming", 5, None, None, 0.0)
+            .unwrap();
         assert!(!results.is_empty());
 
         // Recall with very high min_score should return empty
@@ -455,14 +468,13 @@ mod tests {
     #[test]
     fn test_recall_threshold_zero_returns_all() {
         let uteke = Uteke::open(":memory:").unwrap();
-        let _id = uteke.remember("some content here", &[], None, None).unwrap();
+        let _id = uteke
+            .remember("some content here", &[], None, None)
+            .unwrap();
 
         // min_score=0.0 should return results (backward compatible)
         let results = uteke.recall("content", 5, None, None, 0.0).unwrap();
-        assert!(
-            !results.is_empty(),
-            "Expected results with 0.0 threshold"
-        );
+        assert!(!results.is_empty(), "Expected results with 0.0 threshold");
     }
 
     #[test]
@@ -503,16 +515,13 @@ mod tests {
         let uteke = Uteke::open_with_recall(":memory:", config).unwrap();
 
         let _id = uteke
-            .remember(
-                "test content about rust programming",
-                &[],
-                None,
-                None,
-            )
+            .remember("test content about rust programming", &[], None, None)
             .unwrap();
 
         // Per-call min_score=0.0 should still work (overrides config)
-        let results = uteke.recall("rust programming", 5, None, None, 0.0).unwrap();
+        let results = uteke
+            .recall("rust programming", 5, None, None, 0.0)
+            .unwrap();
         assert!(!results.is_empty());
     }
 }

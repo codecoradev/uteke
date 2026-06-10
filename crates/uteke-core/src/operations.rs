@@ -231,8 +231,12 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         match strategy {
             RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace, min_score),
-            RecallStrategy::Fts5 => self.recall_fts5_only(query, limit, tags_filter, namespace, min_score),
-            RecallStrategy::Hybrid => self.recall_rrf(query, limit, tags_filter, namespace, min_score),
+            RecallStrategy::Fts5 => {
+                self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)
+            }
+            RecallStrategy::Hybrid => {
+                self.recall_rrf(query, limit, tags_filter, namespace, min_score)
+            }
         }
     }
 

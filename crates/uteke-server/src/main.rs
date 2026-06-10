@@ -42,6 +42,12 @@ struct RecallRequest {
     tags: Vec<String>,
     #[serde(default)]
     namespace: Option<String>,
+    /// Filter by entity metadata.
+    #[serde(default)]
+    entity: Option<String>,
+    /// Filter by category metadata.
+    #[serde(default)]
+    category: Option<String>,
     /// Minimum similarity score. Results below are filtered.
     #[serde(default)]
     min_score: Option<f32>,
@@ -471,14 +477,47 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                     ns(&req_data.namespace),
                     min_score,
                 ) {
-                    Ok(results) => {
+                    Ok(raw_results) => {
+                        // Post-filter by entity/category metadata
+                        let results: Vec<_> = raw_results
+                            .into_iter()
+                            .filter(|sr| {
+                                if let Some(ent) = &req_data.entity {
+                                    let matches = sr
+                                        .memory
+                                        .metadata
+                                        .get("entity")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|e| e == ent);
+                                    if !matches {
+                                        return false;
+                                    }
+                                }
+                                if let Some(cat) = &req_data.category {
+                                    let matches = sr
+                                        .memory
+                                        .metadata
+                                        .get("category")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|c| c == cat);
+                                    if !matches {
+                                        return false;
+                                    }
+                                }
+                                true
+                            })
+                            .collect();
+
                         if results.is_empty() && min_score > 0.0 {
-                            ctx.ok_response_for(req, &serde_json::json!({
-                                "results": [],
-                                "total": 0,
-                                "threshold": min_score,
-                                "message": "No memories above similarity threshold"
-                            }))
+                            ctx.ok_response_for(
+                                req,
+                                &serde_json::json!({
+                                    "results": [],
+                                    "total": 0,
+                                    "threshold": min_score,
+                                    "message": "No memories above similarity threshold"
+                                }),
+                            )
                         } else {
                             ctx.ok_response_for(req, &results)
                         }

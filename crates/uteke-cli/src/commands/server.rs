@@ -127,7 +127,11 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .map_err(|e| format!("Server error: {e}"))?;
             let data = parse_json_value(resp)?;
             // Check if server returned enriched empty response with threshold
-            if data.is_object() && data.get("results").map_or(false, |r| r.as_array().map_or(false, |a| a.is_empty())) {
+            if data.is_object()
+                && data
+                    .get("results")
+                    .map_or(false, |r| r.as_array().map_or(false, |a| a.is_empty()))
+            {
                 if let Some(threshold) = data.get("threshold").and_then(|t| t.as_f64()) {
                     // Enriched empty response with threshold info
                     if cli.json {
