@@ -71,7 +71,10 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
             for pair in meta {
                 if let Some((key, value)) = pair.split_once(':') {
-                    meta_map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+                    meta_map.insert(
+                        key.to_string(),
+                        serde_json::Value::String(value.to_string()),
+                    );
                 }
             }
             if !meta_map.is_empty() {
