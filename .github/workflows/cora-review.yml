@@ -12,7 +12,6 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
-  id-token: write
   security-events: write
 
 jobs:
@@ -21,14 +20,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - name: Checkout PR head
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Run Cora AI Code Review
-        uses: ./.github/actions/cora-review
+        uses: codecoradev/cora-review-action@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          infisical-identity-id: ${{ secrets.INFISICAL_IDENTITY_ID }}
+          cora-api-key: ${{ secrets.CORA_API_KEY }}
+          cora-base-url: ${{ secrets.CORA_BASE_URL }}
+          cora-model: ${{ secrets.CORA_MODEL }}
