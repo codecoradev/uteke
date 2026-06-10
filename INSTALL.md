@@ -14,7 +14,7 @@
 
 ```bash
 # Clone
-git clone https://github.com/ajianaz/uteke.git
+git clone https://github.com/codecoradev/uteke.git
 cd uteke
 
 # Build release binary
@@ -29,7 +29,7 @@ uteke --version
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/ajianaz/uteke/releases):
+Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases):
 
 | Platform | File |
 |----------|------|
@@ -44,7 +44,7 @@ Download from [GitHub Releases](https://github.com/ajianaz/uteke/releases):
 ### Quick Install (Linux/macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 > Installs `uteke` and `uteke-serve` to `~/.local/bin`. Add to PATH if needed:
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
 Pin a specific version with `UTEKE_VERSION`:
 
 ```bash
-UTEKE_VERSION=v0.0.7 curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.0.7 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ### Windows Setup
@@ -65,7 +65,7 @@ UTEKE_VERSION=v0.0.7 curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/
 ```powershell
 # Download from GitHub Releases
 # Example (PowerShell):
-Invoke-WebRequest -Uri "https://github.com/ajianaz/uteke/releases/latest/download/uteke-x86_64-pc-windows-msvc.zip" -OutFile "uteke.zip"
+Invoke-WebRequest -Uri "https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-pc-windows-msvc.zip" -OutFile "uteke.zip"
 
 # Extract
 Expand-Archive -Path uteke.zip -DestinationPath uteke
@@ -88,7 +88,7 @@ $env:PATH += ";C:\Users\you\AppData\Local\bin"
 winget install Rustlang.Rustup
 
 # Clone and build
-git clone https://github.com/ajianaz/uteke.git
+git clone https://github.com/codecoradev/uteke.git
 cd uteke
 cargo build --release
 

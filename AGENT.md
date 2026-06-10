@@ -6,7 +6,7 @@
 
 **Uteke** adalah local-first semantic memory engine untuk AI agents. Single Rust binary, fully offline, ~30ms recall. Tidak butuh API key, Docker, atau cloud service.
 
-- **Repo:** `ajianaz/uteke` (remote GitHub), local di `/Users/mis-puragroup/development/riset-ai/uteke`
+- **Repo:** `codecoradev/uteke` (remote GitHub), local di `/Users/mis-puragroup/development/riset-ai/uteke`
 - **Versi:** 0.0.12
 - **Lisensi:** Apache 2.0
 - **Branch utama:** `develop` ( semua PR ke sini), `main` (release)

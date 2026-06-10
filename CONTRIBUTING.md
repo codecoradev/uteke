@@ -10,7 +10,7 @@ Thanks for your interest in contributing! This guide covers the basics.
 ## Build
 
 ```bash
-git clone https://github.com/ajianaz/uteke.git
+git clone https://github.com/codecoradev/uteke.git
 cd uteke
 cargo build --workspace
 ```
@@ -40,7 +40,7 @@ Run `cargo fmt` before committing. Clippy warnings are treated as errors in CI.
 
 ## Code Review with Cora CLI
 
-[Cora](https://github.com/ajianaz/cora-cli) is an AI-powered code review tool that runs automatically on every PR via CI. It uses SARIF output and posts review comments directly on the PR.
+[Cora](https://github.com/codecoradev/cora-cli) is an AI-powered code review tool that runs automatically on every PR via CI. It uses SARIF output and posts review comments directly on the PR.
 
 ### CI (Automatic)
 
@@ -57,7 +57,7 @@ Run Cora locally **before pushing** to catch issues early:
 
 ```bash
 # Install cora-cli (one-time)
-# Download from https://github.com/ajianaz/cora-cli/releases
+# Download from https://github.com/codecoradev/cora-cli/releases
 
 # Review your uncommitted changes
 cora review --base HEAD~1 --format text
@@ -186,8 +186,8 @@ crates/
 
 ## Reporting Issues
 
-- **Bugs:** Use the [Bug Report](https://github.com/ajianaz/uteke/issues/new?template=bug_report.md) template
-- **Features:** Use the [Feature Request](https://github.com/ajianaz/uteke/issues/new?template=feature_request.md) template
+- **Bugs:** Use the [Bug Report](https://github.com/codecoradev/uteke/issues/new?template=bug_report.md) template
+- **Features:** Use the [Feature Request](https://github.com/codecoradev/uteke/issues/new?template=feature_request.md) template
 
 ## Questions?
 

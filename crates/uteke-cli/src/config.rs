@@ -300,7 +300,7 @@ impl Config {
             return;
         }
         let default = r#"# Uteke configuration
-# See https://github.com/ajianaz/uteke for documentation
+# See https://github.com/codecoradev/uteke for documentation
 
 [store]
 # path = "~/.uteke"

@@ -9,16 +9,16 @@ title: Getting Started
 One-liner install (macOS, Linux, Windows):
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 Or install from source (requires [Rust](https://rustup.rs)):
 
 ```bash
-cargo install --git https://github.com/ajianaz/uteke
+cargo install --git https://github.com/codecoradev/uteke
 ```
 
-Pre-built binaries and Docker image also available from [GitHub Releases](https://github.com/ajianaz/uteke/releases) and [GHCR](https://github.com/ajianaz/uteke/pkgs/container/uteke). First run downloads the embedding model (~188MB) — no API keys needed.
+Pre-built binaries and Docker image also available from [GitHub Releases](https://github.com/codecoradev/uteke/releases) and [GHCR](https://github.com/codecoradev/uteke/pkgs/container/uteke). First run downloads the embedding model (~188MB) — no API keys needed.
 
 ## Your First Memory
 

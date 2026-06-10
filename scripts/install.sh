@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
 # Uteke quick install script
-# Usage: curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/develop/scripts/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/develop/scripts/install.sh | sh
 #
 set -euo pipefail
 
-REPO="ajianaz/uteke"
+REPO="codecoradev/uteke"
 INSTALL_DIR="${HOME}/.local/bin"
 BINARY_NAME="uteke"
 
