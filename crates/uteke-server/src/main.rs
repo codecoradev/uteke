@@ -468,12 +468,16 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                 } else {
                     req_data.min_score.unwrap_or(0.0)
                 };
-                // Over-fetch to compensate for metadata post-filtering.
-                // When entity/category filters are present, request more results
-                // and trim after filtering.
+                // Strategy: when entity/category filters are present,
+                // recall WITHOUT min_score to avoid discarding valid matches
+                // that might satisfy metadata but be ranked lower. Apply
+                // min_score after metadata filtering.
                 let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
+                let fetch_min_score = if has_meta_filter { 0.0 } else { min_score };
                 let fetch_limit = if has_meta_filter {
-                    req_data.limit * 3
+                    // Cap at 200 to prevent unbounded amplification.
+                    // May return fewer than requested when matches are sparse.
+                    (req_data.limit * 10).min(200)
                 } else {
                     req_data.limit
                 };
@@ -483,7 +487,7 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                     fetch_limit,
                     tags_filter,
                     ns(&req_data.namespace),
-                    min_score,
+                    fetch_min_score,
                 ) {
                     Ok(raw_results) => {
                         // Post-filter by entity/category metadata
@@ -515,6 +519,11 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                                 true
                             })
                             .collect::<Vec<_>>();
+                        // Apply min_score filter after metadata filtering
+                        // (deferred from recall call to avoid losing valid matches)
+                        if min_score > 0.0 {
+                            results.retain(|sr| sr.score >= min_score);
+                        }
                         // Trim to requested limit after filtering
                         results.truncate(req_data.limit);
 
