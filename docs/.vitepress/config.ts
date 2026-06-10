@@ -29,11 +29,12 @@ export default defineConfig({
           { text: 'Configuration', link: '/configuration' },
           { text: 'Multi-Agent Isolation', link: '/multi-agent' },
           { text: 'Pi Extension', link: '/extensions' },
+          { text: 'Architecture', link: '/architecture' },
           { text: 'Roadmap', link: '/roadmap' },
         ],
       },
     ],
-    socialLinks: [{ icon: 'github', link: 'https://github.com/ajianaz/uteke' }],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/codecoradev/uteke' }],
     search: { provider: 'local' },
   },
 })

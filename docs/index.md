@@ -11,7 +11,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: GitHub
-      link: https://github.com/ajianaz/uteke
+      link: https://github.com/codecoradev/uteke
 
 features:
   - icon: 🧠

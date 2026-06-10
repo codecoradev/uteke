@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
-# uteke installer — https://github.com/ajianaz/uteke
-# Usage: curl -fsSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+# uteke installer — https://github.com/codecoradev/uteke
+# Usage: curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 
 set -e
 
-REPO="ajianaz/uteke"
+REPO="codecoradev/uteke"
 BINARY_NAME="uteke"
 SERVER_BINARY_NAME="uteke-serve"
 INSTALL_DIR="${UTEKE_INSTALL_DIR:-$HOME/.local/bin}"

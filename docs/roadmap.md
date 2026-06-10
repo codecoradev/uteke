@@ -4,141 +4,82 @@ title: Roadmap
 
 # Roadmap
 
-Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/ajianaz/uteke/issues).
-
-## v0.0.2 — Core Engine `✓ Done`
-
-- [#40 Persistent vector index (usearch)](https://github.com/ajianaz/uteke/issues/40) `✓ Done`
-- [#39 Multi-agent namespaces](https://github.com/ajianaz/uteke/issues/39) `✓ Done`
-- [#38 Tiered memory (Hot/Warm/Cold)](https://github.com/ajianaz/uteke/issues/38) `✓ Done`
-- [#37 Health checks (doctor, verify, repair)](https://github.com/ajianaz/uteke/issues/37) `✓ Done`
-- [#53 Website (landing + docs)](https://github.com/ajianaz/uteke/issues/53) `✓ Done`
-
-## v0.0.3 — Tag Management & Operations `✓ Done`
-
-- [#42 Tag-based filtering and management](https://github.com/ajianaz/uteke/issues/42) `✓ Done`
-- [#44 Memory aging with auto-cleanup](https://github.com/ajianaz/uteke/issues/44) `✓ Done`
-- [#47 Shell hook for auto-context loading](https://github.com/ajianaz/uteke/issues/47) `✓ Done`
-- [#48 Configuration file (uteke.toml)](https://github.com/ajianaz/uteke/issues/48) `✓ Done`
-- [#31 Graceful shutdown (SIGINT handler)](https://github.com/ajianaz/uteke/issues/31) `✓ Done`
-- [#32 File logging with daily rotation](https://github.com/ajianaz/uteke/issues/32) `✓ Done`
-- [#41 Upgrade Node.js 20→24 in CI](https://github.com/ajianaz/uteke/issues/41) `✓ Done`
-
-## v0.0.4 — Server Mode & Intelligence `✓ Done`
-
-- [#43 Bulk memory operations (tag, cold, all)](https://github.com/ajianaz/uteke/issues/43) `✓ Done`
-- [#45 Namespace switching & defaults](https://github.com/ajianaz/uteke/issues/45) `✓ Done`
-- [#54 Daemon/server mode — warm recall <50ms](https://github.com/ajianaz/uteke/issues/54) `✓ Done`
-- [#54 CLI auto-routes to server (21ms recall)](https://github.com/ajianaz/uteke/issues/54) `✓ Done`
-- [#51 Auto-forget & temporal facts](https://github.com/ajianaz/uteke/issues/51) `✓ Done`
-- [#52 Consolidation & deduplication](https://github.com/ajianaz/uteke/issues/52) `✓ Done`
-- [#86 Cora AI code review in CI](https://github.com/ajianaz/uteke/issues/86) `✓ Done`
-
-## v0.0.5 — Docker & Deployment `✓ Done`
-
-- [#95 UTEKE_HOME env var for custom data directory](https://github.com/ajianaz/uteke/issues/95) `✓ Done`
-- [#96 uteke-serve reads uteke.toml, default host 0.0.0.0](https://github.com/ajianaz/uteke/issues/96) `✓ Done`
-- [#97 Dockerfile (multi-stage build, model baked in)](https://github.com/ajianaz/uteke/issues/97) `✓ Done`
-- [#99 Docker image build & push on release (GHCR)](https://github.com/ajianaz/uteke/issues/99) `✓ Done`
-
-## v0.0.6 — Hardening & Fixes `✓ Done`
-
-- JSON output omits embedding vector (~3KB savings per memory) `✓ Done`
-- import() now persists vector index (fixes data loss on restart) `✓ Done`
-- Docker: non-root container with USER uteke `✓ Done`
-- Dependabot: automated dependency updates `✓ Done`
-
-## v0.0.7 — Core Stability `✓ Done`
-
-- [#120 Tag queries: LIKE → json_each() for exact matching](https://github.com/ajianaz/uteke/issues/120) `✓ Done`
-- [#127 Configurable tier thresholds (hot_days, warm_days)](https://github.com/ajianaz/uteke/issues/127) `✓ Done`
-- [#129 Test coverage: 34 → 94 tests](https://github.com/ajianaz/uteke/issues/129) `✓ Done`
-- Tag substring false positive fix ("rust" ≠ "rustacean") `✓ Done`
-
-## v0.0.8 — Stability & Architecture `✓ Done`
-
-- [#130 Architecture: module split (1471→352 lib.rs)](https://github.com/ajianaz/uteke/issues/130) `✓ Done`
-- [#132 Input validation (max 10K chars, 20 tags, 1MB payload)](https://github.com/ajianaz/uteke/issues/132) `✓ Done`
-- [#134 Binary checksums (SHA256) + verify-checksums subcommand](https://github.com/ajianaz/uteke/issues/134) `✓ Done`
-- [#138 Schema versioning + migration framework](https://github.com/ajianaz/uteke/issues/138) `✓ Done`
-- [#144 Error handling rewrite — sanitized user-friendly messages](https://github.com/ajianaz/uteke/issues/144) `✓ Done`
-- [#137 Python wrapper: 7→21 methods with type hints](https://github.com/ajianaz/uteke/issues/137) `✓ Done`
-- [#49 Memory benchmark binary (library-level timing)](https://github.com/ajianaz/uteke/issues/49) `✓ Done`
-- Memory consolidation command `✓ Done`
-- Import/Export (JSONL backup and restore) `✓ Done`
-- [#174 README overhaul + landing page refresh (GTM Phase 1+2)](https://github.com/ajianaz/uteke/issues/174) `✓ Done`
-
-## v0.0.9 — Website Migration `✓ Done`
-
-- [#194 Website migrated to VitePress](https://github.com/ajianaz/uteke/issues/194) `✓ Done`
-  - SvelteKit (3,750 LOC, 10 deps) → VitePress (1,300 LOC markdown, 2 deps)
-  - Built-in full-text search
-  - Build time: ~15s → ~6s
-  - Brand theme (amber/dark) preserved
-
-## v0.0.10 — Codebase Quality `✓ Done`
-
-- [#187 Split commands.rs into per-command modules](https://github.com/ajianaz/uteke/issues/187) `✓ Done`
-- [#186 Split store.rs into focused modules](https://github.com/ajianaz/uteke/issues/186) `✓ Done`
-- [#178 Remove all Hermes branding](https://github.com/ajianaz/uteke/issues/178) `✓ Done`
-- [#196 Address all Cora code review findings](https://github.com/ajianaz/uteke/issues/196) `✓ Done`
-- Safe slice for deprecated IDs `✓ Done`
-- Index lock before SQLite write `✓ Done`
-- HTTP status checking in server proxy `✓ Done`
-- Aging cleanup filter fix `✓ Done`
-- Schema migration transactions `✓ Done`
-- Batch bulk deletes `✓ Done`
-- SQLite-first dual-write `✓ Done`
-- Embedding docs corrected (768d) `✓ Done`
-- Shell hook idempotency guards `✓ Done`
+Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
 ## v0.0.12 — Search & Concurrency `✓ Done` `Current`
 
-- [#250 FTS5 hybrid search with RRF](https://github.com/ajianaz/uteke/issues/250) `✓ Done`
+- [#250 FTS5 hybrid search with RRF](https://github.com/codecoradev/uteke/issues/250) `✓ Done`
   - FTS5 full-text search as parallel retrieval channel
   - Reciprocal Rank Fusion (k=60) merges vector + FTS5 results
   - `RecallStrategy` enum: hybrid (default), vector, fts5
   - Schema migration v1→v2 (auto, zero data loss)
   - Phrase search + token-OR fallback
   - Deprecated memories excluded from FTS5
-- [#251 Metadata enrichment via CLI flags](https://github.com/ajianaz/uteke/issues/251) `✓ Done`
+- [#251 Metadata enrichment via CLI flags](https://github.com/codecoradev/uteke/issues/251) `✓ Done`
   - `--entity`, `--category`, `--meta key:value,...` on remember
   - Post-filter on `recall` and `list` by entity/category
   - Auto type detection for meta values (string/number/bool)
-- [#209 Concurrent reads via RwLock](https://github.com/ajianaz/uteke/issues/209) `✓ Done`
+- [#209 Concurrent reads via RwLock](https://github.com/codecoradev/uteke/issues/209) `✓ Done`
   - `Mutex<VectorIndex>` → `RwLock<VectorIndex>` for read-heavy workload
   - Multiple concurrent recalls share read lock
   - Embedder lock scope minimized
-- [#139 Vector index consistency](https://github.com/ajianaz/uteke/issues/139) `✓ Done`
+- [#139 Vector index consistency](https://github.com/codecoradev/uteke/issues/139) `✓ Done`
   - Atomic save for `.keys` sidecar file (temp + rename)
   - `insert()` and `build()` now return `Result` (error propagation)
-  - HashMap already used for key mapping
 
-## Phase A — Growth (100+ stars) `Planned`
+## v0.0.10 — Codebase Quality `✓ Done`
 
-Better embeddings, richer integrations, broader reach.
+- [#187 Split commands.rs into per-command modules](https://github.com/codecoradev/uteke/issues/187) `✓ Done`
+- [#186 Split store.rs into focused modules](https://github.com/codecoradev/uteke/issues/186) `✓ Done`
+- [#178 Remove all Hermes branding](https://github.com/codecoradev/uteke/issues/178) `✓ Done`
+- [#196 Address all Cora code review findings](https://github.com/codecoradev/uteke/issues/196) `✓ Done`
+- Safe slice, index lock ordering, HTTP status checking, aging filter fix
+- Schema migration transactions, batch bulk deletes, SQLite-first dual-write
+- Embedding docs corrected (768d), shell hook idempotency guards
 
-- Better embeddings (larger model option) `Planned`
-- [#46 Import from external knowledge sources](https://github.com/ajianaz/uteke/issues/46) `Planned`
-- Python SDK (PyO3 bindings) `Planned`
-- Editor integrations (VS Code, JetBrains) `Planned`
-- Node.js SDK (NAPI) `Planned`
+## v0.0.9 — Website Migration `✓ Done`
 
-## Phase B — Collaboration (500+ stars) `Future`
+- [#194 Website migrated to VitePress](https://github.com/codecoradev/uteke/issues/194) `✓ Done`
+  - SvelteKit → VitePress, built-in full-text search
 
-Optional cloud sync, team features, and gateway integrations.
+## v0.0.8 — Stability & Architecture `✓ Done`
 
-- Cloud sync (opt-in, end-to-end encrypted) `Future`
-- Team collaboration & shared namespaces `Future`
-- API gateway integration (LangChain, CrewAI, others) `Future`
-- [#100 TLS support & reverse proxy documentation](https://github.com/ajianaz/uteke/issues/100) `Future`
-- [#101 API key authentication for uteke-serve](https://github.com/ajianaz/uteke/issues/101) `Future`
+- [#130 Architecture: module split](https://github.com/codecoradev/uteke/issues/130), [#132 Input validation](https://github.com/codecoradev/uteke/issues/132), [#134 Binary checksums](https://github.com/codecoradev/uteke/issues/134)
+- [#138 Schema versioning](https://github.com/codecoradev/uteke/issues/138), [#144 Error handling rewrite](https://github.com/codecoradev/uteke/issues/144)
+- [#137 Python wrapper: 21 methods](https://github.com/codecoradev/uteke/issues/137), [#49 Memory benchmark](https://github.com/codecoradev/uteke/issues/49)
+- Memory consolidation, import/export (JSONL)
 
-## Phase C — Ecosystem (1000+ stars) `Vision`
+## v0.0.7 — Core Stability `✓ Done`
 
-Plugin ecosystem, advanced consolidation, community extensions.
+- [#120 Tag queries → json_each()](https://github.com/codecoradev/uteke/issues/120), [#127 Configurable tier thresholds](https://github.com/codecoradev/uteke/issues/127)
+- [#129 Test coverage: 34 → 94](https://github.com/codecoradev/uteke/issues/129)
 
-- Plugin ecosystem (custom embedding, storage backends) `Vision`
-- Advanced consolidation (cross-namespace, summarization) `Vision`
-- Community extensions marketplace `Vision`
-- Managed cloud API (optional paid tier) `Vision`
+## v0.0.5–v0.0.6 — Docker & Hardening `✓ Done`
+
+- [#95 UTEKE_HOME](https://github.com/codecoradev/uteke/issues/95), [#97 Dockerfile](https://github.com/codecoradev/uteke/issues/97), [#99 GHCR](https://github.com/codecoradev/uteke/issues/99)
+- Non-root container, Dependabot, JSON output omits embeddings
+
+## v0.0.4 — Server Mode & Intelligence `✓ Done`
+
+- [#54 Daemon/server mode](https://github.com/codecoradev/uteke/issues/54), [#51 Temporal facts](https://github.com/codecoradev/uteke/issues/51), [#52 Consolidation](https://github.com/codecoradev/uteke/issues/52)
+- [#43 Bulk operations](https://github.com/codecoradev/uteke/issues/43), [#45 Namespace switching](https://github.com/codecoradev/uteke/issues/45), [#86 Cora CI review](https://github.com/codecoradev/uteke/issues/86)
+
+## v0.0.2–v0.0.3 — Foundation `✓ Done`
+
+- [#40 usearch persistent index](https://github.com/codecoradev/uteke/issues/40), [#39 Multi-agent namespaces](https://github.com/codecoradev/uteke/issues/39)
+- [#38 Tiered memory](https://github.com/codecoradev/uteke/issues/38), [#37 Health checks](https://github.com/codecoradev/uteke/issues/37)
+- [#42 Tag management](https://github.com/codecoradev/uteke/issues/42), [#44 Memory aging](https://github.com/codecoradev/uteke/issues/44)
+- [#48 Configuration file](https://github.com/codecoradev/uteke/issues/48), [#47 Shell hooks](https://github.com/codecoradev/uteke/issues/47)
+- Graceful shutdown, file logging with rotation
+
+## What's Next
+
+Demand-gated — we build what people actually use.
+
+- Better embeddings (larger model option)
+- [#46 Import from external knowledge sources](https://github.com/codecoradev/uteke/issues/46)
+- Python SDK (PyO3 bindings)
+- Editor integrations (VS Code, JetBrains)
+- Node.js SDK (NAPI)
+- [#100 TLS support](https://github.com/codecoradev/uteke/issues/100)
+- [#101 API key auth for uteke-serve](https://github.com/codecoradev/uteke/issues/101)
