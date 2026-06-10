@@ -88,8 +88,8 @@ impl crate::Uteke {
             {
                 let mut index = self
                     .index
-                    .lock()
-                    .map_err(|_| Error::lock("index lock during import"))?;
+                    .write()
+                    .map_err(|_| Error::lock("index write lock during import"))?;
                 index.insert(&id, &embedding);
                 // Don't save per-item — we'll persist once after the full import.
             }
@@ -98,8 +98,8 @@ impl crate::Uteke {
                 // Rollback: remove from vector index
                 let mut index = self
                     .index
-                    .lock()
-                    .map_err(|_| Error::lock("index lock during import rollback"))?;
+                    .write()
+                    .map_err(|_| Error::lock("index write lock during import rollback"))?;
                 index.remove(&id);
                 // Note: don't save per-entry — save once at end of import.
                 // If process crashes, orphan entry is harmless and cleaned by repair.
@@ -115,8 +115,8 @@ impl crate::Uteke {
         if imported > 0 {
             let mut index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during import save"))?;
+                .write()
+                .map_err(|_| Error::lock("index write lock during import save"))?;
             index.save()?;
         }
 

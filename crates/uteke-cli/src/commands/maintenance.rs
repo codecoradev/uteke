@@ -52,23 +52,21 @@ pub(crate) fn run_prune(
         .map_err(|e| format!("Failed to prune: {e}"))?;
     if cli.json {
         output::print_json(&result);
-    } else {
-        if result.deprecated_ids.is_empty() && result.pruned == 0 {
-            println!("No deprecated memories to prune.");
-        } else if dry_run {
-            println!(
-                "Dry run — {} deprecated memories would be pruned (TTL: {ttl}d):",
-                result.deprecated
-            );
-            for id in &result.deprecated_ids {
-                println!("  {}", id);
-            }
-        } else {
-            println!(
-                "\u{2713} Pruned {} deprecated memories (TTL: {ttl}d)",
-                result.pruned
-            );
+    } else if result.deprecated_ids.is_empty() && result.pruned == 0 {
+        println!("No deprecated memories to prune.");
+    } else if dry_run {
+        println!(
+            "Dry run — {} deprecated memories would be pruned (TTL: {ttl}d):",
+            result.deprecated
+        );
+        for id in &result.deprecated_ids {
+            println!("  {}", id);
         }
+    } else {
+        println!(
+            "\u{2713} Pruned {} deprecated memories (TTL: {ttl}d)",
+            result.pruned
+        );
     }
     Ok(())
 }

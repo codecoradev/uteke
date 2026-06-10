@@ -27,8 +27,8 @@ impl crate::Uteke {
         // 2. usearch index
         let index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during doctor"))?;
+            .read()
+            .map_err(|_| Error::lock("index read lock during doctor"))?;
         let index_count = index.len();
         checks.push(DoctorCheck {
             name: "usearch index".to_string(),
@@ -91,8 +91,8 @@ impl crate::Uteke {
         let db_count = self.store.count(None)?;
         let index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during verify"))?;
+            .read()
+            .map_err(|_| Error::lock("index read lock during verify"))?;
         let index_count = index.len();
 
         let consistent = db_count == index_count;
@@ -109,8 +109,8 @@ impl crate::Uteke {
         let before_index = {
             let index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during repair (count before)"))?;
+                .read()
+                .map_err(|_| Error::lock("index read lock during repair (count before)"))?;
             index.len()
         };
 
@@ -124,8 +124,8 @@ impl crate::Uteke {
         {
             let mut index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during repair (rebuild)"))?;
+                .write()
+                .map_err(|_| Error::lock("index write lock during repair (rebuild)"))?;
             index.build(&items);
             index.save().ok();
         }
@@ -218,8 +218,8 @@ impl crate::Uteke {
         {
             let mut index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during aging_cleanup"))?;
+                .write()
+                .map_err(|_| Error::lock("index write lock during aging_cleanup"))?;
             for id in &ids {
                 index.remove(id);
             }
@@ -258,8 +258,8 @@ impl crate::Uteke {
         {
             let mut index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during prune"))?;
+                .write()
+                .map_err(|_| Error::lock("index write lock during prune"))?;
             for id in &ids {
                 index.remove(id);
             }
@@ -278,8 +278,8 @@ impl crate::Uteke {
     pub fn shutdown(&self) -> Result<(), Error> {
         let mut index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during shutdown"))?;
+            .write()
+            .map_err(|_| Error::lock("index write lock during shutdown"))?;
         if index.is_dirty() {
             index.save()?;
         }

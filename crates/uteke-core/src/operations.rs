@@ -79,13 +79,13 @@ impl crate::Uteke {
             memory_type: memory_type.to_string(),
         };
 
-        // Acquire index lock BEFORE any writes so lock failures are detected early.
+        // Acquire index write lock BEFORE any writes so lock failures are detected early.
         // If SQLite commit fails after index insert, the orphan index entry is harmless
         // and will be cleaned up by verify/repair.
         let mut index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during remember"))?;
+            .write()
+            .map_err(|_| Error::lock("index write lock during remember"))?;
 
         self.store.insert(&memory)?;
 
@@ -103,6 +103,9 @@ impl crate::Uteke {
     /// Recall memories relevant to a query using vector similarity.
     ///
     /// Optionally filter by tags and namespace.
+    ///
+    /// Embedding computation is performed outside the index lock to avoid
+    /// blocking concurrent reads (RwLock allows shared read access).
     pub fn recall(
         &self,
         query: &str,
@@ -111,18 +114,23 @@ impl crate::Uteke {
         namespace: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
+        // Only the embedder Mutex is held here, allowing concurrent index reads.
         let query_embedding = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during recall"))?
             .embed(query)?;
+        // Embedder lock dropped here — other threads can embed or recall concurrently.
 
         // Search usearch index with retry: if post-filtering removes too many
         // results, increase k and try again (up to 3 attempts).
+        // RwLock read lock — multiple concurrent recalls can search simultaneously.
         let index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during recall"))?;
+            .read()
+            .map_err(|_| Error::lock("index read lock during recall"))?;
         let index_len = index.len();
         let mut results = Vec::new();
         let mut attempt = 0;
@@ -235,11 +243,11 @@ impl crate::Uteke {
 
     /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
-        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
+        // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during forget"))?;
+            .write()
+            .map_err(|_| Error::lock("index write lock during forget"))?;
         // SQLite delete (source of truth)
         self.store.delete(id)?;
         // Vector index remove — orphan is harmless if fails (verify/repair cleans up)
@@ -262,11 +270,11 @@ impl crate::Uteke {
         tag: &str,
         namespace: Option<&str>,
     ) -> Result<BulkDeleteResult, Error> {
-        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
+        // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during bulk_forget_by_tag"))?;
+            .write()
+            .map_err(|_| Error::lock("index write lock during bulk_forget_by_tag"))?;
         let ids = self.store.bulk_delete_by_tag(tag, namespace)?;
         for id in &ids {
             if !index.remove(id) {
@@ -289,11 +297,11 @@ impl crate::Uteke {
 
     /// Bulk delete all cold memories. Also removes from index.
     pub fn bulk_forget_cold(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
-        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
+        // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during bulk_forget_cold"))?;
+            .write()
+            .map_err(|_| Error::lock("index write lock during bulk_forget_cold"))?;
         let ids = self
             .store
             .bulk_delete_cold(namespace, self.tier_config.warm_days)?;
@@ -316,11 +324,11 @@ impl crate::Uteke {
 
     /// Bulk delete all memories in a namespace. Also removes from index.
     pub fn bulk_forget_all(&self, namespace: Option<&str>) -> Result<BulkDeleteResult, Error> {
-        // Acquire index lock BEFORE SQLite delete to narrow inconsistency window.
+        // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during bulk_forget_all"))?;
+            .write()
+            .map_err(|_| Error::lock("index write lock during bulk_forget_all"))?;
         let ids = self.store.bulk_delete_all(namespace)?;
         for id in &ids {
             if !index.remove(id) {
