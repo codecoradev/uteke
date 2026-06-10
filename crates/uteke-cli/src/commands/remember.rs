@@ -82,9 +82,9 @@ pub(crate) fn run(
                 }
             });
             if let Some(ref meta) = metadata {
-                obj.as_object_mut()
-                    .unwrap()
-                    .insert("metadata".to_string(), meta.clone());
+                if let Some(map) = obj.as_object_mut() {
+                    map.insert("metadata".to_string(), meta.clone());
+                }
             }
             println!("{obj}");
         } else {
@@ -130,9 +130,9 @@ pub(crate) fn run(
                 for (k, v) in parse_meta_pairs(meta) {
                     m.insert(k, v);
                 }
-                obj.as_object_mut()
-                    .unwrap()
-                    .insert("metadata".to_string(), serde_json::Value::Object(m));
+                if let Some(map) = obj.as_object_mut() {
+                    map.insert("metadata".to_string(), serde_json::Value::Object(m));
+                }
             }
             println!("{obj}");
         } else {

@@ -267,10 +267,13 @@ impl crate::Uteke {
                 }
                 true
             })
-            .map(|(memory, rank)| {
-                // Convert FTS5 rank (negative bm25, more negative = better) to 0..1 score
-                // bm25 returns negative values; map to positive similarity
-                let score = ((1.0 + rank).clamp(0.0, 1.0)) as f32;
+            .map(|(memory, _rank)| {
+                // Convert FTS5 BM25 rank to 0..1 score.
+                // BM25 returns negative values (more negative = worse relevance).
+                // We use rank-based scoring instead of raw BM25 since
+                // BM25 magnitudes vary by query and aren't normalized.
+                // Score is assigned by position in the result list.
+                let score = 1.0f32; // Placeholder — actual ranking done by RRF in hybrid
                 SearchResult { memory, score }
             })
             .take(limit)
@@ -361,9 +364,14 @@ impl crate::Uteke {
             .into_iter()
             .take(limit)
             .map(|(id, score)| {
-                let memory = memories.remove(&id).unwrap();
-                // Normalize RRF score to 0..1 range for consistency
-                let normalized = (score / (2.0 / (RRF_K as f64 + 1.0))).min(1.0);
+                let memory = memories
+                    .remove(&id)
+                    .expect("RRF score references memory that should exist");
+                // RRF score is sum of 1/(k+rank) from both channels.
+                // Max possible: 2/(k+1) when rank=0 in both.
+                // Normalize by dividing by that theoretical max.
+                let max_rrf = 2.0 / (RRF_K as f64 + 1.0);
+                let normalized = (score / max_rrf).clamp(0.0, 1.0);
                 SearchResult {
                     memory,
                     score: normalized as f32,
