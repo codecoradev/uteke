@@ -2,8 +2,7 @@
 
 use crate::error::Error;
 use crate::memory::types::{
-    BulkDeleteResult, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo,
-    DEFAULT_NAMESPACE,
+    BulkDeleteResult, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo, DEFAULT_NAMESPACE,
 };
 use crate::memory::vector::euclidean_to_cosine;
 
@@ -225,12 +224,8 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         match strategy {
             RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace),
-            RecallStrategy::Fts5 => {
-                self.recall_fts5_only(query, limit, tags_filter, namespace)
-            }
-            RecallStrategy::Hybrid => {
-                self.recall_rrf(query, limit, tags_filter, namespace)
-            }
+            RecallStrategy::Fts5 => self.recall_fts5_only(query, limit, tags_filter, namespace),
+            RecallStrategy::Hybrid => self.recall_rrf(query, limit, tags_filter, namespace),
         }
     }
 
@@ -303,20 +298,16 @@ impl crate::Uteke {
         const RRF_K: u32 = 60;
 
         // Run vector search
-        let vector_results =
-            match self.recall(query, limit * 3, tags_filter, namespace) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("Vector search failed in hybrid: {e}");
-                    return self.recall_fts5_only(query, limit, tags_filter, namespace);
-                }
-            };
+        let vector_results = match self.recall(query, limit * 3, tags_filter, namespace) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Vector search failed in hybrid: {e}");
+                return self.recall_fts5_only(query, limit, tags_filter, namespace);
+            }
+        };
 
         // Run FTS5 search
-        let fts_results = match self
-            .store
-            .search_fts5(query, namespace, limit * 3)
-        {
+        let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
             Ok(r) if !r.is_empty() => r,
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
@@ -335,7 +326,9 @@ impl crate::Uteke {
         for (rank, sr) in vector_results.iter().enumerate() {
             let rrf = 1.0 / (RRF_K as f64 + rank as f64 + 1.0);
             *rrf_scores.entry(sr.memory.id.clone()).or_default() += rrf;
-            memories.entry(sr.memory.id.clone()).or_insert_with(|| sr.memory.clone());
+            memories
+                .entry(sr.memory.id.clone())
+                .or_insert_with(|| sr.memory.clone());
         }
 
         // Score FTS5 results by rank
@@ -355,7 +348,9 @@ impl crate::Uteke {
             }
             let rrf = 1.0 / (RRF_K as f64 + rank as f64 + 1.0);
             *rrf_scores.entry(memory.id.clone()).or_default() += rrf;
-            memories.entry(memory.id.clone()).or_insert_with(|| memory.clone());
+            memories
+                .entry(memory.id.clone())
+                .or_insert_with(|| memory.clone());
         }
 
         // Sort by RRF score descending, take top `limit`

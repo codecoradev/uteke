@@ -304,24 +304,14 @@ mod tests {
         store.init_fts5().unwrap();
 
         store
-            .insert(&make_test_memory(
-                "1",
-                "rust programming language",
-                &[],
-            ))
+            .insert(&make_test_memory("1", "rust programming language", &[]))
             .unwrap();
         store
-            .insert(&make_test_memory(
-                "2",
-                "python machine learning",
-                &[],
-            ))
+            .insert(&make_test_memory("2", "python machine learning", &[]))
             .unwrap();
 
         // Token search with OR
-        let results = store
-            .search_fts5_tokens("rust python", None, 10)
-            .unwrap();
+        let results = store.search_fts5_tokens("rust python", None, 10).unwrap();
         assert_eq!(results.len(), 2);
     }
 
@@ -375,9 +365,7 @@ mod tests {
             .unwrap();
         store.deprecate("2").unwrap();
 
-        let results = store
-            .search_fts5("memory content", None, 10)
-            .unwrap();
+        let results = store.search_fts5("memory content", None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0.id, "1");
     }
