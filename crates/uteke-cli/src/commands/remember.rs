@@ -116,10 +116,16 @@ pub(crate) fn run(
             if entity.is_some() || category.is_some() || !meta.is_empty() {
                 let mut m = serde_json::Map::new();
                 if let Some(e) = entity {
-                    m.insert("entity".to_string(), serde_json::Value::String(e.to_string()));
+                    m.insert(
+                        "entity".to_string(),
+                        serde_json::Value::String(e.to_string()),
+                    );
                 }
                 if let Some(c) = category {
-                    m.insert("category".to_string(), serde_json::Value::String(c.to_string()));
+                    m.insert(
+                        "category".to_string(),
+                        serde_json::Value::String(c.to_string()),
+                    );
                 }
                 for (k, v) in parse_meta_pairs(meta) {
                     m.insert(k, v);

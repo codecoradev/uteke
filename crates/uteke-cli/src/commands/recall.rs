@@ -31,7 +31,10 @@ pub(crate) fn run_recall(
         .into_iter()
         .filter(|sr| {
             if let Some(ent) = entity {
-                let matches = sr.memory.metadata.get("entity")
+                let matches = sr
+                    .memory
+                    .metadata
+                    .get("entity")
                     .and_then(|v| v.as_str())
                     .is_some_and(|e| e == ent);
                 if !matches {
@@ -39,7 +42,10 @@ pub(crate) fn run_recall(
                 }
             }
             if let Some(cat) = category {
-                let matches = sr.memory.metadata.get("category")
+                let matches = sr
+                    .memory
+                    .metadata
+                    .get("category")
                     .and_then(|v| v.as_str())
                     .is_some_and(|c| c == cat);
                 if !matches {

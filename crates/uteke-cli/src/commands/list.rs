@@ -27,7 +27,9 @@ pub(crate) fn run_list(
     if entity.is_some() || category.is_some() {
         results.retain(|m| {
             if let Some(ent) = entity {
-                let matches = m.metadata.get("entity")
+                let matches = m
+                    .metadata
+                    .get("entity")
                     .and_then(|v| v.as_str())
                     .is_some_and(|e| e == ent);
                 if !matches {
@@ -35,7 +37,9 @@ pub(crate) fn run_list(
                 }
             }
             if let Some(cat) = category {
-                let matches = m.metadata.get("category")
+                let matches = m
+                    .metadata
+                    .get("category")
                     .and_then(|v| v.as_str())
                     .is_some_and(|c| c == cat);
                 if !matches {

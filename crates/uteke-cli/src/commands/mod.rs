@@ -52,7 +52,16 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             tags,
             entity,
             category,
-        } => recall::run_recall(cli, uteke, ns, query, *limit, tags, entity.as_deref(), category.as_deref()),
+        } => recall::run_recall(
+            cli,
+            uteke,
+            ns,
+            query,
+            *limit,
+            tags,
+            entity.as_deref(),
+            category.as_deref(),
+        ),
 
         Commands::Search { query, limit, tags } => {
             recall::run_search(cli, uteke, ns, query, *limit, tags)
@@ -64,7 +73,16 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             offset,
             entity,
             category,
-        } => list::run_list(cli, uteke, ns, tag, *limit, *offset, entity.as_deref(), category.as_deref()),
+        } => list::run_list(
+            cli,
+            uteke,
+            ns,
+            tag,
+            *limit,
+            *offset,
+            entity.as_deref(),
+            category.as_deref(),
+        ),
 
         Commands::Get { id } => list::run_get(cli, uteke, id),
 
