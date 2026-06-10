@@ -76,7 +76,7 @@ use memory::store::Store;
 use memory::VectorIndex;
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 /// Configuration for memory tier thresholds.
 ///
@@ -132,7 +132,7 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
 /// into a single cohesive memory system.
 pub struct Uteke {
     store: Store,
-    index: Mutex<VectorIndex>,
+    index: RwLock<VectorIndex>,
     embedder: Mutex<EmbeddingEngine>,
     tier_config: TierConfig,
 }
@@ -206,7 +206,7 @@ impl Uteke {
 
         Ok(Self {
             store,
-            index: Mutex::new(index),
+            index: RwLock::new(index),
             embedder: Mutex::new(embedder),
             tier_config,
         })

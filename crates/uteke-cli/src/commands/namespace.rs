@@ -15,15 +15,13 @@ pub(crate) fn run(cli: &Cli, uteke: &Uteke, command: &NamespaceCommands) -> Resu
                 .map_err(|e| format!("Failed to list namespaces: {e}"))?;
             if cli.json {
                 output::print_json(&namespaces);
+            } else if namespaces.is_empty() {
+                println!("No namespaces found.");
             } else {
-                if namespaces.is_empty() {
-                    println!("No namespaces found.");
-                } else {
-                    println!("Namespaces ({} total):\n", namespaces.len());
-                    for ns_name in &namespaces {
-                        let count = uteke.count(Some(ns_name.as_str())).unwrap_or(0);
-                        println!("  {} ({} memories)", ns_name, count);
-                    }
+                println!("Namespaces ({} total):\n", namespaces.len());
+                for ns_name in &namespaces {
+                    let count = uteke.count(Some(ns_name.as_str())).unwrap_or(0);
+                    println!("  {} ({} memories)", ns_name, count);
                 }
             }
             Ok(())

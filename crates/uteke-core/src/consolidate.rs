@@ -19,8 +19,8 @@ impl crate::Uteke {
         let results = {
             let index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during contradiction check"))?;
+                .read()
+                .map_err(|_| Error::lock("index read lock during contradiction check"))?;
             index.search(embedding, 5, 50)
         };
 
@@ -108,8 +108,8 @@ impl crate::Uteke {
                     );
                 } else {
                     // Remove from vector index so it won't appear in future searches.
-                    let mut idx = self.index.lock().map_err(|_| {
-                        Error::lock("index lock during post-insert contradiction deprecation")
+                    let mut idx = self.index.write().map_err(|_| {
+                        Error::lock("index write lock during post-insert contradiction deprecation")
                     })?;
                     if idx.remove(deprecated_id) {
                         if let Err(e) = idx.save() {
@@ -139,8 +139,8 @@ impl crate::Uteke {
 
         let index = self
             .index
-            .lock()
-            .map_err(|_| Error::lock("index lock during find_duplicates"))?;
+            .read()
+            .map_err(|_| Error::lock("index read lock during find_duplicates"))?;
 
         let mut seen = std::collections::HashSet::new();
         let mut pairs = Vec::new();
@@ -248,8 +248,8 @@ impl crate::Uteke {
             // SQLite first (source of truth), then vector index.
             let mut index = self
                 .index
-                .lock()
-                .map_err(|_| Error::lock("index lock during consolidate"))?;
+                .write()
+                .map_err(|_| Error::lock("index write lock during consolidate"))?;
             if !index.remove(to_remove) {
                 tracing::warn!(
                     "Vector index entry not found during consolidate for id={}",
