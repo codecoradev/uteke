@@ -463,13 +463,11 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                 // Note: server uses its own config loading which doesn't include
                 // [recall] section. Fallback to 0.5 for strict mode.
                 // Users should prefer --min for explicit control via server API.
-                let min_score = req_data.min_score.unwrap_or_else(|| {
-                    if req_data.strict {
-                        crate::STRICT_THRESHOLD
-                    } else {
-                        0.0
-                    }
-                });
+                let min_score = if req_data.strict {
+                    req_data.min_score.unwrap_or(crate::STRICT_THRESHOLD)
+                } else {
+                    req_data.min_score.unwrap_or(0.0)
+                };
                 // Over-fetch to compensate for metadata post-filtering.
                 // When entity/category filters are present, request more results
                 // and trim after filtering.
