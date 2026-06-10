@@ -276,21 +276,16 @@ pub struct SimilarPair {
 }
 
 /// Recall strategy for hybrid search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecallStrategy {
+    /// Hybrid: vector + FTS5 merged via Reciprocal Rank Fusion.
+    #[default]
+    Hybrid,
     /// Vector similarity only (original behavior).
     Vector,
     /// FTS5 full-text search only.
     Fts5,
-    /// Hybrid: vector + FTS5 merged via Reciprocal Rank Fusion.
-    Hybrid,
-}
-
-impl Default for RecallStrategy {
-    fn default() -> Self {
-        Self::Hybrid
-    }
 }
 
 impl RecallStrategy {
