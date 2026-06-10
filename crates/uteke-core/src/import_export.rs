@@ -90,7 +90,7 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during import"))?;
-                index.insert(&id, &embedding);
+                index.insert(&id, &embedding)?;
                 // Don't save per-item — we'll persist once after the full import.
             }
 

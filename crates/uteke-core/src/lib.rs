@@ -199,7 +199,7 @@ impl Uteke {
                     .into_iter()
                     .map(|m| (m.id, m.embedding))
                     .collect();
-                index.build(&items);
+                index.build(&items)?;
                 index.save().ok(); // Persist after migration build
             }
         }

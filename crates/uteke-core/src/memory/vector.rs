@@ -96,6 +96,7 @@ impl VectorIndex {
     }
 
     /// Save index and key mappings to disk.
+    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
     pub fn save(&mut self) -> Result<(), Error> {
         if let Some(ref path) = self.path {
             let path_str = path.to_string_lossy().to_string();
@@ -103,14 +104,13 @@ impl VectorIndex {
                 .save(&path_str)
                 .map_err(|e| Error::embed("save vector index", e))?;
 
-            // Save key→id mapping as sidecar file
+            // Save key→id mapping as sidecar file using atomic write
             let mapping_path = path.with_extension("keys");
             let mut lines = Vec::new();
             for (&key, id) in &self.key_to_id {
                 lines.push(format!("{key}\t{id}"));
             }
-            std::fs::write(&mapping_path, lines.join("\n"))
-                .map_err(|e| Error::embed("save key mapping", e))?;
+            atomic_write(&mapping_path, lines.join("\n").as_bytes())?;
 
             self.dirty = false;
         }
@@ -119,7 +119,7 @@ impl VectorIndex {
 
     /// Build the index from a list of (id, embedding) pairs.
     /// Used for migration from old HNSW or full rebuild.
-    pub fn build(&mut self, items: &[(String, Vec<f32>)]) {
+    pub fn build(&mut self, items: &[(String, Vec<f32>)]) -> Result<(), Error> {
         // Reset
         let dims = if items.is_empty() {
             DEFAULT_DIMS
@@ -129,8 +129,7 @@ impl VectorIndex {
         self.index = match Self::create_index(dims) {
             Ok(idx) => idx,
             Err(e) => {
-                tracing::error!("Failed to rebuild index: {e}");
-                return;
+                return Err(e);
             }
         };
         self.key_to_id.clear();
@@ -145,20 +144,24 @@ impl VectorIndex {
         }
 
         for (id, embedding) in items {
-            self.insert(id, embedding);
+            self.insert(id, embedding)?;
         }
+        Ok(())
     }
 
     /// Insert a single item into the index.
     /// If the ID already exists, removes the old entry first to prevent duplicates.
-    pub fn insert(&mut self, id: &str, embedding: &[f32]) {
+    /// Returns error if the underlying usearch operation fails.
+    pub fn insert(&mut self, id: &str, embedding: &[f32]) -> Result<(), Error> {
         // Guard: remove old entry if ID already exists (prevents duplicate + stale slot)
         if let Some(old_key) = self.id_to_key.get(id) {
             let old_key = *old_key;
             self.key_to_id.remove(&old_key);
-            if let Err(e) = self.index.remove(old_key) {
-                tracing::warn!("Failed to remove old entry for duplicate ID {id}: {e}");
-            }
+            self.index.remove(old_key).map_err(|e| {
+                Error::embed_msg(format!(
+                    "Failed to remove old entry for duplicate ID {id}: {e}"
+                ))
+            })?;
         }
 
         let key = self.next_key;
@@ -170,16 +173,17 @@ impl VectorIndex {
         // Auto-reserve if at capacity
         if self.index.size() >= self.index.capacity() {
             let new_cap = (self.index.capacity() + 1024).max(1024);
-            if let Err(e) = self.index.reserve(new_cap) {
-                tracing::error!("Failed to reserve usearch capacity: {e}");
-            }
+            self.index.reserve(new_cap).map_err(|e| {
+                Error::embed_msg(format!("Failed to reserve usearch capacity: {e}"))
+            })?;
         }
 
-        if let Err(e) = self.index.add(key, embedding) {
-            tracing::error!("Failed to insert into usearch index: {e}");
-        }
+        self.index
+            .add(key, embedding)
+            .map_err(|e| Error::embed_msg(format!("Failed to insert into usearch index: {e}")))?;
 
         self.dirty = true;
+        Ok(())
     }
 
     /// Remove an item by memory ID. Incremental — no rebuild.
@@ -267,6 +271,17 @@ pub fn euclidean_to_cosine(distance: f32) -> f32 {
     sim.clamp(0.0, 1.0)
 }
 
+/// Atomic file write: write to temp file then rename.
+/// Prevents corruption if process crashes mid-write.
+/// POSIX guarantees rename() is atomic on the same filesystem.
+fn atomic_write(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
+    let tmp_path = path.with_extension("keys.tmp");
+    std::fs::write(&tmp_path, data).map_err(|e| Error::embed("write temp key mapping", e))?;
+    std::fs::rename(&tmp_path, path)
+        .map_err(|e| Error::embed("rename temp to final key mapping", e))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,9 +314,9 @@ mod tests {
         let norm = v3.iter().map(|x| x * x).sum::<f32>().sqrt();
         v3.iter_mut().for_each(|x| *x /= norm);
 
-        idx.insert("m1", &v1);
-        idx.insert("m2", &v2);
-        idx.insert("m3", &v3);
+        idx.insert("m1", &v1).unwrap();
+        idx.insert("m2", &v2).unwrap();
+        idx.insert("m3", &v3).unwrap();
 
         assert_eq!(idx.len(), 3);
 
@@ -317,8 +332,8 @@ mod tests {
         let v1 = make_vec(768, 0);
         let v2 = make_vec(768, 1);
 
-        idx.insert("m1", &v1);
-        idx.insert("m2", &v2);
+        idx.insert("m1", &v1).unwrap();
+        idx.insert("m2", &v2).unwrap();
 
         assert_eq!(idx.len(), 2);
 
@@ -351,8 +366,8 @@ mod tests {
             v
         };
 
-        idx.insert("mem-1", &v1);
-        idx.insert("mem-2", &v2);
+        idx.insert("mem-1", &v1).unwrap();
+        idx.insert("mem-2", &v2).unwrap();
         idx.save().unwrap();
 
         // Load from disk
@@ -376,7 +391,7 @@ mod tests {
             .collect();
 
         let mut idx = VectorIndex::new(768).unwrap();
-        idx.build(&items);
+        idx.build(&items).unwrap();
         assert_eq!(idx.len(), 10);
 
         let query = make_vec(768, 0);
