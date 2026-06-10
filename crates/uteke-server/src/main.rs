@@ -470,16 +470,26 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                         0.0
                     }
                 });
+                // Over-fetch to compensate for metadata post-filtering.
+                // When entity/category filters are present, request more results
+                // and trim after filtering.
+                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
+                let fetch_limit = if has_meta_filter {
+                    req_data.limit * 3
+                } else {
+                    req_data.limit
+                };
+
                 match uteke.recall(
                     &req_data.query,
-                    req_data.limit,
+                    fetch_limit,
                     tags_filter,
                     ns(&req_data.namespace),
                     min_score,
                 ) {
                     Ok(raw_results) => {
                         // Post-filter by entity/category metadata
-                        let results: Vec<_> = raw_results
+                        let mut results: Vec<_> = raw_results
                             .into_iter()
                             .filter(|sr| {
                                 if let Some(ent) = &req_data.entity {
@@ -506,7 +516,9 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                                 }
                                 true
                             })
-                            .collect();
+                            .collect::<Vec<_>>();
+                        // Trim to requested limit after filtering
+                        results.truncate(req_data.limit);
 
                         if results.is_empty() && min_score > 0.0 {
                             ctx.ok_response_for(
