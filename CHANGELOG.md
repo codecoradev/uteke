@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Set owner-only file permissions (0700/0600) on database and model directories (#134)
+- Add SHA256 checksum verification for downloaded ONNX model files (#134)
+- Pin expected model checksums to detect corrupted/tampered downloads
+
 ## [0.0.13] — 2026-06-10
 
 ### Added
