@@ -64,6 +64,7 @@ impl crate::Uteke {
         namespace: Option<&str>,
         memory_type: Option<&str>,
         check_contradiction: bool,
+        contradiction_threshold: f32,
     ) -> Result<(String, ContradictionResult), Error> {
         crate::validate_input(content, tags)?;
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
@@ -77,7 +78,7 @@ impl crate::Uteke {
 
         // Check for contradictions (read-only)
         let contradiction = if check_contradiction {
-            self.check_contradiction(content, &embedding, ns, 0.65)?
+            self.check_contradiction(content, &embedding, ns, contradiction_threshold)?
         } else {
             ContradictionResult {
                 contradicted: false,

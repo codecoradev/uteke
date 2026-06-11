@@ -69,7 +69,7 @@ pub(crate) fn run(
 
     if detect_contradiction {
         let (id, contradiction) = uteke
-            .remember_with_contradiction(content, &tag_refs, ns, Some(r#type), true)
+            .remember_with_contradiction(content, &tag_refs, ns, Some(r#type), true, 0.65)
             .map_err(|e| format!("Failed to store memory: {e}"))?;
         tracing::info!("Memory stored with ID: {id}");
         if cli.json {
