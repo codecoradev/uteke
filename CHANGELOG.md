@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add SHA256 checksum verification for downloaded ONNX model files (#134)
 - Pin expected model checksums to detect corrupted/tampered downloads
 
+### Added
+
+- Indonesian README translation (README.id.md) with language switcher (#277)
+- TLS & Reverse Proxy documentation page (Caddy, Nginx, Cloudflare Tunnel) (#100)
+- Crates.io metadata in all Cargo.toml files (#136)
+
 ## [0.0.13] — 2026-06-10
 
 ### Added
