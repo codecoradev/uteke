@@ -127,7 +127,9 @@ impl crate::Uteke {
                 .write()
                 .map_err(|_| Error::lock("index write lock during repair (rebuild)"))?;
             index.build(&items)?;
-            index.save().ok();
+            if let Err(e) = index.save() {
+                tracing::warn!("Failed to save index: {e}");
+            }
         }
 
         Ok(RepairReport {
@@ -223,7 +225,9 @@ impl crate::Uteke {
             for id in &ids {
                 index.remove(id);
             }
-            index.save().ok();
+            if let Err(e) = index.save() {
+                tracing::warn!("Failed to save index: {e}");
+            }
         }
 
         Ok(CleanupResult { deleted })
@@ -263,7 +267,9 @@ impl crate::Uteke {
             for id in &ids {
                 index.remove(id);
             }
-            index.save().ok();
+            if let Err(e) = index.save() {
+                tracing::warn!("Failed to save index: {e}");
+            }
         }
 
         Ok(PruneResult {
