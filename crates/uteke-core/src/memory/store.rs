@@ -67,6 +67,12 @@ pub(super) fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
 
 /// Deserialize an embedding vector from a byte blob.
 pub(super) fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
+    if blob.len() % 4 != 0 {
+        tracing::warn!(
+            "Embedding blob length ({}) is not a multiple of 4, trailing bytes will be skipped",
+            blob.len()
+        );
+    }
     blob.chunks_exact(4)
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect()
@@ -124,7 +130,10 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         .as_deref()
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.to_utc());
-    let deprecated: bool = row.get(10).unwrap_or(false);
+    let deprecated: bool = row.get(10).unwrap_or_else(|e| {
+        tracing::debug!("Failed to read deprecated field: {e}, defaulting to false");
+        false
+    });
     let valid_from_str: Option<String> = row.get(11).ok().flatten();
     let valid_from = valid_from_str
         .as_deref()

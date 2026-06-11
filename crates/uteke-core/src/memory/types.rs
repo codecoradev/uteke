@@ -218,15 +218,26 @@ pub enum MemoryType {
 }
 
 impl MemoryType {
-    /// Parse from string.
+    /// Parse from string (case-insensitive).
     pub fn from_str_opt(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "fact" => Some(Self::Fact),
-            "procedure" => Some(Self::Procedure),
-            "preference" => Some(Self::Preference),
-            "decision" => Some(Self::Decision),
-            "context" => Some(Self::Context),
-            _ => None,
+        match s {
+            "fact" | "Fact" | "FACT" => Some(Self::Fact),
+            "procedure" | "Procedure" | "PROCEDURE" => Some(Self::Procedure),
+            "preference" | "Preference" | "PREFERENCE" => Some(Self::Preference),
+            "decision" | "Decision" | "DECISION" => Some(Self::Decision),
+            "context" | "Context" | "CONTEXT" => Some(Self::Context),
+            _ => {
+                // Fallback: lowercase comparison for mixed case
+                let lower = s.to_lowercase();
+                match lower.as_str() {
+                    "fact" => Some(Self::Fact),
+                    "procedure" => Some(Self::Procedure),
+                    "preference" => Some(Self::Preference),
+                    "decision" => Some(Self::Decision),
+                    "context" => Some(Self::Context),
+                    _ => None,
+                }
+            }
         }
     }
 

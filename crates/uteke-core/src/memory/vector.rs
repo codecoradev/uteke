@@ -202,6 +202,9 @@ impl VectorIndex {
 
     /// Search for the k nearest neighbors of the query vector.
     /// Returns (memory_id, distance_f32) pairs, sorted by distance ascending.
+    /// Search for k nearest neighbors.
+    /// Note: `ef` parameter is accepted for API compatibility but not passed to
+    /// usearch v2.25.3 (Rust bindings don't expose `ef` in `search()`).
     pub fn search(&self, query: &[f32], k: usize, _ef: usize) -> Vec<(String, f32)> {
         if self.index.size() == 0 {
             return Vec::new();
@@ -265,7 +268,7 @@ impl Default for VectorIndex {
 
 /// Convert cosine distance (0..2) to cosine similarity (0..1).
 /// usearch with MetricKind::Cos returns cosine *distance* (1 - similarity).
-pub fn euclidean_to_cosine(distance: f32) -> f32 {
+pub fn cosine_distance_to_similarity(distance: f32) -> f32 {
     // usearch cosine distance = 1 - cosine_similarity
     let sim = 1.0 - distance;
     sim.clamp(0.0, 1.0)
