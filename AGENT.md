@@ -170,6 +170,23 @@ Workflow `deploy-website.yml` otomatis deploy ke Cloudflare Pages saat:
 
 Pastikan docs sudah up-to-date **sebelum** push tag rilis. Docs deploy dari branch `main`, bukan `develop`.
 
+### 10. Semua CI Checks Harus Pass — Tanpa Terkecuali
+
+Jangan pernah abaikan CI check yang gagal dengan alasan "itu external app" atau "bukan required check". Setiap merah di CI harus diinvestigasi.
+
+**Pengalaman nyata:** PR #274 punya `CodeCora` fail yang diabaikan. Ternyata Cora Review (check terpisah) menemukan 2 bug kritikal:
+1. RRF scores ≠ cosine similarity — `min_score` filter salah sasaran
+2. Server ignores `[recall]` config — behavior CLI vs server berbeda
+
+Kalau ada CI check gagal:
+1. **Baca error/log** — jangan langsung bilang "aman"
+2. **Cek apakah finding-nya valid** — trace ke kode terkait
+3. **Kalau valid** → fix dulu, jangan merge
+4. **Kalau false positive** → dokumentasikan kenapa, jangan diamkan
+5. **Jangan merge selama ada merah** — kecuali sudah yakin 100% itu noise
+
+Prinsip: **CI merah = ada masalah. Investigasi dulu, jangan asumsi.**
+
 ---
 
 ## Lessons Learned — Dari Pengalaman Nyata
