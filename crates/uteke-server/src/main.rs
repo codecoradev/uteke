@@ -430,6 +430,7 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                             ns(&req_data.namespace),
                             req_data.r#type.as_deref(),
                             true,
+                            0.65,
                         )
                         .map(|(id, _)| id)
                 } else {
