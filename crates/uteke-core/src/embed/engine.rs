@@ -1,7 +1,11 @@
 //! ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
 
 use crate::Error;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 const MODEL_DIR_NAME: &str = "embeddinggemma-q4";
 const MODEL_FILE: &str = "model_q4.onnx";
@@ -11,6 +15,23 @@ const MODEL_DIMS: usize = 768;
 const MAX_SEQ_LEN: usize = 256;
 
 const HF_REPO: &str = "onnx-community/embeddinggemma-300m-ONNX";
+
+/// Expected SHA256 checksums for model files.
+/// Pin these to prevent corrupted/tampered downloads from causing cryptic ONNX failures.
+const MODEL_CHECKSUMS: &[(&str, &str)] = &[
+    (
+        "model_q4.onnx",
+        "ad1dfee81a70f7944b9b9d1cc6e48075b832881cf33fab2f2b248be78f3f0043",
+    ),
+    (
+        "model_q4.onnx_data",
+        "599962c3143b040de2dd05e5975be3e9091dd067cacc6a8f7186e3203bab9e02",
+    ),
+    (
+        "tokenizer.json",
+        "4dda02faaf32bc91031dc8c88457ac272b00c1016cc679757d1c441b248b9c47",
+    ),
+];
 
 /// ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
 pub struct EmbeddingEngine {
@@ -28,6 +49,13 @@ impl EmbeddingEngine {
         let onnx_dir = model_dir.join("onnx");
         std::fs::create_dir_all(&onnx_dir).map_err(|e| Error::embed("create onnx directory", e))?;
 
+        // Set model directory permissions to owner-only (0700) on Unix
+        #[cfg(unix)]
+        {
+            std::fs::set_permissions(&model_dir, std::fs::Permissions::from_mode(0o700)).ok();
+            std::fs::set_permissions(&onnx_dir, std::fs::Permissions::from_mode(0o700)).ok();
+        }
+
         let model_path = onnx_dir.join(MODEL_FILE);
         let model_data_path = onnx_dir.join(MODEL_DATA_FILE);
         let tokenizer_path = model_dir.join(TOKENIZER_FILE);
@@ -39,12 +67,15 @@ impl EmbeddingEngine {
         // Download model files if not present
         if !model_path.exists() {
             download_hf_file(HF_REPO, "onnx/model_q4.onnx", &model_path)?;
+            verify_checksum(&model_path, "model_q4.onnx")?;
         }
         if !model_data_path.exists() {
             download_hf_file(HF_REPO, "onnx/model_q4.onnx_data", &model_data_path)?;
+            verify_checksum(&model_data_path, "model_q4.onnx_data")?;
         }
         if !tokenizer_path.exists() {
             download_hf_file(HF_REPO, "tokenizer.json", &tokenizer_path)?;
+            verify_checksum(&tokenizer_path, "tokenizer.json")?;
         }
 
         // Load ONNX session
@@ -183,5 +214,45 @@ fn download_hf_file(
     std::fs::rename(&tmp_path, local_path)
         .map_err(|e| Error::embed("rename temp to final path", e))?;
 
+    // Set file permissions to owner-only (0600) on Unix
+    set_owner_only_permissions(local_path);
+
     Ok(())
+}
+
+/// Verify SHA256 checksum of a downloaded model file.
+fn verify_checksum(path: &std::path::Path, filename: &str) -> Result<(), Error> {
+    let expected = MODEL_CHECKSUMS
+        .iter()
+        .find(|(name, _)| name == &filename)
+        .map(|(_, hash)| *hash)
+        .ok_or_else(|| Error::embed_msg(format!("No checksum pinned for {filename}")))?;
+
+    let data = std::fs::read(path).map_err(|e| Error::embed("read file for checksum", e))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    let actual = format!("{:x}", hasher.finalize());
+
+    if actual != expected {
+        // Delete corrupted file so next run re-downloads
+        std::fs::remove_file(path).ok();
+        return Err(Error::embed_msg(format!(
+            "SHA256 checksum mismatch for {filename}.\n\
+             Expected: {expected}\n\
+             Actual:   {actual}\n\
+             File deleted. Re-run to re-download."
+        )));
+    }
+    tracing::debug!("Checksum verified: {filename}");
+    Ok(())
+}
+
+/// Set file permissions to owner-only (0600) on Unix systems.
+fn set_owner_only_permissions(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("Failed to set permissions on {}: {e}", path.display());
+        }
+    }
 }
