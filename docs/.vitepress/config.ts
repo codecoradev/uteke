@@ -30,6 +30,7 @@ export default defineConfig({
           { text: 'Multi-Agent Isolation', link: '/multi-agent' },
           { text: 'Pi Extension', link: '/extensions' },
           { text: 'Architecture', link: '/architecture' },
+          { text: 'TLS & Reverse Proxy', link: '/tls' },
           { text: 'Roadmap', link: '/roadmap' },
         ],
       },
