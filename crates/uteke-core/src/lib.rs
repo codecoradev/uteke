@@ -78,6 +78,9 @@ use memory::VectorIndex;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 /// Configuration for memory tier thresholds.
 ///
 /// Controls how memories are classified into hot/warm/cold tiers
@@ -258,10 +261,19 @@ fn resolve_db_path(db_path: &Path) -> Result<String, Error> {
 
     if db_path.is_dir() || db_path.extension().is_none() {
         std::fs::create_dir_all(db_path).map_err(Error::Io)?;
+        // Set directory permissions to owner-only (0700) on Unix
+        #[cfg(unix)]
+        {
+            let p: &std::path::Path = db_path;
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).ok();
+        }
         Ok(db_path.join("uteke.db").to_string_lossy().to_string())
     } else {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(Error::Io)?;
+            // Set directory permissions to owner-only (0700) on Unix
+            #[cfg(unix)]
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).ok();
         }
         Ok(db_path.to_string_lossy().to_string())
     }
