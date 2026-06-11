@@ -197,6 +197,8 @@ struct ReqCtx {
     auth_token_hash: Option<[u8; 32]>,
     /// Allowed CORS origins from config. Empty = wildcard.
     cors_origins: Vec<String>,
+    /// Recall threshold config from [recall] section in uteke.toml.
+    recall_config: Option<RecallFileSection>,
 }
 
 impl ReqCtx {
@@ -459,14 +461,22 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                 } else {
                     Some(tag_refs.as_slice())
                 };
-                // Resolve threshold: min_score > strict (→ from config or 0.5) > 0.0
-                // Note: server uses its own config loading which doesn't include
-                // [recall] section. Fallback to 0.5 for strict mode.
-                // Users should prefer --min for explicit control via server API.
+                // Resolve threshold: min_score > strict (→ from config or default 0.5) > 0.0
+                // Server reads [recall] section from uteke.toml, matching CLI behavior.
                 let min_score = if req_data.strict {
-                    req_data.min_score.unwrap_or(crate::STRICT_THRESHOLD)
+                    req_data.min_score.unwrap_or(
+                        ctx.recall_config
+                            .as_ref()
+                            .and_then(|r| r.min_score_strict)
+                            .unwrap_or(STRICT_THRESHOLD as f64) as f32,
+                    )
                 } else {
-                    req_data.min_score.unwrap_or(0.0)
+                    req_data.min_score.unwrap_or(
+                        ctx.recall_config
+                            .as_ref()
+                            .and_then(|r| r.min_score)
+                            .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
+                    )
                 };
                 // Strategy: when entity/category filters are present,
                 // recall WITHOUT min_score to avoid discarding valid matches
@@ -692,9 +702,11 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// Default strict mode threshold for server recall.
-/// Kept as a constant since server has its own config loading.
-/// Value matches CLI default `min_score_strict = 0.5`.
+/// Used as fallback when [recall] min_score_strict is not configured.
 const STRICT_THRESHOLD: f32 = 0.5;
+/// Default minimum score for server recall.
+/// Used as fallback when [recall] min_score is not configured.
+const DEFAULT_MIN_SCORE: f32 = 0.0;
 
 fn main() {
     // Parse CLI args — these override config
@@ -865,6 +877,7 @@ fn main() {
     let ctx = ReqCtx {
         auth_token_hash,
         cors_origins: cors_origins.clone(),
+        recall_config: config.recall.clone(),
     };
 
     // Start server
@@ -931,6 +944,15 @@ fn main() {
 #[derive(serde::Deserialize, Default)]
 struct ServerFileConfig {
     server: Option<ServerFileSection>,
+    recall: Option<RecallFileSection>,
+}
+
+#[derive(serde::Deserialize, Default, Clone)]
+struct RecallFileSection {
+    /// Minimum cosine similarity score for recall results.
+    min_score: Option<f64>,
+    /// Strict mode threshold (higher, for critical queries).
+    min_score_strict: Option<f64>,
 }
 
 #[derive(serde::Deserialize, Default)]

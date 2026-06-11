@@ -234,6 +234,9 @@ impl crate::Uteke {
             RecallStrategy::Fts5 => {
                 self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)
             }
+            // Hybrid (RRF): min_score is passed but not used for filtering.
+            // RRF scores are rank-based, not cosine similarity. Applying a
+            // cosine threshold to RRF scores would incorrectly filter results.
             RecallStrategy::Hybrid => {
                 self.recall_rrf(query, limit, tags_filter, namespace, min_score)
             }
@@ -398,14 +401,11 @@ impl crate::Uteke {
             })
             .collect();
 
-        // Filter by minimum score (on normalized RRF score 0..1).
-        // Note: RRF normalized scores are not directly comparable to cosine
-        // similarity. A lower min_score may be needed for hybrid recall.
-        // Consider using a separate recall.min_score config for hybrid vs vector.
-        let mut results = results;
-        if min_score > 0.0 {
-            results.retain(|r| r.score >= min_score);
-        }
+        // NOTE: min_score is NOT applied here. RRF normalized scores are
+        // rank-based (0..1) and not directly comparable to cosine similarity.
+        // Applying a cosine threshold to RRF scores would incorrectly filter
+        // out valid results. The caller (recall_hybrid) handles threshold
+        // filtering at the appropriate level.
 
         // Touch access for returned results
         for r in &results {
