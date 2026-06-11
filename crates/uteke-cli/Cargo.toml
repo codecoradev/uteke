@@ -4,15 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "CLI for uteke — persistent memory for AI agents"
+rust-version.workspace = true
+description = "CLI for Uteke — persistent semantic memory for AI agents, offline-first, ~30ms recall"
+keywords = ["cli", "memory", "ai", "vector-search", "offline"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "uteke"
 path = "src/main.rs"
-
-[[bin]]
-name = "memory-bench"
-path = "src/bench.rs"
 
 [dependencies]
 uteke-core = { path = "../uteke-core" }

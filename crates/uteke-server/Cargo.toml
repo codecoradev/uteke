@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version.workspace = true
 description = "HTTP server for uteke — persistent warm memory for AI agents"
+keywords = ["server", "memory", "ai", "http", "embedding"]
+categories = ["web-programming::http-server", "development-tools"]
 
 [[bin]]
 name = "uteke-serve"

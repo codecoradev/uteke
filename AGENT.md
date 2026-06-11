@@ -1,25 +1,25 @@
 # Uteke — Agent Context
 
-> File ini adalah konteks permanen untuk AI agent yang bekerja di repository ini. Baca sepenuhnya sebelum mulai coding.
+> This file is permanent context for AI agents working in this repository. Read it fully before you start coding.
 
 ## Project Overview
 
-**Uteke** adalah local-first semantic memory engine untuk AI agents. Single Rust binary, fully offline, ~30ms recall. Tidak butuh API key, Docker, atau cloud service.
+**Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
-- **Repo:** `codecoradev/uteke` (remote GitHub), local di `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Versi:** 0.0.13
-- **Lisensi:** Apache 2.0
-- **Branch utama:** `develop` ( semua PR ke sini), `main` (release)
+- **Repo:** `codecoradev/uteke` (remote GitHub), local at `/Users/mis-puragroup/development/riset-ai/uteke`
+- **Version:** 0.0.13
+- **License:** Apache 2.0
+- **Main branches:** `develop` (all PRs go here), `main` (release)
 
 ## Architecture
 
-### Workspace Crates (3 crate)
+### Workspace Crates (3 crates)
 
-| Crate | Path | Fungsi |
-|-------|------|--------|
+| Crate | Path | Purpose |
+|-------|------|---------|
 | `uteke-core` | `crates/uteke-core/` | Library — storage, embedding, vector search, FTS5, operations |
 | `uteke-cli` | `crates/uteke-cli/` | CLI binary — clap commands, JSON output, server proxy |
-| `uteke-server` | `crates/uteke-server/` | HTTP server — persistent daemon untuk fast agent access |
+| `uteke-server` | `crates/uteke-server/` | HTTP server — persistent daemon for fast agent access |
 
 ### Module Structure
 
@@ -63,9 +63,9 @@ crates/uteke-server/src/
 
 ### Key Components
 
-| Komponen | Teknologi | Detail |
-|----------|-----------|--------|
-| Vector Index | usearch v2.25.3 | Persistent HNSW, `RwLock` untuk concurrent reads |
+| Component | Technology | Details |
+|-----------|------------|---------|
+| Vector Index | usearch v2.25.3 | Persistent HNSW, `RwLock` for concurrent reads |
 | Full-Text Search | SQLite FTS5 | Virtual table, phrase + token-OR fallback |
 | Hybrid Search | RRF (k=60) | Reciprocal Rank Fusion merges vector + FTS5 results |
 | Storage | SQLite (rusqlite) | WAL mode, schema v2 |
@@ -75,36 +75,36 @@ crates/uteke-server/src/
 
 ### Schema Versioning
 
-- Tabel `schema_version` dengan integer counter
-- Saat ini: **v2** (FTS5 migration)
-- Auto-migration saat upgrade, zero data loss
+- `schema_version` table with integer counter
+- Current: **v2** (FTS5 migration)
+- Auto-migration on upgrade, zero data loss
 
 ---
 
-## Critical Rules — WAJIB DIIKUTI
+## Critical Rules — MUST FOLLOW
 
-### 1. Selalu `cargo fmt` Sebelum Commit
+### 1. Always `cargo fmt` Before Commit
 
-CI menjalankan `cargo fmt --check` dan **akan gagal** kalau ada formatting issue. Satu spasi atau newline salah cukup untuk gagalkan PR.
+CI runs `cargo fmt --check` and **will fail** if there are formatting issues. A single space or newline mistake is enough to fail the PR.
 
 ```bash
-# SELALU jalankan sebelum commit
+# ALWAYS run before commit
 cargo fmt
 ```
 
-### 2. Jalankan Cora Review Lokal Sebelum Push
+### 2. Run Cora Review Locally Before Push
 
-Cora CLI menemukan **bug real** di proyek ini (BM25 score selalu 0, RRF normalization salah, metadata hilang di server mode). Jangan tunggu CI.
+Cora CLI has found **real bugs** in this project (BM25 score always 0, RRF normalization wrong, metadata missing in server mode). Don't wait for CI.
 
 ```bash
 cora review --base origin/develop --format text
 ```
 
-Kalau Cora menemukan error-level issues, **fix dulu** baru push.
+If Cora finds error-level issues, **fix first** before pushing.
 
 ### 3. Clippy = Error
 
-CI menjalankan `cargo clippy -- -D warnings`. Semua warning dianggap error.
+CI runs `cargo clippy -- -D warnings`. All warnings are treated as errors.
 
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
@@ -112,31 +112,31 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### 4. Branch Protection Rules
 
-- **Develop branch:** semua perubahan harus lewat PR
-- **10 CI checks** harus pass: Build, Check, Clippy, Format, Test, Cora Review, CodeRabbit, Cargo Audit, Trivy FS Scan, GitGuardian
-- **Tidak bisa** push langsung ke develop
+- **Develop branch:** all changes must go through PR
+- **10 CI checks** must pass: Build, Check, Clippy, Format, Test, Cora Review, CodeRabbit, Cargo Audit, Trivy FS Scan, GitGuardian
+- **Cannot** push directly to develop
 
-### 5. Jangan Pernah `.unwrap()` di Production Code
+### 5. Never `.unwrap()` in Production Code
 
-Gunakan `.expect("pesan yang jelas")` atau pattern `if let` / `match`. `.unwrap()` tanpa context membuat debugging mustahil kalau panic.
+Use `.expect("clear message")` or `if let` / `match` patterns. `.unwrap()` without context makes debugging impossible if it panics.
 
 ```rust
-// ❌ Jangan
+// ❌ Don't
 memories.remove(0).unwrap()
 
-// ✅ Benar
+// ✅ Correct
 memories.remove(0).expect("guaranteed by prior count check")
 
-// ✅ Lebih baik
+// ✅ Better
 if let Some(memory) = memories.into_iter().next() { ... }
 ```
 
 ### 6. Atomic File Writes
 
-Untuk semua file I/O yang menulis data penting (index, config, model), gunakan pattern:
+For all file I/O that writes important data (index, config, model), use this pattern:
 
 ```rust
-// Tulis ke .tmp dulu, lalu rename (atomic di POSIX)
+// Write to .tmp first, then rename (atomic on POSIX)
 let tmp_path = path.with_extension("tmp");
 fs::write(&tmp_path, &data)?;
 fs::rename(&tmp_path, &path)?;
@@ -144,128 +144,128 @@ fs::rename(&tmp_path, &path)?;
 
 ### 7. SQLite-First Dual-Write Pattern
 
-- `remember()`: Tulis ke SQLite **dulu**, baru vector index
-- `forget()`: Acquire index lock **dulu**, baru SQLite delete
-- Pattern ini mencegah inconsistency antara DB dan index
+- `remember()`: Write to SQLite **first**, then vector index
+- `forget()`: Acquire index lock **first**, then SQLite delete
+- This pattern prevents inconsistency between DB and index
 
-### 8. Selalu Update CHANGELOG dan Docs Sebelum Commit
+### 8. Always Update CHANGELOG and Docs Before Commit
 
-Setiap commit yang menambah/mengubah fitur atau fix **wajib** diikuti update:
+Every commit that adds/changes a feature or fix **must** include updates to:
 
-1. **CHANGELOG.md** — Tambah entry di bawah `[Unreleased]` (Added/Fixed/Changed)
-2. **docs/cli-reference.md** — Kalau ada CLI flag baru atau behavior berubah
-3. **docs/roadmap.md** — Kalau ada issue yang selesai
-4. **README.md** — Kalau ada perubahan signifikan di features atau quick start
-5. **AGENT.md** — Kalau ada perubahan arsitektur, limitation baru, atau lesson learned
-6. **Version badge** — Kalau akan rilis, update badge di README
+1. **CHANGELOG.md** — Add entry under `[Unreleased]` (Added/Fixed/Changed)
+2. **docs/cli-reference.md** — If there's a new CLI flag or behavior change
+3. **docs/roadmap.md** — If an issue is completed
+4. **README.md** — If there are significant changes to features or quick start
+5. **AGENT.md** — If there are architecture changes, new limitations, or lessons learned
+6. **Version badge** — If releasing, update badge in README
 
-Dokumentasi yang outdated lebih berbahaya dari tidak ada dokumentasi.
+Outdated documentation is more dangerous than no documentation.
 
-### 9. VitePress Docs Deploy Otomatis Saat Rilis
+### 9. VitePress Docs Auto-Deploy on Release
 
-Workflow `deploy-website.yml` otomatis deploy ke Cloudflare Pages saat:
-- Push ke `main` (setelah release workflow sync dari develop)
-- Push tag `v*` (rilis baru)
+The `deploy-website.yml` workflow automatically deploys to Cloudflare Pages when:
+- Push to `main` (after release workflow syncs from develop)
+- Push tag `v*` (new release)
 - Manual trigger via GitHub UI
 
-Pastikan docs sudah up-to-date **sebelum** push tag rilis. Docs deploy dari branch `main`, bukan `develop`.
+Make sure docs are up-to-date **before** pushing a release tag. Docs deploy from the `main` branch, not `develop`.
 
-### 10. Semua CI Checks Harus Pass — Tanpa Terkecuali
+### 10. All CI Checks Must Pass — No Exceptions
 
-Jangan pernah abaikan CI check yang gagal dengan alasan "itu external app" atau "bukan required check". Setiap merah di CI harus diinvestigasi.
+Never ignore a failing CI check with excuses like "it's an external app" or "not a required check." Every red CI check must be investigated.
 
-**Pengalaman nyata:** PR #274 punya `CodeCora` fail yang diabaikan. Ternyata Cora Review (check terpisah) menemukan 2 bug kritikal:
-1. RRF scores ≠ cosine similarity — `min_score` filter salah sasaran
-2. Server ignores `[recall]` config — behavior CLI vs server berbeda
+**Real experience:** PR #274 had a `CodeCora` failure that was ignored. It turned out Cora Review (a separate check) found 2 critical bugs:
+1. RRF scores ≠ cosine similarity — `min_score` filter was targeting the wrong thing
+2. Server ignores `[recall]` config — CLI vs server behavior differed
 
-Kalau ada CI check gagal:
-1. **Baca error/log** — jangan langsung bilang "aman"
-2. **Cek apakah finding-nya valid** — trace ke kode terkait
-3. **Kalau valid** → fix dulu, jangan merge
-4. **Kalau false positive** → dokumentasikan kenapa, jangan diamkan
-5. **Jangan merge selama ada merah** — kecuali sudah yakin 100% itu noise
+If a CI check fails:
+1. **Read the error/log** — don't immediately say "it's safe"
+2. **Check if the finding is valid** — trace to the related code
+3. **If valid** → fix first, don't merge
+4. **If false positive** → document why, don't stay silent
+5. **Don't merge while there's red** — unless 100% sure it's noise
 
-Prinsip: **CI merah = ada masalah. Investigasi dulu, jangan asumsi.**
+Principle: **Red CI = there's a problem. Investigate first, don't assume.**
 
 ---
 
-## Lessons Learned — Dari Pengalaman Nyata
+## Lessons Learned — From Real Experience
 
-### FTS5 + Vector Hybrid Search Non-Trivial
+### FTS5 + Vector Hybrid Search Is Non-Trivial
 
-Menggabungkan dua sistem ranking itu tricky:
+Combining two ranking systems is tricky:
 - **Vector cosine similarity:** range 0..1
-- **BM25 (FTS5):** negatif unbounded (bisa -5, -10, dst)
-- **Jangan clamp BM25 ke 0..1 langsung** — hancurkan ranking
-- Gunakan **RRF (Reciprocal Rank Fusion)** — rank-based, tidak peduli scale asli
-- Kalau perlu normalize ke 0..1, gunakan sigmoid: `1.0 / (1.0 + (-score).exp())`
+- **BM25 (FTS5):** negative unbounded (can be -5, -10, etc.)
+- **Don't clamp BM25 to 0..1 directly** — it destroys ranking
+- Use **RRF (Reciprocal Rank Fusion)** — rank-based, doesn't care about original scale
+- If you need to normalize to 0..1, use sigmoid: `1.0 / (1.0 + (-score).exp())`
 
-### RwLock vs Mutex — Pilih Berdasarkan Workload
+### RwLock vs Mutex — Choose Based on Workload
 
-- `RwLock` untuk **read-heavy** (vector index: recall/search jauh lebih sering dari remember/forget)
-- `Mutex` kalau operasi butuh `&mut self` (ONNX tokenizer)
-- **Jangan asal ganti Mutex → RwLock.** Profile dulu.
+- `RwLock` for **read-heavy** workloads (vector index: recall/search far more frequent than remember/forget)
+- `Mutex` when the operation needs `&mut self` (ONNX tokenizer)
+- **Don't blindly swap Mutex → RwLock.** Profile first.
 
-### Score Normalization Harus Presisi
+### Score Normalization Must Be Precise
 
-Bug terkecil di score calculation bisa membuat fitur tidak berfungsi sama sekali:
-- `.min(1.0)` vs `.clamp(0.0, 1.0)` — beda besar kalau ada nilai negatif
-- Selalu tulis **unit test** yang memverifikasi score range
+The smallest bug in score calculation can break a feature entirely:
+- `.min(1.0)` vs `.clamp(0.0, 1.0)` — huge difference when negative values exist
+- Always write **unit tests** that verify score ranges
 
 ### Server Mode = Hidden Surface Area
 
-Kalau menambah parameter baru di CLI, **jangan lupa update server mode juga.** Bug #264: `--entity`, `--category`, `--meta` ditambahkan di CLI tapi lupa di server endpoint.
+When adding new parameters to the CLI, **don't forget to update server mode too.** Bug #264: `--entity`, `--category`, `--meta` were added to CLI but forgotten in the server endpoint.
 
-**Checklist kalau tambah CLI flag baru:**
+**Checklist when adding a new CLI flag:**
 1. Command module (`commands/remember.rs`)
 2. Server endpoint (`commands/server.rs` — proxy body)
 3. Server handler (`uteke-server/src/main.rs`)
 4. API docs
 5. CLI reference docs
 
-### Metadata di JSON Blob — Post-Filter, Bukan SQL Filter
+### Metadata in JSON Blob — Post-Filter, Not SQL Filter
 
-Entity, category, dan meta disimpan sebagai JSON di kolom `metadata`. Ini berarti:
-- **Filtering dilakukan di Rust**, bukan SQL WHERE clause
-- Tidak ada index pada field individual di dalam JSON
-- Untuk dataset besar (>10K), pertimbangkan kolom terpisah
+Entity, category, and meta are stored as JSON in the `metadata` column. This means:
+- **Filtering is done in Rust**, not SQL WHERE clause
+- No index on individual fields inside JSON
+- For large datasets (>10K), consider separate columns
 
-### Unit Tests Tidak Cukup — Stress Test Manual Wajib
+### Unit Tests Are Not Enough — Manual Stress Testing Is Required
 
-Unit tests (107) tidak cover:
-- Bulk insert 100+ memories (performance regression?)
+Unit tests (107) don't cover:
+- Bulk insert of 100+ memories (performance regression?)
 - Concurrent access via server mode
-- Unicode / special characters di content
-- Schema migration dari DB versi lama
-- Crash recovery (kill di tengah write)
+- Unicode / special characters in content
+- Schema migration from old DB version
+- Crash recovery (kill during write)
 
-Jalankan stress test manual setelah perubahan signifikan.
+Run manual stress tests after significant changes.
 
-### Dokumentasi Cepat Outdated
+### Documentation Gets Outdated Quickly
 
-CONTRIBUTING.md pernah bilang "2 crates" padahal sudah 3 sejak v0.0.4. Badge version tertinggal. **Selalu update docs sebelum commit** — lihat Critical Rule #8.
+CONTRIBUTING.md once said "2 crates" when it had been 3 since v0.0.4. Version badge was behind. **Always update docs before commit** — see Critical Rule #8.
 
 ---
 
-## Workflow yang Terbukti Berhasil
+## Proven Workflow
 
 ### Per-Issue Workflow
 
 ```
  1. git checkout develop && git pull
  2. git checkout -b <type>/<short-description>
- 3. Implementasi (baca modul terkait dulu)
+ 3. Implementation (read related modules first)
  4. cargo fmt && cargo clippy && cargo test
  5. cora review --base origin/develop --format text  (local review)
- 6. Fix semua findings dari Cora
- 7. Update CHANGELOG.md (tambah di [Unreleased])
- 8. Update docs/ kalau ada fitur/flag baru (lihat Critical Rule #8)
+ 6. Fix all Cora findings
+ 7. Update CHANGELOG.md (add under [Unreleased])
+ 8. Update docs/ if there are new features/flags (see Critical Rule #8)
  9. git add -A && git commit -m "type: description"
 10. git push origin <branch>
 11. gh pr create --base develop
 12. Monitor CI (gh pr checks <number>)
 13. Review PR comments (Cora, CodeRabbit)
-14. Fix kalau ada findings baru
+14. Fix if there are new findings
 15. gh pr merge <number> --squash --delete-branch
 16. Pick next issue
 ```
@@ -273,10 +273,10 @@ CONTRIBUTING.md pernah bilang "2 crates" padahal sudah 3 sejak v0.0.4. Badge ver
 ### Branch Naming Convention
 
 ```
-feat/<fitur-baru>
-fix/<bug-yang-diperbaiki>
-docs/<apa-yang-diupdate>
-refactor/<apa-yang-di-refactor>
+feat/<new-feature>
+fix/<bug-being-fixed>
+docs/<what-was-updated>
+refactor/<what-was-refactored>
 ```
 
 ### Commit Message Convention
@@ -287,7 +287,7 @@ type: description (#issue-number)
 type: feat, fix, docs, refactor, test, chore
 ```
 
-Contoh:
+Examples:
 ```
 feat: add FTS5 hybrid search with RRF (#250)
 fix: BM25 score always returning 0.0
@@ -298,17 +298,17 @@ docs: update CLI reference for metadata flags
 
 ## Known Limitations
 
-| Limitasi | Status | Detail |
-|----------|--------|--------|
-| usearch `ef` parameter tidak bisa di-set | External | usearch v2.25.3 Rust bindings tidak expose `ef` di `search()` |
-| Embedder butuh `Mutex` | Architectural | ONNX tokenizer internal pakai `&mut self` |
-| Metadata filtering post-filter | Design | Entity/category/meta di JSON blob, bukan SQL column |
-| Consolidate O(n²) | Algorithm | Pairwise cosine, lambat di >1000 memories |
-| FTS5-only mode score placeholder | Design | BM25 tidak bisa normalize ke 0..1, actual ranking via RRF |
+| Limitation | Status | Details |
+|------------|--------|---------|
+| usearch `ef` parameter cannot be set | External | usearch v2.25.3 Rust bindings don't expose `ef` in `search()` |
+| Embedder requires `Mutex` | Architectural | ONNX tokenizer internally uses `&mut self` |
+| Metadata filtering is post-filter | Design | Entity/category/meta in JSON blob, not SQL column |
+| Consolidate is O(n²) | Algorithm | Pairwise cosine, slow at >1000 memories |
+| FTS5-only mode score placeholder | Design | BM25 can't normalize to 0..1, actual ranking via RRF |
 
 ---
 
-## Reference Cepat
+## Quick Reference
 
 ```bash
 # Build

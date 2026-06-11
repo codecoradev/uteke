@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description.workspace = true
+rust-version.workspace = true
+keywords = ["memory", "ai", "embedding", "vector-search", "semantic"]
+categories = ["science", "data-structures"]
+readme = "../../README.md"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
