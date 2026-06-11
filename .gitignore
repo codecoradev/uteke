@@ -12,3 +12,5 @@ milestone*.md
 # Runtime index files
 uteke_index.keys
 uteke_index.usearch
+.fusion/
+progress.md

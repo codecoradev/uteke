@@ -13,7 +13,7 @@
 **Current State (post-PR #174):**
 - README: ✅ Overhauled — benefit-first hero, updated comparison (Mem0/Letta/Zep), install.sh quick start, audience fit table, performance highlights
 - Website: ✅ Refreshed — version badge v0.0.8, install.sh CTA, social proof section, updated comparison table, OG meta tags
-- Install script: sudah ada (`install.sh`)
+- Install script: already exists (`install.sh`)
 
 ---
 
@@ -21,11 +21,11 @@
 
 > **Merged in PR #174.** All 6 tasks executed in a single squash commit.
 
-README adalah halaman depan. Developer lihat README dulu sebelum star/download. Harus membuat orang langsung "I need this".
+README is the front page. Developers see the README first before starring/downloading. It must make people immediately think "I need this".
 
 ### Task 1.1: Refresh README Hero + Tagline ✅
 
-**Objective:** Hook pembaca dalam 5 detik pertama
+**Objective:** Hook the reader in the first 5 seconds
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/README.md:1-18` (hero section)
@@ -54,7 +54,7 @@ With:
 ```
 
 **Key changes:**
-- Tagline: benefit-first ("Give your AI a memory") bukan descriptive ("memory for AI agents")
+- Tagline: benefit-first ("Give your AI a memory") not descriptive ("memory for AI agents")
 - Sub: 3 core selling points compressed — offline, zero config, fast
 - Remove emoji badge, keep CI + license + Rust version badges
 - Update version badge: `v0.0.8`
@@ -65,7 +65,7 @@ With:
 
 ### Task 1.2: Fix Quick Start — Use install.sh ✅
 
-**Objective:** First install experience harus one-liner, bukan `git clone + cargo install`
+**Objective:** First install experience must be a one-liner, not `git clone + cargo install`
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/README.md:20-44` (Quick Start section)
@@ -96,15 +96,15 @@ uteke stats
 
 **Key changes:**
 - Primary CTA: `curl | sh` (one-liner, instant gratification)
-- `git clone + cargo install` dipindah ke INSTALL.md sebagai alternative
-- Tambah link ke GitHub Releases + Docker (GHCR)
-- Contoh `recall` pakai natural question ("when do we deploy?") — bukan keyword
+- `git clone + cargo install` moved to INSTALL.md as an alternative
+- Add links to GitHub Releases + Docker (GHCR)
+- `recall` example uses a natural question ("when do we deploy?") — not a keyword
 
 ---
 
 ### Task 1.3: Update Comparison Table ✅
 
-**Objective:** Comparison table harus akurat vs kompetitor 2026 yang sebenarnya
+**Objective:** Comparison table must be accurate vs actual 2026 competitors
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/README.md:47-62` (comparison table)
@@ -133,16 +133,16 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 ```
 
 **Key changes:**
-- Kompetitor yang relevan 2026: Mem0 (57K ⭐), Letta, Zep
-- Tambah row: "API keys needed" dan "Privacy" — ini Uteke's killer differentiator
-- Tambah row: "Recall speed" — angka konkret (30ms vs "network")
-- Remove ChromaDB (bukan memory tool, vector DB)
+- Relevant 2026 competitors: Mem0 (57K ⭐), Letta, Zep
+- Add row: "API keys needed" and "Privacy" — these are Uteke's killer differentiators
+- Add row: "Recall speed" — concrete number (30ms vs "network")
+- Remove ChromaDB (not a memory tool, vector DB)
 
 ---
 
 ### Task 1.4: Add "Who is this for" Section ✅
 
-**Objective:** Orang harus langsung tahu apakah Uteke buat mereka
+**Objective:** People must immediately know whether Uteke is for them
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/README.md` (add after "Use Cases" section, ~line 87)
@@ -167,7 +167,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ### Task 1.5: Refresh Performance Section ✅
 
-**Objective:** Performance section harus punya "wow" factor dan konteks
+**Objective:** Performance section must have a "wow" factor and context
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/README.md:230-276` (Performance section)
@@ -198,7 +198,7 @@ For real-time agent use, run `uteke-serve` — model stays in memory, 75x faster
 
 ### Task 1.6: Refresh Roadmap + Footer ✅
 
-**Objective:** Roadmap harus menunjukkan momentum dan credibility
+**Objective:** Roadmap must show momentum and credibility
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/README.md:370-392` (Roadmap + Footer)
@@ -234,11 +234,11 @@ Demand-gated — we build what people actually use.
 
 > **Merged in PR #174.** All 5 tasks executed alongside Phase 1 in the same commit.
 
-Website sudah ada dan bagus, tapi ada beberapa hal yang harus di-fix sebelum go-public.
+The website already exists and is good, but there are a few things that need to be fixed before going public.
 
 ### Task 2.1: Fix Version Badge + Install CTA ✅
 
-**Objective:** Version badge dan install command harus current
+**Objective:** Version badge and install command must be current
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/website/src/routes/+page.svelte` (hero section)
@@ -254,7 +254,7 @@ Website sudah ada dan bagus, tapi ada beberapa hal yang harus di-fix sebelum go-
 
 ### Task 2.2: Add "Trusted By" / Social Proof Section ✅
 
-**Objective:** Tambah credibility signal untuk visitor baru
+**Objective:** Add credibility signals for new visitors
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/website/src/routes/+page.svelte`
@@ -327,7 +327,7 @@ Added rows: "API Keys", "Privacy", "Recall Speed" — these are Uteke's stronges
 
 ### Task 2.4: Add OG Image + Meta Tags ✅
 
-**Objective:** Saat di-share ke Twitter/LinkedIn/Discord, preview card harus menarik
+**Objective:** When shared to Twitter/LinkedIn/Discord, the preview card must be attractive
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/website/src/routes/+page.svelte` (svelte:head)
@@ -350,13 +350,13 @@ Added rows: "API Keys", "Privacy", "Recall Speed" — these are Uteke's stronges
 </svelte:head>
 ```
 
-**OG Image:** Generate dengan `image_generate` tool — dark theme, text: "uteke" + tagline + "Offline · Zero Config · 30ms Recall". Size 1200x630.
+**OG Image:** Generate with `image_generate` tool — dark theme, text: "uteke" + tagline + "Offline · Zero Config · 30ms Recall". Size 1200x630.
 
 ---
 
 ### Task 2.5: Fix Hero Headline for Clarity ✅
 
-**Objective:** Current headline "Your AI forgets everything. Fix that." bagus tapi kurang jelas WHAT Uteke is
+**Objective:** Current headline "Your AI forgets everything. Fix that." is good but unclear about WHAT Uteke is
 
 **Files:**
 - Modify: `/opt/data/repos/uteke/website/src/routes/+page.svelte` (hero h1 + subheadline)
@@ -379,7 +379,7 @@ Added rows: "API Keys", "Privacy", "Recall Speed" — these are Uteke's stronges
 </p>
 ```
 
-**Key change:** "Fix that" → "Give it a memory" (more descriptive). Sub bold-kan angka-angka key.
+**Key change:** "Fix that" → "Give it a memory" (more descriptive). Subheadline bolds the key numbers.
 
 ---
 
@@ -422,7 +422,7 @@ https://github.com/ajianaz/uteke
 
 ### Task 3.3: Record Terminal Demo (asciinema/vhs) 🔜
 
-**Objective:** Record demo yang bisa di-embed di README dan landing page
+**Objective:** Record a demo that can be embedded in the README and landing page
 
 **Steps:**
 1. Install: `curl -sSL ... | sh`
@@ -432,7 +432,7 @@ https://github.com/ajianaz/uteke
 5. `uteke stats`
 6. `uteke aging status`
 
-**Format:** asciinema cast file atau vhs tape → GIF untuk README
+**Format:** asciinema cast file or vhs tape → GIF for README
 
 ---
 
