@@ -25,7 +25,12 @@ impl super::Store {
         let ids: Vec<String> = stmt
             .query_map(params![ns, tag], |row| row.get(0))
             .map_err(|e| Error::db("database operation", e))?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| {
+                if let Err(e) = &r {
+                    tracing::warn!("DB row error in bulk delete: {e}");
+                }
+                r.ok()
+            })
             .collect();
         Ok(ids)
     }
@@ -49,7 +54,12 @@ impl super::Store {
         let ids: Vec<String> = stmt
             .query_map(params![ns, warm_cutoff], |row| row.get(0))
             .map_err(|e| Error::db("database operation", e))?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| {
+                if let Err(e) = &r {
+                    tracing::warn!("DB row error in bulk delete: {e}");
+                }
+                r.ok()
+            })
             .collect();
         Ok(ids)
     }
@@ -66,7 +76,12 @@ impl super::Store {
         let ids: Vec<String> = stmt
             .query_map(params![ns], |row| row.get(0))
             .map_err(|e| Error::db("database operation", e))?
-            .filter_map(|r| r.ok())
+            .filter_map(|r| {
+                if let Err(e) = &r {
+                    tracing::warn!("DB row error in bulk delete: {e}");
+                }
+                r.ok()
+            })
             .collect();
         Ok(ids)
     }

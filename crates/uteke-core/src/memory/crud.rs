@@ -36,7 +36,7 @@ impl super::Store {
                     memory.memory_type,
                 ],
             )
-            .map_err(|e| Error::db("Failed to prepare statement for insert", e))?;
+            .map_err(|e| Error::db("Failed to insert memory", e))?;
 
         Ok(())
     }
@@ -66,6 +66,10 @@ impl super::Store {
     }
 
     /// Update an existing memory.
+    ///
+    /// Note: Only updates content, embedding, tags, metadata, updated_at, and namespace.
+    /// Fields NOT updated: access_count, last_accessed, deprecated, valid_from,
+    /// valid_until, memory_type. Use dedicated methods for those.
     #[allow(dead_code)]
     pub fn update(&self, memory: &Memory) -> Result<(), Error> {
         let embedding_blob = serialize_embedding(&memory.embedding);

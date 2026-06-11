@@ -4,7 +4,7 @@ use crate::error::Error;
 use crate::memory::types::{
     BulkDeleteResult, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo, DEFAULT_NAMESPACE,
 };
-use crate::memory::vector::euclidean_to_cosine;
+use crate::memory::vector::cosine_distance_to_similarity;
 
 impl crate::Uteke {
     /// Store a new memory.
@@ -168,7 +168,7 @@ impl crate::Uteke {
                     }
                 }
 
-                let score = euclidean_to_cosine(*distance);
+                let score = cosine_distance_to_similarity(*distance);
 
                 // Boost hot memories (configurable boost)
                 let tier = MemoryTier::from_last_accessed(
