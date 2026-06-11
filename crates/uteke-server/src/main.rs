@@ -42,6 +42,18 @@ struct RecallRequest {
     tags: Vec<String>,
     #[serde(default)]
     namespace: Option<String>,
+    /// Filter by entity metadata.
+    #[serde(default)]
+    entity: Option<String>,
+    /// Filter by category metadata.
+    #[serde(default)]
+    category: Option<String>,
+    /// Minimum similarity score. Results below are filtered.
+    #[serde(default)]
+    min_score: Option<f32>,
+    /// Use strict threshold (defaults to 0.5 if min_score not set).
+    #[serde(default)]
+    strict: bool,
 }
 
 #[derive(Deserialize)]
@@ -185,6 +197,8 @@ struct ReqCtx {
     auth_token_hash: Option<[u8; 32]>,
     /// Allowed CORS origins from config. Empty = wildcard.
     cors_origins: Vec<String>,
+    /// Recall threshold config from [recall] section in uteke.toml.
+    recall_config: Option<RecallFileSection>,
 }
 
 impl ReqCtx {
@@ -447,13 +461,96 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
                 } else {
                     Some(tag_refs.as_slice())
                 };
+                // Resolve threshold: min_score > strict (→ from config or default 0.5) > 0.0
+                // Server reads [recall] section from uteke.toml, matching CLI behavior.
+                let min_score = if req_data.strict {
+                    req_data.min_score.unwrap_or(
+                        ctx.recall_config
+                            .as_ref()
+                            .and_then(|r| r.min_score_strict)
+                            .unwrap_or(STRICT_THRESHOLD as f64) as f32,
+                    )
+                } else {
+                    req_data.min_score.unwrap_or(
+                        ctx.recall_config
+                            .as_ref()
+                            .and_then(|r| r.min_score)
+                            .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
+                    )
+                };
+                // Strategy: when entity/category filters are present,
+                // recall WITHOUT min_score to avoid discarding valid matches
+                // that might satisfy metadata but be ranked lower. Apply
+                // min_score after metadata filtering.
+                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
+                let fetch_min_score = if has_meta_filter { 0.0 } else { min_score };
+                let fetch_limit = if has_meta_filter {
+                    // Cap at 200 to prevent unbounded amplification.
+                    // May return fewer than requested when matches are sparse.
+                    (req_data.limit * 10).min(200)
+                } else {
+                    req_data.limit
+                };
+
                 match uteke.recall(
                     &req_data.query,
-                    req_data.limit,
+                    fetch_limit,
                     tags_filter,
                     ns(&req_data.namespace),
+                    fetch_min_score,
                 ) {
-                    Ok(results) => ctx.ok_response_for(req, &results),
+                    Ok(raw_results) => {
+                        // Post-filter by entity/category metadata
+                        let mut results: Vec<_> = raw_results
+                            .into_iter()
+                            .filter(|sr| {
+                                if let Some(ent) = &req_data.entity {
+                                    let matches = sr
+                                        .memory
+                                        .metadata
+                                        .get("entity")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|e| e == ent);
+                                    if !matches {
+                                        return false;
+                                    }
+                                }
+                                if let Some(cat) = &req_data.category {
+                                    let matches = sr
+                                        .memory
+                                        .metadata
+                                        .get("category")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|c| c == cat);
+                                    if !matches {
+                                        return false;
+                                    }
+                                }
+                                true
+                            })
+                            .collect::<Vec<_>>();
+                        // Apply min_score filter after metadata filtering
+                        // (deferred from recall call to avoid losing valid matches)
+                        if min_score > 0.0 {
+                            results.retain(|sr| sr.score >= min_score);
+                        }
+                        // Trim to requested limit after filtering
+                        results.truncate(req_data.limit);
+
+                        if results.is_empty() && min_score > 0.0 {
+                            ctx.ok_response_for(
+                                req,
+                                &serde_json::json!({
+                                    "results": [],
+                                    "total": 0,
+                                    "threshold": min_score,
+                                    "message": "No memories above similarity threshold"
+                                }),
+                            )
+                        } else {
+                            ctx.ok_response_for(req, &results)
+                        }
+                    }
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
@@ -603,6 +700,13 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
 // ── Main ────────────────────────────────────────────────────────────────────
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Default strict mode threshold for server recall.
+/// Used as fallback when [recall] min_score_strict is not configured.
+const STRICT_THRESHOLD: f32 = 0.5;
+/// Default minimum score for server recall.
+/// Used as fallback when [recall] min_score is not configured.
+const DEFAULT_MIN_SCORE: f32 = 0.0;
 
 fn main() {
     // Parse CLI args — these override config
@@ -773,6 +877,7 @@ fn main() {
     let ctx = ReqCtx {
         auth_token_hash,
         cors_origins: cors_origins.clone(),
+        recall_config: config.recall.clone(),
     };
 
     // Start server
@@ -839,6 +944,15 @@ fn main() {
 #[derive(serde::Deserialize, Default)]
 struct ServerFileConfig {
     server: Option<ServerFileSection>,
+    recall: Option<RecallFileSection>,
+}
+
+#[derive(serde::Deserialize, Default, Clone)]
+struct RecallFileSection {
+    /// Minimum cosine similarity score for recall results.
+    min_score: Option<f64>,
+    /// Strict mode threshold (higher, for critical queries).
+    min_score_strict: Option<f64>,
 }
 
 #[derive(serde::Deserialize, Default)]

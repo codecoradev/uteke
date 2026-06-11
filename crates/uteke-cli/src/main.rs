@@ -94,6 +94,12 @@ enum Commands {
         /// Filter by category
         #[arg(long)]
         category: Option<String>,
+        /// Minimum similarity score (0.0-1.0). Results below are filtered.
+        #[arg(long)]
+        min: Option<f32>,
+        /// Use strict threshold from config (min_score_strict)
+        #[arg(long)]
+        strict: bool,
     },
     /// Search memories by content keywords (text search)
     Search {

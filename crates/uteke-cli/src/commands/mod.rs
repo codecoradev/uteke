@@ -52,6 +52,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             tags,
             entity,
             category,
+            min,
+            strict,
         } => recall::run_recall(
             cli,
             uteke,
@@ -61,6 +63,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             tags,
             entity.as_deref(),
             category.as_deref(),
+            *min,
+            *strict,
+            config,
         ),
 
         Commands::Search { query, limit, tags } => {

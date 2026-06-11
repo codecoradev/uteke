@@ -93,20 +93,59 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
         }
         Commands::Recall {
-            query, limit, tags, ..
+            query,
+            limit,
+            tags,
+            min,
+            strict,
+            entity,
+            category,
+            ..
         } => {
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "query": query,
                 "limit": limit,
                 "tags": tags,
                 "namespace": ns
             });
+            if let Some(e) = entity {
+                body["entity"] = serde_json::json!(e);
+            }
+            if let Some(c) = category {
+                body["category"] = serde_json::json!(c);
+            }
+            if let Some(m) = min {
+                body["min_score"] = serde_json::json!(m);
+            }
+            if *strict {
+                body["strict"] = serde_json::json!(true);
+            }
             let resp = client
                 .post(format!("{server_url}/recall"))
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let results = parse_response::<Vec<uteke_core::SearchResult>>(resp)?;
+            let data = parse_json_value(resp)?;
+            // Check if server returned enriched empty response with threshold
+            if data.is_object()
+                && data
+                    .get("results")
+                    .is_some_and(|r| r.as_array().is_some_and(|a| a.is_empty()))
+            {
+                if let Some(threshold) = data.get("threshold").and_then(|t| t.as_f64()) {
+                    // Enriched empty response with threshold info
+                    if cli.json {
+                        println!("{data}");
+                    } else {
+                        println!("No matching memories found.");
+                        println!("(min_score threshold: {:.2})", threshold);
+                    }
+                    return Ok(());
+                }
+            }
+            // Normal response: array of SearchResult or empty array
+            let results: Vec<uteke_core::SearchResult> =
+                serde_json::from_value(data).map_err(|e| format!("Parse error: {e}"))?;
             if cli.json {
                 output::print_json(&results);
             } else {

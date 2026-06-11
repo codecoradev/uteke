@@ -104,6 +104,19 @@ impl Default for TierConfig {
     }
 }
 
+/// Configuration for recall threshold.
+#[derive(Debug, Clone, Copy)]
+pub struct RecallConfig {
+    /// Minimum cosine similarity score for recall results. 0.0 = no filter.
+    pub min_score: f32,
+}
+
+impl Default for RecallConfig {
+    fn default() -> Self {
+        Self { min_score: 0.0 }
+    }
+}
+
 /// Resolve uteke data directory.
 ///
 /// Uses `UTEKE_HOME` environment variable when set, otherwise falls back to
@@ -135,6 +148,8 @@ pub struct Uteke {
     index: RwLock<VectorIndex>,
     embedder: Mutex<EmbeddingEngine>,
     tier_config: TierConfig,
+    #[allow(dead_code)] // Stored for future per-store default threshold enforcement
+    recall_config: RecallConfig,
 }
 
 impl Uteke {
@@ -146,7 +161,12 @@ impl Uteke {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, TierConfig::default())
+        Self::finish_open(
+            store,
+            embedder,
+            TierConfig::default(),
+            RecallConfig::default(),
+        )
     }
 
     /// Open with a custom embedder (for testing).
@@ -155,7 +175,12 @@ impl Uteke {
         embedder: EmbeddingEngine,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, embedder, TierConfig::default())
+        Self::finish_open(
+            store,
+            embedder,
+            TierConfig::default(),
+            RecallConfig::default(),
+        )
     }
 
     /// Open with custom tier configuration.
@@ -165,7 +190,17 @@ impl Uteke {
     pub fn open_with_tier(path: impl AsRef<Path>, tier_config: TierConfig) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, tier_config)
+        Self::finish_open(store, embedder, tier_config, RecallConfig::default())
+    }
+
+    /// Open with custom recall configuration.
+    pub fn open_with_recall(
+        path: impl AsRef<Path>,
+        recall_config: RecallConfig,
+    ) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        let embedder = EmbeddingEngine::new()?;
+        Self::finish_open(store, embedder, TierConfig::default(), recall_config)
     }
 
     fn open_store(path: impl AsRef<Path>) -> Result<(String, Store), Error> {
@@ -179,6 +214,7 @@ impl Uteke {
         store: Store,
         embedder: EmbeddingEngine,
         tier_config: TierConfig,
+        recall_config: RecallConfig,
     ) -> Result<Self, Error> {
         // Determine index path: same directory as SQLite DB
         let index_path = store.path().map(|p| {
@@ -209,6 +245,7 @@ impl Uteke {
             index: RwLock::new(index),
             embedder: Mutex::new(embedder),
             tier_config,
+            recall_config,
         })
     }
 }
@@ -385,6 +422,12 @@ mod tests {
     }
 
     #[test]
+    fn test_recall_config_default() {
+        let config = RecallConfig::default();
+        assert!((config.min_score - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn test_bulk_delete_result_serialization() {
         let result = BulkDeleteResult {
             deleted: 3,
@@ -394,5 +437,96 @@ mod tests {
         let restored: BulkDeleteResult = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.deleted, 3);
         assert_eq!(restored.ids.len(), 3);
+    }
+
+    // These tests require ONNX embedding model (not available in CI)
+    #[test]
+    #[ignore]
+    fn test_recall_threshold_filters_low_scores() {
+        let uteke = Uteke::open(":memory:").unwrap();
+
+        // Store a memory
+        let _id = uteke
+            .remember("test content about rust programming", &[], None, None)
+            .unwrap();
+
+        // Recall with min_score=0.0 should return results
+        let results = uteke
+            .recall("rust programming", 5, None, None, 0.0)
+            .unwrap();
+        assert!(!results.is_empty());
+
+        // Recall with very high min_score should return empty
+        let results = uteke
+            .recall("completely unrelated quantum physics", 5, None, None, 0.99)
+            .unwrap();
+        assert!(
+            results.is_empty(),
+            "Expected empty results with 0.99 threshold, got {}",
+            results.len()
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn test_recall_threshold_zero_returns_all() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let _id = uteke
+            .remember("some content here", &[], None, None)
+            .unwrap();
+
+        // min_score=0.0 should return results (backward compatible)
+        let results = uteke.recall("content", 5, None, None, 0.0).unwrap();
+        assert!(!results.is_empty(), "Expected results with 0.0 threshold");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_recall_threshold_specific_score() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let _id = uteke
+            .remember(
+                "Rust is a systems programming language focused on safety",
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Same content query should have high score and pass moderate threshold
+        let results = uteke
+            .recall("Rust programming language safety", 5, None, None, 0.5)
+            .unwrap();
+        assert!(
+            !results.is_empty(),
+            "Expected results with 0.5 threshold for matching query"
+        );
+
+        // Verify each result actually meets the threshold
+        for r in &results {
+            assert!(
+                r.score >= 0.5,
+                "Result score {} is below threshold 0.5",
+                r.score
+            );
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn test_recall_config_stored_but_override_per_call() {
+        // Open with recall config min_score=0.5
+        let config = RecallConfig { min_score: 0.5 };
+        let uteke = Uteke::open_with_recall(":memory:", config).unwrap();
+
+        let _id = uteke
+            .remember("test content about rust programming", &[], None, None)
+            .unwrap();
+
+        // Per-call min_score=0.0 should still work (overrides config)
+        let results = uteke
+            .recall("rust programming", 5, None, None, 0.0)
+            .unwrap();
+        assert!(!results.is_empty());
     }
 }

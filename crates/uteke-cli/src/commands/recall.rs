@@ -1,5 +1,6 @@
 //! Recall and Search commands — semantic and keyword search.
 
+use crate::config::Config;
 use crate::output;
 use crate::Cli;
 use uteke_core::Uteke;
@@ -14,8 +15,18 @@ pub(crate) fn run_recall(
     tags: &[String],
     entity: Option<&str>,
     category: Option<&str>,
+    min: Option<f32>,
+    strict: bool,
+    config: &Config,
 ) -> Result<(), String> {
-    tracing::info!("Recalling: {query} (limit: {limit})");
+    // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
+    let min_score = match min {
+        Some(m) => m,
+        None if strict => config.recall.min_score_strict as f32,
+        None => config.recall.min_score as f32,
+    };
+
+    tracing::info!("Recalling: {query} (limit: {limit}, min_score: {min_score})");
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
     let tags_filter = if tag_refs.is_empty() {
         None
@@ -23,7 +34,7 @@ pub(crate) fn run_recall(
         Some(tag_refs.as_slice())
     };
     let results = uteke
-        .recall(query, limit, tags_filter, ns)
+        .recall(query, limit, tags_filter, ns, min_score)
         .map_err(|e| format!("Failed to recall: {e}"))?;
 
     // Post-filter by entity/category metadata
@@ -55,6 +66,31 @@ pub(crate) fn run_recall(
             true
         })
         .collect();
+
+    if filtered.is_empty() && min_score > 0.0 {
+        if cli.json {
+            let response = serde_json::json!({
+                "results": [],
+                "total": 0,
+                "threshold": min_score,
+                "message": "No memories above similarity threshold"
+            });
+            println!("{}", serde_json::to_string(&response).unwrap());
+        } else {
+            println!("No matching memories found.");
+            println!("(min_score threshold: {:.2})", min_score);
+        }
+        return Ok(());
+    }
+
+    if filtered.is_empty() {
+        if cli.json {
+            output::print_json(&filtered);
+        } else {
+            println!("No matching memories found.");
+        }
+        return Ok(());
+    }
 
     if cli.json {
         output::print_json(&filtered);

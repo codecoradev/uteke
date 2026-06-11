@@ -108,6 +108,25 @@ impl Default for AgingConfig {
     }
 }
 
+/// Recall / search threshold configuration.
+#[derive(serde::Deserialize, Clone)]
+#[serde(default)]
+pub struct RecallConfig {
+    /// Minimum cosine similarity score for recall results. Results below are filtered out.
+    pub min_score: f64,
+    /// Strict mode threshold (higher, for critical queries).
+    pub min_score_strict: f64,
+}
+
+impl Default for RecallConfig {
+    fn default() -> Self {
+        Self {
+            min_score: 0.3,
+            min_score_strict: 0.5,
+        }
+    }
+}
+
 // ── Top-level config ────────────────────────────────────────────────────────
 
 /// Server configuration.
@@ -141,6 +160,7 @@ pub struct Config {
     pub tier: TierConfig,
     pub logging: LoggingConfig,
     pub aging: AgingConfig,
+    pub recall: RecallConfig,
     pub server: ServerConfig,
 }
 
@@ -266,6 +286,16 @@ impl Config {
             }
         }
 
+        // Merge recall section
+        if let Some(recall) = table.get("recall").and_then(|v| v.as_table()) {
+            if recall.contains_key("min_score") {
+                self.recall.min_score = overlay.recall.min_score;
+            }
+            if recall.contains_key("min_score_strict") {
+                self.recall.min_score_strict = overlay.recall.min_score_strict;
+            }
+        }
+
         // Merge server section
         if let Some(server) = table.get("server").and_then(|v| v.as_table()) {
             if server.contains_key("enabled") {
@@ -323,6 +353,10 @@ impl Config {
 # enabled = false
 # max_age_days = 180
 # max_cold_count = 10000
+
+[recall]
+# min_score = 0.3
+# min_score_strict = 0.5
 
 [server]
 # enabled = false
@@ -670,6 +704,48 @@ namespace = "agent1"
     }
 
     #[test]
+    fn default_recall_config() {
+        let cfg = RecallConfig::default();
+        assert!((cfg.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.min_score_strict - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn parse_recall_config() {
+        let toml = r#"
+[recall]
+min_score = 0.45
+min_score_strict = 0.7
+"#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!((cfg.recall.min_score - 0.45).abs() < f64::EPSILON);
+        assert!((cfg.recall.min_score_strict - 0.7).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn merge_recall_config() {
+        let toml = r#"
+[recall]
+min_score = 0.6
+min_score_strict = 0.8
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_merge_recall.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+
+        assert!((merged.recall.min_score - 0.6).abs() < f64::EPSILON);
+        assert!((merged.recall.min_score_strict - 0.8).abs() < f64::EPSILON);
+        // Other config untouched
+        assert_eq!(merged.store.path, "~/.uteke");
+        assert_eq!(merged.embedding.model, "embeddinggemma-q4");
+        assert_eq!(merged.tier.hot_days, 7);
+        assert_eq!(merged.logging.level, "warn");
+        assert!(!merged.aging.enabled);
+        assert!(!merged.server.enabled);
+    }
+
+    #[test]
     fn merge_from_file_all_sections() {
         let toml = r#"
 [store]
@@ -694,6 +770,10 @@ enabled = true
 max_age_days = 60
 max_cold_count = 2000
 
+[recall]
+min_score = 0.4
+min_score_strict = 0.65
+
 [server]
 enabled = true
 host = "0.0.0.0"
@@ -716,6 +796,8 @@ port = 9999
         assert!(merged.aging.enabled);
         assert_eq!(merged.aging.max_age_days, 60);
         assert_eq!(merged.aging.max_cold_count, 2000);
+        assert!((merged.recall.min_score - 0.4).abs() < f64::EPSILON);
+        assert!((merged.recall.min_score_strict - 0.65).abs() < f64::EPSILON);
         assert!(merged.server.enabled);
         assert_eq!(merged.server.host, "0.0.0.0");
         assert_eq!(merged.server.port, 9999);
