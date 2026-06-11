@@ -10,6 +10,10 @@
   <img src="https://img.shields.io/badge/status-v0.0.13-green.svg" alt="v0.0.13" />
 </p>
 
+<p align="center">
+  <strong>🇬🇧 English</strong> · <a href="README.id.md">🇮🇩 Bahasa Indonesia</a>
+</p>
+
 ---
 
 ## Quick Start
