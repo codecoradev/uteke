@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TLS & Reverse Proxy documentation page (Caddy, Nginx, Cloudflare Tunnel) (#100)
 - Crates.io metadata in all Cargo.toml files (#136)
 
+### Changed
+
+- **Server now handles requests concurrently** via thread-per-request (#233)
+  Uses `Arc<Mutex<Uteke>>` for safe shared access across threads.
+- Contradiction threshold is now a parameter instead of hardcoded 0.65 (#253)
+- Rename `euclidean_to_cosine` to `cosine_distance_to_similarity` (#232)
+- 9 code quality improvements from Cora scan (#232)
+
 ## [0.0.13] — 2026-06-10
 
 ### Added

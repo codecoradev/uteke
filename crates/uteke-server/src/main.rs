@@ -5,6 +5,7 @@
 
 use std::io::{Cursor, Read as IoRead};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use std::path::PathBuf;
 
@@ -191,6 +192,7 @@ fn constant_time_eq_digest(a: &[u8; 32], b: &[u8; 32]) -> bool {
     result == 0
 }
 
+#[derive(Clone)]
 struct ReqCtx {
     /// Hashed auth token for constant-time comparison.
     /// If None, auth is disabled.
@@ -355,7 +357,7 @@ fn ns(ns: &Option<String>) -> Option<&str> {
 
 // ── Router ──────────────────────────────────────────────────────────────────
 
-fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
+fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
     let method = req.method().clone();
     let path = req.url().to_string();
 
@@ -379,6 +381,16 @@ fn route(uteke: &Uteke, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<
             return resp;
         }
     }
+
+    // Lock the Uteke instance for the duration of this request.
+    // This serializes requests but prevents data races on the SQLite connection.
+    // Future: use rwlock for read-heavy workloads.
+    let uteke = match uteke.lock() {
+        Ok(u) => u,
+        Err(e) => {
+            return ctx.error_response_for(req, 500, format!("Internal error: {e}").as_str());
+        }
+    };
 
     match (method, path.as_str()) {
         // ── Health ──────────────────────────────────────────────────────
@@ -856,7 +868,7 @@ fn main() {
 
     info!("Opening store at: {db_path}");
     let uteke = match Uteke::open(&db_path) {
-        Ok(u) => u,
+        Ok(u) => Arc::new(Mutex::new(u)),
         Err(e) => {
             error!("Failed to open store: {e}");
             std::process::exit(1);
@@ -913,7 +925,8 @@ fn main() {
     })
     .expect("Failed to set SIGINT handler");
 
-    // Request loop
+    // Request loop — spawn each request in a thread for concurrent handling.
+    // Arc<Mutex<Uteke>> allows safe shared access across threads.
     for mut req in server.incoming_requests() {
         if SHUTDOWN.load(Ordering::SeqCst) {
             info!("Shutdown requested, stopping.");
@@ -924,15 +937,20 @@ fn main() {
         let url = req.url().to_string();
         info!("{method} {url}");
 
-        let response = route(&uteke, &ctx, &mut req);
-        if let Err(e) = req.respond(response) {
-            warn!("Response error: {e}");
-        }
+        let uteke = Arc::clone(&uteke);
+        let ctx = ctx.clone();
+
+        std::thread::spawn(move || {
+            let response = route(&uteke, &ctx, &mut req);
+            if let Err(e) = req.respond(response) {
+                warn!("Response error: {e}");
+            }
+        });
     }
 
     // Graceful shutdown
     info!("Saving index and closing DB...");
-    if let Err(e) = uteke.shutdown() {
+    if let Err(e) = uteke.lock().expect("shutdown lock").shutdown() {
         error!("Shutdown error: {e}");
     }
 
