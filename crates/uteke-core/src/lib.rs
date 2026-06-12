@@ -149,7 +149,7 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
 pub struct Uteke {
     store: Store,
     index: RwLock<VectorIndex>,
-    embedder: Mutex<EmbeddingEngine>,
+    embedder: Mutex<Option<EmbeddingEngine>>,
     tier_config: TierConfig,
     #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
@@ -161,15 +161,12 @@ impl Uteke {
     /// `path` can be a directory path (will create `uteke.db` inside)
     /// or a direct path to a `.sqlite` file.
     /// Use `:memory:` for an in-memory database (testing).
+    ///
+    /// The ONNX embedding model is loaded lazily on first use, so commands
+    /// that don't need embedding (list, get, stats, tags, etc.) start instantly.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(
-            store,
-            embedder,
-            TierConfig::default(),
-            RecallConfig::default(),
-        )
+        Self::finish_open(store, None, TierConfig::default(), RecallConfig::default())
     }
 
     /// Open with a custom embedder (for testing).
@@ -180,7 +177,7 @@ impl Uteke {
         let (_db_str, store) = Self::open_store(path)?;
         Self::finish_open(
             store,
-            embedder,
+            Some(embedder),
             TierConfig::default(),
             RecallConfig::default(),
         )
@@ -192,8 +189,7 @@ impl Uteke {
     /// default 7/30/0.1 values. See [`TierConfig`].
     pub fn open_with_tier(path: impl AsRef<Path>, tier_config: TierConfig) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, tier_config, RecallConfig::default())
+        Self::finish_open(store, None, tier_config, RecallConfig::default())
     }
 
     /// Open with custom recall configuration.
@@ -202,8 +198,7 @@ impl Uteke {
         recall_config: RecallConfig,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        let embedder = EmbeddingEngine::new()?;
-        Self::finish_open(store, embedder, TierConfig::default(), recall_config)
+        Self::finish_open(store, None, TierConfig::default(), recall_config)
     }
 
     fn open_store(path: impl AsRef<Path>) -> Result<(String, Store), Error> {
@@ -215,7 +210,7 @@ impl Uteke {
 
     fn finish_open(
         store: Store,
-        embedder: EmbeddingEngine,
+        embedder: Option<EmbeddingEngine>,
         tier_config: TierConfig,
         recall_config: RecallConfig,
     ) -> Result<Self, Error> {
@@ -250,6 +245,23 @@ impl Uteke {
             tier_config,
             recall_config,
         })
+    }
+
+    /// Lazy-load the ONNX embedding engine on first use.
+    ///
+    /// Commands that don't need embedding (list, get, stats, tags, namespace,
+    /// aging, export, forget) never trigger this, making them instant (~1ms)
+    /// instead of waiting for model load (~2.5s).
+    fn ensure_embedder(&self) -> Result<(), Error> {
+        let mut guard = self
+            .embedder
+            .lock()
+            .map_err(|_| Error::lock("embedder lock during lazy init"))?;
+        if guard.is_none() {
+            tracing::debug!("Lazy-initializing ONNX embedding engine");
+            *guard = Some(EmbeddingEngine::new()?);
+        }
+        Ok(())
     }
 }
 

@@ -5,7 +5,19 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **CLI cold start: ~3s → ~20ms for non-embedding commands** (#185)
+  ONNX embedding model is now loaded lazily on first use. Commands like
+  `list`, `get`, `stats`, `tags`, `forget`, `namespace`, `aging`, `export`,
+  `doctor`, and `verify` start instantly without waiting for model load.
+  Commands that need embedding (`remember`, `recall`, `search`) still take
+  ~3s on first use per process invocation.
+
 ## [0.0.14] — 2026-06-12
+
 
 ### Security
 
