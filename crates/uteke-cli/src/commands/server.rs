@@ -49,6 +49,8 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             entity,
             category,
             meta,
+            room,
+            author,
         } => {
             let mut body = serde_json::json!({
                 "content": content,
@@ -79,6 +81,12 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
             if !meta_map.is_empty() {
                 body["metadata"] = serde_json::Value::Object(meta_map);
+            }
+            if let Some(room_id) = room {
+                body["room"] = serde_json::json!(room_id);
+            }
+            if let Some(author_name) = author {
+                body["author"] = serde_json::json!(author_name);
             }
             let resp = client
                 .post(format!("{server_url}/remember"))

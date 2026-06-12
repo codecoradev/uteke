@@ -16,6 +16,7 @@ mod import_export;
 mod maintenance;
 pub mod memory;
 mod operations;
+mod rooms;
 mod types;
 
 pub use memory::types::{
@@ -23,6 +24,7 @@ pub use memory::types::{
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
     SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
+pub use memory::{Room, RoomMemory, RoomStats};
 
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};

@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 2;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
