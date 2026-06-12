@@ -144,9 +144,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         Commands::Hook { shell } => {
             use crate::SupportedShell;
             let script = match shell {
-                SupportedShell::Bash => include_str!("../../../../scripts/shell/uteke-hook.bash"),
-                SupportedShell::Zsh => include_str!("../../../../scripts/shell/uteke-hook.zsh"),
-                SupportedShell::Fish => include_str!("../../../../scripts/shell/uteke-hook.fish"),
+                SupportedShell::Bash => include_str!("../../assets/shell/uteke-hook.bash"),
+                SupportedShell::Zsh => include_str!("../../assets/shell/uteke-hook.zsh"),
+                SupportedShell::Fish => include_str!("../../assets/shell/uteke-hook.fish"),
             };
             print!("{script}");
             Ok(())
