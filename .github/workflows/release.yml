@@ -119,6 +119,7 @@ jobs:
 
   publish-crates:
     name: Publish to crates.io
+    needs: []
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -131,13 +132,15 @@ jobs:
 
       - name: Publish uteke-cli
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-cli --allow-dirty
+        continue-on-error: true
 
       - name: Publish uteke-server
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-server --allow-dirty
+        continue-on-error: true
 
   release:
     name: Create GitHub Release
-    needs: [build-release, publish-crates]
+    needs: [build-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
