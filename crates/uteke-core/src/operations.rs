@@ -38,10 +38,14 @@ impl crate::Uteke {
                 "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context"
             ))
         })?;
+        // Lazy-load embedder on first use
+        self.ensure_embedder()?;
         let embedding = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?
+            .as_mut()
+            .expect("embedder ensured above")
             .embed(content)?;
         self.remember_precomputed(content, tags, metadata, namespace, memory_type, &embedding)
     }
@@ -118,10 +122,14 @@ impl crate::Uteke {
 
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
+        // Lazy-load embedder on first use.
+        self.ensure_embedder()?;
         let query_embedding = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during recall"))?
+            .as_mut()
+            .expect("embedder ensured above")
             .embed(query)?;
         // Embedder lock dropped here — other threads can embed or recall concurrently.
 

@@ -70,10 +70,13 @@ impl crate::Uteke {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
         // Embed first to check for contradictions before persisting
+        self.ensure_embedder()?;
         let embedding = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember_with_contradiction"))?
+            .as_mut()
+            .expect("embedder ensured above")
             .embed(content)?;
 
         // Check for contradictions (read-only)

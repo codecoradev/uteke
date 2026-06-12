@@ -58,10 +58,13 @@ impl crate::Uteke {
             }
 
             // Re-embed the content
+            self.ensure_embedder()?;
             let embedding = self
                 .embedder
                 .lock()
                 .map_err(|_| Error::lock("embedder lock during import"))?
+                .as_mut()
+                .expect("embedder ensured above")
                 .embed(&entry.content)?;
 
             let id = uuid::Uuid::new_v4().to_string();
