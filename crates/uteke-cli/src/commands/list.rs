@@ -1,7 +1,7 @@
 //! List, Get, and Stats commands.
 
+use crate::cli::Cli;
 use crate::output;
-use crate::Cli;
 use uteke_core::Uteke;
 
 #[allow(clippy::too_many_arguments)]

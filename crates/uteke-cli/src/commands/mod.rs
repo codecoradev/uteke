@@ -10,9 +10,9 @@ mod remember;
 mod server;
 mod tags;
 
+use crate::cli::Cli;
+use crate::cli::Commands;
 use crate::resolve_namespace;
-use crate::Cli;
-use crate::Commands;
 use crate::Config;
 use uteke_core::Uteke;
 
@@ -142,7 +142,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         Commands::Aging { command } => aging::run(cli, uteke, ns, command),
 
         Commands::Hook { shell } => {
-            use crate::SupportedShell;
+            use crate::cli::SupportedShell;
             let script = match shell {
                 SupportedShell::Bash => include_str!("../../assets/shell/uteke-hook.bash"),
                 SupportedShell::Zsh => include_str!("../../assets/shell/uteke-hook.zsh"),

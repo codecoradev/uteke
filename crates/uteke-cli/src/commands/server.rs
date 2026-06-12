@@ -1,8 +1,8 @@
 //! HTTP server routing for CLI commands.
 
+use crate::cli::Cli;
+use crate::cli::Commands;
 use crate::output;
-use crate::Cli;
-use crate::Commands;
 
 /// Check if uteke server is reachable.
 pub(crate) fn is_server_running(url: &str) -> bool {

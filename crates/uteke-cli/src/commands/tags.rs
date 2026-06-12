@@ -1,8 +1,8 @@
 //! Tags subcommands — list, rename, delete.
 
+use crate::cli::Cli;
+use crate::cli::TagCommands;
 use crate::output;
-use crate::Cli;
-use crate::TagCommands;
 use uteke_core::Uteke;
 
 pub(crate) fn run(

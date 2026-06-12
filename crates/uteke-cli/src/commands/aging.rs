@@ -1,8 +1,8 @@
 //! Aging subcommands — status, preview, cleanup.
 
+use crate::cli::AgingCommands;
+use crate::cli::Cli;
 use crate::output;
-use crate::AgingCommands;
-use crate::Cli;
 use uteke_core::Uteke;
 
 pub(crate) fn run(

@@ -1,7 +1,7 @@
 //! Remember command — store a new memory.
 
+use crate::cli::Cli;
 use crate::output;
-use crate::Cli;
 use uteke_core::Uteke;
 
 /// Parse --meta key:value pairs into a JSON object.

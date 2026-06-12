@@ -1,8 +1,8 @@
 //! Recall and Search commands — semantic and keyword search.
 
+use crate::cli::Cli;
 use crate::config::Config;
 use crate::output;
-use crate::Cli;
 use uteke_core::Uteke;
 
 #[allow(clippy::too_many_arguments)]
