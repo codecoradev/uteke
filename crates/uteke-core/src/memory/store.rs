@@ -20,14 +20,16 @@ CREATE TABLE IF NOT EXISTS memories (
     deprecated INTEGER NOT NULL DEFAULT 0,
     valid_from TEXT,
     valid_until TEXT,
-    memory_type TEXT NOT NULL DEFAULT 'fact'
+    memory_type TEXT NOT NULL DEFAULT 'fact',
+    importance REAL NOT NULL DEFAULT 0.5,
+    pinned INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 3;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 4;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -53,6 +55,87 @@ impl Store {
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
+    }
+    /// Pin a memory (never decays).
+    pub fn pin(&self, id: &str) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET pinned = 1 WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| Error::db("pin memory", e))?;
+        Ok(rows > 0)
+    }
+
+    /// Unpin a memory.
+    pub fn unpin(&self, id: &str) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET pinned = 0 WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| Error::db("unpin memory", e))?;
+        Ok(rows > 0)
+    }
+
+    /// Recalculate importance for all memories.
+    /// importance = 0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
+    pub fn recompute_importance(&self) -> Result<usize, Error> {
+        let memories = self.load_all(None)?;
+        let mut updated = 0;
+        let now = chrono::Utc::now();
+
+        for m in &memories {
+            // Skip pinned — they stay at 1.0
+            if m.pinned {
+                if (m.importance - 1.0).abs() > f64::EPSILON {
+                    self.conn
+                        .execute(
+                            "UPDATE memories SET importance = 1.0 WHERE id = ?1",
+                            rusqlite::params![m.id],
+                        )
+                        .map_err(|e| Error::db("update importance", e))?;
+                    updated += 1;
+                }
+                continue;
+            }
+
+            // access_score: normalized by count (cap at 10 accesses = 1.0)
+            let access_score = (m.access_count as f64 / 10.0).min(1.0);
+
+            // recency_score: exponential decay (half-life 30 days)
+            let days_since = m
+                .last_accessed
+                .map(|la| (now - la).num_days().max(0) as f64)
+                .unwrap_or(365.0); // Never accessed = very old
+            let recency_score = (-0.693_f64 * days_since / 30.0_f64).exp(); // e^(-ln2 * days/30)
+
+            // connectivity: count relationships in metadata
+            let rel_count = m
+                .metadata
+                .get("relationships")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0) as f64;
+            let connectivity = (rel_count / 5.0).min(1.0);
+
+            let importance =
+                0.3 * access_score + 0.3 * recency_score + 0.2 * connectivity + 0.2 * 0.0;
+            let importance = importance.clamp(0.0_f64, 1.0_f64);
+
+            if (m.importance - importance).abs() > f64::EPSILON {
+                self.conn
+                    .execute(
+                        "UPDATE memories SET importance = ?1 WHERE id = ?2",
+                        rusqlite::params![importance, m.id],
+                    )
+                    .map_err(|e| Error::db("update importance", e))?;
+                updated += 1;
+            }
+        }
+        Ok(updated)
     }
 }
 
@@ -145,6 +228,8 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.to_utc());
     let memory_type: String = row.get(13).unwrap_or_else(|_| "fact".to_string());
+    let importance: f64 = row.get(14).unwrap_or(0.5);
+    let pinned: bool = row.get(15).unwrap_or(false);
 
     Ok(Memory {
         id,
@@ -161,8 +246,11 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         valid_from,
         valid_until,
         memory_type,
+        importance,
+        pinned,
     })
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -186,6 +274,8 @@ mod tests {
             valid_from: None,
             valid_until: None,
             memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
         }
     }
 
@@ -205,6 +295,8 @@ mod tests {
             valid_from: None,
             valid_until: None,
             memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
         }
     }
 

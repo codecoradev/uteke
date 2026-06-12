@@ -1,11 +1,5 @@
-# Changelog
-
-All notable changes to Uteke will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
+
 ### Added
 
 - **Relationship graph layer between memories** (#246)
@@ -15,24 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Score decay per depth level (0.8x) to rank direct matches higher
   - No new tables — relationships stored in metadata JSON
 
+### Changed
 
-### Added
+- **Smart memory decay and importance scoring** (#247)
+  - Composite importance score: 0.3*access + 0.3*recency + 0.2*connectivity + 0.2*pinning
+  - `uteke pin <id>` / `uteke unpin <id>` — pin memories so they never decay
+  - `uteke importance` — recalculate importance scores for all memories
+  - Schema v4: `importance REAL` and `pinned INTEGER` columns
+  - Exponential recency decay (half-life: 30 days)
+  - Connectivity score from relationship graph (#246)
 
-- **Room-based collaborative memory for multi-agent discussions** (#286)
-  - `uteke remember --room <id> --author <name>` — store memory in a shared room
-  - `uteke room list` — list all rooms
-  - `uteke room stats <id>` — room metadata, participants, memory count
-  - `uteke room recall <id>` — cross-namespace recall of all room memories
-  - `uteke room recall <id> --author <name>` — filter by author
-  - `uteke room delete <id>` — delete room links (memories preserved)
-  - Schema v3: `rooms` + `room_memories` tables with auto-migration
-  - Dual-write: memories exist in agent namespace AND linked to room
-- **MCP server for AI tool integration** (#248)
-  - New `uteke-mcp` binary — stdio JSON-RPC MCP server
-  - 5 tools: `uteke_remember`, `uteke_recall`, `uteke_list`, `uteke_forget`, `uteke_stats`
-  - Room support: `room` and `author` parameters on remember/recall
-  - Compatible with Claude Code, Cursor, Copilot MCP clients
-  - 4th workspace crate: `uteke-mcp`
 
 ## [0.0.15] — 2026-06-12
 

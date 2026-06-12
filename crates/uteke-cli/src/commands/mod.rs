@@ -167,5 +167,47 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         } => maintenance::run_verify_checksums(cli, checksums_file, binary),
 
         Commands::Room { command } => crate::commands::room::run(cli, uteke, ns, command),
+
+        Commands::Pin { id } => {
+            let pinned = uteke.pin(id).map_err(|e| format!("Failed to pin: {e}"))?;
+            if pinned {
+                if cli.json {
+                    println!("{{\"pinned\": \"{id}\"}}");
+                } else {
+                    println!("Pinned memory {}.", &id[..8.min(id.len())]);
+                }
+            } else {
+                return Err(format!("Memory not found: {id}"));
+            }
+            Ok(())
+        }
+
+        Commands::Unpin { id } => {
+            let unpinned = uteke
+                .unpin(id)
+                .map_err(|e| format!("Failed to unpin: {e}"))?;
+            if unpinned {
+                if cli.json {
+                    println!("{{\"unpinned\": \"{id}\"}}");
+                } else {
+                    println!("Unpinned memory {}.", &id[..8.min(id.len())]);
+                }
+            } else {
+                return Err(format!("Memory not found: {id}"));
+            }
+            Ok(())
+        }
+
+        Commands::Importance => {
+            let updated = uteke
+                .recompute_importance()
+                .map_err(|e| format!("Failed to recompute: {e}"))?;
+            if cli.json {
+                println!("{{\"updated\": {updated}}}");
+            } else {
+                println!("Recalculated importance for {updated} memories.");
+            }
+            Ok(())
+        }
     }
 }

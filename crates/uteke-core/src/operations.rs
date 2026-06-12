@@ -81,6 +81,8 @@ impl crate::Uteke {
             valid_from: Some(now),
             valid_until: None,
             memory_type: memory_type.to_string(),
+            importance: 0.5,
+            pinned: false,
         };
 
         // Acquire index write lock BEFORE any writes so lock failures are detected early.
