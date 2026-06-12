@@ -156,6 +156,8 @@ impl super::Store {
                 2 => self.migrate_v1_to_v2()?,
                 // v3: Room-based collaborative memory tables
                 3 => self.migrate_v2_to_v3()?,
+                // v4: Importance scoring + pinned memories
+                4 => self.migrate_v3_to_v4()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -234,6 +236,23 @@ impl super::Store {
                 CREATE INDEX IF NOT EXISTS idx_room_memories_author ON room_memories(author);",
             )
             .map_err(|e| Error::db("create rooms tables", e))?;
+        Ok(())
+    }
+
+    /// Migration v3 → v4: Add importance scoring and pinned columns.
+    fn migrate_v3_to_v4(&self) -> Result<(), Error> {
+        if !self.column_exists("importance") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN importance REAL NOT NULL DEFAULT 0.5;",
+                )
+                .map_err(|e| Error::db("add importance column", e))?;
+        }
+        if !self.column_exists("pinned") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;")
+                .map_err(|e| Error::db("add pinned column", e))?;
+        }
         Ok(())
     }
 

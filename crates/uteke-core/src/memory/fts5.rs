@@ -90,14 +90,14 @@ impl super::Store {
 
         let sql = match namespace {
             Some(_) => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, f.rank
+                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.namespace = ?2 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?3"#
             }
             None => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, f.rank
+                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.deprecated = 0
                    ORDER BY f.rank
@@ -173,14 +173,14 @@ impl super::Store {
 
         let sql = match namespace {
             Some(_) => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, f.rank
+                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.namespace = ?2 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?3"#
             }
             None => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, f.rank
+                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.deprecated = 0
                    ORDER BY f.rank
@@ -252,6 +252,8 @@ mod tests {
             valid_from: None,
             valid_until: None,
             memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
         }
     }
 

@@ -44,10 +44,20 @@ pub struct Memory {
     /// Memory type: fact, procedure, preference, decision, context.
     #[serde(default = "default_memory_type")]
     pub memory_type: String,
+    /// Composite importance score (0.0–1.0). Higher = more important.
+    #[serde(default = "default_importance")]
+    pub importance: f64,
+    /// Whether this memory is pinned (never decays).
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 fn default_namespace() -> String {
     DEFAULT_NAMESPACE.to_string()
+}
+
+fn default_importance() -> f64 {
+    0.5
 }
 
 fn default_memory_type() -> String {

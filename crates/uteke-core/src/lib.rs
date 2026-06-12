@@ -267,6 +267,21 @@ impl Uteke {
         }
         Ok(())
     }
+
+    /// Pin a memory so it never decays.
+    pub fn pin(&self, id: &str) -> Result<bool, Error> {
+        self.store.pin(id)
+    }
+
+    /// Unpin a memory.
+    pub fn unpin(&self, id: &str) -> Result<bool, Error> {
+        self.store.unpin(id)
+    }
+
+    /// Recalculate importance scores for all memories.
+    pub fn recompute_importance(&self) -> Result<usize, Error> {
+        self.store.recompute_importance()
+    }
 }
 
 /// Resolve a path to a database string.
@@ -317,6 +332,8 @@ mod tests {
             valid_from: None,
             valid_until: None,
             memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -359,6 +376,8 @@ mod tests {
             valid_from: None,
             valid_until: None,
             memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
         };
 
         let sr = SearchResult {

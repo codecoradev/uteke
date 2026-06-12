@@ -232,6 +232,18 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Pin a memory so it never decays
+    Pin {
+        /// Memory ID (UUID)
+        id: String,
+    },
+    /// Unpin a memory
+    Unpin {
+        /// Memory ID (UUID)
+        id: String,
+    },
+    /// Recalculate importance scores for all memories
+    Importance,
     /// Room management: list, stats, recall
     Room {
         #[command(subcommand)]

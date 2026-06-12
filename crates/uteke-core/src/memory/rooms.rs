@@ -222,7 +222,7 @@ impl super::Store {
             Some(_) => {
                 "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
                  m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type \
+                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned \
                  FROM memories m \
                  INNER JOIN room_memories rm ON m.id = rm.memory_id \
                  WHERE rm.room_id = ?1 AND rm.author = ?2 \
@@ -232,7 +232,7 @@ impl super::Store {
             None => {
                 "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
                  m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type \
+                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned \
                  FROM memories m \
                  INNER JOIN room_memories rm ON m.id = rm.memory_id \
                  WHERE rm.room_id = ?1 \
