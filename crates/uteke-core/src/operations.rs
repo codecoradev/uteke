@@ -95,6 +95,9 @@ impl crate::Uteke {
 
         self.store.insert(&memory)?;
 
+        // Invalidate recall cache — new memory may affect future queries
+        self.recall_cache.invalidate_namespace(&memory.namespace);
+
         index.insert(&id, embedding)?;
         if let Err(e) = index.save() {
             tracing::warn!(
@@ -121,6 +124,16 @@ impl crate::Uteke {
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Check recall cache first — avoids redundant embedding (~50ms).
+        if let Some(cached) = self.recall_cache.get(query, ns, limit, tags_filter) {
+            // Re-apply min_score filter (may differ from cached query)
+            let mut results = cached;
+            if min_score > 0.0 {
+                results.retain(|r| r.score >= min_score);
+            }
+            return Ok(results);
+        }
 
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
@@ -224,6 +237,10 @@ impl crate::Uteke {
             self.store.touch_access(&r.memory.id).ok();
         }
 
+        // Cache results for future queries
+        self.recall_cache
+            .put(query, ns, limit, tags_filter, results.clone());
+
         Ok(results)
     }
 
@@ -251,6 +268,67 @@ impl crate::Uteke {
                 self.recall_rrf(query, limit, tags_filter, namespace, min_score)
             }
         }
+    }
+
+    /// Recall memories and return a formatted context string for AI prompt injection.
+    ///
+    /// Returns a compact, structured summary optimized for LLM consumption.
+    /// Each memory includes content, score, tags, and importance.
+    ///
+    /// Example output:
+    /// ```text
+    /// [Relevant Memories (3 results, 0.82 avg score)]
+    /// 1. [0.91] Login timeout bug at 500ms [bug, login]
+    /// 2. [0.85] Increase login timeout to 5s [fix]
+    /// 3. [0.70] Users report timeout on slow connections [feedback]
+    /// ```
+    pub fn recall_context(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        strategy: RecallStrategy,
+        min_score: f32,
+    ) -> Result<String, Error> {
+        let results =
+            self.recall_hybrid(query, limit, tags_filter, namespace, strategy, min_score)?;
+
+        if results.is_empty() {
+            return Ok(format!("[No relevant memories found for: {query}]"));
+        }
+
+        let avg_score: f32 = results.iter().map(|r| r.score).sum::<f32>() / results.len() as f32;
+        let mut lines = vec![format!(
+            "[Relevant Memories ({} results, {:.2} avg score)]",
+            results.len(),
+            avg_score
+        )];
+
+        for (i, sr) in results.iter().enumerate() {
+            let tags = if sr.memory.tags.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", sr.memory.tags.join(", "))
+            };
+            let importance = if sr.memory.pinned {
+                " ★".to_string()
+            } else if sr.memory.importance > 0.7 {
+                " ↑".to_string()
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "{}. [{:.2}] {}{}{}",
+                i + 1,
+                sr.score,
+                sr.memory.content,
+                tags,
+                importance
+            ));
+        }
+
+        Ok(lines.join("\n"))
     }
 
     /// FTS5-only recall.
@@ -457,6 +535,9 @@ impl crate::Uteke {
 
     /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
+        // Invalidate recall cache — deleted memory may have been cached
+        self.recall_cache.clear(); // Safe: full clear on mutation
+
         // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index

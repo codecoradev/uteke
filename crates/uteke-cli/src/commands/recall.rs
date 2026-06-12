@@ -20,6 +20,7 @@ pub(crate) fn run_recall(
     config: &Config,
     related: bool,
     depth: usize,
+    context: bool,
 ) -> Result<(), String> {
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
@@ -94,13 +95,45 @@ pub(crate) fn run_recall(
     if filtered.is_empty() {
         if cli.json {
             output::print_json(&filtered);
+        } else if context {
+            println!("[No relevant memories found for: {query}]");
         } else {
             println!("No matching memories found.");
         }
         return Ok(());
     }
 
-    if cli.json {
+    if context {
+        // Context mode: formatted for AI prompt injection
+        let avg_score: f32 = filtered.iter().map(|r| r.score).sum::<f32>() / filtered.len() as f32;
+        println!(
+            "[Relevant Memories ({} results, {:.2} avg score)]",
+            filtered.len(),
+            avg_score
+        );
+        for (i, sr) in filtered.iter().enumerate() {
+            let tags = if sr.memory.tags.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", sr.memory.tags.join(", "))
+            };
+            let importance = if sr.memory.pinned {
+                " \u{2605}".to_string() // ★
+            } else if sr.memory.importance > 0.7 {
+                " \u{2191}".to_string() // ↑
+            } else {
+                String::new()
+            };
+            println!(
+                "{}. [{:.2}] {}{}{}",
+                i + 1,
+                sr.score,
+                sr.memory.content,
+                tags,
+                importance
+            );
+        }
+    } else if cli.json {
         output::print_json(&filtered);
     } else {
         output::print_recall_human(&filtered);

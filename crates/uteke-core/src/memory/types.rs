@@ -124,6 +124,10 @@ pub struct StoreStats {
     pub warm: usize,
     /// Number of cold memories (not accessed in 30+ days).
     pub cold: usize,
+    /// Number of recall cache hits.
+    pub cache_hits: u64,
+    /// Number of recall cache misses.
+    pub cache_misses: u64,
 }
 
 /// Result of a bulk delete operation.
