@@ -251,7 +251,6 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
