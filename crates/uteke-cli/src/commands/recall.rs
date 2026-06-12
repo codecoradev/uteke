@@ -18,6 +18,8 @@ pub(crate) fn run_recall(
     min: Option<f32>,
     strict: bool,
     config: &Config,
+    related: bool,
+    depth: usize,
 ) -> Result<(), String> {
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
@@ -33,9 +35,15 @@ pub(crate) fn run_recall(
     } else {
         Some(tag_refs.as_slice())
     };
-    let results = uteke
-        .recall(query, limit, tags_filter, ns, min_score)
-        .map_err(|e| format!("Failed to recall: {e}"))?;
+    let results = if related {
+        uteke
+            .recall_related(query, limit, tags_filter, ns, min_score, depth)
+            .map_err(|e| format!("Failed to recall: {e}"))?
+    } else {
+        uteke
+            .recall(query, limit, tags_filter, ns, min_score)
+            .map_err(|e| format!("Failed to recall: {e}"))?
+    };
 
     // Post-filter by entity/category metadata
     let filtered: Vec<_> = results

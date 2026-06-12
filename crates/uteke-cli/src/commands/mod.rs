@@ -59,6 +59,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             category,
             min,
             strict,
+            related,
+            depth,
         } => recall::run_recall(
             cli,
             uteke,
@@ -71,6 +73,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             *min,
             *strict,
             config,
+            *related,
+            *depth,
         ),
 
         Commands::Search { query, limit, tags } => {

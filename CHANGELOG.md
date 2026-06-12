@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- **Relationship graph layer between memories** (#246)
+  - `uteke recall --related --depth N` — follow relationship edges via BFS traversal
+  - `uteke remember --meta "rel:supersedes:ID"` — link memories with typed relationships
+  - Relationship types: supersedes, contradicts, part_of, references
+  - Score decay per depth level (0.8x) to rank direct matches higher
+  - No new tables — relationships stored in metadata JSON
+
 
 ### Added
 
