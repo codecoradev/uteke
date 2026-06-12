@@ -127,6 +127,7 @@ jobs:
 
       - name: Publish uteke-core
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-core --allow-dirty
+        continue-on-error: true
 
       - name: Publish uteke-cli
         run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-cli --allow-dirty
