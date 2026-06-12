@@ -4,6 +4,7 @@ members = [
     "crates/uteke-core",
     "crates/uteke-cli",
     "crates/uteke-server",
+    "crates/uteke-mcp",
 ]
 
 [workspace.package]

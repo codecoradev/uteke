@@ -1,0 +1,19 @@
+[package]
+name = "uteke-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP server for uteke — expose persistent memory to AI coding agents"
+readme = "README.md"
+keywords = ["mcp", "ai", "memory", "embedding", "agents"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "uteke-mcp"
+path = "src/main.rs"
+
+[dependencies]
+uteke-core = { path = "../uteke-core", version = "0.0.15" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
