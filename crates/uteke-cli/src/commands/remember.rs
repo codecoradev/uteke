@@ -5,9 +5,22 @@ use crate::output;
 use uteke_core::Uteke;
 
 /// Parse --meta key:value pairs into a JSON object.
+/// Special handling for `rel:type:target` directives which are
+/// accumulated into a `relationships` array.
 fn parse_meta_pairs(pairs: &[String]) -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
+    let mut relationships: Vec<serde_json::Value> = Vec::new();
+
     for pair in pairs {
+        // Check for relationship directive: rel:type:target
+        if let Some((rel_type, target)) = uteke_core::is_relationship_meta(pair) {
+            relationships.push(serde_json::json!({
+                "type": rel_type,
+                "target": target
+            }));
+            continue;
+        }
+
         if let Some((key, value)) = pair.split_once(':') {
             let val = if let Ok(n) = value.parse::<f64>() {
                 serde_json::Value::from(n)
@@ -23,6 +36,14 @@ fn parse_meta_pairs(pairs: &[String]) -> serde_json::Map<String, serde_json::Val
             map.insert(pair.clone(), serde_json::Value::Bool(true));
         }
     }
+
+    if !relationships.is_empty() {
+        map.insert(
+            "relationships".to_string(),
+            serde_json::Value::Array(relationships),
+        );
+    }
+
     map
 }
 

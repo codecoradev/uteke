@@ -96,6 +96,12 @@ pub enum Commands {
         /// Use strict threshold from config (min_score_strict)
         #[arg(long)]
         strict: bool,
+        /// Follow relationship edges in memory metadata
+        #[arg(long)]
+        related: bool,
+        /// Depth of relationship traversal (default: 1, use with --related)
+        #[arg(long, default_value = "1")]
+        depth: usize,
     },
     /// Search memories by content keywords (text search)
     Search {
