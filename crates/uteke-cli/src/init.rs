@@ -1,7 +1,7 @@
 //! Agent initialization commands (pi, claude, cursor).
 
-use crate::Cli;
-use crate::Commands;
+use crate::cli::Cli;
+use crate::cli::Commands;
 
 /// Handle the Init command from the CLI.
 pub(crate) fn run_init_command(cli: &Cli) -> Result<(), String> {

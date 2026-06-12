@@ -2,8 +2,8 @@
 
 use std::io::Read;
 
+use crate::cli::Cli;
 use crate::output;
-use crate::Cli;
 use uteke_core::Uteke;
 
 pub(crate) fn run_doctor(cli: &Cli, uteke: &Uteke) -> Result<(), String> {

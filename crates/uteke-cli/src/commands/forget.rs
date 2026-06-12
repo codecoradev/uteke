@@ -2,8 +2,8 @@
 
 use std::io;
 
+use crate::cli::Cli;
 use crate::output;
-use crate::Cli;
 use uteke_core::Uteke;
 
 /// Flags for the forget command.
