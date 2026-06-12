@@ -95,6 +95,9 @@ impl crate::Uteke {
 
         self.store.insert(&memory)?;
 
+        // Invalidate recall cache — new memory may affect future queries
+        self.recall_cache.invalidate_namespace(&memory.namespace);
+
         index.insert(&id, embedding)?;
         if let Err(e) = index.save() {
             tracing::warn!(
@@ -239,18 +242,106 @@ impl crate::Uteke {
         strategy: RecallStrategy,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        match strategy {
-            RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace, min_score),
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Check recall cache first — avoids redundant embedding (~50ms).
+        // min_score is NOT in the cache key: cached results store the full set
+        // and the caller re-applies threshold, ensuring correctness regardless
+        // of what threshold a previous caller used.
+        if let Some(cached) = self
+            .recall_cache
+            .get(query, ns, limit, tags_filter, strategy)
+        {
+            let mut results = cached;
+            if min_score > 0.0 {
+                results.retain(|r| r.score >= min_score);
+            }
+            results.truncate(limit);
+            return Ok(results);
+        }
+
+        let results = match strategy {
+            RecallStrategy::Vector => {
+                self.recall(query, limit, tags_filter, namespace, min_score)?
+            }
             RecallStrategy::Fts5 => {
-                self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)
+                self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)?
             }
             // Hybrid (RRF): min_score is passed but not used for filtering.
             // RRF scores are rank-based, not cosine similarity. Applying a
             // cosine threshold to RRF scores would incorrectly filter results.
             RecallStrategy::Hybrid => {
-                self.recall_rrf(query, limit, tags_filter, namespace, min_score)
+                self.recall_rrf(query, limit, tags_filter, namespace, min_score)?
             }
+        };
+
+        // Cache results for future queries (without min_score filtering,
+        // so cached results are reusable for any threshold)
+        self.recall_cache
+            .put(query, ns, limit, tags_filter, strategy, results.clone());
+
+        Ok(results)
+    }
+
+    /// Recall memories and return a formatted context string for AI prompt injection.
+    ///
+    /// Returns a compact, structured summary optimized for LLM consumption.
+    /// Each memory includes content, score, tags, and importance.
+    ///
+    /// Example output:
+    /// ```text
+    /// [Relevant Memories (3 results, 0.82 avg score)]
+    /// 1. [0.91] Login timeout bug at 500ms [bug, login]
+    /// 2. [0.85] Increase login timeout to 5s [fix]
+    /// 3. [0.70] Users report timeout on slow connections [feedback]
+    /// ```
+    pub fn recall_context(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        strategy: RecallStrategy,
+        min_score: f32,
+    ) -> Result<String, Error> {
+        let results =
+            self.recall_hybrid(query, limit, tags_filter, namespace, strategy, min_score)?;
+
+        if results.is_empty() {
+            return Ok(format!("[No relevant memories found for: {query}]"));
         }
+
+        let avg_score: f32 = results.iter().map(|r| r.score).sum::<f32>() / results.len() as f32;
+        let mut lines = vec![format!(
+            "[Relevant Memories ({} results, {:.2} avg score)]",
+            results.len(),
+            avg_score
+        )];
+
+        for (i, sr) in results.iter().enumerate() {
+            let tags = if sr.memory.tags.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", sr.memory.tags.join(", "))
+            };
+            let importance = if sr.memory.pinned {
+                " ★".to_string()
+            } else if sr.memory.importance > 0.7 {
+                " ↑".to_string()
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "{}. [{:.2}] {}{}{}",
+                i + 1,
+                sr.score,
+                sr.memory.content,
+                tags,
+                importance
+            ));
+        }
+
+        Ok(lines.join("\n"))
     }
 
     /// FTS5-only recall.
@@ -457,6 +548,15 @@ impl crate::Uteke {
 
     /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
+        // Look up namespace before delete for targeted cache invalidation.
+        // If lookup succeeds, invalidate only that namespace.
+        // If the memory simply doesn't exist, no invalidation needed.
+        // We intentionally do NOT clear the entire cache on lookup errors
+        // to avoid cross-namespace regressions from transient failures.
+        if let Some(memory) = self.store.get_by_id(id).ok().flatten() {
+            self.recall_cache.invalidate_namespace(&memory.namespace);
+        }
+
         // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
             .index

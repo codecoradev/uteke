@@ -17,6 +17,7 @@ mod import_export;
 mod maintenance;
 pub mod memory;
 mod operations;
+mod recall_cache;
 mod rooms;
 mod types;
 
@@ -157,6 +158,8 @@ pub struct Uteke {
     tier_config: TierConfig,
     #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
+    /// Recall cache — avoids redundant embedding computation for repeated queries.
+    recall_cache: recall_cache::RecallCache,
 }
 
 impl Uteke {
@@ -248,6 +251,7 @@ impl Uteke {
             embedder: Mutex::new(embedder),
             tier_config,
             recall_config,
+            recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
         })
     }
 
@@ -397,6 +401,8 @@ mod tests {
             hot: 10,
             warm: 15,
             cold: 17,
+            cache_hits: 100,
+            cache_misses: 25,
         };
 
         let json = serde_json::to_string(&stats).unwrap();

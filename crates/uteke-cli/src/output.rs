@@ -118,6 +118,14 @@ pub(crate) fn print_stats_human(stats: &uteke_core::StoreStats) {
         format!("{:.1} MB", stats.db_size_bytes as f64 / (1024.0 * 1024.0))
     };
     println!("  Database size:  {}", size_str);
+
+    // Recall cache metrics
+    let total_queries = stats.cache_hits + stats.cache_misses;
+    if total_queries > 0 {
+        let hit_rate = (stats.cache_hits as f64 / total_queries as f64) * 100.0;
+        println!("  Cache hits:     {} ({:.0}%)", stats.cache_hits, hit_rate);
+        println!("  Cache misses:   {}", stats.cache_misses);
+    }
 }
 
 /// Print doctor health check report in human-readable format.

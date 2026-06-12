@@ -102,6 +102,9 @@ pub enum Commands {
         /// Depth of relationship traversal (default: 1, use with --related)
         #[arg(long, default_value = "1")]
         depth: usize,
+        /// Output as formatted context for AI prompt injection
+        #[arg(long)]
+        context: bool,
     },
     /// Search memories by content keywords (text search)
     Search {

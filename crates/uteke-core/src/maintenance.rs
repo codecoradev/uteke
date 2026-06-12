@@ -156,6 +156,8 @@ impl crate::Uteke {
             .map(|m| m.len())
             .unwrap_or(0);
 
+        let (cache_hits, cache_misses) = self.recall_cache.metrics();
+
         Ok(StoreStats {
             total_memories,
             unique_tags,
@@ -163,6 +165,8 @@ impl crate::Uteke {
             hot,
             warm,
             cold,
+            cache_hits,
+            cache_misses,
         })
     }
 

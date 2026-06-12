@@ -2,6 +2,12 @@
 
 ### Added
 
+- **Agent recall optimization** (#181)
+  - Recall cache: LRU with TTL (5min, 256 entries) — avoids redundant embedding (~50ms) for repeated queries
+  - `uteke recall --context` — formatted output for AI prompt injection
+  - Cache metrics in `uteke stats` (hits, misses, hit rate)
+  - Auto-invalidation on remember/forget mutations
+  - `recall_context()` library API for direct prompt injection
 - **Relationship graph layer between memories** (#246)
   - `uteke recall --related --depth N` — follow relationship edges via BFS traversal
   - `uteke remember --meta "rel:supersedes:ID"` — link memories with typed relationships
