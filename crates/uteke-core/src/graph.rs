@@ -112,14 +112,13 @@ impl crate::Uteke {
                     if visited.contains(&rel.target) {
                         continue;
                     }
-                    visited.insert(rel.target.clone());
-
                     if let Some(target_memory) = self.get_by_id(&rel.target)? {
-                        // Score decays with depth: each level gets a lower score
+                        visited.insert(rel.target.clone());
                         let decayed_score = (results[memory_id].1 * 0.8).max(0.1);
                         results.insert(rel.target.clone(), (target_memory.clone(), decayed_score));
                         next_frontier.push(rel.target.clone());
                     }
+                    // Missing targets not marked visited — allows alternate paths.
                 }
             }
 
@@ -142,6 +141,7 @@ impl crate::Uteke {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        all_results.truncate(limit);
         Ok(all_results)
     }
 
