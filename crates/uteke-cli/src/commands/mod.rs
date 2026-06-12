@@ -7,6 +7,7 @@ mod maintenance;
 mod namespace;
 mod recall;
 mod remember;
+mod room;
 mod server;
 mod tags;
 
@@ -33,6 +34,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             entity,
             category,
             meta,
+            room,
+            author,
         } => remember::run(
             cli,
             uteke,
@@ -44,6 +47,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             entity.as_deref(),
             category.as_deref(),
             meta,
+            room.as_deref(),
+            author.as_deref(),
         ),
 
         Commands::Recall {
@@ -156,5 +161,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             checksums_file,
             binary,
         } => maintenance::run_verify_checksums(cli, checksums_file, binary),
+
+        Commands::Room { command } => crate::commands::room::run(cli, uteke, ns, command),
     }
 }

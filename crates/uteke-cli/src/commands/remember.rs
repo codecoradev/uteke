@@ -38,6 +38,8 @@ pub(crate) fn run(
     entity: Option<&str>,
     category: Option<&str>,
     meta: &[String],
+    room: Option<&str>,
+    author: Option<&str>,
 ) -> Result<(), String> {
     tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
@@ -106,9 +108,25 @@ pub(crate) fn run(
             }
         }
     } else {
-        let id = uteke
-            .remember(content, &tag_refs, metadata, ns)
-            .map_err(|e| format!("Failed to store memory: {e}"))?;
+        let id = if let Some(room_id) = room {
+            // Room mode: store memory and link to room with author
+            let author_name = author.unwrap_or("anonymous");
+            uteke
+                .remember_in_room(
+                    content,
+                    &tag_refs,
+                    metadata.clone(),
+                    ns,
+                    r#type,
+                    room_id,
+                    author_name,
+                )
+                .map_err(|e| format!("Failed to store memory in room: {e}"))?
+        } else {
+            uteke
+                .remember(content, &tag_refs, metadata, ns)
+                .map_err(|e| format!("Failed to store memory: {e}"))?
+        };
         tracing::info!("Memory stored with ID: {id}");
         if cli.json {
             let mut obj = serde_json::json!({"id": id});

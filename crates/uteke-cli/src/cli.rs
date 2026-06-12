@@ -67,6 +67,12 @@ pub enum Commands {
         /// Arbitrary key:value metadata pairs (comma-separated)
         #[arg(long, value_delimiter = ',')]
         meta: Vec<String>,
+        /// Room ID to link this memory to (collaborative context)
+        #[arg(long)]
+        room: Option<String>,
+        /// Author attribution when storing in a room
+        #[arg(long)]
+        author: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -220,6 +226,11 @@ pub enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Room management: list, stats, recall
+    Room {
+        #[command(subcommand)]
+        command: RoomCommands,
+    },
 }
 
 /// Subcommands for tag management.
@@ -262,6 +273,41 @@ pub enum NamespaceCommands {
     Switch {
         /// Namespace name to set as default
         name: String,
+    },
+}
+
+/// Subcommands for room management.
+#[derive(Subcommand)]
+pub enum RoomCommands {
+    /// List all rooms
+    List {
+        /// Filter by namespace
+        #[arg(long)]
+        namespace: Option<String>,
+    },
+    /// Show room statistics and participants
+    Stats {
+        /// Room ID
+        room_id: String,
+    },
+    /// Recall all memories in a room (cross-namespace)
+    Recall {
+        /// Room ID
+        room_id: String,
+        /// Filter by author
+        #[arg(long)]
+        author: Option<String>,
+        /// Maximum results to return
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Delete a room (memories are NOT deleted, only room links)
+    Delete {
+        /// Room ID
+        room_id: String,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        confirm: bool,
     },
 }
 

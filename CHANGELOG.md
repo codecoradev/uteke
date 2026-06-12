@@ -5,6 +5,20 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Room-based collaborative memory for multi-agent discussions** (#286)
+  - `uteke remember --room <id> --author <name>` — store memory in a shared room
+  - `uteke room list` — list all rooms
+  - `uteke room stats <id>` — room metadata, participants, memory count
+  - `uteke room recall <id>` — cross-namespace recall of all room memories
+  - `uteke room recall <id> --author <name>` — filter by author
+  - `uteke room delete <id>` — delete room links (memories preserved)
+  - Schema v3: `rooms` + `room_memories` tables with auto-migration
+  - Dual-write: memories exist in agent namespace AND linked to room
+
 ## [0.0.15] — 2026-06-12
 
 ### Changed

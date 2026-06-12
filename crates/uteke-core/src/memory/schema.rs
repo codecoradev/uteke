@@ -154,6 +154,8 @@ impl super::Store {
             match version {
                 // v2: FTS5 full-text search virtual table + sync triggers
                 2 => self.migrate_v1_to_v2()?,
+                // v3: Room-based collaborative memory tables
+                3 => self.migrate_v2_to_v3()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -204,6 +206,34 @@ impl super::Store {
             tracing::info!("FTS5 index rebuilt successfully.");
         }
 
+        Ok(())
+    }
+
+    /// Migration v2 → v3: Add rooms and room_memories tables.
+    fn migrate_v2_to_v3(&self) -> Result<(), Error> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS rooms (\n\
+                    id TEXT PRIMARY KEY,\n\
+                    title TEXT,\n\
+                    namespace TEXT NOT NULL,\n\
+                    created_at TEXT NOT NULL,\n\
+                    updated_at TEXT NOT NULL\n\
+                );\n\
+                CREATE INDEX IF NOT EXISTS idx_rooms_namespace ON rooms(namespace);\n\
+                \n\
+                CREATE TABLE IF NOT EXISTS room_memories (\n\
+                    room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,\n\
+                    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,\n\
+                    author TEXT NOT NULL,\n\
+                    role TEXT NOT NULL DEFAULT 'participant',\n\
+                    joined_at TEXT NOT NULL,\n\
+                    PRIMARY KEY (room_id, memory_id)\n\
+                );\n\
+                CREATE INDEX IF NOT EXISTS idx_room_memories_room ON room_memories(room_id);\n\
+                CREATE INDEX IF NOT EXISTS idx_room_memories_author ON room_memories(author);",
+            )
+            .map_err(|e| Error::db("create rooms tables", e))?;
         Ok(())
     }
 

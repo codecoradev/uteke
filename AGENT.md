@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local at `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Version:** 0.0.14
+- **Version:** 0.0.15
 - **License:** Apache 2.0
 - **Main branches:** `develop` (all PRs go here), `main` (release)
 
@@ -48,11 +48,21 @@ crates/uteke-core/src/
     └── vector.rs       # Vector index management
 
 crates/uteke-cli/src/
-├── main.rs             # Entry point, clap app definition
+├── main.rs             # Entry point (logging, config, dispatch)
+├── cli.rs              # Clap structs + enums (Cli, Commands, etc.)
+├── config.rs           # Config file loading (uteke.toml)
+├── logging.rs          # Console + daily file appender setup
+├── output.rs           # Print helpers (human + JSON formatters)
+├── init.rs             # Agent init (pi, claude, cursor, copilot, codex)
+├── bench.rs            # Benchmark helpers
+├── assets/shell/       # Shell hook scripts (include_str! at compile time)
+│   ├── uteke-hook.bash
+│   ├── uteke-hook.zsh
+│   └── uteke-hook.fish
 └── commands/
-    ├── mod.rs
+    ├── mod.rs           # Command dispatch
     ├── remember.rs      # --entity, --category, --meta flags
-    ├── recall.rs        # --entity, --category filter
+    ├── recall.rs        # --entity, --category filter, hybrid search
     ├── list.rs          # --entity, --category filter
     ├── server.rs        # HTTP proxy to uteke-serve
     └── ...              # Other per-command modules
@@ -187,6 +197,32 @@ If a CI check fails:
 
 Principle: **Red CI = there's a problem. Investigate first, don't assume.**
 
+### 11. Release Tags Require Approval
+
+**Never push a `v*` tag without explicit approval.** The tag triggers the release workflow which:
+- Publishes to crates.io (irreversible)
+- Builds 4 platform binaries
+- Creates GitHub Release
+- Pushes Docker image
+- Deploys docs
+
+Before tagging:
+1. All PRs for the version must be merged
+2. Run `cargo publish --dry-run --allow-dirty -p uteke-core && cargo publish --dry-run --allow-dirty -p uteke-cli && cargo publish --dry-run --allow-dirty -p uteke-server` locally
+3. Verify CHANGELOG is complete and version bumped
+4. Get approval from project owner
+5. Then tag and push
+
+### 12. Always Run Cora Pre-Commit Hook
+
+The `cora hook install` pre-commit hook runs on every `git commit`. Do NOT bypass with `--no-verify` unless the Cora API is down. The hook catches real issues before they reach CI.
+
+```bash
+# Pre-commit hook is auto-installed at .git/hooks/pre-commit
+# Verify it works:
+cora review --staged --format compact
+```
+
 ---
 
 ## Lessons Learned — From Real Experience
@@ -244,6 +280,27 @@ Run manual stress tests after significant changes.
 ### Documentation Gets Outdated Quickly
 
 CONTRIBUTING.md once said "2 crates" when it had been 3 since v0.0.4. Version badge was behind. **Always update docs before commit** — see Critical Rule #8.
+
+### crates.io Publish Requires All Files Inside the Crate Directory
+
+v0.0.14 release failed 3 times because:
+1. **Intra-workspace dependencies need `version` field** — `uteke-cli` depended on `uteke-core` with only `path`, but crates.io requires `version = "x.y.z"`
+2. **`include_str!` paths must be within the crate root** — shell hooks were in `scripts/shell/` (repo root), outside `crates/uteke-cli/`. `cargo publish` only packages files within the crate directory.
+3. **Windows build failure blocked GitHub Release** — release job depended on both `build-release` AND `publish-crates`, so one platform failure blocked everything.
+
+**Fix:** Run `cargo publish --dry-run --allow-dirty` locally before tagging. Decouple publish from release.
+
+### Re-tagging Is Destructive and Confusing
+
+Deleting and re-pushing a tag triggers a new release workflow but leaves stale state on crates.io (partial publish). Always verify locally with `--dry-run` before pushing any tag.
+
+### Pre-commit Hooks Prevent Dumb Mistakes
+
+Cora pre-commit hook (`cora hook install`) catches issues before they reach CI. Found real bugs like log directory not created before appender init, and false-positive SQL injection flags on CLI struct definitions.
+
+### Lazy Initialization for Cold Start
+
+ONNX model load takes ~2.5s. Wrapping `embedder` in `Mutex<Option<EmbeddingEngine>>` and lazy-loading on first `embed()` call makes all non-embedding commands (list, stats, tags, get, forget, namespace, aging, export, doctor, verify) start in ~20ms instead of ~3s. The key insight: **not every command needs every expensive resource**.
 
 ---
 
