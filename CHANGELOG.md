@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `uteke room delete <id>` — delete room links (memories preserved)
   - Schema v3: `rooms` + `room_memories` tables with auto-migration
   - Dual-write: memories exist in agent namespace AND linked to room
+- **MCP server for AI tool integration** (#248)
+  - New `uteke-mcp` binary — stdio JSON-RPC MCP server
+  - 5 tools: `uteke_remember`, `uteke_recall`, `uteke_list`, `uteke_forget`, `uteke_stats`
+  - Room support: `room` and `author` parameters on remember/recall
+  - Compatible with Claude Code, Cursor, Copilot MCP clients
+  - 4th workspace crate: `uteke-mcp`
 
 ## [0.0.15] — 2026-06-12
 
