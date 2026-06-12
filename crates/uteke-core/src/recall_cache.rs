@@ -1,20 +1,28 @@
 //! Recall cache for avoiding redundant embedding computation.
 //!
-//! LRU cache keyed by (query_hash, namespace, limit, min_score) with TTL expiry.
+//! TTL-based cache keyed by (query_hash, namespace, limit, strategy) with FIFO eviction.
 //! Embedding a query takes ~50ms; cache hit returns in <1μs.
+//!
+//! Note: min_score is NOT part of the cache key. Cached results are stored
+//! WITHOUT min_score filtering. The caller re-applies min_score after cache
+//! lookup, ensuring correctness regardless of threshold differences between
+//! calls. This works because cache stores the full result set (limit * multiplier)
+//! and the caller truncates after filtering.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Instant;
 
-use crate::memory::types::SearchResult;
+use crate::memory::types::{RecallStrategy, SearchResult};
 
-/// Cache key: hash of query + filters.
+/// Cache key: query hash + namespace + limit + strategy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     query_hash: u64,
     namespace: String,
     limit: usize,
+    /// Strategy affects which search path is used (vector, fts5, hybrid).
+    strategy: &'static str,
 }
 
 /// Cache entry with TTL.
@@ -41,7 +49,7 @@ impl Default for RecallCacheConfig {
     }
 }
 
-/// Thread-safe recall cache with LRU eviction and TTL expiry.
+/// Thread-safe recall cache with FIFO eviction and TTL expiry.
 pub struct RecallCache {
     entries: Mutex<HashMap<CacheKey, CacheEntry>>,
     config: RecallCacheConfig,
@@ -69,8 +77,9 @@ impl RecallCache {
         namespace: &str,
         limit: usize,
         tags_filter: Option<&[&str]>,
+        strategy: RecallStrategy,
     ) -> Option<Vec<SearchResult>> {
-        let key = self.make_key(query, namespace, limit, tags_filter);
+        let key = self.make_key(query, namespace, limit, tags_filter, strategy);
         let mut entries = self.entries.lock().ok()?;
 
         if let Some(entry) = entries.get(&key) {
@@ -97,18 +106,18 @@ impl RecallCache {
         namespace: &str,
         limit: usize,
         tags_filter: Option<&[&str]>,
+        strategy: RecallStrategy,
         results: Vec<SearchResult>,
     ) {
-        let key = self.make_key(query, namespace, limit, tags_filter);
+        let key = self.make_key(query, namespace, limit, tags_filter, strategy);
         if let Ok(mut entries) = self.entries.lock() {
             // Evict expired entries first
             let now = Instant::now();
             entries
                 .retain(|_, v| now.duration_since(v.inserted_at).as_secs() < self.config.ttl_secs);
 
-            // LRU eviction if still over capacity
+            // FIFO eviction if still over capacity (oldest insert time first)
             if entries.len() >= self.config.max_entries {
-                // Remove oldest entry
                 if let Some(oldest_key) = entries
                     .iter()
                     .min_by_key(|(_, v)| v.inserted_at)
@@ -155,6 +164,7 @@ impl RecallCache {
         namespace: &str,
         limit: usize,
         tags_filter: Option<&[&str]>,
+        strategy: RecallStrategy,
     ) -> CacheKey {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -170,6 +180,7 @@ impl RecallCache {
             query_hash: hasher.finish(),
             namespace: namespace.to_string(),
             limit,
+            strategy: strategy.as_str(),
         }
     }
 }
@@ -208,17 +219,31 @@ mod tests {
         }];
 
         // Miss first
-        assert!(cache.get("test query", "default", 5, None).is_none());
+        assert!(cache
+            .get("test query", "default", 5, None, RecallStrategy::Vector)
+            .is_none());
 
-        // Put then hit
-        cache.put("test query", "default", 5, None, results.clone());
-        let cached = cache.get("test query", "default", 5, None);
+        // Put then hit (same strategy)
+        cache.put(
+            "test query",
+            "default",
+            5,
+            None,
+            RecallStrategy::Vector,
+            results.clone(),
+        );
+        let cached = cache.get("test query", "default", 5, None, RecallStrategy::Vector);
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().len(), 1);
 
+        // Different strategy = miss
+        assert!(cache
+            .get("test query", "default", 5, None, RecallStrategy::Hybrid)
+            .is_none());
+
         let (hits, misses) = cache.metrics();
         assert_eq!(hits, 1);
-        assert_eq!(misses, 1);
+        assert_eq!(misses, 2); // first miss + different strategy miss
     }
 
     #[test]
@@ -229,12 +254,30 @@ mod tests {
         });
 
         let results = vec![];
-        cache.put("query", "ns1", 5, None, results.clone());
-        cache.put("query", "ns2", 5, None, results.clone());
+        cache.put(
+            "query",
+            "ns1",
+            5,
+            None,
+            RecallStrategy::Vector,
+            results.clone(),
+        );
+        cache.put(
+            "query",
+            "ns2",
+            5,
+            None,
+            RecallStrategy::Vector,
+            results.clone(),
+        );
 
         cache.invalidate_namespace("ns1");
-        assert!(cache.get("query", "ns1", 5, None).is_none());
-        assert!(cache.get("query", "ns2", 5, None).is_some());
+        assert!(cache
+            .get("query", "ns1", 5, None, RecallStrategy::Vector)
+            .is_none());
+        assert!(cache
+            .get("query", "ns2", 5, None, RecallStrategy::Vector)
+            .is_some());
     }
 
     #[test]
@@ -244,8 +287,10 @@ mod tests {
             ttl_secs: 60,
         });
 
-        cache.put("query", "default", 5, None, vec![]);
+        cache.put("query", "default", 5, None, RecallStrategy::Vector, vec![]);
         cache.clear();
-        assert!(cache.get("query", "default", 5, None).is_none());
+        assert!(cache
+            .get("query", "default", 5, None, RecallStrategy::Vector)
+            .is_none());
     }
 }

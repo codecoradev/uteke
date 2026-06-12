@@ -126,12 +126,18 @@ impl crate::Uteke {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
         // Check recall cache first — avoids redundant embedding (~50ms).
-        if let Some(cached) = self.recall_cache.get(query, ns, limit, tags_filter) {
-            // Re-apply min_score filter (may differ from cached query)
+        // min_score is NOT in the cache key: we cache results with min_score=0.0
+        // and re-apply the threshold here, ensuring correctness regardless of
+        // what threshold a previous caller used.
+        if let Some(cached) =
+            self.recall_cache
+                .get(query, ns, limit, tags_filter, RecallStrategy::Vector)
+        {
             let mut results = cached;
             if min_score > 0.0 {
                 results.retain(|r| r.score >= min_score);
             }
+            results.truncate(limit);
             return Ok(results);
         }
 
@@ -237,9 +243,16 @@ impl crate::Uteke {
             self.store.touch_access(&r.memory.id).ok();
         }
 
-        // Cache results for future queries
-        self.recall_cache
-            .put(query, ns, limit, tags_filter, results.clone());
+        // Cache results for future queries (without min_score filtering,
+        // so cached results are reusable for any threshold)
+        self.recall_cache.put(
+            query,
+            ns,
+            limit,
+            tags_filter,
+            RecallStrategy::Vector,
+            results.clone(),
+        );
 
         Ok(results)
     }
@@ -535,8 +548,15 @@ impl crate::Uteke {
 
     /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
-        // Invalidate recall cache — deleted memory may have been cached
-        self.recall_cache.clear(); // Safe: full clear on mutation
+        // Look up namespace before delete for targeted cache invalidation.
+        // This avoids a full cache clear which would be a cross-namespace regression.
+        let ns = self.store.get_by_id(id).ok().flatten().map(|m| m.namespace);
+        if let Some(ref ns) = ns {
+            self.recall_cache.invalidate_namespace(ns);
+        } else {
+            // Memory not found or error — clear all as safe fallback
+            self.recall_cache.clear();
+        }
 
         // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.
         let mut index = self
