@@ -5,7 +5,7 @@ All notable changes to Uteke will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.15] — 2026-06-12
 
 ### Changed
 
@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `doctor`, and `verify` start instantly without waiting for model load.
   Commands that need embedding (`remember`, `recall`, `search`) still take
   ~3s on first use per process invocation.
+- **Refactor CLI into modular structure** (#131)
+  CLI argument definitions extracted to `cli.rs`, logging setup to `logging.rs`.
+  main.rs reduced from 449 to ~100 lines for easier maintenance.
+- Release workflow now decoupled: crates.io publish runs in parallel with
+  builds, GitHub Release only waits for builds. Single platform failure
+  no longer blocks release.
+- Shell hook scripts inlined into uteke-cli crate for crates.io compatibility.
+- Added `.cora.yaml` config and pre-commit hook (Cora v0.5.0).
 
 ## [0.0.14] — 2026-06-12
 
