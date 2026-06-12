@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.13-green.svg" alt="v0.0.13" />
+  <img src="https://img.shields.io/badge/status-v0.0.14-green.svg" alt="v0.0.14" />
 </p>
 
 <p align="center">
@@ -75,7 +75,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (107 unit tests)
+cargo test --workspace         # Test (108 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
