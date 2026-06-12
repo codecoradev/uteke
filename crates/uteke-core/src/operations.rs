@@ -125,22 +125,6 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
-        // Check recall cache first — avoids redundant embedding (~50ms).
-        // min_score is NOT in the cache key: we cache results with min_score=0.0
-        // and re-apply the threshold here, ensuring correctness regardless of
-        // what threshold a previous caller used.
-        if let Some(cached) =
-            self.recall_cache
-                .get(query, ns, limit, tags_filter, RecallStrategy::Vector)
-        {
-            let mut results = cached;
-            if min_score > 0.0 {
-                results.retain(|r| r.score >= min_score);
-            }
-            results.truncate(limit);
-            return Ok(results);
-        }
-
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
         // Lazy-load embedder on first use.
@@ -243,17 +227,6 @@ impl crate::Uteke {
             self.store.touch_access(&r.memory.id).ok();
         }
 
-        // Cache results for future queries (without min_score filtering,
-        // so cached results are reusable for any threshold)
-        self.recall_cache.put(
-            query,
-            ns,
-            limit,
-            tags_filter,
-            RecallStrategy::Vector,
-            results.clone(),
-        );
-
         Ok(results)
     }
 
@@ -269,18 +242,45 @@ impl crate::Uteke {
         strategy: RecallStrategy,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        match strategy {
-            RecallStrategy::Vector => self.recall(query, limit, tags_filter, namespace, min_score),
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Check recall cache first — avoids redundant embedding (~50ms).
+        // min_score is NOT in the cache key: cached results store the full set
+        // and the caller re-applies threshold, ensuring correctness regardless
+        // of what threshold a previous caller used.
+        if let Some(cached) = self
+            .recall_cache
+            .get(query, ns, limit, tags_filter, strategy)
+        {
+            let mut results = cached;
+            if min_score > 0.0 {
+                results.retain(|r| r.score >= min_score);
+            }
+            results.truncate(limit);
+            return Ok(results);
+        }
+
+        let results = match strategy {
+            RecallStrategy::Vector => {
+                self.recall(query, limit, tags_filter, namespace, min_score)?
+            }
             RecallStrategy::Fts5 => {
-                self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)
+                self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)?
             }
             // Hybrid (RRF): min_score is passed but not used for filtering.
             // RRF scores are rank-based, not cosine similarity. Applying a
             // cosine threshold to RRF scores would incorrectly filter results.
             RecallStrategy::Hybrid => {
-                self.recall_rrf(query, limit, tags_filter, namespace, min_score)
+                self.recall_rrf(query, limit, tags_filter, namespace, min_score)?
             }
-        }
+        };
+
+        // Cache results for future queries (without min_score filtering,
+        // so cached results are reusable for any threshold)
+        self.recall_cache
+            .put(query, ns, limit, tags_filter, strategy, results.clone());
+
+        Ok(results)
     }
 
     /// Recall memories and return a formatted context string for AI prompt injection.
@@ -549,13 +549,12 @@ impl crate::Uteke {
     /// Delete a memory by ID. Incremental — no index rebuild.
     pub fn forget(&self, id: &str) -> Result<(), Error> {
         // Look up namespace before delete for targeted cache invalidation.
-        // This avoids a full cache clear which would be a cross-namespace regression.
-        let ns = self.store.get_by_id(id).ok().flatten().map(|m| m.namespace);
-        if let Some(ref ns) = ns {
-            self.recall_cache.invalidate_namespace(ns);
-        } else {
-            // Memory not found or error — clear all as safe fallback
-            self.recall_cache.clear();
+        // If lookup succeeds, invalidate only that namespace.
+        // If the memory simply doesn't exist, no invalidation needed.
+        // We intentionally do NOT clear the entire cache on lookup errors
+        // to avoid cross-namespace regressions from transient failures.
+        if let Some(memory) = self.store.get_by_id(id).ok().flatten() {
+            self.recall_cache.invalidate_namespace(&memory.namespace);
         }
 
         // Acquire index write lock BEFORE SQLite delete to narrow inconsistency window.

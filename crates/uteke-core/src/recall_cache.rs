@@ -145,6 +145,7 @@ impl RecallCache {
     }
 
     /// Clear all cached entries.
+    #[allow(dead_code)] // Public API — kept for library consumers
     pub fn clear(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.clear();
@@ -172,8 +173,10 @@ impl RecallCache {
         let mut hasher = DefaultHasher::new();
         query.hash(&mut hasher);
         if let Some(tags) = tags_filter {
+            tags.len().hash(&mut hasher); // sentinel: prevents ["a","bc"] vs ["ab","c"] collision
             for t in tags {
                 t.hash(&mut hasher);
+                0u8.hash(&mut hasher); // separator: terminates each tag in the hash stream
             }
         }
         CacheKey {
