@@ -48,7 +48,7 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | `--category <cat>` | Categorize the memory (e.g. "infrastructure") |
 | `--meta <pairs>` | Key:value pairs, comma-separated. Auto-detects type (string/number/bool) |
 | `--metadata <json>` | Arbitrary JSON metadata |
-| `--detect-contradiction` | Detect conflicting memories (threshold 0.65) |
+| `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
 | `--type <type>` | Memory type: fact, procedure, preference, decision, context |
 | `--valid-from <datetime>` | Start of validity period (ISO 8601) |
 | `--valid-until <datetime>` | End of validity period (ISO 8601) |
