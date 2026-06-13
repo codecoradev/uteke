@@ -1,4 +1,4 @@
-## [Unreleased]
+## [0.1.0] — 2026-06-13
 
 ### Added
 
@@ -54,9 +54,13 @@
   - Score decay per depth level (0.8x) to rank direct matches higher
   - No new tables — relationships stored in metadata JSON
 
-### Changed
+### Fixed
 
-- **Normalize tags with junction table** (#184)
+- **Recall `--json` output consistency** — empty results now always output `[]`
+  instead of `{"results":[]}` when min_score threshold is active. Ensures
+  machine consumers (cora-cli, scripts, MCP) can parse output reliably.
+
+### Changed
   - New `memory_tags` junction table for O(log n) tag lookups
   - Schema v5: creates table, populates from existing JSON tags
   - Dual-write: insert/update writes to both JSON column and junction table

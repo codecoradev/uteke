@@ -93,25 +93,14 @@ pub(crate) fn run_recall(
         })
         .collect();
 
-    if filtered.is_empty() && min_score > 0.0 {
-        if cli.json {
-            let response = serde_json::json!({
-                "results": [],
-                "total": 0,
-                "threshold": min_score,
-                "message": "No memories above similarity threshold"
-            });
-            println!("{}", serde_json::to_string(&response).unwrap());
-        } else {
-            println!("No matching memories found.");
-            println!("(min_score threshold: {:.2})", min_score);
-        }
-        return Ok(());
-    }
-
     if filtered.is_empty() {
         if cli.json {
+            // Always output a JSON array for machine consumers (cora-cli,
+            // scripts, MCP). A bare [] is easier to parse than {"results":[]}.
             output::print_json(&filtered);
+        } else if min_score > 0.0 {
+            println!("No matching memories found.");
+            println!("(min_score threshold: {:.2})", min_score);
         } else if context {
             println!("[No relevant memories found for: {query}]");
         } else {
