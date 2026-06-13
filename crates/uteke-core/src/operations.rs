@@ -783,9 +783,10 @@ impl crate::Uteke {
                 return Ok(results);
             }
 
-            // If the fetch returned fewer than fetch_limit candidates, the
-            // index is exhausted — no point expanding the search scope.
-            if results.is_empty() && candidates_len < fetch_limit {
+            // If the fetch returned fewer candidates than fetch_limit, the
+            // index is exhausted — expanding the search scope won't help.
+            if candidates_len < fetch_limit {
+                results.truncate(limit);
                 return Ok(results);
             }
 
