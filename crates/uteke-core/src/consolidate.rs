@@ -75,7 +75,7 @@ impl crate::Uteke {
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember_with_contradiction"))?
-            .as_mut()
+            .as_ref()
             .expect("embedder ensured above")
             .embed(content)?;
 

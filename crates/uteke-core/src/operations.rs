@@ -44,7 +44,7 @@ impl crate::Uteke {
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?
-            .as_mut()
+            .as_ref()
             .expect("embedder ensured above")
             .embed(content)?;
         self.remember_precomputed(content, tags, metadata, namespace, memory_type, &embedding)
@@ -133,7 +133,7 @@ impl crate::Uteke {
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during recall"))?
-            .as_mut()
+            .as_ref()
             .expect("embedder ensured above")
             .embed(query)?;
         // Embedder lock dropped here — other threads can embed or recall concurrently.
