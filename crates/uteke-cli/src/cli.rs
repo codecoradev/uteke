@@ -315,12 +315,18 @@ pub enum RoomCommands {
     Recall {
         /// Room ID
         room_id: String,
+        /// Semantic query — rank memories by relevance instead of chronological
+        #[arg(long)]
+        query: Option<String>,
         /// Filter by author
         #[arg(long)]
         author: Option<String>,
         /// Maximum results to return
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Minimum similarity score (0.0-1.0). Only used with --query.
+        #[arg(long)]
+        min: Option<f32>,
     },
     /// Delete a room (memories are NOT deleted, only room links)
     Delete {
@@ -329,6 +335,11 @@ pub enum RoomCommands {
         /// Skip confirmation prompt
         #[arg(long)]
         confirm: bool,
+    },
+    /// Generate a summary of room discussion (topic clustering, no LLM needed)
+    Summary {
+        /// Room ID
+        room_id: String,
     },
 }
 

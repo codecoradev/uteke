@@ -189,6 +189,30 @@ pub(crate) fn print_aging_status_human(status: &uteke_core::AgingStatus) {
     println!("  🚫 Never accessed: {}", status.never_accessed);
 }
 
+/// Print room semantic recall results in human-readable format.
+pub(crate) fn print_room_semantic_human(room_id: &str, results: &[uteke_core::SearchResult]) {
+    if results.is_empty() {
+        println!("No matching memories found in room {room_id}.");
+        return;
+    }
+    println!("Found {} result(s) in room {}:\n", results.len(), room_id);
+    for (i, r) in results.iter().enumerate() {
+        let tags = if r.memory.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", r.memory.tags.join(", "))
+        };
+        println!(
+            "  {}. (score: {:.2}) {}{}",
+            i + 1,
+            r.score,
+            r.memory.content,
+            tags
+        );
+        println!("     ID: {}", &r.memory.id[..8.min(r.memory.id.len())]);
+    }
+}
+
 /// Print aging preview (memories eligible for cleanup) in human-readable format.
 pub(crate) fn print_aging_preview_human(memories: &[uteke_core::Memory]) {
     if memories.is_empty() {
