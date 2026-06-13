@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.0.14-green.svg" alt="v0.0.14" />
+  <img src="https://img.shields.io/badge/status-v0.1.0-green.svg" alt="v0.1.0" />
 </p>
 
 <p align="center">
@@ -51,6 +51,13 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 | **Pencarian semantik** | ✅ ONNX lokal + hybrid FTS5 | ✅ Embedding cloud | ⚠️ Kata kunci + arsip | ✅ GraphRAG |
 | **Pencarian teks penuh** | ✅ FTS5 bawaan | ❌ | ⚠️ Hanya kata kunci | ❌ |
 | **Kecepatan recall** | ~30ms (library) | Round-trip jaringan | Round-trip jaringan | Round-trip jaringan |
+| **Rooms** | ✅ Bawaan | ❌ | ❌ | ❌ |
+| **Time-travel** | ✅ --at flag | ❌ | ❌ | ❌ |
+| **MCP Server** | ✅ Bawaan | ❌ | ❌ | ❌ |
+| **Relationship Graph** | ✅ --related | ❌ | ❌ | ✅ GraphRAG |
+| **Smart Decay** | ✅ Pin + importance | ✅ | ✅ Core memory | ✅ TTL-based |
+| **Recall Cache** | ✅ LRU + TTL | ❌ | ❌ | ❌ |
+| **Benchmark** | ✅ Bawaan | ❌ | ❌ | ❌ |
 | **Privasi** | ✅ Data tidak pernah keluar dari perangkat | ⚠️ Data dikirim ke LLM | ⚠️ Data dikirim ke LLM | ⚠️ Data dikirim ke LLM |
 | **Lisensi** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
@@ -59,7 +66,14 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 ## Fitur Utama
 
 - 🧠 **Pencarian Hybrid** — Kemiripan vektor + pencarian teks penuh FTS5, digabungkan oleh Reciprocal Rank Fusion (RRF)
+- 🏠 **Rooms** — Kelompokkan memori berdasarkan konteks (meeting, proyek) dengan atribusi penulis
+- ⏳ **Time-travel queries** — Recall memori pada titik waktu tertentu
+- 🔌 **Pluggable embeddings** — Tukar backend ONNX/OpenAI/Ollama via config
 - 🏷️ **Pengayaan Metadata** — Tag, entitas, kategori, dan metadata key:value pada setiap memori
+- 🔗 **Relationship graph** — Hubungkan memori dengan edge bertipe (supersedes, contradicts, references)
+- 📉 **Smart decay** — Skor importance komposit, pin memori penting
+- ⚡ **Recall cache** — Cache LRU menghilangkan embedding berulang untuk query berulang
+- 📊 **Benchmark** — `uteke bench` untuk perf testing + LongMemEval harness untuk evaluasi akurasi
 - 👥 **Namespace Multi-Agent** — Memori terisolasi penuh per agent, tanpa overhead
 - 🖥️ **Mode Server** — Daemon persisten dengan recall hangat ~42ms (75x lebih cepat dari CLI)
 - 🔥 **Memori Bertingkat** — Pelacakan Hot/Warm/Cold dengan pembersihan otomatis memori basi
