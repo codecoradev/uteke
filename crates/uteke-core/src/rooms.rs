@@ -2,7 +2,7 @@
 
 use crate::error::Error;
 use crate::memory::types::{Memory, RecallStrategy, SearchResult};
-use crate::memory::{Room, RoomStats, RoomSummary};
+use crate::memory::{Room, RoomDocument, RoomStats, RoomSummary};
 
 impl crate::Uteke {
     /// Create a new room for collaborative memory.
@@ -136,5 +136,10 @@ impl crate::Uteke {
     /// Generate a summary of room discussion (topic clustering, no LLM needed).
     pub fn room_summary(&self, room_id: &str) -> Result<Option<RoomSummary>, Error> {
         self.store.room_summary(room_id)
+    }
+
+    /// Generate a structured document from room memories.
+    pub fn room_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
+        self.store.room_document(room_id)
     }
 }

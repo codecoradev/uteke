@@ -27,7 +27,10 @@ pub use memory::types::{
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
     SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
-pub use memory::{Room, RoomMemory, RoomStats, RoomSummary, TimeRange, TopicCluster};
+pub use memory::{
+    DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
+    TimeRange, TopicCluster,
+};
 
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};

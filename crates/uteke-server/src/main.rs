@@ -723,6 +723,29 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
             }
         }
 
+        // ── Room Document ────────────────────────────────────────────────
+        (Method::Post, "/room/document") => {
+            #[derive(Deserialize)]
+            struct RoomDocumentRequest {
+                room_id: String,
+            }
+            match read_body::<RoomDocumentRequest>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_document(&req_data.room_id) {
+                    Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
+                    Ok(None) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Room not found: {}", req_data.room_id),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
         // ── Get memory by ID ──────────────────────────────────────────
         (Method::Get, p) if p.starts_with("/memory?id=") => {
             let id = p.trim_start_matches("/memory?id=");
@@ -870,6 +893,7 @@ fn main() {
                 println!("  GET  /stats               → {{ stats }}");
                 println!("  GET  /namespaces           → {{ namespaces }}");
                 println!("  POST /room/summary         → {{ room_id }} → {{ summary }}");
+                println!("  POST /room/document        → {{ room_id }} → {{ document }}");
                 std::process::exit(0);
             }
             _ => {

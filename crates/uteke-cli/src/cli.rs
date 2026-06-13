@@ -341,6 +341,11 @@ pub enum RoomCommands {
         /// Room ID
         room_id: String,
     },
+    /// Generate a structured document from room memories
+    Document {
+        /// Room ID
+        room_id: String,
+    },
 }
 
 /// Subcommands for memory aging operations.

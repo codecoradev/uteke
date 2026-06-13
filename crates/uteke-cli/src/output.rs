@@ -235,3 +235,36 @@ pub(crate) fn print_aging_preview_human(memories: &[uteke_core::Memory]) {
         println!("     Accessed: {} (count: {})", accessed, m.access_count);
     }
 }
+
+/// Print a room document in human-readable format.
+pub(crate) fn print_room_document_human(doc: &uteke_core::RoomDocument) {
+    // Header
+    let title = doc.title.as_deref().unwrap_or(&doc.room_id);
+    println!("# {}", title);
+    println!("Generated: {}\n", doc.generated_at);
+
+    for section in &doc.sections {
+        println!("## {} {}", section.icon, section.heading);
+        for entry in &section.entries {
+            // Truncate content to 200 chars for human output
+            let content = if entry.content.len() > 200 {
+                format!("{}...", &entry.content[..197])
+            } else {
+                entry.content.clone()
+            };
+            let tags = if entry.tags.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", entry.tags.join(", "))
+            };
+            let author = if entry.author.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", entry.author)
+            };
+            println!("• {}{}{}", content, author, tags);
+            println!("  {}", entry.created_at);
+        }
+        println!();
+    }
+}
