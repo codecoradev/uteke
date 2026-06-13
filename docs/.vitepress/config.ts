@@ -27,9 +27,24 @@ export default defineConfig({
           { text: 'Installation', link: '/getting-started' },
           { text: 'CLI Reference', link: '/cli-reference' },
           { text: 'Configuration', link: '/configuration' },
-          { text: 'Multi-Agent Isolation', link: '/multi-agent' },
-          { text: 'Pi Extension', link: '/extensions' },
+        ],
+      },
+      {
+        text: 'Features',
+        items: [
+          { text: 'Rooms', link: '/getting-started#rooms' },
+          { text: 'Time-Travel', link: '/getting-started#time-travel-queries' },
+          { text: 'Multi-Agent', link: '/multi-agent' },
+          { text: 'Smart Decay', link: '/getting-started#memory-importance-pinning' },
+          { text: 'Relationship Graph', link: '/getting-started#relationship-graph' },
+          { text: 'Benchmarks', link: '/getting-started#benchmarking' },
+        ],
+      },
+      {
+        text: 'Reference',
+        items: [
           { text: 'Architecture', link: '/architecture' },
+          { text: 'Pi Extension', link: '/extensions' },
           { text: 'TLS & Reverse Proxy', link: '/tls' },
           { text: 'Roadmap', link: '/roadmap' },
         ],

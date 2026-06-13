@@ -86,6 +86,91 @@ uteke --namespace architect recall "database"
 uteke --namespace dev recall "database"
 ```
 
+## Rooms
+
+Group related memories by context (meetings, projects, discussions):
+
+```bash
+# Create a room
+uteke room create "project-kickoff" --title "Project Kickoff"
+
+# Add a memory to a room with author attribution
+uteke room add "project-kickoff" <memory-id> --author alice
+
+# Semantic recall within a room
+uteke room recall "project-kickoff" --query "database decision"
+
+# Generate a structured document from room memories
+uteke room document "project-kickoff"
+
+# Get a summary of room discussions
+uteke room summary "project-kickoff"
+```
+
+## Time-Travel Queries
+
+Query memories as they existed at a specific point in time:
+
+```bash
+# List memories that existed on a given date
+uteke list --at 2026-06-01T12:00:00Z
+
+# Semantic recall filtered to memories valid at a point in time
+uteke recall "deployment process" --at 2026-06-01T12:00:00Z
+```
+
+Timestamps use [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) format. Replace the example date with your actual target.
+
+## Memory Importance & Pinning
+
+Pin critical memories so they never decay:
+
+```bash
+# Pin a memory
+uteke pin <id>
+
+# Unpin a memory
+uteke unpin <id>
+
+# Recalculate importance scores
+uteke importance
+```
+
+## Relationship Graph
+
+Link related memories and traverse the graph:
+
+```bash
+# Store a memory that supersedes an old one
+uteke remember "API rate limit is now 2000/min" --meta "rel:supersedes:old-memory-id"
+
+# Recall with relationship traversal
+uteke recall "rate limit" --related --depth 2
+```
+
+## Recall Cache
+
+The recall cache eliminates redundant embedding for repeated queries (~50ms savings). It's automatic — no configuration needed. Use `--context` for AI-prompt formatted output:
+
+```bash
+# AI-optimized context output
+uteke recall "api design" --context
+```
+
+## Benchmarking
+
+Test performance with synthetic data:
+
+```bash
+# Run full benchmark suite
+uteke bench
+
+# Custom counts + JSON output
+uteke bench --counts 100,1000 --json
+```
+
+See also: [LongMemEval retrieval harness](https://github.com/codecoradev/uteke/tree/develop/benchmarks/longmemeval) for accuracy evaluation.
+
 ## Shell Hooks
 
 Auto-load project-scoped memory when you cd into a project directory:
@@ -131,10 +216,11 @@ All data lives in `~/.uteke/`:
 
 ```
 ~/.uteke/
-├── uteke.db                    # SQLite (memories + metadata)
-├── uteke_index.usearch         # Persistent vector index
+├── uteke.db                    # SQLite (memories + metadata + FTS5)
+├── uteke_index.usearch         # Persistent HNSW vector index
 ├── uteke_index.keys            # Index key mapping
-├── models/embeddinggemma/      # Local ONNX embedding model
+├── embeddinggemma-q4/          # Local ONNX embedding model (~188MB)
+│   └── onnx/                   # model_q4.onnx + model_q4.onnx_data
 └── logs/
     ├── uteke.log               # Current log
     └── uteke.log.YYYY-MM-DD    # Rotated logs
