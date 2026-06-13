@@ -38,6 +38,14 @@ fn main() {
             }
             std::process::exit(0);
         }
+        Commands::Bench { counts, json } => {
+            // Bench creates its own temp stores — skip opening the user store.
+            if let Err(e) = commands::bench::run_bench(*json, counts.clone()) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
         _ => {}
     }
 
