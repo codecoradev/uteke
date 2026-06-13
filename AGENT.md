@@ -122,9 +122,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 ### 4. Branch Protection Rules
 
-- **Develop branch:** all changes must go through PR
+#### `main` branch (release only)
+- **Only PRs** — no direct push, no force push, no deletion
+- **Admins enforced** — even repo owners must follow rules
+- **Linear history required** — no merge commits, only fast-forward or rebase
+- **7 CI checks** must pass: Build, Check, Clippy, Format, Test, Cargo Audit, Trivy FS
+- **0 approval required** — no member review needed
+- **Release flow:** merge `develop` → `main` via PR → tag → publish
+
+#### `develop` branch (development)
+- **All changes must go through PR** — no direct push
 - **10 CI checks** must pass: Build, Check, Clippy, Format, Test, Cora Review, CodeRabbit, Cargo Audit, Trivy FS Scan, GitGuardian
-- **Cannot** push directly to develop
 
 ### 5. Never `.unwrap()` in Production Code
 
