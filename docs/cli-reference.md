@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.0.13**.
+Complete reference for all uteke commands. Version **0.1.0**.
 
 ## Global Flags
 
@@ -198,6 +198,88 @@ uteke tags rename old-tag new-tag
 
 # Delete a tag from all memories
 uteke tags delete unused-tag
+```
+
+## uteke recall (enhanced)
+
+Semantic search with new flags:
+
+```bash
+# Minimum similarity score filter
+uteke recall "database config" --min 0.7
+uteke recall "database config" --strict    # uses 0.7 default
+
+# Time-travel: query memories at specific point in time
+uteke recall "deployment process" --at 2026-06-01T12:00:00Z
+
+# Relationship graph traversal
+uteke recall "auth" --related --depth 2
+
+# AI-context formatted output
+uteke recall "api design" --context
+```
+
+| Flag | Description |
+|------|-------------|
+| `--min <score>` | Minimum similarity score (0.0-1.0) |
+| `--strict` | Use strict threshold (0.7) |
+| `--at <timestamp>` | Query memories at point in time (RFC3339) |
+| `--related` | Follow relationship edges |
+| `--depth <n>` | Traversal depth for --related |
+| `--context` | AI-prompt formatted output |
+
+## uteke list (enhanced)
+
+```bash
+# Time-travel list
+uteke list --at 2026-06-01T12:00:00Z
+```
+
+## uteke room
+
+Room-based memory management:
+
+```bash
+# Create a room
+uteke room create "project-kickoff" --title "Project Kickoff"
+
+# List rooms
+uteke room list
+
+# Add memory to room
+uteke room add "project-kickoff" <memory-id> --author cto
+
+# Recall within a room (semantic)
+uteke room recall "project-kickoff" --query "database decision"
+
+# Generate structured document from room
+uteke room document "project-kickoff"
+
+# Room summary (LLM-free, tag clustering)
+uteke room summary "project-kickoff"
+
+# Remove memory from room
+uteke room remove "project-kickoff" <memory-id>
+
+# Delete room
+uteke room delete "project-kickoff"
+```
+
+## uteke pin / unpin
+
+Pin memories so they never decay:
+
+```bash
+uteke pin <id>
+uteke unpin <id>
+```
+
+## uteke importance
+
+Recalculate importance scores:
+
+```bash
+uteke importance
 ```
 
 ## uteke aging
