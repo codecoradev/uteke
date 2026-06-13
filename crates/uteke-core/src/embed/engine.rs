@@ -1,8 +1,10 @@
 //! ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
 
+use crate::embed::Embedder;
 use crate::Error;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -34,12 +36,15 @@ const MODEL_CHECKSUMS: &[(&str, &str)] = &[
 ];
 
 /// ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
-pub struct EmbeddingEngine {
-    session: ort::session::Session,
-    tokenizer: tokenizers::Tokenizer,
+///
+/// Implements the [`Embedder`] trait. The tokenizer is wrapped in a `Mutex`
+/// so `embed()` can take `&self` (required by the trait) instead of `&mut self`.
+pub struct OnnxEmbedder {
+    session: Mutex<ort::session::Session>,
+    tokenizer: Mutex<tokenizers::Tokenizer>,
 }
 
-impl EmbeddingEngine {
+impl OnnxEmbedder {
     /// Create a new embedding engine. Downloads model if not cached.
     pub fn new() -> Result<Self, Error> {
         let model_dir = Self::model_dir()?;
@@ -87,16 +92,25 @@ impl EmbeddingEngine {
         let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| Error::embed("load tokenizer", e))?;
 
-        Ok(Self { session, tokenizer })
+        Ok(Self {
+            session: Mutex::new(session),
+            tokenizer: Mutex::new(tokenizer),
+        })
     }
 
     /// Embed a text string, returning a 768-dimensional f32 vector.
-    pub fn embed(&mut self, text: &str) -> Result<Vec<f32>, Error> {
-        // Tokenize
-        let encoding = self
+    ///
+    /// Takes `&self` — the tokenizer mutex is locked internally.
+    pub fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
+        // Tokenize (lock mutex)
+        let tokenizer = self
             .tokenizer
+            .lock()
+            .map_err(|_| Error::lock("tokenizer lock during embedding"))?;
+        let encoding = tokenizer
             .encode(text, true)
             .map_err(|e| Error::embed("tokenize text", e))?;
+        drop(tokenizer); // release lock before inference
 
         let input_ids = encoding.get_ids();
         let attention_mask = encoding.get_attention_mask();
@@ -127,8 +141,11 @@ impl EmbeddingEngine {
         // Run ONNX inference — EmbeddingGemma has 2 outputs:
         //   output[0] = last_hidden_state (1, seq_len, 768)
         //   output[1] = sentence_embedding (1, 768) — already mean-pooled
-        let outputs = self
+        let mut session = self
             .session
+            .lock()
+            .map_err(|_| Error::lock("session lock during embedding"))?;
+        let outputs = session
             .run(ort::inputs![input_ids_tensor, attention_mask_tensor])
             .map_err(|e| Error::embed("ONNX inference", e))?;
 
@@ -152,13 +169,32 @@ impl EmbeddingEngine {
         Ok(embedding)
     }
 
-    /// Get the embedding dimension.
+    /// Get the embedding dimension (associated function for backward compat).
     pub fn dims() -> usize {
         MODEL_DIMS
     }
 
     fn model_dir() -> Result<PathBuf, Error> {
         crate::uteke_home().map(|p| p.join("models").join(MODEL_DIR_NAME))
+    }
+}
+
+impl Embedder for OnnxEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
+        // Delegate to inherent method (which locks the tokenizer mutex).
+        OnnxEmbedder::embed(self, text)
+    }
+
+    fn dims(&self) -> usize {
+        MODEL_DIMS
+    }
+
+    fn max_seq_len(&self) -> usize {
+        MAX_SEQ_LEN
+    }
+
+    fn name(&self) -> &str {
+        "embeddinggemma-q4"
     }
 }
 

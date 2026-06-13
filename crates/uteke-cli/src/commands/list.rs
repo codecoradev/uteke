@@ -14,14 +14,30 @@ pub(crate) fn run_list(
     offset: usize,
     entity: Option<&str>,
     category: Option<&str>,
+    at: Option<&str>,
 ) -> Result<(), String> {
     tracing::info!(
         "Listing memories (tag: {:?}, limit: {limit}, offset: {offset})",
         tag
     );
-    let mut results = uteke
-        .list(tag.as_deref(), limit, offset, ns)
-        .map_err(|e| format!("Failed to list: {e}"))?;
+
+    // Time-travel mode: parse --at as RFC3339 and use list_at_time
+    let mut results = if let Some(at_str) = at {
+        let point_in_time = chrono::DateTime::parse_from_rfc3339(at_str)
+            .map_err(|e| {
+                format!(
+                    "Invalid --at timestamp: {e}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+                )
+            })?
+            .with_timezone(&chrono::Utc);
+        uteke
+            .list_at_time(tag.as_deref(), limit, offset, ns, point_in_time)
+            .map_err(|e| format!("Failed to list at time: {e}"))?
+    } else {
+        uteke
+            .list(tag.as_deref(), limit, offset, ns)
+            .map_err(|e| format!("Failed to list: {e}"))?
+    };
 
     // Post-filter by entity/category metadata
     if entity.is_some() || category.is_some() {

@@ -150,7 +150,6 @@ impl super::Store {
                 .unchecked_transaction()
                 .map_err(|e| Error::db("begin migration transaction", e))?;
 
-            #[allow(clippy::match_single_binding)]
             match version {
                 // v2: FTS5 full-text search virtual table + sync triggers
                 2 => self.migrate_v1_to_v2()?,
@@ -158,6 +157,8 @@ impl super::Store {
                 3 => self.migrate_v2_to_v3()?,
                 // v4: Importance scoring + pinned memories
                 4 => self.migrate_v3_to_v4()?,
+                // v5: Tag junction table for O(log n) lookups
+                5 => self.migrate_v4_to_v5()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -253,6 +254,51 @@ impl super::Store {
                 .execute_batch("ALTER TABLE memories ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;")
                 .map_err(|e| Error::db("add pinned column", e))?;
         }
+        Ok(())
+    }
+
+    /// Migration v4 → v5: Add memory_tags junction table for O(log n) tag lookups.
+    ///
+    /// Creates `memory_tags` table, populates from existing JSON `tags` column.
+    /// The JSON column is kept for backward compat — dual-write to both.
+    fn migrate_v4_to_v5(&self) -> Result<(), Error> {
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS memory_tags (\n\
+                    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,\n\
+                    tag TEXT NOT NULL COLLATE NOCASE,\n\
+                    PRIMARY KEY (memory_id, tag)\n\
+                );\n\
+                CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);",
+            )
+            .map_err(|e| Error::db("create memory_tags table", e))?;
+
+        // Populate from existing JSON tags column
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, tags FROM memories")
+            .map_err(|e| Error::db("select memories for tag migration", e))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| Error::db("tag migration query", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut insert_stmt = self
+            .conn
+            .prepare("INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?1, ?2)")
+            .map_err(|e| Error::db("prepare tag insert", e))?;
+
+        for (id, tags_str) in &rows {
+            let tags: Vec<String> = serde_json::from_str(tags_str).unwrap_or_default();
+            for tag in &tags {
+                insert_stmt
+                    .execute(rusqlite::params![id, tag])
+                    .map_err(|e| Error::db("insert tag row", e))?;
+            }
+        }
+
+        tracing::info!("Tag junction table populated for {} memories", rows.len());
         Ok(())
     }
 

@@ -44,7 +44,7 @@ impl crate::Uteke {
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?
-            .as_mut()
+            .as_ref()
             .expect("embedder ensured above")
             .embed(content)?;
         self.remember_precomputed(content, tags, metadata, namespace, memory_type, &embedding)
@@ -133,7 +133,7 @@ impl crate::Uteke {
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during recall"))?
-            .as_mut()
+            .as_ref()
             .expect("embedder ensured above")
             .embed(query)?;
         // Embedder lock dropped here — other threads can embed or recall concurrently.
@@ -720,5 +720,93 @@ impl crate::Uteke {
     /// Get a memory by ID (without touching access count — used for internal lookups).
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         self.store.get_by_id(id)
+    }
+
+    /// Recall memories that existed at a specific point in time.
+    ///
+    /// Runs a semantic recall to gather candidates, then post-filters by
+    /// temporal validity at `point_in_time`:
+    /// - `created_at <= point_in_time`
+    /// - `valid_until IS NULL OR valid_until > point_in_time`
+    /// - `valid_from IS NULL OR valid_from <= point_in_time`
+    /// - `deprecated = false`
+    pub fn recall_at_time(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+        min_score: f32,
+    ) -> Result<Vec<SearchResult>, Error> {
+        // Retry loop: over-fetch with increasing multipliers to compensate
+        // for temporal filtering removing candidates. If post-filtering
+        // yields fewer than `limit` results, expand the search scope.
+        let mut multiplier = 3usize;
+        let mut attempt = 0;
+
+        loop {
+            let fetch_limit = (limit * multiplier).max(50);
+            let candidates = self.recall(query, fetch_limit, tags_filter, namespace, min_score)?;
+            let candidates_len = candidates.len();
+
+            let mut results: Vec<SearchResult> = candidates
+                .into_iter()
+                .filter(|r| {
+                    // Memory must have existed at this time
+                    if r.memory.created_at > point_in_time {
+                        return false;
+                    }
+                    // Memory must not have been invalidated before this time
+                    if let Some(valid_until) = r.memory.valid_until {
+                        if valid_until <= point_in_time {
+                            return false;
+                        }
+                    }
+                    // Memory should not be deprecated
+                    if r.memory.deprecated {
+                        return false;
+                    }
+                    // valid_from should be before point_in_time (if set)
+                    if let Some(valid_from) = r.memory.valid_from {
+                        if valid_from > point_in_time {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .collect();
+
+            // Stop if we have enough results or exhausted retry budget.
+            if results.len() >= limit || attempt >= 2 {
+                results.truncate(limit);
+                return Ok(results);
+            }
+
+            // If the fetch returned fewer candidates than fetch_limit, the
+            // index is exhausted — expanding the search scope won't help.
+            if candidates_len < fetch_limit {
+                results.truncate(limit);
+                return Ok(results);
+            }
+
+            attempt += 1;
+            multiplier *= 3;
+        }
+    }
+
+    /// List memories that existed at a specific point in time.
+    ///
+    /// Thin wrapper around the store-level temporal query.
+    pub fn list_at_time(
+        &self,
+        tag: Option<&str>,
+        limit: usize,
+        offset: usize,
+        namespace: Option<&str>,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Memory>, Error> {
+        self.store
+            .list_at_time(tag, namespace, limit, offset, point_in_time)
     }
 }

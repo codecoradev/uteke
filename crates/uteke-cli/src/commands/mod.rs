@@ -62,6 +62,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             related,
             depth,
             context,
+            at,
         } => recall::run_recall(
             cli,
             uteke,
@@ -77,6 +78,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             *related,
             *depth,
             *context,
+            at.as_deref(),
         ),
 
         Commands::Search { query, limit, tags } => {
@@ -89,6 +91,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             offset,
             entity,
             category,
+            at,
         } => list::run_list(
             cli,
             uteke,
@@ -98,6 +101,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             *offset,
             entity.as_deref(),
             category.as_deref(),
+            at.as_deref(),
         ),
 
         Commands::Get { id } => list::run_get(cli, uteke, id),

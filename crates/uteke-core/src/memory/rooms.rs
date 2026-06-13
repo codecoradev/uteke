@@ -58,6 +58,32 @@ pub struct TopicCluster {
     pub score: f32,
 }
 
+/// A structured document generated from a room's memories.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RoomDocument {
+    pub room_id: String,
+    pub title: Option<String>,
+    pub generated_at: String,
+    pub sections: Vec<DocumentSection>,
+}
+
+/// A section within a room document, grouping entries by memory type.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DocumentSection {
+    pub heading: String,
+    pub icon: String,
+    pub entries: Vec<DocumentEntry>,
+}
+
+/// A single entry within a document section.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DocumentEntry {
+    pub content: String,
+    pub author: String,
+    pub tags: Vec<String>,
+    pub created_at: String,
+}
+
 /// A memory linked to a room with author attribution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoomMemory {
@@ -604,5 +630,135 @@ impl super::Store {
             return Err(Error::db_msg(format!("Room not found: {room_id}")));
         }
         Ok(())
+    }
+
+    /// Generate a structured document from room memories, grouped by memory_type.
+    ///
+    /// Returns `None` if the room does not exist.
+    /// Sections: pinned first, then grouped by type (decision, fact, procedure, preference, context).
+    /// Empty sections are omitted.
+    pub fn room_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
+        let room = match self.get_room(room_id)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        // Get room memories (cap at 10000 to bound query cost)
+        let memories = self.recall_room(room_id, None, 10_000)?;
+
+        // Get author mapping from room_memories
+        let mut author_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT memory_id, author FROM room_memories WHERE room_id = ?1")
+                .map_err(|e| Error::db("room document authors", e))?;
+            let rows: Vec<(String, String)> = stmt
+                .query_map(params![room_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| Error::db("room document authors", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("room document authors", e))?;
+            for (mid, author) in rows {
+                author_map.insert(mid, author);
+            }
+        }
+
+        let fmt_time = |s: &str| -> String { s.get(..19).unwrap_or(s).to_string() };
+
+        let mut sections: Vec<DocumentSection> = Vec::new();
+
+        // 1. Pinned section
+        let pinned: Vec<&crate::memory::types::Memory> =
+            memories.iter().filter(|m| m.pinned).collect();
+        if !pinned.is_empty() {
+            let mut entries: Vec<DocumentEntry> = pinned
+                .into_iter()
+                .map(|m| DocumentEntry {
+                    content: m.content.clone(),
+                    author: author_map.get(&m.id).cloned().unwrap_or_default(),
+                    tags: m.tags.clone(),
+                    created_at: fmt_time(&m.created_at.to_rfc3339()),
+                })
+                .collect();
+            entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            sections.push(DocumentSection {
+                heading: "Pinned".to_string(),
+                icon: "📌".to_string(),
+                entries,
+            });
+        }
+
+        // 2. Type-based sections
+        struct TypeSection {
+            key: &'static str,
+            heading: &'static str,
+            icon: &'static str,
+        }
+        let type_sections = [
+            TypeSection {
+                key: "decision",
+                heading: "Decisions",
+                icon: "📋",
+            },
+            TypeSection {
+                key: "fact",
+                heading: "Research & Facts",
+                icon: "🔍",
+            },
+            TypeSection {
+                key: "procedure",
+                heading: "Procedures",
+                icon: "⚙️",
+            },
+            TypeSection {
+                key: "preference",
+                heading: "Preferences",
+                icon: "🎨",
+            },
+            TypeSection {
+                key: "context",
+                heading: "Context & Discussion",
+                icon: "💬",
+            },
+        ];
+
+        for ts in &type_sections {
+            let mut matching: Vec<&crate::memory::types::Memory> = memories
+                .iter()
+                .filter(|m| m.memory_type == ts.key && !m.pinned)
+                .collect();
+            if matching.is_empty() {
+                continue;
+            }
+            // Sort by importance desc, fallback recency
+            matching.sort_by(|a, b| {
+                b.importance
+                    .partial_cmp(&a.importance)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b.created_at.cmp(&a.created_at))
+            });
+            let entries: Vec<DocumentEntry> = matching
+                .into_iter()
+                .map(|m| DocumentEntry {
+                    content: m.content.clone(),
+                    author: author_map.get(&m.id).cloned().unwrap_or_default(),
+                    tags: m.tags.clone(),
+                    created_at: fmt_time(&m.created_at.to_rfc3339()),
+                })
+                .collect();
+            sections.push(DocumentSection {
+                heading: ts.heading.to_string(),
+                icon: ts.icon.to_string(),
+                entries,
+            });
+        }
+
+        Ok(Some(RoomDocument {
+            room_id: room.id,
+            title: room.title,
+            generated_at: fmt_time(&chrono::Utc::now().to_rfc3339()),
+            sections,
+        }))
     }
 }

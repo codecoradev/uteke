@@ -11,7 +11,10 @@ pub mod tags;
 pub mod types;
 pub mod vector;
 
-pub use rooms::{Room, RoomMemory, RoomStats, RoomSummary, TimeRange, TopicCluster};
+pub use rooms::{
+    DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
+    TimeRange, TopicCluster,
+};
 pub use store::Store;
 pub use types::{Memory, RecallStrategy, SearchResult, StoreStats};
 pub use vector::VectorIndex;

@@ -215,5 +215,19 @@ pub(crate) fn run(
             }
             Ok(())
         }
+
+        RoomCommands::Document { room_id } => {
+            let doc = uteke
+                .room_document(room_id)
+                .map_err(|e| format!("Failed to generate room document: {e}"))?
+                .ok_or_else(|| format!("Room not found: {room_id}"))?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+            } else {
+                output::print_room_document_human(&doc);
+            }
+            Ok(())
+        }
     }
 }
