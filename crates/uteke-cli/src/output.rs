@@ -247,8 +247,9 @@ pub(crate) fn print_room_document_human(doc: &uteke_core::RoomDocument) {
         println!("## {} {}", section.icon, section.heading);
         for entry in &section.entries {
             // Truncate content to 200 chars for human output
-            let content = if entry.content.len() > 200 {
-                format!("{}...", &entry.content[..197])
+            let content = if entry.content.chars().count() > 200 {
+                let truncated: String = entry.content.chars().take(197).collect();
+                format!("{truncated}...")
             } else {
                 entry.content.clone()
             };

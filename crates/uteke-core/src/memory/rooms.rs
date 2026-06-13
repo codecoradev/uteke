@@ -643,8 +643,8 @@ impl super::Store {
             None => return Ok(None),
         };
 
-        // Get ALL room memories
-        let memories = self.recall_room(room_id, None, i32::MAX as usize)?;
+        // Get room memories (cap at 10000 to bound query cost)
+        let memories = self.recall_room(room_id, None, 10_000)?;
 
         // Get author mapping from room_memories
         let mut author_map: std::collections::HashMap<String, String> =
