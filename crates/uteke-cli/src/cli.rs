@@ -105,6 +105,9 @@ pub enum Commands {
         /// Output as formatted context for AI prompt injection
         #[arg(long)]
         context: bool,
+        /// Query memories as they existed at this timestamp (RFC3339, e.g. 2026-06-01T12:00:00Z)
+        #[arg(long)]
+        at: Option<String>,
     },
     /// Search memories by content keywords (text search)
     Search {
@@ -134,6 +137,9 @@ pub enum Commands {
         /// Filter by category
         #[arg(long)]
         category: Option<String>,
+        /// List memories as they existed at this timestamp (RFC3339)
+        #[arg(long)]
+        at: Option<String>,
     },
     /// Get a single memory by ID
     Get {
@@ -315,12 +321,18 @@ pub enum RoomCommands {
     Recall {
         /// Room ID
         room_id: String,
+        /// Semantic query — rank memories by relevance instead of chronological
+        #[arg(long)]
+        query: Option<String>,
         /// Filter by author
         #[arg(long)]
         author: Option<String>,
         /// Maximum results to return
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Minimum similarity score (0.0-1.0). Only used with --query.
+        #[arg(long)]
+        min: Option<f32>,
     },
     /// Delete a room (memories are NOT deleted, only room links)
     Delete {
@@ -329,6 +341,16 @@ pub enum RoomCommands {
         /// Skip confirmation prompt
         #[arg(long)]
         confirm: bool,
+    },
+    /// Generate a summary of room discussion (topic clustering, no LLM needed)
+    Summary {
+        /// Room ID
+        room_id: String,
+    },
+    /// Generate a structured document from room memories
+    Document {
+        /// Room ID
+        room_id: String,
     },
 }
 

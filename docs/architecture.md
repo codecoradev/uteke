@@ -78,7 +78,9 @@ SQLite-first dual-write: metadata persisted before index. If index write fails, 
 ### Read Path (recall)
 
 ```
-Query → ONNX embed (Mutex) → 768d vector
+Query → Recall Cache check (TTL 5min, LRU 256)
+         ↓ miss
+       ONNX embed (Mutex) → 768d vector
                                 ↓
               ┌─────────────────┴──────────────────┐
               ↓                                     ↓
@@ -122,7 +124,11 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v2 (FTS5 virtual table). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v5 (memory_tags junction table). Zero data loss guaranteed.
+
+### Rooms
+
+Rooms group related memories with author attribution. Stored in `rooms` and `room_memories` tables (schema v4). Semantic room recall over-fetches via `recall_hybrid()`, then post-filters to room memory IDs. Room summaries use tag co-occurrence clustering — no LLM call required. Room documents group memories by `memory_type` into sections (Decisions, Facts, Procedures, etc).
 
 ## Performance
 
@@ -171,6 +177,5 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
 |-----------|--------|--------|
 | usearch `ef` not configurable | External | usearch v2.25.3 Rust bindings don't expose `ef` in `search()` |
 | Embedder requires Mutex | Architectural | ONNX tokenizer internally uses `&mut self` |
-| Metadata is post-filter | Design | Entity/category in JSON blob, filtered in Rust not SQL |
 | Consolidate is O(n²) | Algorithm | Pairwise cosine — slow above 1K memories |
 | FTS5-only score is placeholder | Design | BM25 can't normalize to 0..1; actual ranking via RRF |

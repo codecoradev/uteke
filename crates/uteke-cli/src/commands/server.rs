@@ -108,6 +108,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             strict,
             entity,
             category,
+            at,
             ..
         } => {
             let mut body = serde_json::json!({
@@ -127,6 +128,9 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
             if *strict {
                 body["strict"] = serde_json::json!(true);
+            }
+            if let Some(a) = at {
+                body["at"] = serde_json::json!(a);
             }
             let resp = client
                 .post(format!("{server_url}/recall"))
@@ -182,14 +186,21 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
         }
         Commands::List {
-            tag, limit, offset, ..
+            tag,
+            limit,
+            offset,
+            at,
+            ..
         } => {
-            let body = serde_json::json!({
+            let mut body = serde_json::json!({
                 "tag": tag,
                 "limit": limit,
                 "offset": offset,
                 "namespace": ns
             });
+            if let Some(a) = at {
+                body["at"] = serde_json::json!(a);
+            }
             let resp = client
                 .post(format!("{server_url}/list"))
                 .json(&body)

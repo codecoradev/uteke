@@ -27,8 +27,12 @@ pub use memory::types::{
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
     SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
-pub use memory::{Room, RoomMemory, RoomStats};
+pub use memory::{
+    DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
+    TimeRange, TopicCluster,
+};
 
+pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
@@ -76,7 +80,6 @@ pub fn validate_input(content: &str, tags: &[impl AsRef<str>]) -> Result<(), Err
     Ok(())
 }
 
-use embed::EmbeddingEngine;
 use memory::store::Store;
 use memory::VectorIndex;
 
@@ -154,7 +157,9 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
 pub struct Uteke {
     store: Store,
     index: RwLock<VectorIndex>,
-    embedder: Mutex<Option<EmbeddingEngine>>,
+    embedder: Mutex<Option<Box<dyn Embedder>>>,
+    /// Embedding backend name ("onnx", "openai", etc.). Used by lazy init.
+    embedder_backend: String,
     tier_config: TierConfig,
     #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
@@ -172,19 +177,19 @@ impl Uteke {
     /// The ONNX embedding model is loaded lazily on first use, so commands
     /// that don't need embedding (list, get, stats, tags, etc.) start instantly.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, None, TierConfig::default(), RecallConfig::default())
+        Self::open_with_backend(path, "onnx")
     }
 
     /// Open with a custom embedder (for testing).
     pub fn open_with_embedder(
         path: impl AsRef<Path>,
-        embedder: EmbeddingEngine,
+        embedder: impl Embedder + 'static,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         Self::finish_open(
             store,
-            Some(embedder),
+            Some(Box::new(embedder)),
+            "custom".to_string(),
             TierConfig::default(),
             RecallConfig::default(),
         )
@@ -196,7 +201,29 @@ impl Uteke {
     /// default 7/30/0.1 values. See [`TierConfig`].
     pub fn open_with_tier(path: impl AsRef<Path>, tier_config: TierConfig) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, None, tier_config, RecallConfig::default())
+        Self::finish_open(
+            store,
+            None,
+            "onnx".to_string(),
+            tier_config,
+            RecallConfig::default(),
+        )
+    }
+
+    /// Open with custom tier configuration and embedding backend.
+    pub fn open_with_tier_and_backend(
+        path: impl AsRef<Path>,
+        tier_config: TierConfig,
+        backend: &str,
+    ) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        Self::finish_open(
+            store,
+            None,
+            backend.to_string(),
+            tier_config,
+            RecallConfig::default(),
+        )
     }
 
     /// Open with custom recall configuration.
@@ -205,7 +232,27 @@ impl Uteke {
         recall_config: RecallConfig,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(store, None, TierConfig::default(), recall_config)
+        Self::finish_open(
+            store,
+            None,
+            "onnx".to_string(),
+            TierConfig::default(),
+            recall_config,
+        )
+    }
+
+    /// Open with a specific embedding backend (e.g., "onnx").
+    ///
+    /// Future backends ("openai", "ollama") will be selectable here once implemented.
+    pub fn open_with_backend(path: impl AsRef<Path>, backend: &str) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        Self::finish_open(
+            store,
+            None,
+            backend.to_string(),
+            TierConfig::default(),
+            RecallConfig::default(),
+        )
     }
 
     fn open_store(path: impl AsRef<Path>) -> Result<(String, Store), Error> {
@@ -217,7 +264,8 @@ impl Uteke {
 
     fn finish_open(
         store: Store,
-        embedder: Option<EmbeddingEngine>,
+        embedder: Option<Box<dyn Embedder>>,
+        embedder_backend: String,
         tier_config: TierConfig,
         recall_config: RecallConfig,
     ) -> Result<Self, Error> {
@@ -227,9 +275,23 @@ impl Uteke {
             dir.join("uteke_index.usearch")
         });
 
+        // Use dims from the provided embedder if available.
+        // When lazy-initializing (embedder=None), validate backend and use known dims.
+        let dims = match embedder.as_ref() {
+            Some(e) => e.dims(),
+            None => match embedder_backend.as_str() {
+                "onnx" | "" | "custom" => OnnxEmbedder::dims(),
+                other => {
+                    return Err(Error::Validation(format!(
+                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                    )));
+                }
+            },
+        };
+
         let mut index = match &index_path {
-            Some(path) => VectorIndex::load_or_create(path, EmbeddingEngine::dims())?,
-            None => VectorIndex::new(EmbeddingEngine::dims())?,
+            Some(path) => VectorIndex::load_or_create(path, dims)?,
+            None => VectorIndex::new(dims)?,
         };
 
         // If index is empty but SQLite has memories, build from SQLite (migration)
@@ -249,6 +311,7 @@ impl Uteke {
             store,
             index: RwLock::new(index),
             embedder: Mutex::new(embedder),
+            embedder_backend,
             tier_config,
             recall_config,
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
@@ -266,8 +329,20 @@ impl Uteke {
             .lock()
             .map_err(|_| Error::lock("embedder lock during lazy init"))?;
         if guard.is_none() {
-            tracing::debug!("Lazy-initializing ONNX embedding engine");
-            *guard = Some(EmbeddingEngine::new()?);
+            tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
+            *guard = Some(match self.embedder_backend.as_str() {
+                "onnx" | "" => Box::new(OnnxEmbedder::new()?),
+                "custom" => {
+                    return Err(Error::generic(
+                        "Custom embedder backend set but no embedder was provided",
+                    ));
+                }
+                other => {
+                    return Err(Error::Validation(format!(
+                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                    )));
+                }
+            });
         }
         Ok(())
     }

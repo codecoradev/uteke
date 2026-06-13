@@ -21,6 +21,7 @@ pub(crate) fn run_recall(
     related: bool,
     depth: usize,
     context: bool,
+    at: Option<&str>,
 ) -> Result<(), String> {
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
@@ -36,7 +37,23 @@ pub(crate) fn run_recall(
     } else {
         Some(tag_refs.as_slice())
     };
-    let results = if related {
+
+    // Time-travel mode: parse --at as RFC3339 and use recall_at_time
+    let results = if let Some(at_str) = at {
+        let point_in_time = chrono::DateTime::parse_from_rfc3339(at_str)
+            .map_err(|e| {
+                format!(
+                    "Invalid --at timestamp: {e}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+                )
+            })?
+            .with_timezone(&chrono::Utc);
+        if related {
+            return Err("--at and --related cannot be used together".into());
+        }
+        uteke
+            .recall_at_time(query, limit, tags_filter, ns, point_in_time, min_score)
+            .map_err(|e| format!("Failed to recall at time: {e}"))?
+    } else if related {
         uteke
             .recall_related(query, limit, tags_filter, ns, min_score, depth)
             .map_err(|e| format!("Failed to recall: {e}"))?

@@ -73,6 +73,7 @@ The `--namespace` flag works on every command:
 | `recall` | Search within namespace |
 | `search` | Text search within namespace |
 | `list` | List memories in namespace |
+| `room` | Room operations in namespace |
 | `tags list` | Tags for namespace |
 | `tags rename` | Rename tag in namespace |
 | `tags delete` | Delete tag in namespace |

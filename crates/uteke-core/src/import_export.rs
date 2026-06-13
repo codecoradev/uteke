@@ -63,7 +63,7 @@ impl crate::Uteke {
                 .embedder
                 .lock()
                 .map_err(|_| Error::lock("embedder lock during import"))?
-                .as_mut()
+                .as_ref()
                 .expect("embedder ensured above")
                 .embed(&entry.content)?;
 

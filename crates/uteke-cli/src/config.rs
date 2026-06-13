@@ -30,6 +30,8 @@ impl Default for StoreConfig {
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
 pub struct EmbeddingConfig {
+    /// Embedding backend: "onnx" (default), future: "openai", "ollama".
+    pub backend: String,
     /// Embedding model name.
     pub model: String,
     /// Maximum sequence length for the embedding model.
@@ -39,8 +41,29 @@ pub struct EmbeddingConfig {
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
+            backend: "onnx".to_string(),
             model: "embeddinggemma-q4".to_string(),
             max_seq_length: 256,
+        }
+    }
+}
+
+impl EmbeddingConfig {
+    /// Supported embedding backends.
+    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx"];
+
+    /// Validate the backend field.
+    ///
+    /// Returns an error message if the backend is not recognized.
+    pub fn validate_backend(&self) -> Result<(), String> {
+        if Self::SUPPORTED_BACKENDS.contains(&self.backend.as_str()) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Unsupported embedding backend: '{}'. Supported: {}",
+                self.backend,
+                Self::SUPPORTED_BACKENDS.join(", ")
+            ))
         }
     }
 }
@@ -242,6 +265,9 @@ impl Config {
 
         // Merge embedding section
         if let Some(emb) = table.get("embedding").and_then(|v| v.as_table()) {
+            if emb.contains_key("backend") {
+                self.embedding.backend = overlay.embedding.backend.clone();
+            }
             if emb.contains_key("model") {
                 self.embedding.model = overlay.embedding.model;
             }
@@ -337,6 +363,7 @@ impl Config {
 # namespace = "default"
 
 [embedding]
+# backend = "onnx"  # future: "openai", "ollama"
 # model = "embeddinggemma-q4"
 # max_seq_length = 256
 
@@ -543,6 +570,7 @@ mod tests {
         assert_eq!(cfg.store.path, "~/.uteke");
         assert_eq!(cfg.store.namespace, "default");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
+        assert_eq!(cfg.embedding.backend, "onnx");
         assert_eq!(cfg.embedding.max_seq_length, 256);
         assert_eq!(cfg.tier.hot_days, 7);
         assert_eq!(cfg.tier.warm_days, 30);
@@ -562,6 +590,7 @@ path = "/data/uteke"
 namespace = "test-ns"
 
 [embedding]
+backend = "openai"
 model = "custom-model"
 max_seq_length = 512
 
@@ -583,6 +612,7 @@ max_cold_count = 5000
         assert_eq!(cfg.store.path, "/data/uteke");
         assert_eq!(cfg.store.namespace, "test-ns");
         assert_eq!(cfg.embedding.model, "custom-model");
+        assert_eq!(cfg.embedding.backend, "openai");
         assert_eq!(cfg.embedding.max_seq_length, 512);
         assert_eq!(cfg.tier.hot_days, 3);
         assert_eq!(cfg.tier.warm_days, 14);
@@ -610,6 +640,7 @@ level = "info"
         // Everything else is default
         assert_eq!(cfg.store.path, "~/.uteke");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
+        assert_eq!(cfg.embedding.backend, "onnx");
         assert_eq!(cfg.embedding.max_seq_length, 256);
         assert_eq!(cfg.tier.hot_days, 7);
         assert!(!cfg.aging.enabled);
@@ -753,6 +784,7 @@ path = "/custom/path"
 namespace = "full-test"
 
 [embedding]
+backend = "onnx"
 model = "custom-embed"
 max_seq_length = 512
 
@@ -787,6 +819,7 @@ port = 9999
         assert_eq!(merged.store.path, "/custom/path");
         assert_eq!(merged.store.namespace, "full-test");
         assert_eq!(merged.embedding.model, "custom-embed");
+        assert_eq!(merged.embedding.backend, "onnx");
         assert_eq!(merged.embedding.max_seq_length, 512);
         assert_eq!(merged.tier.hot_days, 5);
         assert_eq!(merged.tier.warm_days, 21);
@@ -811,6 +844,22 @@ port = 9999
         std::fs::remove_file(&tmp).ok();
         // Should return defaults when file is invalid
         assert_eq!(merged.store.path, "~/.uteke");
+    }
+
+    #[test]
+    fn merge_embedding_backend() {
+        let toml = r#"
+[embedding]
+backend = "ollama"
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_backend_merge.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        assert_eq!(merged.embedding.backend, "ollama");
+        // Other embedding fields stay default
+        assert_eq!(merged.embedding.model, "embeddinggemma-q4");
+        assert_eq!(merged.embedding.max_seq_length, 256);
     }
 
     #[test]

@@ -6,7 +6,34 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
-## v0.0.12 — Search & Concurrency `✓ Done` `Current`
+## v0.1.0 — Rooms, Intelligence & Pluggability `✓ Done`
+
+- [#292 Time-travel queries](https://github.com/codecoradev/uteke/issues/292) `✓ Done`
+  - Recall/list at specific point in time (`--at` flag)
+  - Temporal validity filter: created_at, valid_from/valid_until, deprecated
+- [#249 Pluggable embedding models](https://github.com/codecoradev/uteke/issues/249) `✓ Done`
+  - `Embedder` trait abstraction for multiple backends
+  - ONNX backend (default), future: OpenAI, Ollama
+- [#306 Room document view](https://github.com/codecoradev/uteke/issues/306) `✓ Done`
+  - Structured document output grouped by memory_type
+- [#305 Room summary](https://github.com/codecoradev/uteke/issues/305) `✓ Done`
+  - LLM-free room summary via tag clustering
+- [#304 Semantic room recall](https://github.com/codecoradev/uteke/issues/304) `✓ Done`
+  - `recall_room_semantic()` with `--query` flag
+- [#184 Normalize tags junction table](https://github.com/codecoradev/uteke/issues/184) `✓ Done`
+  - Schema v5, memory_tags table, O(log n) lookups
+- [#252 Configurable recall threshold](https://github.com/codecoradev/uteke/issues/252) `✓ Done`
+  - `--min`, `--strict`, `[recall] min_score` config
+- [#286 Room-based memory](https://github.com/codecoradev/uteke/issues/286) `✓ Done`
+  - Full room management with author attribution
+- [#181 Recall cache optimization](https://github.com/codecoradev/uteke/issues/181) `✓ Done`
+  - LRU cache with TTL, `--context` output format
+- [#246 Relationship graph](https://github.com/codecoradev/uteke/issues/246) `✓ Done`
+  - `--related --depth N` BFS traversal
+- [#247 Smart memory decay](https://github.com/codecoradev/uteke/issues/247) `✓ Done`
+  - Composite importance scoring, pin/unpin
+
+## v0.0.12 — Search & Concurrency `✓ Done`
 
 - [#250 FTS5 hybrid search with RRF](https://github.com/codecoradev/uteke/issues/250) `✓ Done`
   - FTS5 full-text search as parallel retrieval channel

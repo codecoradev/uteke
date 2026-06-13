@@ -68,6 +68,44 @@ If the server is not running, CLI falls back to local store automatically.
 | `host` | 127.0.0.1 | Server bind address |
 | `port` | 8767 | Server port |
 
+## Embedding Backend
+
+Configure the embedding backend:
+
+```toml
+[embedding]
+# Backend: "onnx" (default), future: "openai", "ollama"
+backend = "onnx"
+
+# Model name (for ONNX backend)
+model = "embeddinggemma-q4"
+
+# Maximum sequence length in tokens
+max_seq_length = 256
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `backend` | onnx | Embedding backend |
+| `model` | embeddinggemma-q4 | Model identifier |
+| `max_seq_length` | 256 | Max tokens per input |
+
+## Recall Threshold
+
+Control minimum similarity score for recall results:
+
+```toml
+[recall]
+# Minimum similarity score (0.0-1.0). Memories below this score are excluded.
+min_score = 0.0
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `min_score` | 0.0 | Minimum similarity score |
+
+Use `--strict` flag or `--min 0.7` to override per-query.
+
 ## Config Migration
 
 If you have an older flat-format config (pre-v0.0.4), uteke auto-migrates it on first run:
