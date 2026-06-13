@@ -1,20 +1,25 @@
 //! Tag operations — unique tags, counts, rename, delete, namespaces.
+//!
+//! Uses the `memory_tags` junction table (schema v5) for O(log n) lookups.
+//! The JSON `tags` column in `memories` is kept in sync for backward compat.
 
 use crate::memory::types::TagInfo;
 use crate::Error;
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 impl super::Store {
     /// Get all unique tags, optionally filtered by namespace.
     ///
-    /// Uses `json_each()` to unnest the JSON array stored in `tags` so SQLite
-    /// returns individual tag values directly — no in-Rust JSON parsing needed.
+    /// Queries the `memory_tags` junction table directly — O(log n).
     pub fn unique_tags(&self, namespace: Option<&str>) -> Result<Vec<String>, Error> {
         let sql = match namespace {
             Some(_) => {
-                "SELECT DISTINCT je.value FROM memories, json_each(memories.tags) AS je WHERE namespace = ?1"
+                "SELECT DISTINCT mt.tag FROM memory_tags mt \
+                 INNER JOIN memories m ON mt.memory_id = m.id \
+                 WHERE m.namespace = ?1 \
+                 ORDER BY mt.tag"
             }
-            None => "SELECT DISTINCT je.value FROM memories, json_each(memories.tags) AS je",
+            None => "SELECT DISTINCT tag FROM memory_tags ORDER BY tag",
         };
 
         let mut stmt = self
@@ -40,13 +45,17 @@ impl super::Store {
 
     /// List all tags with their usage counts.
     ///
-    /// Single-query approach using `json_each()` — replaces the old N+1 pattern
-    /// that fetched each tag then ran a separate COUNT query per tag.
+    /// Single GROUP BY query on `memory_tags` — much faster than json_each().
     pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
         let mut result = Vec::new();
         match namespace {
             Some(ns) => {
-                let sql = "SELECT je.value AS name, COUNT(*) AS count FROM memories, json_each(memories.tags) AS je WHERE namespace = ?1 GROUP BY je.value ORDER BY count DESC";
+                let sql = "SELECT mt.tag AS name, COUNT(*) AS count \
+                           FROM memory_tags mt \
+                           INNER JOIN memories m ON mt.memory_id = m.id \
+                           WHERE m.namespace = ?1 \
+                           GROUP BY mt.tag \
+                           ORDER BY count DESC";
                 let mut stmt = self
                     .conn
                     .prepare(sql)
@@ -64,7 +73,10 @@ impl super::Store {
                 }
             }
             None => {
-                let sql = "SELECT je.value AS name, COUNT(*) AS count FROM memories, json_each(memories.tags) AS je GROUP BY je.value ORDER BY count DESC";
+                let sql = "SELECT tag AS name, COUNT(*) AS count \
+                           FROM memory_tags \
+                           GROUP BY tag \
+                           ORDER BY count DESC";
                 let mut stmt = self
                     .conn
                     .prepare(sql)
@@ -87,9 +99,8 @@ impl super::Store {
 
     /// Rename a tag across all memories. Returns number updated.
     ///
-    /// Uses `json_each()` to find affected rows precisely, then updates the
-    /// JSON tags column with the renamed tag. Wrapped in a transaction for
-    /// atomicity — either all renames succeed or none do.
+    /// Updates both `memory_tags` junction table AND JSON `tags` column.
+    /// Wrapped in a transaction for atomicity.
     pub fn rename_tag(
         &self,
         old: &str,
@@ -102,58 +113,102 @@ impl super::Store {
             .unchecked_transaction()
             .map_err(|e| Error::db("begin transaction", e))?;
 
+        // Find affected memory IDs from junction table
         let (sql, ns_param): (&str, Option<&str>) = match namespace {
-            Some(_) => ("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)", namespace),
-            None => ("SELECT id, tags FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)", None),
+            Some(_) => (
+                "SELECT mt.memory_id FROM memory_tags mt \
+                 INNER JOIN memories m ON mt.memory_id = m.id \
+                 WHERE mt.tag = ?1 AND m.namespace = ?2",
+                namespace,
+            ),
+            None => ("SELECT memory_id FROM memory_tags WHERE tag = ?1", None),
         };
         let mut stmt = self
             .conn
             .prepare(sql)
             .map_err(|e| Error::db("database operation", e))?;
 
-        let rows: Vec<(String, String)> = match ns_param {
+        let memory_ids: Vec<String> = match ns_param {
             Some(ns) => stmt
-                .query_map(params![ns, old], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
+                .query_map(params![old, ns], |row| row.get::<_, String>(0))
                 .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
             None => stmt
-                .query_map(params![old], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
+                .query_map(params![old], |row| row.get::<_, String>(0))
                 .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
         };
+
         let mut updated = 0;
 
-        for (id, tags_str) in &rows {
-            let mut tags: Vec<String> = match serde_json::from_str(tags_str) {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::warn!("Skipping rename for memory {id}: corrupted tags JSON: {e}");
-                    continue;
+        // Update junction table: delete old, insert new for each memory
+        let mut del_stmt = self
+            .conn
+            .prepare("DELETE FROM memory_tags WHERE memory_id = ?1 AND tag = ?2")
+            .map_err(|e| Error::db("database operation", e))?;
+        let mut ins_stmt = self
+            .conn
+            .prepare("INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?1, ?2)")
+            .map_err(|e| Error::db("database operation", e))?;
+
+        for mid in &memory_ids {
+            del_stmt
+                .execute(params![mid, old])
+                .map_err(|e| Error::db("database operation", e))?;
+            ins_stmt
+                .execute(params![mid, new])
+                .map_err(|e| Error::db("database operation", e))?;
+
+            // Also update JSON tags column for backward compat
+            let tags_str: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT tags FROM memories WHERE id = ?1",
+                    params![mid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| Error::db("database operation", e))?;
+
+            if let Some(ts) = tags_str {
+                let mut tags: Vec<String> = match serde_json::from_str(&ts) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping rename for memory {mid}: corrupted tags JSON: {e}"
+                        );
+                        continue;
+                    }
+                };
+                let mut changed = false;
+                for t in &mut tags {
+                    if t == old {
+                        *t = new.to_string();
+                        changed = true;
+                    }
                 }
-            };
-            let mut changed = false;
-            for t in &mut tags {
-                if t == old {
-                    *t = new.to_string();
-                    changed = true;
+                if changed {
+                    let new_tags_json = serde_json::to_string(&tags)
+                        .map_err(|e| Error::db("database operation", e))?;
+                    let now = chrono::Utc::now().to_rfc3339();
+                    self.conn
+                        .execute(
+                            "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                            params![new_tags_json, now, mid],
+                        )
+                        .map_err(|e| Error::db("database operation", e))?;
+                    updated += 1;
+                } else {
+                    // Junction table updated but JSON was already correct — no net change.
+                    // Revert junction table change to keep both in sync.
+                    del_stmt
+                        .execute(params![mid, new])
+                        .map_err(|e| Error::db("database operation", e))?;
                 }
-            }
-            if changed {
-                let new_tags_json =
-                    serde_json::to_string(&tags).map_err(|e| Error::db("database operation", e))?;
-                let now = chrono::Utc::now().to_rfc3339();
-                self.conn
-                    .execute(
-                        "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
-                        params![new_tags_json, now, id],
-                    )
-                    .map_err(|e| Error::db("database operation", e))?;
+            } else {
+                // No JSON tags row — shouldn't happen, but junction table is already correct.
                 updated += 1;
             }
         }
@@ -165,8 +220,8 @@ impl super::Store {
 
     /// Delete a tag from all memories. Returns number updated.
     ///
-    /// Uses `json_each()` to find affected rows precisely. Wrapped in a
-    /// transaction for atomicity.
+    /// Deletes from `memory_tags` junction table AND updates JSON `tags` column.
+    /// Wrapped in a transaction for atomicity.
     pub fn delete_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
         // Start transaction BEFORE read to prevent TOCTOU race.
         let tx = self
@@ -174,54 +229,80 @@ impl super::Store {
             .unchecked_transaction()
             .map_err(|e| Error::db("begin transaction", e))?;
 
+        // Find affected memory IDs from junction table
         let (sql, ns_param): (&str, Option<&str>) = match namespace {
-            Some(_) => ("SELECT id, tags FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)", namespace),
-            None => ("SELECT id, tags FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)", None),
+            Some(_) => (
+                "SELECT mt.memory_id FROM memory_tags mt \
+                 INNER JOIN memories m ON mt.memory_id = m.id \
+                 WHERE mt.tag = ?1 AND m.namespace = ?2",
+                namespace,
+            ),
+            None => ("SELECT memory_id FROM memory_tags WHERE tag = ?1", None),
         };
         let mut stmt = self
             .conn
             .prepare(sql)
             .map_err(|e| Error::db("database operation", e))?;
 
-        let rows: Vec<(String, String)> = match ns_param {
+        let memory_ids: Vec<String> = match ns_param {
             Some(ns) => stmt
-                .query_map(params![ns, tag], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
+                .query_map(params![tag, ns], |row| row.get::<_, String>(0))
                 .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
             None => stmt
-                .query_map(params![tag], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })
+                .query_map(params![tag], |row| row.get::<_, String>(0))
                 .map_err(|e| Error::db("database operation", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("database operation", e))?,
         };
+
         let mut updated = 0;
 
-        for (id, tags_str) in &rows {
-            let mut tags: Vec<String> = match serde_json::from_str(tags_str) {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::warn!("Skipping delete_tag for memory {id}: corrupted tags JSON: {e}");
-                    continue;
+        for mid in &memory_ids {
+            // Delete from junction table
+            self.conn
+                .execute(
+                    "DELETE FROM memory_tags WHERE memory_id = ?1 AND tag = ?2",
+                    params![mid, tag],
+                )
+                .map_err(|e| Error::db("database operation", e))?;
+
+            // Also update JSON tags column for backward compat
+            let tags_str: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT tags FROM memories WHERE id = ?1",
+                    params![mid],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| Error::db("database operation", e))?;
+
+            if let Some(ts) = tags_str {
+                let mut tags: Vec<String> = match serde_json::from_str(&ts) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping delete_tag for memory {mid}: corrupted tags JSON: {e}"
+                        );
+                        continue;
+                    }
+                };
+                let before_len = tags.len();
+                tags.retain(|t| t != tag);
+                if tags.len() != before_len {
+                    let new_tags_json = serde_json::to_string(&tags)
+                        .map_err(|e| Error::db("database operation", e))?;
+                    let now = chrono::Utc::now().to_rfc3339();
+                    self.conn
+                        .execute(
+                            "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
+                            params![new_tags_json, now, mid],
+                        )
+                        .map_err(|e| Error::db("database operation", e))?;
+                    updated += 1;
                 }
-            };
-            let before_len = tags.len();
-            tags.retain(|t| t != tag);
-            if tags.len() != before_len {
-                let new_tags_json =
-                    serde_json::to_string(&tags).map_err(|e| Error::db("database operation", e))?;
-                let now = chrono::Utc::now().to_rfc3339();
-                self.conn
-                    .execute(
-                        "UPDATE memories SET tags = ?1, updated_at = ?2 WHERE id = ?3",
-                        params![new_tags_json, now, id],
-                    )
-                    .map_err(|e| Error::db("database operation", e))?;
-                updated += 1;
             }
         }
 
@@ -236,17 +317,20 @@ impl super::Store {
             Some(ns) => self
                 .conn
                 .query_row(
-                    "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2)",
-                    params![ns, tag],
-                    |row| row.get(0),
+                    "SELECT COUNT(DISTINCT mt.memory_id) \
+                     FROM memory_tags mt \
+                     INNER JOIN memories m ON mt.memory_id = m.id \
+                     WHERE mt.tag = ?1 AND m.namespace = ?2",
+                    params![tag, ns],
+                    |row| row.get::<_, usize>(0),
                 )
                 .map_err(|e| Error::db("database operation", e)),
             None => self
                 .conn
                 .query_row(
-                    "SELECT COUNT(*) FROM memories WHERE EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?1)",
+                    "SELECT COUNT(DISTINCT memory_id) FROM memory_tags WHERE tag = ?1",
                     params![tag],
-                    |row| row.get(0),
+                    |row| row.get::<_, usize>(0),
                 )
                 .map_err(|e| Error::db("database operation", e)),
         }

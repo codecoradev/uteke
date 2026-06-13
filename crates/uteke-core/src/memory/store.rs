@@ -26,10 +26,17 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+
+CREATE TABLE IF NOT EXISTS memory_tags (
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    tag TEXT NOT NULL COLLATE NOCASE,
+    PRIMARY KEY (memory_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 4;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 5;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

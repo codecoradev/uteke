@@ -40,6 +40,16 @@ impl super::Store {
             )
             .map_err(|e| Error::db("Failed to insert memory", e))?;
 
+        // Dual-write: insert tags into junction table
+        for tag in &memory.tags {
+            self.conn
+                .execute(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?1, ?2)",
+                    params![memory.id, tag],
+                )
+                .map_err(|e| Error::db("Failed to insert tag", e))?;
+        }
+
         Ok(())
     }
 
@@ -95,6 +105,23 @@ impl super::Store {
                 ],
             )
             .map_err(|e| Error::db("database operation", e))?;
+
+        // Dual-write: sync junction table tags
+        self.conn
+            .execute(
+                "DELETE FROM memory_tags WHERE memory_id = ?1",
+                params![memory.id],
+            )
+            .map_err(|e| Error::db("delete old tags", e))?;
+        for tag in &memory.tags {
+            self.conn
+                .execute(
+                    "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?1, ?2)",
+                    params![memory.id, tag],
+                )
+                .map_err(|e| Error::db("insert tag", e))?;
+        }
+
         Ok(())
     }
 
@@ -109,7 +136,7 @@ impl super::Store {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
         let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
             None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         };
 

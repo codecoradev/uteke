@@ -19,7 +19,7 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "DELETE FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE value = ?2) RETURNING id",
+                "DELETE FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) RETURNING id",
             )
             .map_err(|e| Error::db("database operation", e))?;
         let ids: Vec<String> = stmt
