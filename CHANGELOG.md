@@ -2,6 +2,35 @@
 
 ### Added
 
+- **Time-travel queries** (#292)
+  - `uteke recall --at 2026-06-01T12:00:00Z` — recall memories as they existed at a specific point in time
+  - `uteke list --at 2026-06-01T12:00:00Z` — list memories that existed at timestamp
+  - Filters by created_at, valid_from/valid_until, deprecated status
+  - Server: `/recall` and `/list` accept `"at"` field
+- **Pluggable embedding models** (#249)
+  - New `Embedder` trait — enables different embedding backends (ONNX, OpenAI, Ollama)
+  - `EmbeddingEngine` renamed to `OnnxEmbedder`, implements `Embedder`
+  - Config: `[embedding] backend = "onnx"` (default)
+  - Lazy backend selection via `embedder_backend` field
+- **Room document view** (#306)
+  - `uteke room document <room>` — generate structured document from room memories
+  - Sections grouped by memory_type: 📋 Decisions, 🔍 Facts, ⚙️ Procedures, 🎨 Preferences, 💬 Context
+  - Pinned memories get 📌 section first
+  - Server: `POST /room/document`
+- **Semantic room recall** (#304)
+  - `uteke room recall <room> --query "topic"` — semantic recall within a room
+  - `/room/recall` endpoint
+- **Room summary** (#305)
+  - `uteke room summary <room>` — LLM-free room summary via tag clustering
+  - `/room/summary` endpoint
+- **Configurable recall threshold** (#252)
+  - `uteke recall --min 0.7` — set minimum similarity score
+  - `uteke recall --strict` — use 0.7 default threshold
+  - `[recall] min_score = 0.7` in config
+- **Room-based memory** (#286)
+  - `uteke room create/list/add/recall/remove/delete` — full room management
+  - Memories can belong to rooms with author attribution
+  - `/room/*` endpoints
 - **Agent recall optimization** (#181)
   - Recall cache: LRU with TTL (5min, 256 entries) — avoids redundant embedding (~50ms) for repeated queries
   - `uteke recall --context` — formatted output for AI prompt injection
@@ -17,6 +46,12 @@
 
 ### Changed
 
+- **Normalize tags with junction table** (#184)
+  - New `memory_tags` junction table for O(log n) tag lookups
+  - Schema v5: creates table, populates from existing JSON tags
+  - Dual-write: insert/update writes to both JSON column and junction table
+  - All tag queries use junction table instead of json_each()
+  - Backward compat: JSON `tags` column preserved
 - **Smart memory decay and importance scoring** (#247)
   - Composite importance score: 0.3*access + 0.3*recency + 0.2*connectivity + 0.2*pinning
   - `uteke pin <id>` / `uteke unpin <id>` — pin memories so they never decay
