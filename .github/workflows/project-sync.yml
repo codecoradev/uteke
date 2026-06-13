@@ -1,0 +1,74 @@
+name: Sync to CodeCorraDev Roadmap
+
+on:
+  issues:
+    types: [opened, reopened, closed, labeled]
+  # Manual trigger for backfill
+  workflow_dispatch:
+
+permissions:
+  issues: read
+  repository-projects: read
+
+env:
+  PROJECT_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
+  PROJECT_NODE_ID: ${{ secrets.PROJECT_NODE_ID }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync issue to Project Board
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
+        run: |
+          EVENT="${{ github.event.action }}"
+          ISSUE_NUMBER="${{ github.event.issue.number }}"
+          ISSUE_NODE_ID="${{ github.event.issue.node_id }}"
+          ISSUE_STATE="${{ github.event.issue.state }}"
+          REPO="${{ github.repository }}"
+
+          echo "::group::Event Details"
+          echo "Event: $EVENT"
+          echo "Issue: #$ISSUE_NUMBER"
+          echo "State: $ISSUE_STATE"
+          echo "Repo: $REPO"
+          echo "Project: $PROJECT_NODE_ID"
+          echo "::endgroup::"
+
+          if [ -z "$PROJECT_NODE_ID" ] || [ "$PROJECT_NODE_ID" = "" ]; then
+            echo "::warning::PROJECT_NODE_ID not set. Skipping."
+            exit 0
+          fi
+
+          add_to_project() {
+            local node_id="$1"
+            RESULT=$(gh api graphql \
+              -f query="
+                mutation {
+                  addProjectV2ItemById(input: {projectId: \"$PROJECT_NODE_ID\", contentId: \"$node_id\"}) {
+                    item { id }
+                  }
+                }" 2>&1)
+            if echo "$RESULT" | grep -q '"item"'; then
+              echo "✅ Added to project"
+            else
+              echo "⚠️ Add failed (may already exist): $RESULT"
+            fi
+          }
+
+          case "$EVENT" in
+            opened|reopened)
+              if [ "$ISSUE_STATE" = "open" ]; then
+                echo "Adding opened/reopened issue #$ISSUE_NUMBER..."
+                add_to_project "$ISSUE_NODE_ID"
+              fi
+              ;;
+            closed)
+              echo "Issue #$ISSUE_NUMBER closed — item stays in board (visibility handled by project)"
+              ;;
+            labeled)
+              echo "Issue #$ISSUE_NUMBER labeled — no action needed"
+              ;;
+          esac
