@@ -45,6 +45,12 @@ fn main() {
     Config::write_default_config();
     let config = Config::load();
 
+    // Validate embedding backend early (fail-fast before store open)
+    if let Err(e) = config.embedding.validate_backend() {
+        eprintln!("Config error: {e}");
+        std::process::exit(1);
+    }
+
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
     let server_available = config.server.enabled && commands::is_server_running(&server_url);

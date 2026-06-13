@@ -48,6 +48,26 @@ impl Default for EmbeddingConfig {
     }
 }
 
+impl EmbeddingConfig {
+    /// Supported embedding backends.
+    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx"];
+
+    /// Validate the backend field.
+    ///
+    /// Returns an error message if the backend is not recognized.
+    pub fn validate_backend(&self) -> Result<(), String> {
+        if Self::SUPPORTED_BACKENDS.contains(&self.backend.as_str()) {
+            Ok(())
+        } else {
+            Err(format!(
+                "Unsupported embedding backend: '{}'. Supported: {}",
+                self.backend,
+                Self::SUPPORTED_BACKENDS.join(", ")
+            ))
+        }
+    }
+}
+
 /// Tier configuration for hot/warm/cold memory tiers.
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]

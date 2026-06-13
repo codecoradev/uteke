@@ -32,6 +32,7 @@ pub use memory::{
     TimeRange, TopicCluster,
 };
 
+pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
@@ -79,7 +80,6 @@ pub fn validate_input(content: &str, tags: &[impl AsRef<str>]) -> Result<(), Err
     Ok(())
 }
 
-use embed::{Embedder, OnnxEmbedder};
 use memory::store::Store;
 use memory::VectorIndex;
 
@@ -275,11 +275,19 @@ impl Uteke {
             dir.join("uteke_index.usearch")
         });
 
-        // Use the dims from the provided embedder if available, otherwise default to ONNX dims
-        let dims = embedder
-            .as_ref()
-            .map(|e| e.dims())
-            .unwrap_or(OnnxEmbedder::dims());
+        // Use dims from the provided embedder if available.
+        // When lazy-initializing (embedder=None), validate backend and use known dims.
+        let dims = match embedder.as_ref() {
+            Some(e) => e.dims(),
+            None => match embedder_backend.as_str() {
+                "onnx" | "" | "custom" => OnnxEmbedder::dims(),
+                other => {
+                    return Err(Error::Validation(format!(
+                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                    )));
+                }
+            },
+        };
 
         let mut index = match &index_path {
             Some(path) => VectorIndex::load_or_create(path, dims)?,
@@ -323,7 +331,12 @@ impl Uteke {
         if guard.is_none() {
             tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
             *guard = Some(match self.embedder_backend.as_str() {
-                "onnx" | "" | "custom" => Box::new(OnnxEmbedder::new()?),
+                "onnx" | "" => Box::new(OnnxEmbedder::new()?),
+                "custom" => {
+                    return Err(Error::generic(
+                        "Custom embedder backend set but no embedder was provided",
+                    ));
+                }
                 other => {
                     return Err(Error::Validation(format!(
                         "Unknown embedding backend: '{other}'. Supported: 'onnx'."
