@@ -266,6 +266,87 @@ impl super::Store {
         Ok(count)
     }
 
+    /// List memories that existed at a specific point in time.
+    ///
+    /// A memory existed at `point_in_time` if:
+    /// - `created_at <= point_in_time`
+    /// - `valid_from IS NULL OR valid_from <= point_in_time`
+    /// - `valid_until IS NULL OR valid_until > point_in_time`
+    /// - `deprecated = 0`
+    pub fn list_at_time(
+        &self,
+        tag: Option<&str>,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Memory>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let pit = point_in_time.to_rfc3339();
+
+        let sql = match tag {
+            Some(_) => {
+                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
+                 m.created_at, m.updated_at, m.namespace, m.access_count, \
+                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, \
+                 m.memory_type, m.importance, m.pinned \
+                 FROM memories m \
+                 INNER JOIN memory_tags mt ON mt.memory_id = m.id \
+                 WHERE m.namespace = ?1 \
+                   AND m.created_at <= ?2 \
+                   AND (m.valid_from IS NULL OR m.valid_from <= ?2) \
+                   AND (m.valid_until IS NULL OR m.valid_until > ?2) \
+                   AND m.deprecated = 0 \
+                   AND mt.tag = ?3 \
+                 ORDER BY m.created_at DESC LIMIT ?4 OFFSET ?5"
+            }
+            None => {
+                "SELECT id, content, embedding, tags, metadata, \
+                 created_at, updated_at, namespace, access_count, \
+                 last_accessed, deprecated, valid_from, valid_until, \
+                 memory_type, importance, pinned \
+                 FROM memories \
+                 WHERE namespace = ?1 \
+                   AND created_at <= ?2 \
+                   AND (valid_from IS NULL OR valid_from <= ?2) \
+                   AND (valid_until IS NULL OR valid_until > ?2) \
+                   AND deprecated = 0 \
+                 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
+            }
+        };
+
+        let mut memories = Vec::new();
+        match tag {
+            Some(t) => {
+                let mut stmt = self
+                    .conn
+                    .prepare(sql)
+                    .map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![ns, pit, t, limit, offset], row_to_memory)
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    let m = row.map_err(|e| Error::db("database operation", e))?;
+                    memories.push(m);
+                }
+            }
+            None => {
+                let mut stmt = self
+                    .conn
+                    .prepare(sql)
+                    .map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![ns, pit, limit, offset], row_to_memory)
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    let m = row.map_err(|e| Error::db("database operation", e))?;
+                    memories.push(m);
+                }
+            }
+        }
+        Ok(memories)
+    }
+
     /// Get the underlying database path, if file-based.
     pub fn path(&self) -> Option<std::path::PathBuf> {
         self.conn.path().map(std::path::PathBuf::from)

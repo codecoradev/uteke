@@ -55,6 +55,9 @@ struct RecallRequest {
     /// Use strict threshold (defaults to 0.5 if min_score not set).
     #[serde(default)]
     strict: bool,
+    /// Time-travel: query memories that existed at this RFC3339 timestamp.
+    #[serde(default)]
+    at: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -78,6 +81,9 @@ struct ListParams {
     offset: usize,
     #[serde(default)]
     namespace: Option<String>,
+    /// Time-travel: list memories that existed at this RFC3339 timestamp.
+    #[serde(default)]
+    at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -517,13 +523,43 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
                     req_data.limit
                 };
 
-                match uteke.recall(
-                    &req_data.query,
-                    fetch_limit,
-                    tags_filter,
-                    ns(&req_data.namespace),
-                    fetch_min_score,
-                ) {
+                // Time-travel mode: parse --at and use recall_at_time
+                let point_in_time = match req_data.at.as_deref() {
+                    Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
+                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+                        Err(_) => {
+                            return ctx.error_response_for(
+                                    req,
+                                    400,
+                                    format!(
+                                        "Invalid 'at' timestamp: {at_str}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+                                    ),
+                                );
+                        }
+                    },
+                    None => None,
+                };
+
+                let recall_result = if let Some(pit) = point_in_time {
+                    uteke.recall_at_time(
+                        &req_data.query,
+                        fetch_limit,
+                        tags_filter,
+                        ns(&req_data.namespace),
+                        pit,
+                        fetch_min_score,
+                    )
+                } else {
+                    uteke.recall(
+                        &req_data.query,
+                        fetch_limit,
+                        tags_filter,
+                        ns(&req_data.namespace),
+                        fetch_min_score,
+                    )
+                };
+
+                match recall_result {
                     Ok(raw_results) => {
                         // Post-filter by entity/category metadata
                         let mut results: Vec<_> = raw_results
@@ -613,12 +649,37 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
         // ── List ────────────────────────────────────────────────────────
         (Method::Post, "/list") => match read_body::<ListParams>(req.as_reader()) {
             Ok(req_data) => {
-                match uteke.list(
-                    req_data.tag.as_deref(),
-                    req_data.limit,
-                    req_data.offset,
-                    ns(&req_data.namespace),
-                ) {
+                // Time-travel mode: parse --at and use list_at_time
+                let list_result = match req_data.at.as_deref() {
+                    Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
+                        Ok(dt) => {
+                            let pit = dt.with_timezone(&chrono::Utc);
+                            uteke.list_at_time(
+                                req_data.tag.as_deref(),
+                                req_data.limit,
+                                req_data.offset,
+                                ns(&req_data.namespace),
+                                pit,
+                            )
+                        }
+                        Err(_) => {
+                            return ctx.error_response_for(
+                                    req,
+                                    400,
+                                    format!(
+                                        "Invalid 'at' timestamp: {at_str}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+                                    ),
+                                );
+                        }
+                    },
+                    None => uteke.list(
+                        req_data.tag.as_deref(),
+                        req_data.limit,
+                        req_data.offset,
+                        ns(&req_data.namespace),
+                    ),
+                };
+                match list_result {
                     Ok(memories) => ctx.ok_response_for(req, &memories),
                     Err(e) => {
                         error!("Internal error: {e}");

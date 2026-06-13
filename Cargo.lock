@@ -2726,6 +2726,7 @@ dependencies = [
 name = "uteke-cli"
 version = "0.0.15"
 dependencies = [
+ "chrono",
  "clap",
  "clap_complete",
  "ctrlc",
@@ -2776,6 +2777,7 @@ dependencies = [
 name = "uteke-server"
 version = "0.0.15"
 dependencies = [
+ "chrono",
  "ctrlc",
  "serde",
  "serde_json",

@@ -105,6 +105,9 @@ pub enum Commands {
         /// Output as formatted context for AI prompt injection
         #[arg(long)]
         context: bool,
+        /// Query memories as they existed at this timestamp (RFC3339, e.g. 2026-06-01T12:00:00Z)
+        #[arg(long)]
+        at: Option<String>,
     },
     /// Search memories by content keywords (text search)
     Search {
@@ -134,6 +137,9 @@ pub enum Commands {
         /// Filter by category
         #[arg(long)]
         category: Option<String>,
+        /// List memories as they existed at this timestamp (RFC3339)
+        #[arg(long)]
+        at: Option<String>,
     },
     /// Get a single memory by ID
     Get {

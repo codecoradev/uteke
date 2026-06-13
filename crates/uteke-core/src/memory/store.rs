@@ -1280,4 +1280,170 @@ mod tests {
         let result = store.insert(&make_test_memory("dup", "second", &[]));
         assert!(result.is_err());
     }
+
+    fn make_temporal_memory(
+        id: &str,
+        content: &str,
+        created_at: chrono::DateTime<Utc>,
+        valid_from: Option<chrono::DateTime<Utc>>,
+        valid_until: Option<chrono::DateTime<Utc>>,
+        deprecated: bool,
+    ) -> Memory {
+        Memory {
+            id: id.to_string(),
+            content: content.to_string(),
+            embedding: vec![0.1; 768],
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            created_at,
+            updated_at: created_at,
+            namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
+            access_count: 0,
+            last_accessed: None,
+            deprecated,
+            valid_from,
+            valid_until,
+            memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
+        }
+    }
+
+    #[test]
+    fn test_list_at_time_basic() {
+        let store = Store::open(":memory:").unwrap();
+        let t0 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t1 = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t2 = chrono::DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // Memory created at t0, still valid → exists at t1
+        store
+            .insert(&make_temporal_memory("m1", "old", t0, None, None, false))
+            .unwrap();
+        // Memory created at t2 → did NOT exist at t1
+        store
+            .insert(&make_temporal_memory("m2", "future", t2, None, None, false))
+            .unwrap();
+
+        let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "m1");
+    }
+
+    #[test]
+    fn test_list_at_time_excludes_expired() {
+        let store = Store::open(":memory:").unwrap();
+        let t0 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t1 = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t2 = chrono::DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // valid_until = t1 → expired AT t1 (valid_until > pit required)
+        store
+            .insert(&make_temporal_memory(
+                "expired",
+                "gone",
+                t0,
+                None,
+                Some(t1),
+                false,
+            ))
+            .unwrap();
+        // valid_until = t2 → still valid at t1
+        store
+            .insert(&make_temporal_memory(
+                "active",
+                "here",
+                t0,
+                None,
+                Some(t2),
+                false,
+            ))
+            .unwrap();
+
+        let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "active");
+    }
+
+    #[test]
+    fn test_list_at_time_excludes_deprecated() {
+        let store = Store::open(":memory:").unwrap();
+        let t0 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t1 = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        store
+            .insert(&make_temporal_memory(
+                "dep",
+                "deprecated",
+                t0,
+                None,
+                None,
+                true,
+            ))
+            .unwrap();
+        store
+            .insert(&make_temporal_memory("ok", "active", t0, None, None, false))
+            .unwrap();
+
+        let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "ok");
+    }
+
+    #[test]
+    fn test_list_at_time_excludes_future_valid_from() {
+        let store = Store::open(":memory:").unwrap();
+        let t0 = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t1 = chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let t2 = chrono::DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // valid_from = t2 → not yet valid at t1
+        store
+            .insert(&make_temporal_memory(
+                "future_vf",
+                "scheduled",
+                t0,
+                Some(t2),
+                None,
+                false,
+            ))
+            .unwrap();
+        // valid_from = t0 → valid at t1
+        store
+            .insert(&make_temporal_memory(
+                "past_vf",
+                "ready",
+                t0,
+                Some(t0),
+                None,
+                false,
+            ))
+            .unwrap();
+
+        let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "past_vf");
+    }
 }
