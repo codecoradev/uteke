@@ -10,11 +10,6 @@ permissions:
   issues: read
   repository-projects: read
 
-env:
-  PROJECT_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
-  PROJECT_NODE_ID: ${{ secrets.PROJECT_NODE_ID }}
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -22,11 +17,13 @@ jobs:
       - name: Sync issue to Project Board
         env:
           GH_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
+          PROJECT_NODE_ID: ${{ secrets.PROJECT_NODE_ID }}
         run: |
+          set -e
           EVENT="${{ github.event.action }}"
-          ISSUE_NUMBER="${{ github.event.issue.number }}"
-          ISSUE_NODE_ID="${{ github.event.issue.node_id }}"
-          ISSUE_STATE="${{ github.event.issue.state }}"
+          ISSUE_NUMBER="${{ github.event.issue.number || '' }}"
+          ISSUE_NODE_ID="${{ github.event.issue.node_id || '' }}"
+          ISSUE_STATE="${{ github.event.issue.state || '' }}"
           REPO="${{ github.repository }}"
 
           echo "::group::Event Details"
@@ -37,32 +34,76 @@ jobs:
           echo "Project: $PROJECT_NODE_ID"
           echo "::endgroup::"
 
-          if [ -z "$PROJECT_NODE_ID" ] || [ "$PROJECT_NODE_ID" = "" ]; then
+          # Skip on manual dispatch or when project secrets are not configured.
+          if [ -z "$PROJECT_NODE_ID" ]; then
             echo "::warning::PROJECT_NODE_ID not set. Skipping."
+            exit 0
+          fi
+
+          # Guard: only proceed for issue events with valid data.
+          if [ -z "$ISSUE_NODE_ID" ]; then
+            echo "No issue context (manual dispatch?). Exiting."
             exit 0
           fi
 
           add_to_project() {
             local node_id="$1"
-            RESULT=$(gh api graphql \
+
+            # Use a unique temp file per call to avoid cross-contamination.
+            local err_file
+            err_file=$(mktemp)
+            # Ensure cleanup regardless of exit path.
+            trap "rm -f '$err_file'" RETURN
+
+            # Capture stdout and exit code separately for reliable error detection.
+            # Suppress set -e for this command so we can capture the exit code.
+            local stdout_result
+            local exit_code
+            set +e
+            stdout_result=$(gh api graphql \
               -f query="
                 mutation {
                   addProjectV2ItemById(input: {projectId: \"$PROJECT_NODE_ID\", contentId: \"$node_id\"}) {
                     item { id }
                   }
-                }" 2>&1)
-            if echo "$RESULT" | grep -q '"item"'; then
-              echo "✅ Added to project"
-            else
-              echo "⚠️ Add failed (may already exist): $RESULT"
+                }" 2>"$err_file")
+            exit_code=$?
+            set -e
+            local stderr_result
+            stderr_result=$(cat "$err_file")
+
+            # gh api failed entirely (network, auth, etc.)
+            if [ $exit_code -ne 0 ]; then
+              echo "❌ gh api failed (exit $exit_code): $stderr_result"
+              return 1
             fi
+
+            # Check for GraphQL errors field in the response body.
+            if echo "$stdout_result" | grep -q '"errors"'; then
+              echo "❌ GraphQL error: $stdout_result $stderr_result"
+              return 1
+            fi
+
+            # Verify the mutation returned an item id.
+            if echo "$stdout_result" | grep -q '"item"'; then
+              echo "✅ Added to project"
+              return 0
+            fi
+
+            echo "⚠️ Unexpected response (may already exist): $stdout_result $stderr_result"
+            return 0
           }
 
           case "$EVENT" in
             opened|reopened)
               if [ "$ISSUE_STATE" = "open" ]; then
                 echo "Adding opened/reopened issue #$ISSUE_NUMBER..."
-                add_to_project "$ISSUE_NODE_ID"
+                if ! add_to_project "$ISSUE_NODE_ID"; then
+                  echo "::error::Failed to add issue #$ISSUE_NUMBER to project board"
+                  exit 1
+                fi
+              else
+                echo "Issue #$ISSUE_NUMBER is not open. Skipping."
               fi
               ;;
             closed)
@@ -70,5 +111,8 @@ jobs:
               ;;
             labeled)
               echo "Issue #$ISSUE_NUMBER labeled — no action needed"
+              ;;
+            *)
+              echo "Unhandled event: $EVENT. No action."
               ;;
           esac
