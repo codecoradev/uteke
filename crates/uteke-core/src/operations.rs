@@ -739,35 +739,59 @@ impl crate::Uteke {
         point_in_time: chrono::DateTime<chrono::Utc>,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        // Over-fetch to compensate for temporal filtering reducing the set.
-        let fetch_limit = (limit * 3).max(50);
-        let mut results = self.recall(query, fetch_limit, tags_filter, namespace, min_score)?;
+        // Retry loop: over-fetch with increasing multipliers to compensate
+        // for temporal filtering removing candidates. If post-filtering
+        // yields fewer than `limit` results, expand the search scope.
+        let mut multiplier = 3usize;
+        let mut attempt = 0;
 
-        results.retain(|r| {
-            // Memory must have existed at this time
-            if r.memory.created_at > point_in_time {
-                return false;
+        loop {
+            let fetch_limit = (limit * multiplier).max(50);
+            let candidates = self.recall(query, fetch_limit, tags_filter, namespace, min_score)?;
+            let candidates_len = candidates.len();
+
+            let mut results: Vec<SearchResult> = candidates
+                .into_iter()
+                .filter(|r| {
+                    // Memory must have existed at this time
+                    if r.memory.created_at > point_in_time {
+                        return false;
+                    }
+                    // Memory must not have been invalidated before this time
+                    if let Some(valid_until) = r.memory.valid_until {
+                        if valid_until <= point_in_time {
+                            return false;
+                        }
+                    }
+                    // Memory should not be deprecated
+                    if r.memory.deprecated {
+                        return false;
+                    }
+                    // valid_from should be before point_in_time (if set)
+                    if let Some(valid_from) = r.memory.valid_from {
+                        if valid_from > point_in_time {
+                            return false;
+                        }
+                    }
+                    true
+                })
+                .collect();
+
+            // Stop if we have enough results or exhausted retry budget.
+            if results.len() >= limit || attempt >= 2 {
+                results.truncate(limit);
+                return Ok(results);
             }
-            // Memory must not have been invalidated before this time
-            if let Some(valid_until) = r.memory.valid_until {
-                if valid_until <= point_in_time {
-                    return false;
-                }
+
+            // If the fetch returned fewer than fetch_limit candidates, the
+            // index is exhausted — no point expanding the search scope.
+            if results.is_empty() && candidates_len < fetch_limit {
+                return Ok(results);
             }
-            // Memory should not be deprecated
-            if r.memory.deprecated {
-                return false;
-            }
-            // valid_from should be before point_in_time (if set)
-            if let Some(valid_from) = r.memory.valid_from {
-                if valid_from > point_in_time {
-                    return false;
-                }
-            }
-            true
-        });
-        results.truncate(limit);
-        Ok(results)
+
+            attempt += 1;
+            multiplier *= 3;
+        }
     }
 
     /// List memories that existed at a specific point in time.
