@@ -1,6 +1,7 @@
 //! Command handler implementations for all CLI subcommands.
 
 mod aging;
+pub(crate) mod bench;
 mod forget;
 mod list;
 mod maintenance;
@@ -215,5 +216,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             }
             Ok(())
         }
+
+        // Bench is handled early in main.rs (creates own temp stores, never
+        // reaches this dispatch path).
+        Commands::Bench { .. } => Ok(()),
     }
 }

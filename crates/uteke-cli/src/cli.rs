@@ -258,6 +258,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: RoomCommands,
     },
+    /// Run performance benchmarks with synthetic data
+    Bench {
+        /// Memory counts to benchmark (default: 100, 1000, 10000)
+        #[arg(long, value_delimiter = ',', default_value = "100,1000,10000")]
+        counts: Vec<usize>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Subcommands for tag management.

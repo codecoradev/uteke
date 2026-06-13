@@ -2,6 +2,16 @@
 
 ### Added
 
+- **Performance benchmark command** (#49)
+  - `uteke bench` — generates synthetic memories and benchmarks insert/recall at scale
+  - `--counts 100,1000,10000` — configurable memory counts
+  - `--json` — machine-readable output
+  - Measures: insert ops/sec, recall avg/p95 latency, DB/index size
+- **LongMemEval retrieval harness** (#316)
+  - `benchmarks/longmemeval/` — evaluates retrieval accuracy vs LongMemEval benchmark
+  - Session-level Recall@5/10/50, NDCG@5/10/50
+  - Per-question-type breakdown
+  - Comparison table vs Mem0/Hindsight
 - **Time-travel queries** (#292)
   - `uteke recall --at 2026-06-01T12:00:00Z` — recall memories as they existed at a specific point in time
   - `uteke list --at 2026-06-01T12:00:00Z` — list memories that existed at timestamp

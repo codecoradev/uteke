@@ -66,6 +66,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 🔗 **Relationship graph** — Link memories with typed edges (supersedes, contradicts, references)
 - 📉 **Smart decay** — Composite importance scoring, pin critical memories
 - ⚡ **Recall cache** — LRU cache eliminates redundant embedding for repeated queries
+- 📊 **Benchmarks** — Built-in `uteke bench` for perf testing + LongMemEval retrieval harness
 - 👥 **Multi-Agent Namespaces** — Fully isolated memory per agent, zero overhead
 - 🖥️ **Server Mode** — Persistent daemon with ~42ms warm recall (75x faster than CLI)
 - 🔥 **Tiered Memory** — Hot/Warm/Cold tracking with auto-cleanup of stale memories

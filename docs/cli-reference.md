@@ -265,6 +265,23 @@ uteke room remove "project-kickoff" <memory-id>
 uteke room delete "project-kickoff"
 ```
 
+## uteke bench
+
+Run performance benchmarks with synthetic data:
+
+```bash
+# Default: 100, 1000, 10000 memories
+uteke bench
+
+# Custom counts
+uteke bench --counts 500,5000
+
+# JSON output
+uteke bench --json
+```
+
+Measures insert throughput, recall latency (avg + p95), and storage footprint.
+
 ## uteke pin / unpin
 
 Pin memories so they never decay:

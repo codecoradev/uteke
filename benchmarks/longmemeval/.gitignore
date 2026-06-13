@@ -1,0 +1,11 @@
+# LongMemEval dataset (downloaded separately)
+data/
+
+# Results (commit RESULTS.md, ignore raw outputs)
+results/*.jsonl
+results/*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
