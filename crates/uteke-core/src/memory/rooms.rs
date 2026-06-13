@@ -26,6 +26,38 @@ pub struct RoomStats {
     pub last_activity: Option<String>,
 }
 
+/// Room summary result — topic clusters and discussion overview.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RoomSummary {
+    pub room_id: String,
+    pub title: Option<String>,
+    pub total_memories: usize,
+    pub participants: Vec<String>,
+    pub time_range: TimeRange,
+    pub clusters: Vec<TopicCluster>,
+    pub top_tags: Vec<crate::memory::types::TagInfo>,
+    pub recent_decisions: Vec<String>,
+    pub pinned_highlights: Vec<String>,
+}
+
+/// Time range of memories in a room.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TimeRange {
+    pub earliest: String,
+    pub latest: String,
+}
+
+/// A topic cluster derived from tag co-occurrence.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TopicCluster {
+    pub topic: String,
+    pub memory_count: usize,
+    pub top_memories: Vec<String>,
+    pub tags: Vec<String>,
+    pub participants: Vec<String>,
+    pub score: f32,
+}
+
 /// A memory linked to a room with author attribution.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoomMemory {
@@ -262,6 +294,304 @@ impl super::Store {
         };
 
         Ok(memories)
+    }
+
+    /// Get memory IDs linked to a room.
+    /// Returns just the IDs — much cheaper than full recall when only
+    /// filtering is needed.
+    pub fn get_room_memory_ids(
+        &self,
+        room_id: &str,
+        author: Option<&str>,
+    ) -> Result<Vec<String>, Error> {
+        let sql = match author {
+            Some(_) => "SELECT memory_id FROM room_memories WHERE room_id = ?1 AND author = ?2",
+            None => "SELECT memory_id FROM room_memories WHERE room_id = ?1",
+        };
+
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::db("get room memory ids", e))?;
+
+        let ids: Vec<String> = match author {
+            Some(a) => stmt
+                .query_map(params![room_id, a], |row| row.get(0))
+                .map_err(|e| Error::db("get room memory ids", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("get room memory ids", e))?,
+            None => stmt
+                .query_map(params![room_id], |row| row.get(0))
+                .map_err(|e| Error::db("get room memory ids", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("get room memory ids", e))?,
+        };
+
+        Ok(ids)
+    }
+
+    /// Generate a room summary with LLM-free topic clustering.
+    pub fn room_summary(&self, room_id: &str) -> Result<Option<RoomSummary>, Error> {
+        let room = match self.get_room(room_id)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        // Get ALL room memories (no limit)
+        let memories = self.recall_room(room_id, None, i32::MAX as usize)?;
+
+        if memories.is_empty() {
+            return Ok(Some(RoomSummary {
+                room_id: room.id,
+                title: room.title,
+                total_memories: 0,
+                participants: vec![],
+                time_range: TimeRange {
+                    earliest: String::new(),
+                    latest: String::new(),
+                },
+                clusters: vec![],
+                top_tags: vec![],
+                recent_decisions: vec![],
+                pinned_highlights: vec![],
+            }));
+        }
+
+        // Get author mapping from room_memories
+        let mut author_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT memory_id, author FROM room_memories WHERE room_id = ?1")
+                .map_err(|e| Error::db("room summary authors", e))?;
+            let rows: Vec<(String, String)> = stmt
+                .query_map(params![room_id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| Error::db("room summary authors", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("room summary authors", e))?;
+            for (mid, author) in rows {
+                author_map.insert(mid, author);
+            }
+        }
+
+        // Collect participants
+        let participants: Vec<String> = {
+            let mut ps: Vec<String> = author_map.values().cloned().collect();
+            ps.sort();
+            ps.dedup();
+            ps
+        };
+
+        // Time range
+        let earliest = memories
+            .iter()
+            .map(|m| m.created_at.to_rfc3339())
+            .min()
+            .unwrap_or_default();
+        let latest = memories
+            .iter()
+            .map(|m| m.created_at.to_rfc3339())
+            .max()
+            .unwrap_or_default();
+
+        let fmt_time = |s: &str| -> String { s.get(..19).unwrap_or(s).to_string() };
+
+        // Tag frequency
+        let mut tag_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for m in &memories {
+            for tag in &m.tags {
+                *tag_counts.entry(tag.clone()).or_insert(0) += 1;
+            }
+        }
+
+        // Top tags (top 10)
+        let mut tag_count_vec: Vec<(String, usize)> =
+            tag_counts.iter().map(|(k, &v)| (k.clone(), v)).collect();
+        tag_count_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let top_tags: Vec<crate::memory::types::TagInfo> = tag_count_vec
+            .iter()
+            .take(10)
+            .map(|(name, count)| crate::memory::types::TagInfo {
+                name: name.clone(),
+                count: *count,
+            })
+            .collect();
+
+        // Build clusters from tag co-occurrence
+        let mut tag_groups: std::collections::HashMap<String, Vec<&crate::memory::types::Memory>> =
+            std::collections::HashMap::new();
+        for m in &memories {
+            for tag in &m.tags {
+                tag_groups.entry(tag.clone()).or_default().push(m);
+            }
+        }
+
+        // Convert to TopicClusters
+        let mut clusters: Vec<TopicCluster> = tag_groups
+            .iter()
+            .map(|(tag, mems)| {
+                let mem_count = mems.len();
+                // Top 3 memories by importance (fallback recency)
+                let mut sorted = mems.clone();
+                sorted.sort_by(|a, b| {
+                    b.importance
+                        .partial_cmp(&a.importance)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| b.created_at.cmp(&a.created_at))
+                });
+                let top_memories: Vec<String> = sorted
+                    .iter()
+                    .take(3)
+                    .map(|m| {
+                        let s = m.content.clone();
+                        if s.len() > 100 {
+                            format!("{}...", &s[..97])
+                        } else {
+                            s
+                        }
+                    })
+                    .collect();
+
+                // Cluster tags: collect all tags from cluster memories, sort by frequency
+                let mut cluster_tags: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for m in mems {
+                    for t in &m.tags {
+                        *cluster_tags.entry(t.clone()).or_insert(0) += 1;
+                    }
+                }
+                let mut cluster_tag_filtered: Vec<(&String, &usize)> =
+                    cluster_tags.iter().filter(|(t, _)| *t != tag).collect();
+                cluster_tag_filtered.sort_by(|a, b| b.1.cmp(a.1));
+                let mut cluster_tag_vec: Vec<String> = cluster_tag_filtered
+                    .into_iter()
+                    .take(5)
+                    .map(|(t, _)| t.clone())
+                    .collect();
+                cluster_tag_vec.insert(0, tag.clone());
+
+                // Cluster participants
+                let mut cluster_parts: Vec<String> = mems
+                    .iter()
+                    .filter_map(|m| author_map.get(&m.id).cloned())
+                    .collect();
+                cluster_parts.sort();
+                cluster_parts.dedup();
+
+                // Average importance score
+                let score =
+                    mems.iter().map(|m| m.importance as f32).sum::<f32>() / mems.len() as f32;
+
+                TopicCluster {
+                    topic: tag.clone(),
+                    memory_count: mem_count,
+                    top_memories,
+                    tags: cluster_tag_vec,
+                    participants: cluster_parts,
+                    score,
+                }
+            })
+            .collect();
+
+        // Sort clusters by memory count descending
+        clusters.sort_by(|a, b| {
+            b.memory_count
+                .cmp(&a.memory_count)
+                .then_with(|| a.topic.cmp(&b.topic))
+        });
+
+        // Merge small clusters (< 2 memories) into "Other"
+        let (small, big): (Vec<_>, Vec<_>) = clusters.into_iter().partition(|c| c.memory_count < 2);
+        let mut final_clusters = big;
+        if !small.is_empty() {
+            let total_small: usize = small.iter().map(|c| c.memory_count).sum();
+            let all_previews: Vec<String> = small
+                .iter()
+                .flat_map(|c| c.top_memories.iter())
+                .take(3)
+                .cloned()
+                .collect();
+            let mut all_tags: Vec<String> = small
+                .iter()
+                .flat_map(|c| c.tags.iter())
+                .take(5)
+                .cloned()
+                .collect();
+            all_tags.sort();
+            all_tags.dedup();
+            let mut all_parts: Vec<String> = small
+                .iter()
+                .flat_map(|c| c.participants.iter())
+                .cloned()
+                .collect();
+            all_parts.sort();
+            all_parts.dedup();
+            let score: f32 = small
+                .iter()
+                .map(|c| c.score * c.memory_count as f32)
+                .sum::<f32>()
+                / total_small.max(1) as f32;
+
+            final_clusters.push(TopicCluster {
+                topic: "Other".to_string(),
+                memory_count: total_small,
+                top_memories: all_previews,
+                tags: all_tags,
+                participants: all_parts,
+                score,
+            });
+        }
+
+        // Recent decisions: memory_type == "decision", sorted by created_at desc, top 5
+        let mut decisions: Vec<&crate::memory::types::Memory> = memories
+            .iter()
+            .filter(|m| m.memory_type == "decision")
+            .collect();
+        decisions.sort_by_key(|b| std::cmp::Reverse(b.created_at));
+        let recent_decisions: Vec<String> = decisions
+            .iter()
+            .take(5)
+            .map(|m| {
+                let s = m.content.clone();
+                if s.len() > 120 {
+                    format!("{}...", &s[..117])
+                } else {
+                    s
+                }
+            })
+            .collect();
+
+        // Pinned highlights
+        let pinned: Vec<String> = memories
+            .iter()
+            .filter(|m| m.pinned)
+            .take(5)
+            .map(|m| {
+                let s = m.content.clone();
+                if s.len() > 120 {
+                    format!("{}...", &s[..117])
+                } else {
+                    s
+                }
+            })
+            .collect();
+
+        Ok(Some(RoomSummary {
+            room_id: room.id,
+            title: room.title,
+            total_memories: memories.len(),
+            participants,
+            time_range: TimeRange {
+                earliest: fmt_time(&earliest),
+                latest: fmt_time(&latest),
+            },
+            clusters: final_clusters,
+            top_tags,
+            recent_decisions,
+            pinned_highlights: pinned,
+        }))
     }
 
     /// Delete a room and all its memory links (CASCADE).

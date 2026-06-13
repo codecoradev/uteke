@@ -95,6 +95,18 @@ struct ErrorResponse {
 fn default_limit() -> usize {
     5
 }
+#[derive(Deserialize)]
+struct RoomRecallRequest {
+    room_id: String,
+    query: String,
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    author: Option<String>,
+    #[serde(default)]
+    min_score: Option<f32>,
+}
+
 fn default_limit_search() -> usize {
     10
 }
@@ -688,6 +700,29 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
             }
         },
 
+        // ── Room Summary ────────────────────────────────────────────────
+        (Method::Post, "/room/summary") => {
+            #[derive(Deserialize)]
+            struct RoomSummaryRequest {
+                room_id: String,
+            }
+            match read_body::<RoomSummaryRequest>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_summary(&req_data.room_id) {
+                    Ok(Some(summary)) => ctx.ok_response_for(req, &summary),
+                    Ok(None) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Room not found: {}", req_data.room_id),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
         // ── Get memory by ID ──────────────────────────────────────────
         (Method::Get, p) if p.starts_with("/memory?id=") => {
             let id = p.trim_start_matches("/memory?id=");
@@ -704,6 +739,32 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
                 }
             }
         }
+
+        // ── Room Recall (semantic) ────────────────────────────────────────
+        (Method::Post, "/room/recall") => match read_body::<RoomRecallRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let min_score = req_data.min_score.unwrap_or(
+                    ctx.recall_config
+                        .as_ref()
+                        .and_then(|r| r.min_score)
+                        .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
+                );
+                match uteke.recall_room_semantic(
+                    &req_data.room_id,
+                    &req_data.query,
+                    req_data.limit,
+                    req_data.author.as_deref(),
+                    min_score,
+                ) {
+                    Ok(results) => ctx.ok_response_for(req, &results),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
 
         // ── 404 ─────────────────────────────────────────────────────────
         _ => ctx.error_response_for(req, 404, "Not found"),
@@ -808,6 +869,7 @@ fn main() {
                 println!("  GET  /memory?id=UUID       → {{ memory }}");
                 println!("  GET  /stats               → {{ stats }}");
                 println!("  GET  /namespaces           → {{ namespaces }}");
+                println!("  POST /room/summary         → {{ room_id }} → {{ summary }}");
                 std::process::exit(0);
             }
             _ => {

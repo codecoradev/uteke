@@ -1,8 +1,8 @@
 //! Room-based collaborative memory operations.
 
 use crate::error::Error;
-use crate::memory::types::Memory;
-use crate::memory::{Room, RoomStats};
+use crate::memory::types::{Memory, RecallStrategy, SearchResult};
+use crate::memory::{Room, RoomStats, RoomSummary};
 
 impl crate::Uteke {
     /// Create a new room for collaborative memory.
@@ -70,9 +70,71 @@ impl crate::Uteke {
         self.store.recall_room(room_id, author, limit)
     }
 
+    /// Semantic recall within room context using hybrid search (vector + FTS5).
+    ///
+    /// Returns room memories ranked by relevance to query, with scores.
+    /// Algorithm: over-fetch via recall_hybrid, post-filter to room members, truncate.
+    pub fn recall_room_semantic(
+        &self,
+        room_id: &str,
+        query: &str,
+        limit: usize,
+        author: Option<&str>,
+        min_score: f32,
+    ) -> Result<Vec<SearchResult>, Error> {
+        // 1. Get room memory IDs (cheap — IDs only)
+        let room_ids = self.store.get_room_memory_ids(room_id, author)?;
+        if room_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let id_set: std::collections::HashSet<String> = room_ids.into_iter().collect();
+
+        // 2. Over-fetch via hybrid recall (no namespace filter — rooms are cross-ns)
+        // Cap at 200 to prevent unbounded searches for large rooms.
+        let fetch_limit = (limit * 5).min(200).max(limit);
+        // If room has fewer memories than fetch_limit, only fetch that many.
+        let fetch_limit = fetch_limit.min(id_set.len());
+        let results = self.recall_hybrid(
+            query,
+            fetch_limit,
+            None, // no tag filter
+            None, // no namespace filter — rooms are cross-namespace
+            RecallStrategy::Hybrid,
+            0.0, // no min_score at fetch stage, we filter after
+        )?;
+
+        // 3. Post-filter: only keep results whose memory ID is in the room
+        let mut filtered: Vec<SearchResult> = results
+            .into_iter()
+            .filter(|sr| id_set.contains(&sr.memory.id))
+            .collect();
+
+        // 4. Apply min_score filter
+        if min_score > 0.0 {
+            filtered.retain(|sr| sr.score >= min_score);
+        }
+
+        // 5. Sort by score descending (already sorted by recall_hybrid, but re-sort after filtering)
+        filtered.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // 6. Truncate to limit
+        filtered.truncate(limit);
+
+        Ok(filtered)
+    }
+
     /// Delete a room and all its memory links.
     /// Note: memories themselves are NOT deleted — they remain in their namespaces.
     pub fn delete_room(&self, room_id: &str) -> Result<(), Error> {
         self.store.delete_room(room_id)
+    }
+
+    /// Generate a summary of room discussion (topic clustering, no LLM needed).
+    pub fn room_summary(&self, room_id: &str) -> Result<Option<RoomSummary>, Error> {
+        self.store.room_summary(room_id)
     }
 }

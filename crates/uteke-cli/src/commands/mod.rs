@@ -168,7 +168,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             binary,
         } => maintenance::run_verify_checksums(cli, checksums_file, binary),
 
-        Commands::Room { command } => crate::commands::room::run(cli, uteke, ns, command),
+        Commands::Room { command } => crate::commands::room::run(cli, uteke, ns, command, config),
 
         Commands::Pin { id } => {
             let pinned = uteke.pin(id).map_err(|e| format!("Failed to pin: {e}"))?;
