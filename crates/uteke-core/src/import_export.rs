@@ -87,6 +87,7 @@ impl crate::Uteke {
                 memory_type: "fact".to_string(),
                 importance: 0.5,
                 pinned: false,
+                content_type: "text".to_string(),
             };
 
             // Write-ahead: vector index first (can be rolled back), then SQLite.

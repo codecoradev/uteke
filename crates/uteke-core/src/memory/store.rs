@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS memories (
     valid_until TEXT,
     memory_type TEXT NOT NULL DEFAULT 'fact',
     importance REAL NOT NULL DEFAULT 0.5,
-    pinned INTEGER NOT NULL DEFAULT 0
+    pinned INTEGER NOT NULL DEFAULT 0,
+    content_type TEXT NOT NULL DEFAULT 'text'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -36,7 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 5;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 6;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -237,6 +238,7 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     let memory_type: String = row.get(13).unwrap_or_else(|_| "fact".to_string());
     let importance: f64 = row.get(14).unwrap_or(0.5);
     let pinned: bool = row.get(15).unwrap_or(false);
+    let content_type: String = row.get(16).unwrap_or_else(|_| "text".to_string());
 
     Ok(Memory {
         id,
@@ -255,6 +257,7 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         memory_type,
         importance,
         pinned,
+        content_type,
     })
 }
 
@@ -282,6 +285,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         }
     }
 
@@ -303,6 +307,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         }
     }
 
@@ -1306,6 +1311,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         }
     }
 

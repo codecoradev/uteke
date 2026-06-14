@@ -159,6 +159,8 @@ impl super::Store {
                 4 => self.migrate_v3_to_v4()?,
                 // v5: Tag junction table for O(log n) lookups
                 5 => self.migrate_v4_to_v5()?,
+                // v6: Content type column (text vs json)
+                6 => self.migrate_v5_to_v6()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -299,6 +301,21 @@ impl super::Store {
         }
 
         tracing::info!("Tag junction table populated for {} memories", rows.len());
+        Ok(())
+    }
+
+    /// Migration v5 → v6: Add content_type column for structured memory support.
+    ///
+    /// Stores whether memory content is "text" (default) or "json".
+    /// Existing memories default to "text".
+    fn migrate_v5_to_v6(&self) -> Result<(), Error> {
+        if !self.column_exists("content_type") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text';",
+                )
+                .map_err(|e| Error::db("add content_type column", e))?;
+        }
         Ok(())
     }
 
