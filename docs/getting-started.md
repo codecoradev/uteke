@@ -20,6 +20,8 @@ cargo install --git https://github.com/codecoradev/uteke
 
 Pre-built binaries and Docker image also available from [GitHub Releases](https://github.com/codecoradev/uteke/releases) and [GHCR](https://github.com/codecoradev/uteke/pkgs/container/uteke). First run downloads the embedding model (~188MB) — no API keys needed.
 
+> 💡 **Using Docker?** See the [Docker guide](docker.md) for `docker compose` setup, env vars, and persistence.
+
 ## Your First Memory
 
 ```bash

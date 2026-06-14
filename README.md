@@ -37,6 +37,21 @@ uteke stats
 
 > 📖 [Install options](INSTALL.md) · [Pre-built binaries](https://github.com/codecoradev/uteke/releases) · [Docker](https://github.com/codecoradev/uteke/pkgs/container/uteke) · [Full docs](https://github.com/codecoradev/uteke/tree/develop/docs)
 
+### Docker
+
+> Listens on localhost only by default. See [Docker docs](docs/docker.md) for auth setup.
+
+```bash
+# One-liner (model pre-baked in image)
+docker run -d --name uteke -p 127.0.0.1:8767:8767 -v uteke-data:/data \
+  ghcr.io/codecoradev/uteke:latest
+
+# Or docker compose
+docker compose up -d
+```
+
+📖 [Docker docs](docs/docker.md) · [Compose file](docker-compose.yml)
+
 ---
 
 ## Why Uteke?
