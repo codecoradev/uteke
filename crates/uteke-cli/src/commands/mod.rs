@@ -149,7 +149,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
 
         Commands::Export { output } => maintenance::run_export(cli, uteke, ns, output),
 
-        Commands::Import { input } => maintenance::run_import(cli, uteke, ns, input),
+        Commands::Import {
+            input,
+            tags,
+            format,
+        } => maintenance::run_import(cli, uteke, ns, input, tags, format),
 
         Commands::Completions { .. } => {
             // Already handled in main()

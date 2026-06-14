@@ -192,11 +192,17 @@ pub enum Commands {
         #[arg(default_value = "-")]
         output: String,
     },
-    /// Import memories from JSONL file (re-embeds content)
+    /// Import memories from JSONL, Markdown, or text files (re-embeds content)
     Import {
         /// Input file path (use - for stdin)
         #[arg(default_value = "-")]
         input: String,
+        /// Tags to apply to all imported memories (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Import format: auto, jsonl, markdown, text (default: auto-detect)
+        #[arg(long, default_value = "auto")]
+        format: String,
     },
     /// Generate shell completions
     Completions {
