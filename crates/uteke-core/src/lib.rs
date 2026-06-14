@@ -12,7 +12,7 @@
 mod consolidate;
 mod embed;
 mod error;
-mod graph;
+pub mod graph;
 mod import_export;
 mod maintenance;
 pub mod memory;
@@ -22,6 +22,7 @@ mod rooms;
 mod types;
 
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
+pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,

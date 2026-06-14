@@ -34,10 +34,31 @@ CREATE TABLE IF NOT EXISTS memory_tags (
     PRIMARY KEY (memory_id, tag)
 );
 CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);
+
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL COLLATE NOCASE,
+    entity_type TEXT,
+    properties_json TEXT DEFAULT '{}',
+    memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS graph_edges (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL COLLATE NOCASE,
+    weight REAL NOT NULL DEFAULT 1.0,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_id, target_id, relation)
+);
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 6;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 7;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -59,6 +80,8 @@ impl Store {
             .map_err(|e| Error::db("Failed to set WAL mode", e))?;
         conn.execute_batch("PRAGMA busy_timeout=5000;")
             .map_err(|e| Error::db("Failed to set busy timeout", e))?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")
+            .map_err(|e| Error::db("Failed to enable foreign keys", e))?;
 
         let store = Self { conn };
         store.init_schema()?;

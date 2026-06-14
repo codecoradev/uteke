@@ -161,6 +161,8 @@ impl super::Store {
                 5 => self.migrate_v4_to_v5()?,
                 // v6: Content type column (text vs json)
                 6 => self.migrate_v5_to_v6()?,
+                // v7: Knowledge graph tables (graph_nodes, graph_edges)
+                7 => self.migrate_v6_to_v7()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -324,5 +326,37 @@ impl super::Store {
             .prepare("SELECT * FROM memories LIMIT 0")
             .map(|stmt| stmt.column_names().iter().any(|n| n == &column))
             .unwrap_or(false)
+    }
+
+    /// v7: Knowledge graph tables (graph_nodes, graph_edges)
+    fn migrate_v6_to_v7(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v6 to v7: knowledge graph tables");
+        self.conn
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS graph_nodes (
+                    id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL COLLATE NOCASE,
+                    entity_type TEXT,
+                    properties_json TEXT DEFAULT '{}',
+                    memory_id TEXT REFERENCES memories(id) ON DELETE SET NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS graph_edges (
+                    id TEXT PRIMARY KEY,
+                    source_id TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
+                    target_id TEXT NOT NULL REFERENCES graph_nodes(id) ON DELETE CASCADE,
+                    relation TEXT NOT NULL COLLATE NOCASE,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(source_id, target_id, relation)
+                );
+                CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id);
+                CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id);
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v6 to v7", e))?;
+        Ok(())
     }
 }
