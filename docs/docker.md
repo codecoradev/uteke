@@ -8,10 +8,12 @@ Uteke ships as a multi-arch Docker image with the embedding model pre-baked. No 
 
 ## Quick Start
 
+> ⚠️ **Security**: The default config listens on `127.0.0.1` (localhost only). For network access, set `UTEKE_AUTH_TOKEN` (see [Authentication](#with-authentication)).
+
 ```bash
 # Pull and run
 docker run -d --name uteke \
-  -p 8767:8767 \
+  -p 127.0.0.1:8767:8767 \
   -v uteke-data:/data \
   ghcr.io/codecoradev/uteke:latest
 
@@ -41,7 +43,7 @@ services:
   uteke:
     image: ghcr.io/codecoradev/uteke:latest
     ports:
-      - "8767:8767"
+      - "127.0.0.1:8767:8767"
     volumes:
       - uteke-data:/data
     restart: unless-stopped
@@ -64,14 +66,18 @@ docker compose up -d
 ### With authentication
 
 ```bash
+# Read token securely (not stored in shell history)
+read -s UTEKE_AUTH_TOKEN
+export UTEKE_AUTH_TOKEN
+
 docker run -d --name uteke \
-  -p 8767:8767 \
+  -p 127.0.0.1:8767:8767 \
   -v uteke-data:/data \
-  -e UTEKE_AUTH_TOKEN=$YOUR_TOKEN \
+  -e UTEKE_AUTH_TOKEN \
   ghcr.io/codecoradev/uteke:latest
 
 # Now all requests need Authorization header
-curl -H "Authorization: Bearer $YOUR_TOKEN" \
+curl -H "Authorization: Bearer $UTEKE_AUTH_TOKEN" \
   http://localhost:8767/health
 ```
 
@@ -131,7 +137,7 @@ curl http://localhost:8767/health
 # → {"status":"healthy","memories":42,"index_size":1024}
 ```
 
-Docker Compose includes a built-in health check:
+Docker Compose includes a built-in health check (`curl` is pre-installed in the image):
 ```yaml
 healthcheck:
   test: ["CMD", "curl", "-f", "http://localhost:8767/health"]
