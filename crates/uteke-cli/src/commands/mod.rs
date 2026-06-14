@@ -3,6 +3,7 @@
 mod aging;
 pub(crate) mod bench;
 mod forget;
+pub(crate) mod graph;
 mod list;
 mod maintenance;
 mod namespace;
@@ -64,6 +65,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             depth,
             context,
             at,
+            content_format,
+            r#where,
         } => recall::run_recall(
             cli,
             uteke,
@@ -80,6 +83,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             *depth,
             *context,
             at.as_deref(),
+            content_format.as_str(),
+            r#where.as_deref(),
         ),
 
         Commands::Search { query, limit, tags } => {
@@ -144,7 +149,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
 
         Commands::Export { output } => maintenance::run_export(cli, uteke, ns, output),
 
-        Commands::Import { input } => maintenance::run_import(cli, uteke, ns, input),
+        Commands::Import {
+            input,
+            tags,
+            format,
+        } => maintenance::run_import(cli, uteke, ns, input, tags, format),
 
         Commands::Completions { .. } => {
             // Already handled in main()
@@ -220,5 +229,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         // Bench is handled early in main.rs (creates own temp stores, never
         // reaches this dispatch path).
         Commands::Bench { .. } => Ok(()),
+
+        Commands::Graph { command } => crate::commands::graph::run(cli, uteke, command),
     }
 }

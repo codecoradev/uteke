@@ -22,6 +22,8 @@ pub(crate) fn run_recall(
     depth: usize,
     context: bool,
     at: Option<&str>,
+    content_format: &str,
+    where_filter: Option<&str>,
 ) -> Result<(), String> {
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
@@ -93,6 +95,39 @@ pub(crate) fn run_recall(
         })
         .collect();
 
+    // JSON field-level filtering: --where key=value
+    let filtered: Vec<_> = if let Some(where_clause) = where_filter {
+        let (key, value) = parse_where(where_clause)?;
+        filtered
+            .into_iter()
+            .filter(|sr| {
+                if sr.memory.content_type != "json" {
+                    return false;
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&sr.memory.content) {
+                    if let Some(obj) = v.as_object() {
+                        let field = match obj.get(&key) {
+                            Some(f) => f,
+                            None => return false,
+                        };
+                        // Match string, number, or bool values
+                        let actual = match field {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            serde_json::Value::Null => "null".to_string(),
+                            _ => return false, // arrays/objects not supported in key=value filter
+                        };
+                        return actual == value;
+                    }
+                }
+                false
+            })
+            .collect()
+    } else {
+        filtered
+    };
+
     if filtered.is_empty() {
         if cli.json {
             // Always output a JSON array for machine consumers (cora-cli,
@@ -140,7 +175,21 @@ pub(crate) fn run_recall(
             );
         }
     } else if cli.json {
-        output::print_json(&filtered);
+        // Apply content_format: pretty-print JSON content when requested
+        if content_format == "json" {
+            let mut formatted: Vec<_> = filtered.into_iter().collect();
+            for sr in &mut formatted {
+                if sr.memory.content_type == "json" {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&sr.memory.content) {
+                        sr.memory.content = serde_json::to_string_pretty(&v)
+                            .unwrap_or_else(|_| sr.memory.content.clone());
+                    }
+                }
+            }
+            output::print_json(&formatted);
+        } else {
+            output::print_json(&filtered);
+        }
     } else {
         output::print_recall_human(&filtered);
     }
@@ -171,4 +220,15 @@ pub(crate) fn run_search(
         output::print_search_human(&results);
     }
     Ok(())
+}
+
+/// Parse a `--where` expression in `key=value` format.
+fn parse_where(s: &str) -> Result<(String, String), String> {
+    let parts: Vec<&str> = s.splitn(2, '=').collect();
+    if parts.len() != 2 {
+        return Err(format!(
+            "Invalid --where expression: '{s}'. Use key=value format."
+        ));
+    }
+    Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
 }

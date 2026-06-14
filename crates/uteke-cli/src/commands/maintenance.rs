@@ -146,31 +146,140 @@ pub(crate) fn run_import(
     uteke: &Uteke,
     ns: Option<&str>,
     input: &str,
+    tags: &[String],
+    format: &str,
 ) -> Result<(), String> {
-    tracing::info!("Importing memories from {input}");
-    let jsonl = if input == "-" {
+    tracing::info!("Importing memories from {input} (format: {format})");
+
+    let content = if input == "-" {
         let mut buf = String::new();
         std::io::stdin()
             .read_to_string(&mut buf)
             .map_err(|e| format!("Failed to read stdin: {e}"))?;
         buf
     } else {
-        std::fs::read_to_string(input).map_err(|e| format!("Failed to read import file: {e}"))?
+        std::fs::read_to_string(input).map_err(|e| format!("Failed to read file: {e}"))?
     };
 
-    let result = uteke
-        .import(&jsonl, ns)
-        .map_err(|e| format!("Failed to import: {e}"))?;
+    let detected_format = if format == "auto" {
+        detect_format(input, &content)
+    } else {
+        format.to_string()
+    };
+
+    let result = match detected_format.as_str() {
+        "jsonl" => uteke
+            .import(&content, ns)
+            .map_err(|e| format!("Failed to import JSONL: {e}"))?,
+        "markdown" | "text" => {
+            let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+            import_text(uteke, &content, &tag_refs, ns)?
+        }
+        other => {
+            return Err(format!(
+                "Unknown import format: '{other}'. Use: jsonl, markdown, text"
+            ))
+        }
+    };
 
     if cli.json {
         output::print_json(&result);
     } else {
         println!(
-            "\u{2713} Imported {} memories ({} skipped)",
+            "\u{2713} Imported {} memories ({} skipped) as {detected_format}",
             result.imported, result.skipped
         );
     }
     Ok(())
+}
+
+/// Detect import format from file extension and content.
+fn detect_format(filename: &str, content: &str) -> String {
+    // Check file extension
+    let ext = filename.rsplit('.').next().unwrap_or("");
+    match ext {
+        "jsonl" => "jsonl".to_string(),
+        "md" | "markdown" => "markdown".to_string(),
+        "txt" => "text".to_string(),
+        "csv" => "text".to_string(), // treat CSV as text for now
+        _ => {
+            // Auto-detect from content
+            let first_line = content.lines().next().unwrap_or("");
+            if first_line.starts_with('{') {
+                "jsonl".to_string()
+            } else {
+                "text".to_string()
+            }
+        }
+    }
+}
+
+/// Import text/markdown content as memories.
+/// Splits by double newline (paragraphs) or markdown headings.
+fn import_text(
+    uteke: &Uteke,
+    content: &str,
+    tags: &[&str],
+    ns: Option<&str>,
+) -> Result<uteke_core::ImportResult, String> {
+    use uteke_core::ImportResult;
+
+    let chunks: Vec<String> = if content.contains("\n# ") || content.contains("\n## ") {
+        // Markdown with headings — split by headings
+        split_markdown(content)
+    } else {
+        // Plain text — split by double newline (paragraphs)
+        content
+            .split("\n\n")
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty() && s.len() > 10) // skip very short chunks
+            .collect()
+    };
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+
+    for chunk in &chunks {
+        match uteke.remember(chunk, tags, None, ns) {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                tracing::warn!("Failed to import chunk: {e}");
+                skipped += 1;
+            }
+        }
+    }
+
+    Ok(ImportResult { imported, skipped })
+}
+
+/// Split markdown by headings. Each heading + body becomes a chunk.
+fn split_markdown(content: &str) -> Vec<String> {
+    let mut chunks: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for line in content.lines() {
+        let is_heading =
+            line.starts_with("# ") || line.starts_with("## ") || line.starts_with("### ");
+        if is_heading {
+            // New section — save previous
+            if !current.trim().is_empty() {
+                chunks.push(current.trim().to_string());
+            }
+            current = line.to_string();
+            current.push('\n'); // separator after heading
+        } else {
+            if !current.is_empty() {
+                current.push('\n');
+            }
+            current.push_str(line);
+        }
+    }
+    if !current.trim().is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+
+    // Filter very short chunks
+    chunks.into_iter().filter(|c| c.len() > 10).collect()
 }
 
 pub(crate) fn run_verify_checksums(

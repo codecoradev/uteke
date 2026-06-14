@@ -1,14 +1,15 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'uteke',
+  title: 'Uteke',
   description: 'Local-first semantic memory engine. Single binary, zero infrastructure, 30ms recall.',
   lang: 'en',
+  base: '/docs/uteke/',
   cleanUrls: true,
   head: [
     ['link', { rel: 'icon', href: '/favicon.svg' }],
     ['meta', { property: 'og:type', content: 'website' }],
-    ['meta', { property: 'og:title', content: 'uteke — Give Your AI a Memory' }],
+    ['meta', { property: 'og:title', content: 'Uteke — Give Your AI a Memory' }],
     ['meta', { property: 'og:description', content: 'Offline-first semantic memory. Single binary. Zero config. 30ms recall.' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
   ],
@@ -16,9 +17,11 @@ export default defineConfig({
   themeConfig: {
     logo: '/favicon.svg',
     nav: [
+      { text: 'Codecora', link: 'https://codecora.dev' },
       { text: 'Docs', link: '/getting-started' },
       { text: 'CLI Reference', link: '/cli-reference' },
       { text: 'Configuration', link: '/configuration' },
+      { text: 'GitHub', link: 'https://github.com/codecoradev/uteke' },
     ],
     sidebar: [
       {
@@ -27,6 +30,7 @@ export default defineConfig({
           { text: 'Installation', link: '/getting-started' },
           { text: 'CLI Reference', link: '/cli-reference' },
           { text: 'Configuration', link: '/configuration' },
+          { text: 'Docker', link: '/docker' },
         ],
       },
       {

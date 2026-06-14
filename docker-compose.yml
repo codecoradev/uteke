@@ -1,0 +1,24 @@
+# Uteke Docker Compose — default: localhost only, no auth
+# For network access, uncomment UTEKE_AUTH_TOKEN below.
+services:
+  uteke:
+    image: ghcr.io/codecoradev/uteke:latest
+    container_name: uteke
+    ports:
+      - "127.0.0.1:${UTEKE_PORT:-8767}:8767"
+    volumes:
+      - uteke-data:/data
+    environment:
+      # Auth (optional — set UTEKE_AUTH_TOKEN env var to enable)
+      # - UTEKE_AUTH_TOKEN
+    restart: unless-stopped
+    healthcheck:
+      # curl is pre-installed in the uteke Docker image (Dockerfile runtime stage)
+      test: ["CMD", "curl", "-f", "http://localhost:8767/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  uteke-data:

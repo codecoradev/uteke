@@ -217,6 +217,7 @@ mod tests {
                 memory_type: "fact".to_string(),
                 importance: 0.5,
                 pinned: false,
+                content_type: "text".to_string(),
             },
             score: 0.95,
         }];

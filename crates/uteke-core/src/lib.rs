@@ -9,10 +9,11 @@
 //! let results = uteke.recall("query", 5, None)?;
 //! ```
 
+pub mod chunker;
 mod consolidate;
 mod embed;
 mod error;
-mod graph;
+pub mod graph;
 mod import_export;
 mod maintenance;
 pub mod memory;
@@ -21,7 +22,9 @@ mod recall_cache;
 mod rooms;
 mod types;
 
+pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
+pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
@@ -361,6 +364,11 @@ impl Uteke {
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         self.store.recompute_importance()
     }
+
+    /// Get a reference to the raw connection for graph operations.
+    pub fn graph_store(&self) -> &rusqlite::Connection {
+        &self.store.conn
+    }
 }
 
 /// Resolve a path to a database string.
@@ -413,6 +421,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -457,6 +466,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         };
 
         let sr = SearchResult {

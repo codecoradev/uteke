@@ -50,6 +50,9 @@ pub struct Memory {
     /// Whether this memory is pinned (never decays).
     #[serde(default)]
     pub pinned: bool,
+    /// Content type: "text" (default) or "json".
+    #[serde(default = "default_content_type")]
+    pub content_type: String,
 }
 
 fn default_namespace() -> String {
@@ -62,6 +65,10 @@ fn default_importance() -> f64 {
 
 fn default_memory_type() -> String {
     "fact".to_string()
+}
+
+fn default_content_type() -> String {
+    "text".to_string()
 }
 
 /// A search result with relevance score.

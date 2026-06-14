@@ -36,8 +36,8 @@ impl super::Store {
         let cutoff =
             (chrono::Utc::now() - chrono::Duration::days(older_than_days as i64)).to_rfc3339();
         let sql = r#"
-            SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
-            FROM memories
+            SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type
+                 FROM memories
             WHERE namespace = ?1
               AND deprecated = 0
               AND created_at < ?2

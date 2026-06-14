@@ -108,6 +108,12 @@ pub enum Commands {
         /// Query memories as they existed at this timestamp (RFC3339, e.g. 2026-06-01T12:00:00Z)
         #[arg(long)]
         at: Option<String>,
+        /// Content display format: 'auto' (detect), 'text' (force text), 'json' (pretty-print JSON)
+        #[arg(long, default_value = "auto")]
+        content_format: String,
+        /// Filter results by JSON field (format: key=value, e.g. --where role=CTO)
+        #[arg(long)]
+        r#where: Option<String>,
     },
     /// Search memories by content keywords (text search)
     Search {
@@ -186,11 +192,17 @@ pub enum Commands {
         #[arg(default_value = "-")]
         output: String,
     },
-    /// Import memories from JSONL file (re-embeds content)
+    /// Import memories from JSONL, Markdown, or text files (re-embeds content)
     Import {
         /// Input file path (use - for stdin)
         #[arg(default_value = "-")]
         input: String,
+        /// Tags to apply to all imported memories (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Import format: auto, jsonl, markdown, text (default: auto-detect)
+        #[arg(long, default_value = "auto")]
+        format: String,
     },
     /// Generate shell completions
     Completions {
@@ -267,6 +279,53 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Knowledge graph operations
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommands,
+    },
+}
+
+/// Subcommands for knowledge graph operations.
+#[derive(Subcommand)]
+pub enum GraphCommands {
+    /// List all graph nodes
+    Nodes {
+        /// Filter by entity type
+        #[arg(long)]
+        entity_type: Option<String>,
+    },
+    /// List all graph edges
+    Edges {
+        /// Filter by relation type
+        #[arg(long)]
+        relation: Option<String>,
+    },
+    /// Find neighbors of a node (outgoing edges via BFS)
+    Neighbors {
+        /// Node label
+        label: String,
+        /// Max traversal depth
+        #[arg(long, default_value = "1")]
+        depth: usize,
+    },
+    /// Find shortest path between two nodes (BFS)
+    Path {
+        /// Source node label
+        source: String,
+        /// Target node label
+        target: String,
+        /// Max search depth
+        #[arg(long, default_value = "5")]
+        max_depth: usize,
+    },
+    /// Query edges by relation type
+    Query {
+        /// Relation type (e.g., "owns", "part_of")
+        relation: String,
+    },
+    /// Show graph statistics
+    Stats,
 }
 
 /// Subcommands for tag management.
