@@ -9,6 +9,7 @@
 //! let results = uteke.recall("query", 5, None)?;
 //! ```
 
+pub mod chunker;
 mod consolidate;
 mod embed;
 mod error;
@@ -21,6 +22,7 @@ mod recall_cache;
 mod rooms;
 mod types;
 
+pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use memory::types::{
