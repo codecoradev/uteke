@@ -108,6 +108,12 @@ pub enum Commands {
         /// Query memories as they existed at this timestamp (RFC3339, e.g. 2026-06-01T12:00:00Z)
         #[arg(long)]
         at: Option<String>,
+        /// Content display format: 'auto' (detect), 'text' (force text), 'json' (pretty-print JSON)
+        #[arg(long, default_value = "auto")]
+        content_format: String,
+        /// Filter results by JSON field (format: key=value, e.g. --where role=CTO)
+        #[arg(long)]
+        r#where: Option<String>,
     },
     /// Search memories by content keywords (text search)
     Search {

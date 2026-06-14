@@ -90,6 +90,9 @@ impl crate::Uteke {
             }
         };
 
+        // Detect content type for consolidated memory
+        let content_type = crate::memory::crud::detect_content_type(content);
+
         // Use remember_precomputed to avoid double-embedding
         let id = self.remember_precomputed(
             content,
@@ -97,6 +100,7 @@ impl crate::Uteke {
             None,
             Some(ns),
             memory_type.unwrap_or("fact"),
+            content_type,
             &embedding,
         )?;
 

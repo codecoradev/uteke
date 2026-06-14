@@ -20,6 +20,21 @@ impl crate::Uteke {
         self.remember_typed(content, tags, metadata, namespace, "fact")
     }
 
+    /// Store a JSON-structured memory. Content must be valid JSON.
+    ///
+    /// This is a convenience wrapper that validates JSON before storing.
+    /// The `remember()` method also auto-detects JSON content.
+    pub fn remember_json(
+        &self,
+        json_content: &str,
+        tags: &[&str],
+        namespace: Option<&str>,
+    ) -> Result<String, Error> {
+        serde_json::from_str::<serde_json::Value>(json_content)
+            .map_err(|e| Error::Validation(format!("Invalid JSON content: {e}")))?;
+        self.remember(json_content, tags, None, namespace)
+    }
+
     /// Store a new memory with explicit type.
     ///
     /// Returns the UUID of the created memory.
@@ -38,6 +53,13 @@ impl crate::Uteke {
                 "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context"
             ))
         })?;
+        // Detect JSON content and use flattened text for embedding
+        let content_type = crate::memory::crud::detect_content_type(content);
+        let embed_text = if content_type == "json" {
+            crate::memory::crud::flatten_json_for_embedding(content)
+        } else {
+            content.to_string()
+        };
         // Lazy-load embedder on first use
         self.ensure_embedder()?;
         let embedding = self
@@ -46,14 +68,23 @@ impl crate::Uteke {
             .map_err(|_| Error::lock("embedder lock during remember"))?
             .as_ref()
             .expect("embedder ensured above")
-            .embed(content)?;
-        self.remember_precomputed(content, tags, metadata, namespace, memory_type, &embedding)
+            .embed(&embed_text)?;
+        self.remember_precomputed(
+            content,
+            tags,
+            metadata,
+            namespace,
+            memory_type,
+            content_type,
+            &embedding,
+        )
     }
 
     /// Store a new memory with a pre-computed embedding.
     ///
     /// Use when the embedding has already been computed (e.g., contradiction check).
     /// Returns the UUID of the created memory.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn remember_precomputed(
         &self,
         content: &str,
@@ -61,6 +92,7 @@ impl crate::Uteke {
         metadata: Option<serde_json::Value>,
         namespace: Option<&str>,
         memory_type: &str,
+        content_type: &str,
         embedding: &[f32],
     ) -> Result<String, Error> {
         let id = uuid::Uuid::new_v4().to_string();
@@ -83,6 +115,7 @@ impl crate::Uteke {
             memory_type: memory_type.to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: content_type.to_string(),
         };
 
         // Acquire index write lock BEFORE any writes so lock failures are detected early.

@@ -413,6 +413,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -457,6 +458,7 @@ mod tests {
             memory_type: "fact".to_string(),
             importance: 0.5,
             pinned: false,
+            content_type: "text".to_string(),
         };
 
         let sr = SearchResult {

@@ -104,7 +104,7 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type
                  FROM memories WHERE namespace = ?1 AND deprecated = 0 ORDER BY created_at DESC LIMIT ?2",
             )
             .map_err(|e| Error::db("database operation", e))?;
@@ -147,7 +147,7 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type
                  FROM memories WHERE namespace = ?1
                  AND deprecated = 1
                  AND updated_at < ?2
