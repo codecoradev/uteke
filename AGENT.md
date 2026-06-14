@@ -7,19 +7,20 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local at `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Version:** 0.0.15
+- **Version:** 0.1.0
 - **License:** Apache 2.0
-- **Main branches:** `develop` (all PRs go here), `main` (release)
+- **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
 ## Architecture
 
-### Workspace Crates (3 crates)
+### Workspace Crates (4 crates)
 
 | Crate | Path | Purpose |
 |-------|------|---------|
 | `uteke-core` | `crates/uteke-core/` | Library — storage, embedding, vector search, FTS5, operations |
 | `uteke-cli` | `crates/uteke-cli/` | CLI binary — clap commands, JSON output, server proxy |
 | `uteke-server` | `crates/uteke-server/` | HTTP server — persistent daemon for fast agent access |
+| `uteke-mcp` | `crates/uteke-mcp/` | MCP server — JSON-RPC for AI tool integration |
 
 ### Module Structure
 
@@ -78,15 +79,17 @@ crates/uteke-server/src/
 | Vector Index | usearch v2.25.3 | Persistent HNSW, `RwLock` for concurrent reads |
 | Full-Text Search | SQLite FTS5 | Virtual table, phrase + token-OR fallback |
 | Hybrid Search | RRF (k=60) | Reciprocal Rank Fusion merges vector + FTS5 results |
-| Storage | SQLite (rusqlite) | WAL mode, schema v2 |
+| Storage | SQLite (rusqlite) | WAL mode, schema v5 |
 | Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, `Mutex` (ONNX tokenizer needs `&mut self`) |
 | CLI | clap v4 | Standard Rust CLI |
 | Server | actix-web | CORS enabled, ~42ms warm recall |
+| MCP | JSON-RPC over stdin/stdout | 5 tools: remember, recall, list, forget, stats |
+| Embedder Trait | `Box<dyn Embedder>` | Pluggable: ONNX (default), future: OpenAI, Ollama |
 
 ### Schema Versioning
 
 - `schema_version` table with integer counter
-- Current: **v2** (FTS5 migration)
+- Current: **v5** (memory_tags junction table for normalized tags)
 - Auto-migration on upgrade, zero data loss
 
 ---
@@ -120,21 +123,59 @@ CI runs `cargo clippy -- -D warnings`. All warnings are treated as errors.
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-### 4. Branch Protection Rules
+### 4. Branch Protection & GitFlow
 
-#### `main` branch (release only)
-- **Only PRs** — no direct push, no force push, no deletion
-- **Admins enforced** — even repo owners must follow rules
-- **Linear history required** — no merge commits, only fast-forward or rebase
-- **7 CI checks** must pass: Build, Check, Clippy, Format, Test, Cargo Audit, Trivy FS
-- **0 approval required** — no member review needed
-- **Release flow:** merge `develop` → `main` via PR → tag → publish
+#### GitFlow (CRITICAL — read carefully)
 
-#### `develop` branch (development)
-- **All changes must go through PR** — no direct push
-- **10 CI checks** must pass: Build, Check, Clippy, Format, Test, Cora Review, CodeRabbit, Cargo Audit, Trivy FS Scan, GitGuardian
+```
+feature branch → PR → develop (default branch)
+                       ↓
+              PR develop → main (saat rilis)
+                       ↓
+              tag vX.Y.Z dari main commit
+                       ↓
+              release workflow auto-publish
+```
 
-### 5. Never `.unwrap()` in Production Code
+**Rules:**
+- `develop` is the **default branch**. All development work goes here via PR.
+- `main` is a **release mirror**. It only receives updates via PR from develop.
+- **Never** push directly to main. **Never** PR directly to main (except develop→main).
+- **Before tagging**: merge develop → main via PR FIRST. Then tag from main.
+- Tag must point to a commit **on main**, not develop.
+- Release workflow has `verify-main` job that aborts if tag is not on main.
+
+#### `main` branch
+- PR required (no direct push)
+- `allow_force_pushes: true` (for release workflow only)
+- `required_linear_history: true`
+- `allow_deletions: false`
+
+#### `develop` branch
+- All changes via PR — no direct push
+- Required checks: Build, Check, Clippy, Format, Test, Cora Review, Cargo Audit, Trivy FS Scan
+
+### 5. Release Process
+
+**Prerequisite:** All v0.X.0 milestone issues closed, docs updated.
+
+```bash
+# 1. Update docs (CHANGELOG, README, cli-reference, roadmap, etc.)
+# 2. Bump version in Cargo.toml + inter-crate deps
+# 3. PR to develop, merge
+# 4. PR develop → main, merge
+# 5. Tag from main commit:
+git checkout main
+git pull origin main
+git tag vX.Y.Z -m "vX.Y.Z — Description"
+git push origin vX.Y.Z
+# 6. Release workflow auto-builds: binaries, crates.io, Docker, GitHub Release
+```
+
+**Never tag without merging develop → main first.**
+The `verify-main` CI job will abort the release if the tag is not on main.
+
+### 6. Never `.unwrap()` in Production Code
 
 Use `.expect("clear message")` or `if let` / `match` patterns. `.unwrap()` without context makes debugging impossible if it panics.
 
@@ -149,7 +190,7 @@ memories.remove(0).expect("guaranteed by prior count check")
 if let Some(memory) = memories.into_iter().next() { ... }
 ```
 
-### 6. Atomic File Writes
+### 7. Atomic File Writes
 
 For all file I/O that writes important data (index, config, model), use this pattern:
 
@@ -160,13 +201,13 @@ fs::write(&tmp_path, &data)?;
 fs::rename(&tmp_path, &path)?;
 ```
 
-### 7. SQLite-First Dual-Write Pattern
+### 8. SQLite-First Dual-Write Pattern
 
 - `remember()`: Write to SQLite **first**, then vector index
 - `forget()`: Acquire index lock **first**, then SQLite delete
 - This pattern prevents inconsistency between DB and index
 
-### 8. Always Update CHANGELOG and Docs Before Commit
+### 9. Always Update CHANGELOG and Docs Before Commit
 
 Every commit that adds/changes a feature or fix **must** include updates to:
 
@@ -179,16 +220,13 @@ Every commit that adds/changes a feature or fix **must** include updates to:
 
 Outdated documentation is more dangerous than no documentation.
 
-### 9. VitePress Docs Auto-Deploy on Release
+### 10. VitePress Docs Auto-Deploy
 
-The `deploy-website.yml` workflow automatically deploys to Cloudflare Pages when:
-- Push to `main` (after release workflow syncs from develop)
-- Push tag `v*` (new release)
-- Manual trigger via GitHub UI
+The `deploy-website.yml` workflow deploys to Cloudflare Pages when `main` is updated.
 
-Make sure docs are up-to-date **before** pushing a release tag. Docs deploy from the `main` branch, not `develop`.
+Docs deploy from `main`, not `develop`. Make sure docs are updated **before** merging develop → main.
 
-### 10. All CI Checks Must Pass — No Exceptions
+### 11. All CI Checks Must Pass — No Exceptions
 
 Never ignore a failing CI check with excuses like "it's an external app" or "not a required check." Every red CI check must be investigated.
 
@@ -205,23 +243,20 @@ If a CI check fails:
 
 Principle: **Red CI = there's a problem. Investigate first, don't assume.**
 
-### 11. Release Tags Require Approval
+### 12. Release Tags Require Approval
 
-**Never push a `v*` tag without explicit approval.** The tag triggers the release workflow which:
-- Publishes to crates.io (irreversible)
-- Builds 4 platform binaries
-- Creates GitHub Release
-- Pushes Docker image
-- Deploys docs
+**Never push a `v*` tag without explicit approval.** See section #5 for full release process.
 
 Before tagging:
-1. All PRs for the version must be merged
-2. Run `cargo publish --dry-run --allow-dirty -p uteke-core && cargo publish --dry-run --allow-dirty -p uteke-cli && cargo publish --dry-run --allow-dirty -p uteke-server` locally
-3. Verify CHANGELOG is complete and version bumped
-4. Get approval from project owner
-5. Then tag and push
+1. All PRs for the version must be merged to develop
+2. Docs updated (CHANGELOG, README, cli-reference, roadmap)
+3. Version bumped in Cargo.toml + inter-crate deps
+4. develop → main merged via PR
+5. `cargo publish --dry-run` passes locally
+6. Get approval from project owner
+7. Tag from main commit, push
 
-### 12. Always Run Cora Pre-Commit Hook
+### 13. Always Run Cora Pre-Commit Hook
 
 The `cora hook install` pre-commit hook runs on every `git commit`. Do NOT bypass with `--no-verify` unless the Cora API is down. The hook catches real issues before they reach CI.
 
