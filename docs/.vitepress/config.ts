@@ -27,6 +27,7 @@ export default defineConfig({
           { text: 'Installation', link: '/getting-started' },
           { text: 'CLI Reference', link: '/cli-reference' },
           { text: 'Configuration', link: '/configuration' },
+          { text: 'Docker', link: '/docker' },
         ],
       },
       {
