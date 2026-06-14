@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local at `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Version:** 0.1.0
+- **Version:** 0.2.0
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -89,7 +89,7 @@ crates/uteke-server/src/
 ### Schema Versioning
 
 - `schema_version` table with integer counter
-- Current: **v5** (memory_tags junction table for normalized tags)
+- Current: **v7** (knowledge graph tables)
 - Auto-migration on upgrade, zero data loss
 
 ---

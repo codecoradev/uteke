@@ -212,6 +212,9 @@ impl Config {
             config = config.merge_from_file(&project_path);
         }
 
+        // Layer 3: environment variables (override config file)
+        config = config.apply_env_overrides();
+
         config
     }
 
@@ -332,6 +335,59 @@ impl Config {
             }
             if server.contains_key("port") {
                 self.server.port = overlay.server.port;
+            }
+        }
+
+        self
+    }
+
+    /// Apply environment variable overrides on top of config file values.
+    ///
+    /// Resolution order (highest priority first):
+    /// 1. CLI flags
+    /// 2. Environment variables (UTEKE_*)
+    /// 3. Config file (uteke.toml)
+    /// 4. Built-in defaults
+    fn apply_env_overrides(mut self) -> Self {
+        // Logging
+        if let Ok(v) = std::env::var("UTEKE_LOG_LEVEL") {
+            self.logging.level = v;
+        }
+
+        // Server
+        if let Ok(v) = std::env::var("UTEKE_SERVER_HOST") {
+            self.server.host = v;
+        }
+        if let Ok(v) = std::env::var("UTEKE_SERVER_PORT") {
+            match v.parse::<u16>() {
+                Ok(port) => self.server.port = port,
+                Err(_) => {
+                    tracing::warn!("Invalid UTEKE_SERVER_PORT='{v}', ignoring (expected 0-65535)")
+                }
+            }
+        }
+
+        // Recall thresholds (must be 0.0-1.0)
+        if let Ok(v) = std::env::var("UTEKE_RECALL_MIN_SCORE") {
+            match v.parse::<f64>() {
+                Ok(score) if (0.0..=1.0).contains(&score) => self.recall.min_score = score,
+                Ok(_) => tracing::warn!(
+                    "UTEKE_RECALL_MIN_SCORE='{v}' out of range, ignoring (expected 0.0-1.0)"
+                ),
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_RECALL_MIN_SCORE='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_RECALL_MIN_SCORE_STRICT") {
+            match v.parse::<f64>() {
+                Ok(score) if (0.0..=1.0).contains(&score) => self.recall.min_score_strict = score,
+                Ok(_) => tracing::warn!(
+                    "UTEKE_RECALL_MIN_SCORE_STRICT='{v}' out of range, ignoring (expected 0.0-1.0)"
+                ),
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_RECALL_MIN_SCORE_STRICT='{v}', ignoring (expected 0.0-1.0)"
+                ),
             }
         }
 
@@ -879,5 +935,63 @@ max_seq_length = 128
     fn expand_tilde_no_home() {
         // Just verify it doesn't panic
         let _ = Config::expand_tilde("/absolute/path");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_log_level() {
+        std::env::set_var("UTEKE_LOG_LEVEL", "debug");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_LOG_LEVEL");
+        assert_eq!(cfg.logging.level, "debug");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_server() {
+        std::env::set_var("UTEKE_SERVER_HOST", "0.0.0.0");
+        std::env::set_var("UTEKE_SERVER_PORT", "9999");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_SERVER_HOST");
+        std::env::remove_var("UTEKE_SERVER_PORT");
+        assert_eq!(cfg.server.host, "0.0.0.0");
+        assert_eq!(cfg.server.port, 9999);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_recall() {
+        std::env::set_var("UTEKE_RECALL_MIN_SCORE", "0.7");
+        std::env::set_var("UTEKE_RECALL_MIN_SCORE_STRICT", "0.85");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        std::env::remove_var("UTEKE_RECALL_MIN_SCORE_STRICT");
+        assert!((cfg.recall.min_score - 0.7).abs() < f64::EPSILON);
+        assert!((cfg.recall.min_score_strict - 0.85).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_invalid_port_ignored() {
+        std::env::set_var("UTEKE_SERVER_PORT", "not-a-number");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_SERVER_PORT");
+        // Invalid value should be ignored — keeps default
+        assert_eq!(cfg.server.port, 8767);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_no_vars_uses_defaults() {
+        // Ensure no env vars are set
+        std::env::remove_var("UTEKE_LOG_LEVEL");
+        std::env::remove_var("UTEKE_SERVER_HOST");
+        std::env::remove_var("UTEKE_SERVER_PORT");
+        std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        let cfg = Config::default().apply_env_overrides();
+        assert_eq!(cfg.logging.level, "warn");
+        assert_eq!(cfg.server.host, "127.0.0.1");
+        assert_eq!(cfg.server.port, 8767);
+        assert!((cfg.recall.min_score - 0.3).abs() < f64::EPSILON);
     }
 }
