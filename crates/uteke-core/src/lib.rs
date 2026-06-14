@@ -12,7 +12,7 @@
 mod consolidate;
 mod embed;
 mod error;
-mod graph;
+pub mod graph;
 mod import_export;
 mod maintenance;
 pub mod memory;
@@ -22,6 +22,7 @@ mod rooms;
 mod types;
 
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
+pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
@@ -360,6 +361,11 @@ impl Uteke {
     /// Recalculate importance scores for all memories.
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         self.store.recompute_importance()
+    }
+
+    /// Get a reference to the raw connection for graph operations.
+    pub fn graph_store(&self) -> &rusqlite::Connection {
+        &self.store.conn
     }
 }
 

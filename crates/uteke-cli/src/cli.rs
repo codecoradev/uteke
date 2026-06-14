@@ -273,6 +273,53 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Knowledge graph operations
+    Graph {
+        #[command(subcommand)]
+        command: GraphCommands,
+    },
+}
+
+/// Subcommands for knowledge graph operations.
+#[derive(Subcommand)]
+pub enum GraphCommands {
+    /// List all graph nodes
+    Nodes {
+        /// Filter by entity type
+        #[arg(long)]
+        entity_type: Option<String>,
+    },
+    /// List all graph edges
+    Edges {
+        /// Filter by relation type
+        #[arg(long)]
+        relation: Option<String>,
+    },
+    /// Find neighbors of a node (outgoing edges via BFS)
+    Neighbors {
+        /// Node label
+        label: String,
+        /// Max traversal depth
+        #[arg(long, default_value = "1")]
+        depth: usize,
+    },
+    /// Find shortest path between two nodes (BFS)
+    Path {
+        /// Source node label
+        source: String,
+        /// Target node label
+        target: String,
+        /// Max search depth
+        #[arg(long, default_value = "5")]
+        max_depth: usize,
+    },
+    /// Query edges by relation type
+    Query {
+        /// Relation type (e.g., "owns", "part_of")
+        relation: String,
+    },
+    /// Show graph statistics
+    Stats,
 }
 
 /// Subcommands for tag management.

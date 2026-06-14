@@ -533,6 +533,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7); // v7 = graph tables added
     }
 }

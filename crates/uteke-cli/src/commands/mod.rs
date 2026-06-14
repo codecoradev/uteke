@@ -3,6 +3,7 @@
 mod aging;
 pub(crate) mod bench;
 mod forget;
+pub(crate) mod graph;
 mod list;
 mod maintenance;
 mod namespace;
@@ -224,5 +225,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         // Bench is handled early in main.rs (creates own temp stores, never
         // reaches this dispatch path).
         Commands::Bench { .. } => Ok(()),
+
+        Commands::Graph { command } => crate::commands::graph::run(cli, uteke, command),
     }
 }
