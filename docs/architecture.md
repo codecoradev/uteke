@@ -25,7 +25,7 @@ title: Architecture
 │          │ RwLock   │   table)  │                    │
 ├──────────┴──────────┴───────────┴────────────────────┤
 │              ~/.uteke/ (local storage)               │
-│ uteke.db │ uteke_index.usearch │ models/embeddinggemma/ │
+│ uteke.db │ uteke_index.usearch │ embeddinggemma-q4/ │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -165,7 +165,8 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
 ├── uteke.db                    # SQLite (memories + metadata + FTS5)
 ├── uteke_index.usearch         # Persistent HNSW vector index
 ├── uteke_index.keys            # Index key mapping (atomic save)
-├── models/embeddinggemma/      # Local ONNX embedding model (~188MB)
+├── embeddinggemma-q4/           # Local ONNX embedding model (~188MB)
+│   └── onnx/                    # model_q4.onnx + model_q4.onnx_data
 └── logs/
     ├── uteke.log               # Current log
     └── uteke.log.YYYY-MM-DD    # Rotated logs

@@ -420,7 +420,7 @@
 
 ### Added
 
-- **Website** — https://uteke.ajianaz.dev (SvelteKit 5 + Tailwind)
+- **Website** — https://github.com/codecoradev/uteke (SvelteKit 5 + Tailwind)
   - Landing page, docs, roadmap
   - Auto-deploy via CF Pages + Infisical OIDC
 - **Release matrix** — 4 platforms: Linux x64, Linux ARM64, macOS ARM64, Windows x64

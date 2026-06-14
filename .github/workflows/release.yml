@@ -11,40 +11,49 @@ env:
 
 jobs:
   sync-main:
-    name: Sync main branch
+    name: Sync main ← tag commit
     runs-on: ubuntu-latest
-    continue-on-error: true
-    # Only runs on v* tag pushes (release trigger). Uses force-push because main
-    # is a release-only mirror of develop — any commits on main not in develop
-    # are stale snapshots that should be overwritten by the current release.
     if: startsWith(github.ref, 'refs/tags/v')
+    # Blocking: main MUST be synced before release artifacts are built.
+    # If main can't be fast-forwarded, the release aborts to prevent
+    # stale install.sh / mismatched main branch (#325).
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: develop
+          fetch-depth: 0
 
-      - name: Push to main
+      - name: Fast-forward main to tag commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # main is a release-only mirror of develop.
-          # Use GitHub API to force-update the ref (bypasses ruleset that blocks
-          # git force-push and branch deletion).
-          git push origin HEAD:refs/heads/main --force 2>/dev/null && {
-            echo "✅ main synced via fast-forward"
-          } || {
-            echo "Force-push blocked by ruleset, using API ref update..."
-            SHA=$(git rev-parse HEAD)
-            gh api repos/${{ github.repository }}/git/refs/heads/main \
-              -X PATCH \
-              --input - <<< '{"sha":"'"$SHA"'","force":true}'
-            echo "✅ main synced to develop at $SHA via API"
-          }
+          # The tag points to a commit on develop. We want main to point
+          # to the exact same commit so install.sh (which fetches from main)
+          # always matches the release binary.
+          #
+          # Strategy: try fast-forward first (works if main is an ancestor
+          # of the tag commit). If that fails (main diverged), force-update
+          # via API — main is a release-only mirror, develop is the source
+          # of truth.
+          TAG_SHA=$(git rev-parse "${{ github.ref }}^{commit}")
+          echo "Tag commit: $TAG_SHA"
+
+          # Check if main is an ancestor of TAG_SHA (safe fast-forward).
+          # If main is NOT an ancestor, abort — force-updating would
+          # rewrite history and potentially lose commits.
+          if git merge-base --is-ancestor origin/main "$TAG_SHA" 2>/dev/null; then
+            git push origin "$TAG_SHA:refs/heads/main"
+            echo "✅ main fast-forwarded to $TAG_SHA"
+          else
+            echo "::error::main is not an ancestor of tag commit. Refusing to force-update."
+            echo "Manual intervention required: merge develop into main first."
+            exit 1
+          fi
 
   build-release:
     name: Build ${{ matrix.target }}
+    needs: sync-main
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -119,7 +128,7 @@ jobs:
 
   publish-crates:
     name: Publish to crates.io
-    needs: []
+    needs: [sync-main]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -241,7 +250,6 @@ jobs:
       - name: Extract binaries for Docker context
         run: |
           mkdir -p binaries
-          # Artifacts are uploaded as release/*.tar.gz, so find them recursively
           cd release-artifacts
           AMD64=$(find . -name "uteke-x86_64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz" | head -1)
           ARM64=$(find . -name "uteke-aarch64-unknown-linux-gnu-${{ github.ref_name }}.tar.gz" | head -1)
