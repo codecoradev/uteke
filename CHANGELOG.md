@@ -1,3 +1,52 @@
+## [0.2.0] — 2026-06-14
+
+### Added
+
+- **SQLite knowledge graph storage** (#317)
+  - `graph_nodes` + `graph_edges` tables (schema v7)
+  - `uteke graph nodes/edges/neighbors/path/query/stats`
+  - BFS pathfinding with parent tracking
+  - `GraphStore` API: upsert_node, add_edge, find_path, query_relation
+- **Structured memory — JSON content** (#293)
+  - Auto-detect JSON content, sets `content_type='json'`
+  - Schema v6: `content_type TEXT NOT NULL DEFAULT 'text'`
+  - Flatten JSON for embedding: `{"name":"Alice"}` → `"name: Alice"`
+  - CLI: `--where key=value` filters JSON memories
+  - CLI: `--content-format json` pretty-prints JSON output
+- **External knowledge import** (#46)
+  - `uteke import <file> --tags a,b --format markdown`
+  - Auto-detect: `.md`, `.jsonl`, `.txt` from extension or content
+  - Markdown: split by headings, each section becomes a memory
+  - Text: split by double newline (paragraphs)
+  - Stdin: `echo 'text' | uteke import - --tags note`
+- **AST-aware code chunking** (#245)
+  - Regex-based chunker (zero tree-sitter dependency)
+  - Languages: Rust, Go, Python, TypeScript/JS, Dart
+  - `detect_language()`, `chunk_code()`, `extract_imports()`
+  - Fallback: whole file for unknown languages
+- **Hermes plugin integration guide** (#55)
+  - `docs/integrations/hermes.md` — complete setup guide
+- **Docker quickstart** (#336)
+  - `docker-compose.yml` with healthcheck + volume persistence
+  - `docs/docker.md` — full Docker guide
+  - README Docker section with localhost-only binding
+- **Environment variable coverage** (#338)
+  - `UTEKE_LOG_LEVEL`, `UTEKE_SERVER_HOST/PORT`
+  - `UTEKE_RECALL_MIN_SCORE/STRICT`
+  - Resolution: CLI flag > env var > config file > default
+  - Invalid values logged as warning
+
+### Changed
+
+- **Schema v7**: graph_nodes + graph_edges tables
+- **Schema v6**: content_type column (text vs json)
+- `PRAGMA foreign_keys=ON` enabled for cascade deletes
+
+### Fixed
+
+- **Recall `--json` output consistency** — empty results always output `[]`
+  instead of `{"results":[]}` when min_score threshold is active
+
 ## [0.1.0] — 2026-06-13
 
 ### Added

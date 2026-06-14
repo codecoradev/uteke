@@ -104,7 +104,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 
 ---
 
-## v0.2.0 — Knowledge Graph & Scale `Current`
+## v0.2.0 — Knowledge Graph & Scale `✓ Done`
 
 - [#317 SQLite graph storage](https://github.com/codecoradev/uteke/issues/317) — optional knowledge graph mode
 - [#245 Code-aware embedding with AST chunking](https://github.com/codecoradev/uteke/issues/245) — entity extraction from code
