@@ -5,6 +5,7 @@ export default defineConfig({
   description: 'Local-first semantic memory engine. Single binary, zero infrastructure, 30ms recall.',
   lang: 'en',
   cleanUrls: true,
+  base: '/docs/uteke/',
   head: [
     ['link', { rel: 'icon', href: '/favicon.svg' }],
     ['meta', { property: 'og:type', content: 'website' }],
