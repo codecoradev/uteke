@@ -7,7 +7,7 @@ Every new session starts from zero. Decisions lost. Context rebuilt. Again.
 
 I built Uteke to fix this. A local-first semantic memory engine for AI — single Rust binary, fully offline, 30ms recall.
 
-🧠 https://github.com/ajianaz/uteke
+🧠 https://github.com/codecoradev/uteke
 
 #Rust #AI #OpenSource
 
@@ -16,7 +16,7 @@ I built Uteke to fix this. A local-first semantic memory engine for AI — singl
 **Tweet 2/7**
 What does Uteke do?
 
-curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 
 uteke remember "BOND uses Go + SvelteKit monorepo" --tags architecture
 uteke recall "what architecture does BOND use?"
@@ -84,7 +84,7 @@ Apache 2.0 — use it, fork it, ship it.
 **Tweet 7/7**
 If you build AI agents and hate that they forget everything — give Uteke a try.
 
-⭐ Star the repo: https://github.com/ajianaz/uteke
+⭐ Star the repo: https://github.com/codecoradev/uteke
 🐛 Report bugs: Open an issue
 🤝 Contribute: PRs to develop branch
 

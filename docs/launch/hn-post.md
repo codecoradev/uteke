@@ -1,6 +1,6 @@
 # Show HN: Uteke — Offline-first semantic memory for AI agents, single Rust binary
 
-**URL:** https://github.com/ajianaz/uteke
+**URL:** https://github.com/codecoradev/uteke
 
 Hey HN,
 
@@ -9,7 +9,7 @@ I built Uteke because I was tired of AI agents forgetting everything between ses
 Uteke is a local-first memory engine for AI agents. It's a single Rust binary with zero configuration:
 
 ```
-curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh
+curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 
 uteke remember "Deploy v2.1 to staging on Friday" --tags deploy
 uteke recall "what deployment is coming up?"
