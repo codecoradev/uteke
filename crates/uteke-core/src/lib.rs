@@ -362,6 +362,11 @@ impl Uteke {
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         self.store.recompute_importance()
     }
+
+    /// Get a reference to the raw connection for graph operations.
+    pub fn graph_store(&self) -> &rusqlite::Connection {
+        &self.store.conn
+    }
 }
 
 /// Resolve a path to a database string.

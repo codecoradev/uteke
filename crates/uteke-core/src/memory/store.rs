@@ -62,7 +62,7 @@ pub(super) const CURRENT_SCHEMA_VERSION: i32 = 7;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
-    pub(super) conn: Connection,
+    pub conn: Connection,
 }
 
 impl Store {
