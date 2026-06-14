@@ -106,6 +106,38 @@ min_score = 0.0
 
 Use `--strict` flag or `--min 0.7` to override per-query.
 
+## Environment Variables
+
+Environment variables override config file values. Applied in `Config::load()` after config file merge. CLI flags override env vars.
+
+Resolution order (highest priority first):
+1. CLI flag (`--min`, `--host`, `--port`)
+2. Environment variable (`UTEKE_*`)
+3. Config file (`uteke.toml`)
+4. Built-in default
+
+| Env Var | Config Equivalent | Default | Description |
+|---------|-------------------|---------|-------------|
+| `UTEKE_HOME` | — | `~/.uteke` | Data directory |
+| `UTEKE_NAMESPACE` | `[store] namespace` | `default` | Default namespace (applied in CLI) |
+| `UTEKE_AUTH_TOKEN` | — | — | Server auth token (applied in server) |
+| `UTEKE_LOG_LEVEL` | `[logging] level` | `warn` | Log level (trace/debug/info/warn/error) |
+| `UTEKE_SERVER_HOST` | `[server] host` | `127.0.0.1` | Server bind address |
+| `UTEKE_SERVER_PORT` | `[server] port` | `8767` | Server port |
+| `UTEKE_RECALL_MIN_SCORE` | `[recall] min_score` | `0.3` | Default similarity threshold |
+| `UTEKE_RECALL_MIN_SCORE_STRICT` | `[recall] min_score_strict` | `0.5` | Strict threshold |
+
+### Docker Example
+
+```bash
+docker run -d --name uteke \
+  -p 127.0.0.1:8767:8767 \
+  -v uteke-data:/data \
+  -e UTEKE_LOG_LEVEL=info \
+  -e UTEKE_RECALL_MIN_SCORE=0.5 \
+  ghcr.io/codecoradev/uteke:latest
+```
+
 ## Config Migration
 
 If you have an older flat-format config (pre-v0.0.4), uteke auto-migrates it on first run:
