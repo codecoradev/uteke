@@ -499,7 +499,8 @@ impl crate::Uteke {
                         }
                     }
                 }
-                ExtractedRef::Rel(t, id) => match self.store.get_by_id_in_namespace(&id, namespace) {
+                ExtractedRef::Rel(t, id) => match self.store.get_by_id_in_namespace(&id, namespace)
+                {
                     Ok(Some(_)) => {
                         if id != source_id {
                             resolved.push((id, t));
