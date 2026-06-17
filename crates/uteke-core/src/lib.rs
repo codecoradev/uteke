@@ -154,6 +154,42 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
     }
 }
 
+/// Resolved embedder configuration used by lazy backend dispatch.
+///
+/// Mirrors the CLI-side `EmbeddingConfig` but kept inside `uteke-core` so
+/// the core library can construct OpenAI/Ollama backends without depending
+/// on the CLI crate. Field values are sourced from environment variables
+/// first, then fall back to backend defaults.
+struct EmbedderEnv {
+    api_key: String,
+    base_url: String,
+    model: String,
+    dims: usize,
+}
+
+impl EmbedderEnv {
+    /// Read embedder settings from environment variables. Empty fields
+    /// trigger backend defaults at the call site.
+    fn resolve(_backend: &str) -> Self {
+        let api_key = std::env::var("UTEKE_EMBEDDING_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .unwrap_or_default();
+        let base_url = std::env::var("UTEKE_EMBEDDING_BASE_URL").unwrap_or_default();
+        let model = std::env::var("UTEKE_EMBEDDING_MODEL").unwrap_or_default();
+        let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        Self {
+            api_key,
+            base_url,
+            model,
+            dims,
+        }
+    }
+}
+
 /// Uteke — AI agent memory engine.
 ///
 /// Combines SQLite persistence, HNSW vector search, and ONNX embedding
@@ -284,10 +320,28 @@ impl Uteke {
         let dims = match embedder.as_ref() {
             Some(e) => e.dims(),
             None => match embedder_backend.as_str() {
-                "onnx" | "" | "custom" => OnnxEmbedder::dims(),
+                "onnx" | "" | "custom" => crate::embed::OnnxEmbedder::dims(),
+                "openai" => {
+                    // User-configurable via UTEKE_EMBEDDING_DIMS. Default 1536
+                    // (text-embedding-3-small).
+                    let cfg = EmbedderEnv::resolve("openai");
+                    if cfg.dims == 0 {
+                        crate::embed::openai::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    }
+                }
+                "ollama" => {
+                    let cfg = EmbedderEnv::resolve("ollama");
+                    if cfg.dims == 0 {
+                        crate::embed::ollama::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    }
+                }
                 other => {
                     return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
                     )));
                 }
             },
@@ -334,19 +388,77 @@ impl Uteke {
             .map_err(|_| Error::lock("embedder lock during lazy init"))?;
         if guard.is_none() {
             tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
-            *guard = Some(match self.embedder_backend.as_str() {
-                "onnx" | "" => Box::new(OnnxEmbedder::new()?),
+            let backend = self.embedder_backend.as_str();
+            let embedder: Box<dyn crate::embed::Embedder> = match backend {
+                "onnx" | "" => Box::new(crate::embed::OnnxEmbedder::new()?),
                 "custom" => {
                     return Err(Error::generic(
                         "Custom embedder backend set but no embedder was provided",
                     ));
                 }
+                "openai" => {
+                    let cfg = EmbedderEnv::resolve(backend);
+                    let model = if cfg.model.is_empty() {
+                        crate::embed::openai::DEFAULT_MODEL.to_string()
+                    } else {
+                        cfg.model
+                    };
+                    let base_url = if cfg.base_url.is_empty() {
+                        crate::embed::openai::DEFAULT_BASE_URL.to_string()
+                    } else {
+                        cfg.base_url
+                    };
+                    let dims = if cfg.dims == 0 {
+                        crate::embed::openai::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    };
+                    Box::new(crate::embed::OpenAiEmbedder::new(
+                        &cfg.api_key,
+                        &model,
+                        &base_url,
+                        dims,
+                    )?)
+                }
+                "ollama" => {
+                    let cfg = EmbedderEnv::resolve(backend);
+                    let model = if cfg.model.is_empty() {
+                        crate::embed::ollama::DEFAULT_MODEL.to_string()
+                    } else {
+                        cfg.model
+                    };
+                    let base_url = if cfg.base_url.is_empty() {
+                        crate::embed::ollama::DEFAULT_BASE_URL.to_string()
+                    } else {
+                        cfg.base_url
+                    };
+                    let dims = if cfg.dims == 0 {
+                        crate::embed::ollama::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    };
+                    Box::new(crate::embed::OllamaEmbedder::new(&base_url, &model, dims)?)
+                }
                 other => {
                     return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
                     )));
                 }
-            });
+            };
+
+            // Dim mismatch detection (#337): refuse to silently mix vectors
+            // from different backends in one index. Catch it at first use
+            // so the user gets a clear error instead of garbage recall.
+            let backend_dims = embedder.dims();
+            let index_dims = self.index.read().map(|i| i.dims()).unwrap_or(backend_dims);
+            if index_dims != backend_dims {
+                return Err(Error::Validation(format!(
+                    "Embedding dimension mismatch: index has {index_dims}d vectors but backend '{backend}' produces {backend_dims}d. \
+                     Rebuild the index (`uteke repair`) or switch backend."
+                )));
+            }
+
+            *guard = Some(embedder);
         }
         Ok(())
     }

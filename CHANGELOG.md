@@ -2,6 +2,24 @@
 
 ### Added
 
+- **OpenAI + Ollama embedding backends** (#337)
+  - New `OpenAiEmbedder` (`crates/uteke-core/src/embed/openai.rs`) — HTTP
+    call to `{base_url}/embeddings`, default model `text-embedding-3-small`
+    (1536d). Azure OpenAI compatible via `base_url`.
+  - New `OllamaEmbedder` (`crates/uteke-core/src/embed/ollama.rs`) — HTTP
+    call to `{base_url}/api/embed`, default model `nomic-embed-text` (768d).
+  - `[embedding]` config section extended with `api_key`, `base_url`, `dims`.
+  - New env vars: `UTEKE_EMBEDDING_BACKEND`, `UTEKE_EMBEDDING_MODEL`,
+    `UTEKE_EMBEDDING_API_KEY` (fallback: `OPENAI_API_KEY`),
+    `UTEKE_EMBEDDING_BASE_URL`, `UTEKE_EMBEDDING_DIMS`.
+  - Dim mismatch detection: opening an existing store with a backend that
+    produces a different dims now returns a clear error pointing the user
+    at `uteke repair` instead of silently corrupting the index.
+  - `reqwest` `json` feature added (always included — no feature flag).
+  - 16 new unit tests (backend construction, endpoint normalization, default
+    constants, response parsing, config merge + env var precedence).
+  - ONNX remains the default — fully backward compatible.
+
 - **Auto-wired memory edges** (#346)
   - New `memory_edges` SQLite table (schema v8) for typed edges between
     memories.
