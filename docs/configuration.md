@@ -14,7 +14,7 @@ Uteke searches for config in this order. Last match wins (highest priority):
 2. **`~/.uteke/uteke.toml`** — Global user-level config
 3. **`.uteke/uteke.toml`** — Project-level (in current working directory)
 
-Override the config file path with the `--config` flag.
+Config file path is auto-resolved (no `--config` flag). Layered merge: each file overlays the previous, with field-level granularity (only keys explicitly present override).
 
 ## Config File Format
 
@@ -28,12 +28,12 @@ path = "~/.uteke"
 # Default namespace (default: "default")
 namespace = "default"
 
-[log]
+[logging]
 # Log level: trace, debug, info, warn, error
 level = "info"
 
-# Log directory (default: ~/.uteke/logs)
-dir = "~/.uteke/logs"
+# Optional log file path. Empty = stderr only.
+# file = ""
 
 [server]
 # Enable CLI auto-routing to server
@@ -97,12 +97,17 @@ Control minimum similarity score for recall results:
 ```toml
 [recall]
 # Minimum similarity score (0.0-1.0). Memories below this score are excluded.
-min_score = 0.0
+# Default: 0.3 (balanced). Use 0.0 to disable filtering.
+min_score = 0.3
+
+# Strict-mode threshold (used with `--strict` flag)
+min_score_strict = 0.5
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `min_score` | 0.0 | Minimum similarity score |
+| `min_score` | 0.3 | Minimum similarity score (0.0-1.0) |
+| `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`) |
 
 Use `--strict` flag or `--min 0.7` to override per-query.
 
@@ -154,7 +159,7 @@ log_level = "info"
 path = "~/.uteke"
 namespace = "default"
 
-[log]
+[logging]
 level = "info"
 ```
 
@@ -181,7 +186,7 @@ Place a `.uteke/uteke.toml` in your project root to override defaults for that p
 path = "./.uteke"
 namespace = "my-project"
 
-[log]
+[logging]
 level = "warn"
 
 [server]
@@ -198,9 +203,6 @@ CLI flags always take precedence over config file values:
 ```bash
 # Override store path
 uteke --store /path/to/project/.uteke remember "project note"
-
-# Override config file
-uteke --config ./my-config.toml stats
 
 # Override namespace
 uteke --namespace agent-1 recall "context"

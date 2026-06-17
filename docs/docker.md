@@ -97,7 +97,7 @@ The volume contains:
 - `uteke.db` — SQLite database (memories, metadata, FTS5)
 - `uteke_index.usearch` — HNSW vector index
 - `uteke_index.keys` — Index key mapping
-- `models/embeddinggemma-q4/` — ONNX embedding model (~208MB)
+- `models/embeddinggemma-q4/` — ONNX embedding model (~188MB)
 
 ## Multi-Architecture
 

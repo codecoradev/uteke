@@ -124,7 +124,7 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v5 (memory_tags junction table). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v7 (knowledge graph tables — `graph_nodes` + `graph_edges`). Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column (text vs json), v7 knowledge graph. Zero data loss guaranteed.
 
 ### Rooms
 
