@@ -66,10 +66,10 @@ uteke tags delete unused-tag
 uteke aging status
 
 # Preview memories older than 90 days
-uteke aging preview --days 90
+uteke aging preview --older-than-days 90
 
 # Delete stale memories older than 180 days
-uteke aging cleanup --days 180 --confirm
+uteke aging cleanup --older-than-days 180 --yes
 ```
 
 ## Multi-Agent Isolation

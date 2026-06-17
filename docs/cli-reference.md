@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.1.0**.
+Complete reference for all uteke commands. Version **0.2.0**.
 
 ## Global Flags
 
@@ -12,9 +12,10 @@ Complete reference for all uteke commands. Version **0.1.0**.
 |------|-------------|---------|
 | `--store <path>` | Override store location | `~/.uteke` |
 | `--namespace <name>` | Namespace for multi-agent isolation | `default` |
-| `--config <path>` | Override config file path | auto-resolved |
 | `--json` | Output as JSON | off |
 | `--verbose` | Enable debug logging | off |
+
+Config file path is auto-resolved (`~/.uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
 
 ## uteke remember
 
@@ -34,8 +35,8 @@ uteke remember "Deploy staging to AWS us-east-1" \
 # With contradiction detection
 uteke remember "Server runs on port 8080" --tags config --detect-contradiction
 
-# With memory type and temporal bounds
-uteke remember "API rate limit is 1000/min" --type fact --valid-from 2026-01-01 --valid-until 2026-12-31
+# With memory type
+uteke remember "API rate limit is 1000/min" --type fact
 
 # In a specific namespace
 uteke remember "User prefers dark mode" --tags pref --namespace my-agent
@@ -47,11 +48,10 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | `--entity <name>` | Associate memory with an entity (e.g. "staging-server") |
 | `--category <cat>` | Categorize the memory (e.g. "infrastructure") |
 | `--meta <pairs>` | Key:value pairs, comma-separated. Auto-detects type (string/number/bool) |
-| `--metadata <json>` | Arbitrary JSON metadata |
-| `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
 | `--type <type>` | Memory type: fact, procedure, preference, decision, context |
-| `--valid-from <datetime>` | Start of validity period (ISO 8601) |
-| `--valid-until <datetime>` | End of validity period (ISO 8601) |
+| `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
+| `--room <room_id>` | Link memory to a room (collaborative context) |
+| `--author <name>` | Author attribution when storing in a room |
 | `--json` | Output stored memory as JSON |
 
 ## uteke recall
@@ -71,6 +71,8 @@ uteke recall "config" --category infrastructure --limit 5
 | `--limit <n>` | Max results (default: 5) |
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
+| `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
+| `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`) |
 | `--json` | Output as JSON array |
 
 ## uteke search
@@ -86,7 +88,7 @@ uteke search "api" --namespace backend --json
 | Flag | Description |
 |------|-------------|
 | `--tags <tags>` | Filter by comma-separated tags |
-| `--limit <n>` | Max results (default: 20) |
+| `--limit <n>` | Max results (default: 10) |
 | `--json` | Output as JSON |
 
 ## uteke list
@@ -207,7 +209,7 @@ Semantic search with new flags:
 ```bash
 # Minimum similarity score filter
 uteke recall "database config" --min 0.7
-uteke recall "database config" --strict    # uses 0.7 default
+uteke recall "database config" --strict    # uses min_score_strict (default 0.5)
 
 # Time-travel: query memories at specific point in time
 uteke recall "deployment process" --at 2026-06-01T12:00:00Z
@@ -222,7 +224,7 @@ uteke recall "api design" --context
 | Flag | Description |
 |------|-------------|
 | `--min <score>` | Minimum similarity score (0.0-1.0) |
-| `--strict` | Use strict threshold (0.7) |
+| `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
@@ -308,11 +310,51 @@ Memory aging management with auto-cleanup.
 uteke aging status
 
 # Preview memories older than 90 days
-uteke aging preview --days 90
+uteke aging preview --older-than-days 90
 
 # Delete memories older than 180 days
-uteke aging cleanup --days 180 --confirm
+uteke aging cleanup --older-than-days 180 --yes
 ```
+
+| Subcommand | Flags | Description |
+|------------|-------|-------------|
+| `status` | — | Show hot/warm/cold/never-accessed counts |
+| `preview` | `--older-than-days N` (default 180), `--max-access-count N` (default 1) | Dry-run preview of cleanup candidates |
+| `cleanup` | `--older-than-days N` (default 180), `--max-access-count N` (default 1), `--yes` | Delete aged memories (`--yes` skips confirmation) |
+
+## uteke graph
+
+Knowledge graph operations (v0.2.0). Nodes and edges stored in SQLite (`graph_nodes`, `graph_edges` tables, schema v7).
+
+```bash
+# List all nodes (optionally filter by entity type)
+uteke graph nodes
+uteke graph nodes --entity-type person
+
+# List all edges (optionally filter by relation)
+uteke graph edges --relation owns
+
+# Find neighbors of a node via BFS
+uteke graph neighbors alice --depth 2
+
+# Shortest path between two nodes
+uteke graph path alice "project-x" --max-depth 5
+
+# Query edges by relation type
+uteke graph query part_of
+
+# Show graph statistics
+uteke graph stats
+```
+
+| Subcommand | Flags | Description |
+|------------|-------|-------------|
+| `nodes` | `--entity-type <t>` | List graph nodes |
+| `edges` | `--relation <r>` | List graph edges |
+| `neighbors <label>` | `--depth N` (default 1) | BFS neighbors of a node |
+| `path <source> <target>` | `--max-depth N` (default 5) | BFS shortest path |
+| `query <relation>` | — | Query edges by relation type |
+| `stats` | — | Show graph statistics |
 
 ## Other Commands
 
@@ -327,14 +369,16 @@ uteke aging cleanup --days 180 --confirm
 | `uteke prune` | Remove deprecated/expired memories |
 | `uteke stats` | Show store statistics with tier breakdown |
 | `uteke export` | Export memories to JSONL (no embeddings) |
-| `uteke import <file>` | Import memories from JSONL |
+| `uteke import <file>` | Import memories from JSONL/Markdown/text |
 | `uteke doctor` | Health check (DB, index, model, consistency) |
 | `uteke verify` | Verify DB and index consistency |
+| `uteke verify-checksums --binary <path>` | Verify binary integrity against SHA256 checksums |
 | `uteke repair` | Rebuild index from SQLite |
 | `uteke namespace list` | List all namespaces with memory counts |
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
-| `uteke hook install <shell>` | Install shell hook (bash/zsh/fish) |
+| `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
+| `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, copilot, codex) |
 | `uteke completions <shell>` | Generate shell completions |
 
 ## uteke-serve (Server Mode)

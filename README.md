@@ -97,7 +97,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (108 unit tests)
+cargo test --workspace         # Test (180 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
