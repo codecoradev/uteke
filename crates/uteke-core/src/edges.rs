@@ -390,20 +390,24 @@ impl Store {
         frontier.push_back((start_id.to_string(), 0));
         let mut ordered: Vec<String> = Vec::new();
 
+        // Prepare the neighbor lookup once and reuse across hops. Recompiling
+        // per visited node would add avoidable overhead on deeper traversals
+        // (CodeCora finding #134).
+        let mut neighbors_stmt = self
+            .conn
+            .prepare(
+                "SELECT target_id FROM memory_edges WHERE source_id = ?1
+                 UNION
+                 SELECT source_id FROM memory_edges WHERE target_id = ?1",
+            )
+            .map_err(|e| Error::db("prepare bfs neighbors", e))?;
+
         while let Some((cur, depth)) = frontier.pop_front() {
             if depth >= max_depth {
                 continue;
             }
             // Gather neighbors (both directions) at the SQL level.
-            let mut stmt = self
-                .conn
-                .prepare(
-                    "SELECT target_id FROM memory_edges WHERE source_id = ?1
-                     UNION
-                     SELECT source_id FROM memory_edges WHERE target_id = ?1",
-                )
-                .map_err(|e| Error::db("prepare bfs neighbors", e))?;
-            let rows = stmt
+            let rows = neighbors_stmt
                 .query_map(params![cur], |r| r.get::<_, String>(0))
                 .map_err(|e| Error::db("query bfs neighbors", e))?;
             for row in rows {
@@ -884,5 +888,20 @@ mod tests {
         assert_eq!(from_a, vec![b.id.clone()]);
         let from_b = store.edge_bfs(&b.id, 1).unwrap();
         assert_eq!(from_b, vec![a.id.clone()]);
+    }
+
+    /// Regression test for CodeCora finding #136: confirms the migration
+    /// dispatcher reaches v8 from a fresh DB (which starts at v1 then
+    /// loops v2..=v8 via run_migrations). Verifies the migration
+    /// v7->v8 is actually invoked, not skipped.
+    #[test]
+    fn migration_dispatcher_reaches_v8() {
+        let store = Store::open(":memory:").unwrap();
+        let v = store.schema_version().unwrap();
+        assert_eq!(v, 8, "fresh store must reach CURRENT_SCHEMA_VERSION=8");
+
+        // memory_edges table must exist and be queryable after migration.
+        let n = store.count_memory_edges().unwrap();
+        assert_eq!(n, 0, "fresh store has zero edges but table must exist");
     }
 }
