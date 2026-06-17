@@ -109,7 +109,7 @@ min_score_strict = 0.5
 | `min_score` | 0.3 | Minimum similarity score (0.0-1.0) |
 | `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`) |
 
-Use `--strict` flag or `--min 0.7` to override per-query.
+Use `--strict` flag or `--min <score>` to override per-query.
 
 ## Environment Variables
 
