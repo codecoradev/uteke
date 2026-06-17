@@ -40,6 +40,7 @@ impl OllamaEmbedder {
                 "Ollama embedder requires a base_url (default: http://localhost:11434)".into(),
             ));
         }
+        crate::embed::validate_base_url(base_url)?;
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()

@@ -47,6 +47,7 @@ impl OpenAiEmbedder {
                 "OpenAI embedder requires an API key (set UTEKE_EMBEDDING_API_KEY or OPENAI_API_KEY)".into(),
             ));
         }
+        crate::embed::validate_base_url(base_url)?;
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
@@ -71,10 +72,23 @@ impl Embedder for OpenAiEmbedder {
         // OpenAI rejects empty input with 400; send a single space so the
         // call is always valid (matches ONNX backend's non-empty contract).
         let input = if text.is_empty() { " " } else { text };
-        let body = serde_json::json!({
-            "model": self.model,
-            "input": input,
-        });
+        // Include `dimensions` when explicitly configured. This keeps the
+        // API response size in sync with the configured index dims
+        // (CodeCora finding #146) for models that support the field.
+        // text-embedding-3-* support it; older models ignore unknown fields
+        // so sending it unconditionally is safe.
+        let body = if self.dims > 0 {
+            serde_json::json!({
+                "model": self.model,
+                "input": input,
+                "dimensions": self.dims,
+            })
+        } else {
+            serde_json::json!({
+                "model": self.model,
+                "input": input,
+            })
+        };
 
         let resp = self
             .client
@@ -180,5 +194,27 @@ mod tests {
         let parsed: EmbeddingsResponse = serde_json::from_str(raw).unwrap();
         let emb = parsed.data.into_iter().next().unwrap().embedding;
         assert_eq!(emb, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn rejects_invalid_base_url() {
+        // Schemeless URL — CodeCora #155.
+        let err =
+            OpenAiEmbedder::new("k", DEFAULT_MODEL, "api.openai.com/v1", DEFAULT_DIMS).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("http"), "got: {msg}");
+
+        // Empty string.
+        let err = OpenAiEmbedder::new("k", DEFAULT_MODEL, "", DEFAULT_DIMS).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("empty") || msg.contains("http"), "got: {msg}");
+
+        // Unparseable.
+        let err = OpenAiEmbedder::new("k", DEFAULT_MODEL, "https://", DEFAULT_DIMS).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("valid URL") || msg.contains("http"),
+            "got: {msg}"
+        );
     }
 }
