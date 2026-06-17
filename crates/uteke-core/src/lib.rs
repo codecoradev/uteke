@@ -178,15 +178,20 @@ impl EmbeddingSettings {
     /// (UTEKE_EMBEDDING_*) win over the caller-supplied values; the caller
     /// is responsible for having already merged uteke.toml into the input.
     fn resolve_with_defaults(input: &EmbeddingSettings) -> Self {
-        let api_key = std::env::var("UTEKE_EMBEDDING_API_KEY")
-            .ok()
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+        // Env vars win over caller-supplied values, but an explicitly empty
+        // env var is treated as "unset" so it cannot clobber a non-empty
+        // config-provided value (CodeCora finding: empty
+        // UTEKE_EMBEDDING_API_KEY previously overwrote a populated
+        // [embedding].api_key).
+        let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let api_key = env_or("UTEKE_EMBEDDING_API_KEY")
+            .or_else(|| env_or("OPENAI_API_KEY"))
             .unwrap_or_else(|| input.api_key.clone());
-        let base_url =
-            std::env::var("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|_| input.base_url.clone());
-        let model = std::env::var("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|_| input.model.clone());
+        let base_url = env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|| input.base_url.clone());
+        let model = env_or("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|| input.model.clone());
         let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
             .ok()
+            .filter(|v| !v.is_empty())
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(input.dims);
         Self {
@@ -865,6 +870,31 @@ mod tests {
         // Non-overridden fields fall through from the caller config.
         assert_eq!(merged.base_url, "https://config.example.com");
         assert_eq!(merged.dims, 1024);
+    }
+
+    #[test]
+    fn embedding_settings_empty_env_does_not_overwrite_config() {
+        // Explicitly empty env var must NOT clobber a non-empty config value
+        // (CodeCora finding: std::env::var returns Ok("") for empty vars).
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
+        std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
+        let input = EmbeddingSettings {
+            api_key: "sk-from-config".to_string(),
+            base_url: "https://config.example.com".to_string(),
+            model: "config-model".to_string(),
+            dims: 1536,
+        };
+        let merged = EmbeddingSettings::resolve_with_defaults(&input);
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        assert_eq!(
+            merged.api_key, "sk-from-config",
+            "empty env must not clobber config"
+        );
+        assert_eq!(
+            merged.model, "config-model",
+            "empty env must not clobber config"
+        );
     }
 
     #[test]

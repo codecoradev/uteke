@@ -107,7 +107,7 @@ When you set `backend = "openai"` or `"ollama"` and leave `model`/`base_url`/`di
 
 ### Azure OpenAI
 
-Set `backend = "openai"`, `base_url = "https://<your-resource>.openai.azure.com/openai/deployments/<deployment>"` and `api_key` to your Azure key. The request path `/embeddings` is appended automatically.
+Set `backend = "openai"`, `base_url = "https://<your-resource>.openai.azure.com/openai/deployments/<deployment>?api-version=2024-10-21"` and `api_key` to your Azure key. The request path `/embeddings` is appended automatically. Azure requires the `api-version` query param — include it in `base_url`.
 
 ### Dim mismatch detection
 

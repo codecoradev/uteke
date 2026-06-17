@@ -416,19 +416,31 @@ impl Config {
 
         // Embedding backend overrides (#337)
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BACKEND") {
-            self.embedding.backend = v;
+            if !v.is_empty() {
+                self.embedding.backend = v;
+            }
         }
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_MODEL") {
-            self.embedding.model = v;
+            if !v.is_empty() {
+                self.embedding.model = v;
+            }
         }
         // API key: prefer UTEKE_EMBEDDING_API_KEY, then OPENAI_API_KEY fallback.
+        // An explicitly empty env var is treated as unset so it cannot clobber
+        // a non-empty [embedding].api_key from uteke.toml (CodeCora finding).
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_API_KEY") {
-            self.embedding.api_key = v;
+            if !v.is_empty() {
+                self.embedding.api_key = v;
+            }
         } else if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-            self.embedding.api_key = v;
+            if !v.is_empty() {
+                self.embedding.api_key = v;
+            }
         }
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BASE_URL") {
-            self.embedding.base_url = v;
+            if !v.is_empty() {
+                self.embedding.base_url = v;
+            }
         }
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
             match v.parse::<usize>() {
