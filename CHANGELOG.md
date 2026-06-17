@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Changed
+
+- **Bump sha2 0.10 → 0.11** (supersedes Dependabot PR #364)
+  - sha2 0.11 dropped the `LowerHex` impl on the digest output, breaking
+    `format!("{:x}", hasher.finalize())` in `engine.rs`.
+  - Fix: iterate the digest bytes and format each as `{:02x}`.
+  - Unifies the crate on a single sha2 version (uteke-server was already
+    on 0.11).
+
 ### Added
 
 - **OpenAI + Ollama embedding backends** (#337)
