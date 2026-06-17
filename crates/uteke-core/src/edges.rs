@@ -851,10 +851,7 @@ mod tests {
                 // If the insert succeeded (FKs not enforced for some reason),
                 // verify no actual row was written that would break traversal.
                 let edges = store.list_memory_edges(&a.id).unwrap();
-                let has_dangling = edges
-                    .outgoing
-                    .iter()
-                    .any(|e| e.target_id == dangling);
+                let has_dangling = edges.outgoing.iter().any(|e| e.target_id == dangling);
                 assert!(!has_dangling, "dangling edge should not persist");
             }
             Err(_) => {
@@ -878,7 +875,9 @@ mod tests {
         store.insert(&b).unwrap();
 
         // Only one edge a -> b in the edge table.
-        store.add_memory_edge(&a.id, &b.id, EDGE_REFERENCES).unwrap();
+        store
+            .add_memory_edge(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
 
         // BFS from a should return [b], from b should return [a].
         let from_a = store.edge_bfs(&a.id, 1).unwrap();
