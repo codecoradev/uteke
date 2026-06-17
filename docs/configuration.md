@@ -70,25 +70,59 @@ If the server is not running, CLI falls back to local store automatically.
 
 ## Embedding Backend
 
-Configure the embedding backend:
+Configure the embedding backend. Three backends are supported:
+
+- **`onnx`** (default) — fully offline, EmbeddingGemma Q4, 768d. Zero API keys, zero network.
+- **`openai`** — OpenAI `text-embedding-3-small` (1536d) or `text-embedding-3-large` (3072d). Requires API key.
+- **`ollama`** — local Ollama server with models like `nomic-embed-text` (768d) or `mxbai-embed-large` (1024d). No API key, runs on `http://localhost:11434`.
 
 ```toml
 [embedding]
-# Backend: "onnx" (default), future: "openai", "ollama"
-backend = "onnx"
-
-# Model name (for ONNX backend)
-model = "embeddinggemma-q4"
-
-# Maximum sequence length in tokens
+backend = "onnx"              # onnx | openai | ollama
+model = "embeddinggemma-q4"   # backend-specific
 max_seq_length = 256
+api_key = ""                  # OpenAI only (or use UTEKE_EMBEDDING_API_KEY)
+base_url = ""                 # custom endpoint (Azure OpenAI, Ollama URL, proxy)
+dims = 0                     # 0 = use model default (override only if you know)
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `backend` | onnx | Embedding backend |
-| `model` | embeddinggemma-q4 | Model identifier |
-| `max_seq_length` | 256 | Max tokens per input |
+| `backend` | `onnx` | `onnx`, `openai`, or `ollama` |
+| `model` | `embeddinggemma-q4` | Backend-specific model name |
+| `max_seq_length` | `256` | Max tokens per input |
+| `api_key` | `""` | OpenAI API key (ONNX/Ollama ignore) |
+| `base_url` | `""` | Custom endpoint. Empty = backend default |
+| `dims` | `0` | Force dims. 0 = backend/model default |
+
+### Backend-specific defaults
+
+When you set `backend = "openai"` or `"ollama"` and leave `model`/`base_url`/`dims` empty, uteke picks:
+
+| Backend | Model | Base URL | Dims |
+|---|---|---|---|
+| `onnx` | `embeddinggemma-q4` | (local) | 768 |
+| `openai` | `text-embedding-3-small` | `https://api.openai.com/v1` | 1536 |
+| `ollama` | `nomic-embed-text` | `http://localhost:11434` | 768 |
+
+### Azure OpenAI
+
+Set `backend = "openai"`, `base_url = "https://<your-resource>.openai.azure.com/openai/deployments/<deployment>?api-version=2024-10-21"` and `api_key` to your Azure key. The request path `/embeddings` is appended automatically. Azure requires the `api-version` query param — include it in `base_url`.
+
+### Dim mismatch detection
+
+If you open an existing store with a different backend (different dims), the first embedding operation returns a clear error instead of silently corrupting the index:
+
+```
+Embedding dimension mismatch: index has 768d vectors but backend 'openai' produces 1536d.
+Rebuild the index (`uteke repair`) or switch backend.
+```
+
+To migrate, run `uteke repair` after switching backends — it rebuilds the vector index from the SQLite source of truth using the new backend's embeddings. Because the dim-mismatch guard will block any embed-based operation on first contact, set `UTEKE_ALLOW_DIM_MISMATCH=1` once to let `uteke repair` open the store with the new backend:
+
+```bash
+UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair
+```
 
 ## Recall Threshold
 
@@ -131,6 +165,11 @@ Resolution order (highest priority first):
 | `UTEKE_SERVER_PORT` | `[server] port` | `8767` | Server port |
 | `UTEKE_RECALL_MIN_SCORE` | `[recall] min_score` | `0.3` | Default similarity threshold |
 | `UTEKE_RECALL_MIN_SCORE_STRICT` | `[recall] min_score_strict` | `0.5` | Strict threshold |
+| `UTEKE_EMBEDDING_BACKEND` | `[embedding] backend` | `onnx` | Embedding backend: onnx, openai, ollama |
+| `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
+| `UTEKE_EMBEDDING_API_KEY` | `[embedding] api_key` | — | API key (OpenAI). Fallback: `OPENAI_API_KEY` |
+| `UTEKE_EMBEDDING_BASE_URL` | `[embedding] base_url` | backend-specific | Custom endpoint URL |
+| `UTEKE_EMBEDDING_DIMS` | `[embedding] dims` | `0` (auto) | Force embedding dimensionality |
 
 ### Docker Example
 

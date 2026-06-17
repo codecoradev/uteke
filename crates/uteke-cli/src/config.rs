@@ -30,12 +30,23 @@ impl Default for StoreConfig {
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
 pub struct EmbeddingConfig {
-    /// Embedding backend: "onnx" (default), future: "openai", "ollama".
+    /// Embedding backend: "onnx" (default), "openai", "ollama".
     pub backend: String,
     /// Embedding model name.
     pub model: String,
     /// Maximum sequence length for the embedding model.
     pub max_seq_length: usize,
+    /// API key for backends that require one (OpenAI). Leave empty for ONNX/Ollama.
+    /// Can also be supplied via UTEKE_EMBEDDING_API_KEY / OPENAI_API_KEY.
+    pub api_key: String,
+    /// Custom endpoint URL. Empty string = backend default.
+    /// - OpenAI: https://api.openai.com/v1
+    /// - Ollama: http://localhost:11434
+    /// - Azure OpenAI: your endpoint base
+    pub base_url: String,
+    /// Embedding dimensions. 0 = use backend/model default.
+    /// Override only when you know your model's output dim.
+    pub dims: usize,
 }
 
 impl Default for EmbeddingConfig {
@@ -44,13 +55,16 @@ impl Default for EmbeddingConfig {
             backend: "onnx".to_string(),
             model: "embeddinggemma-q4".to_string(),
             max_seq_length: 256,
+            api_key: String::new(),
+            base_url: String::new(),
+            dims: 0,
         }
     }
 }
 
 impl EmbeddingConfig {
     /// Supported embedding backends.
-    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx"];
+    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx", "openai", "ollama"];
 
     /// Validate the backend field.
     ///
@@ -272,10 +286,19 @@ impl Config {
                 self.embedding.backend = overlay.embedding.backend.clone();
             }
             if emb.contains_key("model") {
-                self.embedding.model = overlay.embedding.model;
+                self.embedding.model = overlay.embedding.model.clone();
             }
             if emb.contains_key("max_seq_length") {
                 self.embedding.max_seq_length = overlay.embedding.max_seq_length;
+            }
+            if emb.contains_key("api_key") {
+                self.embedding.api_key = overlay.embedding.api_key.clone();
+            }
+            if emb.contains_key("base_url") {
+                self.embedding.base_url = overlay.embedding.base_url.clone();
+            }
+            if emb.contains_key("dims") {
+                self.embedding.dims = overlay.embedding.dims;
             }
         }
 
@@ -387,6 +410,43 @@ impl Config {
                 ),
                 Err(_) => tracing::warn!(
                     "Invalid UTEKE_RECALL_MIN_SCORE_STRICT='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+
+        // Embedding backend overrides (#337)
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BACKEND") {
+            if !v.is_empty() {
+                self.embedding.backend = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_MODEL") {
+            if !v.is_empty() {
+                self.embedding.model = v;
+            }
+        }
+        // API key: prefer UTEKE_EMBEDDING_API_KEY, then OPENAI_API_KEY fallback.
+        // An explicitly empty env var is treated as unset so it cannot clobber
+        // a non-empty [embedding].api_key from uteke.toml (CodeCora finding).
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_API_KEY") {
+            if !v.is_empty() {
+                self.embedding.api_key = v;
+            }
+        } else if let Ok(v) = std::env::var("OPENAI_API_KEY") {
+            if !v.is_empty() {
+                self.embedding.api_key = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BASE_URL") {
+            if !v.is_empty() {
+                self.embedding.base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
+            match v.parse::<usize>() {
+                Ok(d) => self.embedding.dims = d,
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)"
                 ),
             }
         }
@@ -916,6 +976,77 @@ backend = "ollama"
         // Other embedding fields stay default
         assert_eq!(merged.embedding.model, "embeddinggemma-q4");
         assert_eq!(merged.embedding.max_seq_length, 256);
+    }
+
+    #[test]
+    fn merge_embedding_full_openai_config() {
+        let toml = r#"
+[embedding]
+backend = "openai"
+model = "text-embedding-3-large"
+api_key = "sk-test-123"
+base_url = "https://my-proxy.example.com/v1"
+dims = 3072
+max_seq_length = 8191
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_openai_full.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        assert_eq!(merged.embedding.backend, "openai");
+        assert_eq!(merged.embedding.model, "text-embedding-3-large");
+        assert_eq!(merged.embedding.api_key, "sk-test-123");
+        assert_eq!(merged.embedding.base_url, "https://my-proxy.example.com/v1");
+        assert_eq!(merged.embedding.dims, 3072);
+        assert_eq!(merged.embedding.max_seq_length, 8191);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_overrides_embedding_backend() {
+        std::env::set_var("UTEKE_EMBEDDING_BACKEND", "openai");
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-test");
+        std::env::set_var("UTEKE_EMBEDDING_MODEL", "text-embedding-3-small");
+        std::env::set_var("UTEKE_EMBEDDING_DIMS", "1536");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_EMBEDDING_BACKEND");
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        assert_eq!(cfg.embedding.backend, "openai");
+        assert_eq!(cfg.embedding.api_key, "sk-env-test");
+        assert_eq!(cfg.embedding.model, "text-embedding-3-small");
+        assert_eq!(cfg.embedding.dims, 1536);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_openai_api_key_fallback() {
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::set_var("OPENAI_API_KEY", "sk-fallback");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("OPENAI_API_KEY");
+        assert_eq!(cfg.embedding.api_key, "sk-fallback");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_uteke_api_key_wins_over_openai() {
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-uteke");
+        std::env::set_var("OPENAI_API_KEY", "sk-openai");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("OPENAI_API_KEY");
+        assert_eq!(cfg.embedding.api_key, "sk-uteke");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_invalid_dims_ignored() {
+        std::env::set_var("UTEKE_EMBEDDING_DIMS", "not-a-number");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        assert_eq!(cfg.embedding.dims, 0, "invalid dims should keep default 0");
     }
 
     #[test]

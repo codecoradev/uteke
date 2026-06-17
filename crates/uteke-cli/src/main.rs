@@ -88,14 +88,23 @@ fn main() {
 
     tracing::debug!("Opening store at: {store_path}");
 
-    let uteke = match Uteke::open_with_tier_and_backend(
+    let uteke = match Uteke::open_with_embedding(
         &store_path,
+        &config.embedding.backend,
+        uteke_core::EmbeddingSettings {
+            api_key: config.embedding.api_key.clone(),
+            base_url: config.embedding.base_url.clone(),
+            model: config.embedding.model.clone(),
+            dims: config.embedding.dims,
+        },
         uteke_core::TierConfig {
             hot_days: config.tier.hot_days as i64,
             warm_days: config.tier.warm_days as i64,
             hot_boost: config.tier.hot_boost,
         },
-        &config.embedding.backend,
+        uteke_core::RecallConfig {
+            min_score: config.recall.min_score as f32,
+        },
     ) {
         Ok(u) => u,
         Err(e) => {
