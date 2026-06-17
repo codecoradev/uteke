@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS memories (
     memory_type TEXT NOT NULL DEFAULT 'fact',
     importance REAL NOT NULL DEFAULT 0.5,
     pinned INTEGER NOT NULL DEFAULT 0,
-    content_type TEXT NOT NULL DEFAULT 'text'
+    content_type TEXT NOT NULL DEFAULT 'text',
+    slug TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -55,10 +56,29 @@ CREATE TABLE IF NOT EXISTS graph_edges (
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id);
+
+-- memory_edges: typed auto-wired edges between memories (v8, #346).
+-- Populated by pattern extraction on remember(): [[slug]], @tag, ^id, >uuid,
+-- and legacy metadata.relationships JSON.
+CREATE TABLE IF NOT EXISTS memory_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    edge_type TEXT NOT NULL COLLATE NOCASE,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_id, target_id, edge_type)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
+
+-- slug: stable short identifier for [[slug]] auto-linking (v8, #346).
+-- Populated lazily; uniqueness enforced via partial index where non-null.
+CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 7;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 8;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -262,6 +282,7 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     let importance: f64 = row.get(14).unwrap_or(0.5);
     let pinned: bool = row.get(15).unwrap_or(false);
     let content_type: String = row.get(16).unwrap_or_else(|_| "text".to_string());
+    let slug: Option<String> = row.get(17).ok().flatten();
 
     Ok(Memory {
         id,
@@ -281,6 +302,7 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         importance,
         pinned,
         content_type,
+        slug,
     })
 }
 
@@ -309,6 +331,7 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
         }
     }
 
@@ -331,6 +354,7 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
         }
     }
 
@@ -1335,6 +1359,7 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
         }
     }
 

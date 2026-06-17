@@ -116,6 +116,7 @@ impl crate::Uteke {
             importance: 0.5,
             pinned: false,
             content_type: content_type.to_string(),
+            slug: None,
         };
 
         // Acquire index write lock BEFORE any writes so lock failures are detected early.
@@ -127,6 +128,16 @@ impl crate::Uteke {
             .map_err(|_| Error::lock("index write lock during remember"))?;
 
         self.store.insert(&memory)?;
+
+        // Auto-wire edges for the new memory (v8, #346).
+        // Pattern-based extraction — best-effort, never fails the insert.
+        self.wire_edges(
+            &id,
+            content,
+            tags,
+            &memory.metadata,
+            Some(memory.namespace.as_str()),
+        );
 
         // Invalidate recall cache — new memory may affect future queries
         self.recall_cache.invalidate_namespace(&memory.namespace);

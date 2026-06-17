@@ -1,3 +1,36 @@
+## [Unreleased]
+
+### Added
+
+- **Auto-wired memory edges** (#346)
+  - New `memory_edges` SQLite table (schema v8) for typed edges between
+    memories.
+  - Optional `slug` column on memories for `[[slug]]` Wikilink-style
+    references.
+  - Pattern-based entity extraction on every `remember()` call — zero LLM,
+    pure string parsing:
+    - `[[slug]]` → `references` edge
+    - `@tag` → `tagged_as` edge (most recent memory with that tag)
+    - `^<uuid>` → `supersedes` edge
+    - `><uuid>` → `replies_to` edge
+    - `rel:<type>:<uuid>` (legacy `--meta` form) → `<type>` edge
+  - New `uteke edges <id> [--deep N]` CLI subcommand: lists direct edges or
+    runs BFS across the edge table.
+  - Rewrote `get_related()` to prefer the edge table (indexed SQL) over the
+    old O(n) JSON metadata scan. Legacy path retained as fallback.
+  - Migration v7→v8 backfills existing `metadata.relationships` JSON entries
+    into `memory_edges` rows.
+  - 20 new unit tests (extraction patterns, edge roundtrip, BFS cycle safety,
+    slug/tag resolution).
+
+### Changed
+
+- Schema version v7 → v8.
+- `Memory` struct gains optional `slug: Option<String>` field.
+- Clippy: cleaned up pre-existing `else { if .. }` collapse warnings in
+  `commands/graph.rs` (3 sites) so `cargo clippy --workspace -- -D warnings`
+  now passes cleanly.
+
 ## [0.2.0] — 2026-06-14
 
 ### Added

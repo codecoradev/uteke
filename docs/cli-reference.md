@@ -356,6 +356,35 @@ uteke graph stats
 | `query <relation>` | — | Query edges by relation type |
 | `stats` | — | Show graph statistics |
 
+## uteke edges
+
+List auto-wired edges for a memory (v0.2.1, #346). Edges are auto-extracted from content on every `remember()` call using pure pattern matching — no LLM.
+
+### Supported patterns
+
+| Pattern | Edge type | Resolved via |
+|---------|-----------|--------------|
+| `[[slug]]` | `references` | `memories.slug` lookup |
+| `@tag` | `tagged_as` | most recent memory with that tag |
+| `^<uuid>` | `supersedes` | direct memory UUID |
+| `><uuid>` | `replies_to` | direct memory UUID |
+| `rel:<type>:<uuid>` in `--meta` | `<type>` | direct memory UUID (legacy compat) |
+
+### Usage
+
+```bash
+# List direct edges (both directions)
+uteke edges <memory-id>
+
+# Multi-hop BFS across the edge table
+uteke edges <memory-id> --deep 2
+
+# JSON output
+uteke edges <memory-id> --json
+```
+
+With `--deep N`, returns memory ids reachable within N hops (cycles detected, start excluded).
+
 ## Other Commands
 
 | Command | Description |
