@@ -267,7 +267,10 @@ fn verify_checksum(path: &std::path::Path, filename: &str) -> Result<(), Error> 
     let data = std::fs::read(path).map_err(|e| Error::embed("read file for checksum", e))?;
     let mut hasher = Sha256::new();
     hasher.update(&data);
-    let actual = format!("{:x}", hasher.finalize());
+    let digest = hasher.finalize();
+    // sha2 0.11 dropped the LowerHex impl on the digest Array type, so format
+    // the 32 bytes as lowercase hex manually.
+    let actual: String = digest.iter().map(|b| format!("{b:02x}")).collect();
 
     if actual != expected {
         // Delete corrupted file so next run re-downloads
