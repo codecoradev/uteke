@@ -11,6 +11,7 @@
 
 pub mod chunker;
 mod consolidate;
+mod edges;
 mod embed;
 mod error;
 pub mod graph;
@@ -422,6 +423,7 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -467,6 +469,7 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
         };
 
         let sr = SearchResult {

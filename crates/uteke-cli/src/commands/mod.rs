@@ -2,6 +2,7 @@
 
 mod aging;
 pub(crate) mod bench;
+mod edges;
 mod forget;
 pub(crate) mod graph;
 mod list;
@@ -231,5 +232,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         Commands::Bench { .. } => Ok(()),
 
         Commands::Graph { command } => crate::commands::graph::run(cli, uteke, command),
+
+        Commands::Edges { id, deep } => edges::run(cli, uteke, id, *deep),
     }
 }

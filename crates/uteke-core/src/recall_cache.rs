@@ -218,6 +218,7 @@ mod tests {
                 importance: 0.5,
                 pinned: false,
                 content_type: "text".to_string(),
+                slug: None,
             },
             score: 0.95,
         }];

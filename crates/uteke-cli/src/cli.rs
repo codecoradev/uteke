@@ -284,6 +284,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: GraphCommands,
     },
+    /// List auto-wired edges for a memory (v8, #346)
+    Edges {
+        /// Memory ID (UUID)
+        id: String,
+        /// Multi-hop traversal depth. 0 (default) = list direct edges only.
+        /// N>0 performs BFS across the edge table and returns reachable memory ids.
+        #[arg(long, default_value = "0")]
+        deep: usize,
+    },
 }
 
 /// Subcommands for knowledge graph operations.

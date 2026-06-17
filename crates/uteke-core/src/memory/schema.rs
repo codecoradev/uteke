@@ -163,6 +163,8 @@ impl super::Store {
                 6 => self.migrate_v5_to_v6()?,
                 // v7: Knowledge graph tables (graph_nodes, graph_edges)
                 7 => self.migrate_v6_to_v7()?,
+                // v8: memory_edges table + slug column (auto-wired graph, #346)
+                8 => self.migrate_v7_to_v8()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -357,6 +359,94 @@ impl super::Store {
                 "#,
             )
             .map_err(|e| Error::db("schema migration v6 to v7", e))?;
+        Ok(())
+    }
+
+    /// v8: memory_edges table + slug column (auto-wiring graph, #346).
+    ///
+    /// - Adds `slug TEXT` column to memories (nullable, for opt-in [[slug]] linking).
+    /// - Creates `memory_edges` table for typed edges between memories.
+    /// - Migrates any existing `metadata.relationships` JSON entries into
+    ///   `memory_edges` rows so legacy data is searchable via the new table.
+    fn migrate_v7_to_v8(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v7 to v8: memory_edges + slug column");
+
+        // Add slug column if missing.
+        if !self.column_exists("slug") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN slug TEXT;")
+                .map_err(|e| Error::db("add slug column", e))?;
+        }
+
+        // Create memory_edges table + indices. CREATE IF NOT EXISTS is safe.
+        self.conn
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS memory_edges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    target_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    edge_type TEXT NOT NULL COLLATE NOCASE,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(source_id, target_id, edge_type)
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
+                CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
+                CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
+                CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v7 to v8", e))?;
+
+        // Backfill edges from legacy metadata.relationships JSON.
+        // Shape: { "relationships": [{ "type": "supersedes", "target": "<uuid>" }, ...] }
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, metadata FROM memories")
+            .map_err(|e| Error::db("select memories for edge backfill", e))?;
+        let rows: Vec<(String, Option<String>)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| Error::db("edge backfill query", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut insert_stmt = self
+            .conn
+            .prepare(
+                "INSERT OR IGNORE INTO memory_edges (source_id, target_id, edge_type, created_at) \
+                 SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM memories WHERE id = ?2)",
+            )
+            .map_err(|e| Error::db("prepare edge insert", e))?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut migrated = 0usize;
+        for (source_id, metadata_str) in &rows {
+            let Some(meta_str) = metadata_str.as_deref() else {
+                continue;
+            };
+            let Ok(meta_value) = serde_json::from_str::<serde_json::Value>(meta_str) else {
+                continue;
+            };
+            let Some(rels) = meta_value.get("relationships").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for rel in rels {
+                let Some(rel_type) = rel.get("type").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(target) = rel.get("target").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let rows_changed = insert_stmt
+                    .execute(rusqlite::params![source_id, target, rel_type, now])
+                    .map_err(|e| Error::db("insert edge row", e))?;
+                migrated += rows_changed;
+            }
+        }
+
+        if migrated > 0 {
+            tracing::info!("Backfilled {migrated} edges from legacy metadata.relationships");
+        }
         Ok(())
     }
 }

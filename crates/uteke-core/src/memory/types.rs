@@ -53,6 +53,10 @@ pub struct Memory {
     /// Content type: "text" (default) or "json".
     #[serde(default = "default_content_type")]
     pub content_type: String,
+    /// Optional stable slug for `[[slug]]` auto-linking (v8, #346).
+    /// Populated lazily when a memory is referenced by slug.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
 }
 
 fn default_namespace() -> String {

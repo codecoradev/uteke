@@ -25,15 +25,13 @@ pub fn run(cli: &Cli, uteke: &uteke_core::Uteke, command: &GraphCommands) -> Res
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&filtered).unwrap());
+            } else if filtered.is_empty() {
+                println!("No graph nodes found.");
             } else {
-                if filtered.is_empty() {
-                    println!("No graph nodes found.");
-                } else {
-                    println!("Graph Nodes ({}):", filtered.len());
-                    for node in &filtered {
-                        let etype = node.entity_type.as_deref().unwrap_or("—");
-                        println!("  • {} [{}] ({})", node.label, etype, node.id);
-                    }
+                println!("Graph Nodes ({}):", filtered.len());
+                for node in &filtered {
+                    let etype = node.entity_type.as_deref().unwrap_or("—");
+                    println!("  • {} [{}] ({})", node.label, etype, node.id);
                 }
             }
         }
@@ -53,17 +51,15 @@ pub fn run(cli: &Cli, uteke: &uteke_core::Uteke, command: &GraphCommands) -> Res
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&filtered).unwrap());
+            } else if filtered.is_empty() {
+                println!("No graph edges found.");
             } else {
-                if filtered.is_empty() {
-                    println!("No graph edges found.");
-                } else {
-                    println!("Graph Edges ({}):", filtered.len());
-                    for edge in &filtered {
-                        println!(
-                            "  • {} -[{}]-> {} (w={:.1})",
-                            edge.source_id, edge.relation, edge.target_id, edge.weight
-                        );
-                    }
+                println!("Graph Edges ({}):", filtered.len());
+                for edge in &filtered {
+                    println!(
+                        "  • {} -[{}]-> {} (w={:.1})",
+                        edge.source_id, edge.relation, edge.target_id, edge.weight
+                    );
                 }
             }
         }
@@ -146,17 +142,15 @@ pub fn run(cli: &Cli, uteke: &uteke_core::Uteke, command: &GraphCommands) -> Res
 
             if cli.json {
                 println!("{}", serde_json::to_string_pretty(&triples).unwrap());
+            } else if triples.is_empty() {
+                println!("No edges with relation '{}'", relation);
             } else {
-                if triples.is_empty() {
-                    println!("No edges with relation '{}'", relation);
-                } else {
-                    println!("Relation '{}' ({}):", relation, triples.len());
-                    for t in &triples {
-                        println!(
-                            "  • {} -[{}]-> {} (w={:.1})",
-                            t.source.label, t.edge.relation, t.target.label, t.edge.weight
-                        );
-                    }
+                println!("Relation '{}' ({}):", relation, triples.len());
+                for t in &triples {
+                    println!(
+                        "  • {} -[{}]-> {} (w={:.1})",
+                        t.source.label, t.edge.relation, t.target.label, t.edge.weight
+                    );
                 }
             }
         }

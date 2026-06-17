@@ -131,8 +131,12 @@ impl crate::Uteke {
     }
 
     pub fn get_related(&self, memory_id: &str) -> Result<Vec<Memory>, Error> {
-        let mut related = Vec::new();
-        let mut seen = HashSet::new();
+        // Prefer edge table (v8, #346) — indexed SQL, O(log n) per hop.
+        // Union with legacy JSON metadata scan so we never lose relations
+        // that exist in metadata but not (yet) in the edge table (e.g. a
+        // store that predates v8 auto-wiring, or refs we couldn't resolve).
+        let mut related = self.related_via_edges(memory_id, 1)?;
+        let mut seen: HashSet<String> = related.iter().map(|m| m.id.clone()).collect();
         seen.insert(memory_id.to_string());
 
         if let Some(memory) = self.get_by_id(memory_id)? {
