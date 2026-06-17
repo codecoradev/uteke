@@ -414,7 +414,7 @@ impl super::Store {
             .conn
             .prepare(
                 "INSERT OR IGNORE INTO memory_edges (source_id, target_id, edge_type, created_at) \
-                 VALUES (?1, ?2, ?3, ?4)",
+                 SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM memories WHERE id = ?2)",
             )
             .map_err(|e| Error::db("prepare edge insert", e))?;
 

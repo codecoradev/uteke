@@ -72,8 +72,9 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
 
--- slug: stable short identifier for [[slug]] auto-linking (v8, #346).
--- Populated lazily; uniqueness enforced via partial index where non-null.
+-- slug: short identifier for [[slug]] auto-linking (v8, #346).
+-- Not globally unique — resolution picks the most recently updated match
+-- (see Store::resolve_slug). Use a unique slug per namespace for deterministic links.
 CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
 "#;
 
