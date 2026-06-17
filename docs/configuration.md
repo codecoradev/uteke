@@ -118,7 +118,11 @@ Embedding dimension mismatch: index has 768d vectors but backend 'openai' produc
 Rebuild the index (`uteke repair`) or switch backend.
 ```
 
-To migrate, run `uteke repair` after switching backends — it rebuilds the vector index from the SQLite source of truth using the new backend's embeddings.
+To migrate, run `uteke repair` after switching backends — it rebuilds the vector index from the SQLite source of truth using the new backend's embeddings. Because the dim-mismatch guard will block any embed-based operation on first contact, set `UTEKE_ALLOW_DIM_MISMATCH=1` once to let `uteke repair` open the store with the new backend:
+
+```bash
+UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair
+```
 
 ## Recall Threshold
 

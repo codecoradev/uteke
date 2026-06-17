@@ -494,12 +494,20 @@ impl Uteke {
             // Dim mismatch detection (#337): refuse to silently mix vectors
             // from different backends in one index. Catch it at first use
             // so the user gets a clear error instead of garbage recall.
+            //
+            // Escape hatch: UTEKE_ALLOW_DIM_MISMATCH=1 skips the check so the
+            // user can open the store with a different backend to run
+            // `uteke repair` (which rebuilds vectors with the new backend).
+            // Without this, a user who flips backend on an existing store
+            // can never recover (CodeCora finding #154).
             let backend_dims = embedder.dims();
             let index_dims = self.index.read().map(|i| i.dims()).unwrap_or(backend_dims);
-            if index_dims != backend_dims {
+            if index_dims != backend_dims
+                && std::env::var("UTEKE_ALLOW_DIM_MISMATCH").as_deref() != Ok("1")
+            {
                 return Err(Error::Validation(format!(
                     "Embedding dimension mismatch: index has {index_dims}d vectors but backend '{backend}' produces {backend_dims}d. \
-                     Rebuild the index (`uteke repair`) or switch backend."
+                     Rebuild the index (`UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair`) or switch backend."
                 )));
             }
 
