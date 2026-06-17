@@ -481,22 +481,25 @@ impl crate::Uteke {
                     }
                 },
                 ExtractedRef::Uuid(id, edge_type) => {
-                    // Verify target exists to avoid dangling edges.
-                    match self.store.get_by_id(&id) {
+                    // Verify target exists AND belongs to the same namespace
+                    // (CodeCora #138: UUID edges must not leak across namespaces).
+                    match self.store.get_by_id_in_namespace(&id, namespace) {
                         Ok(Some(_)) => {
                             if id != source_id {
                                 resolved.push((id, edge_type.to_string()));
                             }
                         }
                         Ok(None) => {
-                            tracing::debug!("Auto-edge: uuid '{id}' unresolved, skipped");
+                            tracing::debug!(
+                                "Auto-edge: uuid '{id}' unresolved (missing or cross-namespace), skipped"
+                            );
                         }
                         Err(e) => {
                             tracing::warn!("Auto-edge uuid resolve failed for '{id}': {e}");
                         }
                     }
                 }
-                ExtractedRef::Rel(t, id) => match self.store.get_by_id(&id) {
+                ExtractedRef::Rel(t, id) => match self.store.get_by_id_in_namespace(&id, namespace) {
                     Ok(Some(_)) => {
                         if id != source_id {
                             resolved.push((id, t));
@@ -894,6 +897,10 @@ mod tests {
     /// dispatcher reaches v8 from a fresh DB (which starts at v1 then
     /// loops v2..=v8 via run_migrations). Verifies the migration
     /// v7->v8 is actually invoked, not skipped.
+    /// Regression test for CodeCora finding #136: confirms the migration
+    /// dispatcher reaches v8 from a fresh DB (which starts at v1 then
+    /// loops v2..=v8 via run_migrations). Verifies the migration
+    /// v7->v8 is actually invoked, not skipped.
     #[test]
     fn migration_dispatcher_reaches_v8() {
         let store = Store::open(":memory:").unwrap();
@@ -903,5 +910,28 @@ mod tests {
         // memory_edges table must exist and be queryable after migration.
         let n = store.count_memory_edges().unwrap();
         assert_eq!(n, 0, "fresh store has zero edges but table must exist");
+    }
+
+    /// Regression test for CodeCora finding #138: ^<uuid>, ><uuid>, and
+    /// rel:<type>:<id> auto-edges must NOT resolve across namespace boundaries.
+    /// Slug/tag resolution is already namespace-scoped; this extends the
+    /// invariant to direct UUID references.
+    #[test]
+    fn uuid_edges_respect_namespace_isolation() {
+        let store = Store::open(":memory:").unwrap();
+        let mut a = mem("alpha", &[]);
+        a.namespace = "ns-a".to_string();
+        let mut b = mem("beta", &[]);
+        b.namespace = "ns-b".to_string();
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        // a exists in ns-a only — lookup from ns-b must return None.
+        let cross = store.get_by_id_in_namespace(&a.id, Some("ns-b")).unwrap();
+        assert!(cross.is_none(), "cross-namespace lookup must return None");
+
+        // Same-namespace lookup must still work.
+        let same = store.get_by_id_in_namespace(&a.id, Some("ns-a")).unwrap();
+        assert!(same.is_some(), "same-namespace lookup must succeed");
     }
 }

@@ -123,6 +123,30 @@ impl super::Store {
         Ok(result)
     }
 
+    /// Get a memory by its ID, only if it belongs to `namespace`.
+    ///
+    /// Used by edge auto-wiring (#346) to enforce namespace isolation on
+    /// `^<uuid>` / `><uuid>` / `rel:*:<id>` references. Returns None when the
+    /// memory does not exist OR exists in a different namespace.
+    pub fn get_by_id_in_namespace(
+        &self,
+        id: &str,
+        namespace: Option<&str>,
+    ) -> Result<Option<Memory>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE id = ?1 AND namespace = ?2")
+            .map_err(|e| Error::db("Failed to prepare statement for get_by_id_in_namespace", e))?;
+
+        let result = stmt
+            .query_row(params![id, ns], row_to_memory)
+            .optional()
+            .map_err(|e| Error::db("Failed to get memory by ID in namespace", e))?;
+
+        Ok(result)
+    }
+
     /// Delete a memory by ID. Returns true if a row was deleted.
     pub fn delete(&self, id: &str) -> Result<bool, Error> {
         let deleted = self
