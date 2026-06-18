@@ -307,7 +307,13 @@ impl Store {
     ///
     /// Use this when you want the "Iron Law of Back-Linking": a reference
     /// A→B automatically makes B→A navigable as `referenced_by`.
-    /// Returns whether a new forward row was inserted (backlink is best-effort).
+    ///
+    /// Unlike the auto-wire path (`wire_edges`), this propagates backlink
+    /// failures rather than swallowing them — callers who ask for an edge
+    /// *with backlink* expect bidirectional consistency.
+    ///
+    /// Returns whether a new forward row was inserted (duplicate inserts are
+    /// a no-op for both forward and backlink rows).
     pub fn add_memory_edge_with_backlink(
         &self,
         source_id: &str,
@@ -326,17 +332,18 @@ impl Store {
             .map_err(|e| Error::db("add memory edge (with backlink)", e))?;
         // Always (try to) ensure the inverse, even if the forward row already
         // existed — a previous insert may have happened before #350 shipped.
-        if let Err(e) = self.ensure_backlink(source_id, target_id, edge_type) {
-            tracing::warn!("backlink ensure failed for {source_id}→{target_id} ({edge_type}): {e}");
-        }
+        // Propagate the error: callers explicitly opted into backlinking.
+        self.ensure_backlink(source_id, target_id, edge_type)?;
         Ok(changed > 0)
     }
 
     /// Bulk insert edges. Silently ignores duplicates and dangling targets.
     ///
     /// Each inserted forward edge also receives an automatic `referenced_by`
-    /// backlink (#350). Returns the number of **forward** rows inserted
-    /// (backlinks are best-effort and do not count toward the return value).
+    /// backlink (#350). Backlink failures are propagated (use `wire_edges`
+    /// at the `Uteke` level for best-effort auto-wiring that swallows them).
+    /// Returns the number of **forward** rows inserted (backlinks are
+    /// guaranteed on success and do not count toward the return value).
     pub fn add_memory_edges_batch(
         &self,
         source_id: &str,
@@ -354,12 +361,9 @@ impl Store {
                 )
                 .map_err(|e| Error::db("batch insert memory edge", e))?;
             inserted += changed;
-            // #350: ensure inverse backlink for every forward edge.
-            if let Err(e) = self.ensure_backlink(source_id, target_id, edge_type) {
-                tracing::warn!(
-                    "backlink ensure failed in batch for {source_id}→{target_id} ({edge_type}): {e}"
-                );
-            }
+            // #350: ensure inverse backlink for every forward edge. Errors
+            // propagate so callers know the backlink was not created.
+            self.ensure_backlink(source_id, target_id, edge_type)?;
         }
         Ok(inserted)
     }
