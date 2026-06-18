@@ -342,17 +342,23 @@ impl MemoryType {
     /// | _(none of the above)_ | `Note` |
     pub fn infer_from_content(content: &str) -> Self {
         // Look at the first non-empty line — reference markers are
-        // line-start signals, not body signals.
+        // line-start signals, not body signals. CodeCora #386: previous
+        // code used lower.starts_with on the original content, which made
+        // detection depend on leading whitespace. We now use first_line for
+        // line-start signals.
         let trimmed = content.trim_start();
         let first_line = trimmed.lines().next().unwrap_or("").trim();
         let lower = content.to_ascii_lowercase();
 
-        // Reference: starts with URL scheme or a ref marker.
+        // Reference: starts with URL scheme or a ref marker on the first
+        // non-empty line. Use first_line (not lower) so leading whitespace
+        // doesn't matter.
+        let first_lower = first_line.to_ascii_lowercase();
         if first_line.starts_with("http://")
             || first_line.starts_with("https://")
-            || lower.starts_with("ref:")
-            || lower.starts_with("see:")
-            || lower.starts_with("docs:")
+            || first_lower.starts_with("ref:")
+            || first_lower.starts_with("see:")
+            || first_lower.starts_with("docs:")
         {
             return Self::Reference;
         }
@@ -584,7 +590,12 @@ mod tests {
             MemoryType::Reference
         );
         assert_eq!(
-            MemoryType::infer_from_content("http://example.com/spec"),
+            MemoryType::infer_from_content("https://example.com/spec"),
+            MemoryType::Reference
+        );
+        // Whitespace before ref marker should still match (CodeCora #386).
+        assert_eq!(
+            MemoryType::infer_from_content("  ref: RFC 1234 section 2"),
             MemoryType::Reference
         );
         assert_eq!(
