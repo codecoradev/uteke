@@ -129,7 +129,10 @@ impl crate::Uteke {
 
         self.store.insert(&memory)?;
 
-        // Timeline: record creation (#347). Best-effort, never fails the insert.
+        // Timeline: record creation (#347). This hook lives in the single
+        // shared creation path so every remember() / remember_typed() /
+        // remember_precomputed() / consolidate() call records a Created
+        // event. Best-effort, never fails the insert.
         self.try_timeline_event(&id, crate::timeline::TimelineEventType::Created, None);
 
         // Auto-wire edges for the new memory (v8, #346).
