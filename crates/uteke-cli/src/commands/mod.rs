@@ -235,6 +235,12 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
 
         Commands::Graph { command } => crate::commands::graph::run(cli, uteke, command),
 
-        Commands::Edges { id, deep } => edges::run(cli, uteke, id, *deep),
+        Commands::Edges {
+            id,
+            deep,
+            direction,
+        } => edges::run(cli, uteke, id, *deep, direction),
+
+        Commands::RebuildBacklinks { quiet } => edges::run_rebuild_backlinks(cli, uteke, *quiet),
     }
 }

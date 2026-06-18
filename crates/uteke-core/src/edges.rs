@@ -30,6 +30,36 @@ pub const EDGE_TAGGED_AS: &str = "tagged_as";
 pub const EDGE_SUPERSEDES: &str = "supersedes";
 /// Edge type for `><uuid>` (replies_to).
 pub const EDGE_REPLIES_TO: &str = "replies_to";
+/// Inverse edge type created automatically by backlink auto-generation (#350).
+///
+/// Whenever `(A → B, references)` is inserted, `ensure_backlink()` also inserts
+/// `(B → A, referenced_by)` so the graph is navigable in both directions.
+pub const EDGE_REFERENCED_BY: &str = "referenced_by";
+
+/// Edge types that should receive an auto-generated `referenced_by` backlink (#350).
+///
+/// Backlinks are only generated for the forward link types listed here. Inverse
+/// types (like `referenced_by` itself) are intentionally excluded to avoid
+/// infinite ping-pong.
+const BACKLINKED_EDGE_TYPES: &[&str] = &[
+    EDGE_REFERENCES,
+    EDGE_TAGGED_AS,
+    EDGE_SUPERSEDES,
+    EDGE_REPLIES_TO,
+];
+
+/// Return the backlink edge type for a forward edge type, if any (#350).
+///
+/// `references` → `referenced_by`. Other forward types currently map to
+/// `referenced_by` as well; if finer-grained inverses are needed later,
+/// extend this function.
+pub fn backlink_type_for(edge_type: &str) -> Option<&'static str> {
+    if BACKLINKED_EDGE_TYPES.contains(&edge_type) {
+        Some(EDGE_REFERENCED_BY)
+    } else {
+        None
+    }
+}
 
 /// A single typed edge between two memories.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,6 +242,10 @@ fn looks_like_uuid(s: &str) -> bool {
 
 impl Store {
     /// Insert a single edge. Silently ignores duplicates (UNIQUE constraint).
+    ///
+    /// This is the low-level store primitive. It does **not** generate a
+    /// backlink. Use [`Uteke::link_memories`] / auto-wiring for the
+    /// bidirectional behavior required by #350.
     pub fn add_memory_edge(
         &self,
         source_id: &str,
@@ -233,25 +267,144 @@ impl Store {
         Ok(())
     }
 
+    /// Idempotently insert the inverse `referenced_by` edge for a forward
+    /// edge `(source → target, edge_type)` (#350).
+    ///
+    /// Only forward link types (see [`BACKLINKED_EDGE_TYPES`]) receive a
+    /// backlink. Calling this on an already-backlinked type (or on a pair
+    /// that already has the backlink) is a no-op thanks to the table's
+    /// `UNIQUE(source_id, target_id, edge_type)` constraint.
+    ///
+    /// Returns `true` if a new backlink row was inserted.
+    pub fn ensure_backlink(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        edge_type: &str,
+    ) -> Result<bool, Error> {
+        let Some(backlink_type) = backlink_type_for(edge_type) else {
+            return Ok(false);
+        };
+        // target → source with the inverse type. Avoid self-loops: a memory
+        // referencing itself should not produce a `referenced_by` echo.
+        if source_id == target_id {
+            return Ok(false);
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let changed = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO memory_edges
+                    (source_id, target_id, edge_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![target_id, source_id, backlink_type, now],
+            )
+            .map_err(|e| Error::db("ensure backlink", e))?;
+        Ok(changed > 0)
+    }
+
+    /// Idempotently insert a forward edge **and** its backlink (#350).
+    ///
+    /// Use this when you want the "Iron Law of Back-Linking": a reference
+    /// A→B automatically makes B→A navigable as `referenced_by`.
+    ///
+    /// Unlike the auto-wire path (`wire_edges`), this propagates backlink
+    /// failures rather than swallowing them — callers who ask for an edge
+    /// *with backlink* expect bidirectional consistency.
+    ///
+    /// Both inserts run inside a single SQLite transaction so the edge pair
+    /// is atomic: if the backlink fails, the forward insert is rolled back.
+    ///
+    /// Returns whether a new forward row was inserted (duplicate inserts are
+    /// a no-op for both forward and backlink rows).
+    pub fn add_memory_edge_with_backlink(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        edge_type: &str,
+    ) -> Result<bool, Error> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin edge tx", e))?;
+        let changed = tx
+            .execute(
+                "INSERT OR IGNORE INTO memory_edges
+                    (source_id, target_id, edge_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![source_id, target_id, edge_type, now],
+            )
+            .map_err(|e| Error::db("add memory edge (with backlink)", e))?;
+        // Insert the inverse inside the same transaction. If this fails the
+        // whole tx is rolled back and the caller observes the error with no
+        // partial state left behind.
+        let Some(backlink_type) = backlink_type_for(edge_type) else {
+            tx.commit()
+                .map_err(|e| Error::db("commit edge tx (no backlink)", e))?;
+            return Ok(changed > 0);
+        };
+        if source_id != target_id {
+            tx.execute(
+                "INSERT OR IGNORE INTO memory_edges
+                    (source_id, target_id, edge_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![target_id, source_id, backlink_type, now],
+            )
+            .map_err(|e| Error::db("ensure backlink (tx)", e))?;
+        }
+        tx.commit().map_err(|e| Error::db("commit edge tx", e))?;
+        Ok(changed > 0)
+    }
+
     /// Bulk insert edges. Silently ignores duplicates and dangling targets.
+    ///
+    /// Each inserted forward edge also receives an automatic `referenced_by`
+    /// backlink (#350). All inserts run inside a single transaction so the
+    /// batch is atomic — on failure, no partial state is left behind.
+    ///
+    /// Backlink failures are propagated (use `wire_edges` at the `Uteke`
+    /// level for best-effort auto-wiring that swallows them).
+    ///
+    /// Returns the number of **forward** rows inserted (backlinks are
+    /// guaranteed on success and do not count toward the return value).
     pub fn add_memory_edges_batch(
         &self,
         source_id: &str,
         edges: &[(String, String)],
     ) -> Result<usize, Error> {
         let now = chrono::Utc::now().to_rfc3339();
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin batch edge tx", e))?;
         let mut inserted = 0usize;
         for (target_id, edge_type) in edges {
-            let changed = self
-                .conn
+            let changed = tx
                 .execute(
-                    "INSERT OR IGNORE INTO memory_edges (source_id, target_id, edge_type, created_at)
+                    "INSERT OR IGNORE INTO memory_edges
+                        (source_id, target_id, edge_type, created_at)
                      VALUES (?1, ?2, ?3, ?4)",
                     params![source_id, target_id, edge_type, now],
                 )
                 .map_err(|e| Error::db("batch insert memory edge", e))?;
             inserted += changed;
+            // #350: ensure inverse backlink for every forward edge inside the
+            // same transaction so the whole batch commits atomically.
+            if let Some(backlink_type) = backlink_type_for(edge_type) {
+                if source_id != target_id {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO memory_edges
+                            (source_id, target_id, edge_type, created_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![target_id, source_id, backlink_type, now],
+                    )
+                    .map_err(|e| Error::db("batch ensure backlink", e))?;
+                }
+            }
         }
+        tx.commit()
+            .map_err(|e| Error::db("commit batch edge tx", e))?;
         Ok(inserted)
     }
 
@@ -421,6 +574,72 @@ impl Store {
         Ok(ordered)
     }
 
+    /// Rebuild all `referenced_by` backlinks from existing forward edges (#350).
+    ///
+    /// Scans every row in `memory_edges` whose `edge_type` is a backlinkable
+    /// forward type (see [`BACKLINKED_EDGE_TYPES`]) and ensures the inverse
+    /// `(target → source, referenced_by)` row exists. Idempotent.
+    ///
+    /// Returns the number of new backlink rows inserted.
+    pub fn rebuild_backlinks(&self) -> Result<usize, Error> {
+        // Collect all forward edges first to avoid holding a read cursor
+        // while we write backlinks into the same table.
+        //
+        // BACKLINKED_EDGE_TYPES is fixed at 4 entries (references, tagged_as,
+        // supersedes, replies_to) — we bind them positionally.
+        debug_assert_eq!(
+            BACKLINKED_EDGE_TYPES.len(),
+            4,
+            "update rebuild_backlinks SQL if backlinked types change"
+        );
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT source_id, target_id FROM memory_edges
+                 WHERE edge_type IN (?1, ?2, ?3, ?4)",
+            )
+            .map_err(|e| Error::db("prepare rebuild backlinks scan", e))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map(
+                params![
+                    BACKLINKED_EDGE_TYPES[0],
+                    BACKLINKED_EDGE_TYPES[1],
+                    BACKLINKED_EDGE_TYPES[2],
+                    BACKLINKED_EDGE_TYPES[3],
+                ],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .map_err(|e| Error::db("rebuild backlinks scan", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("rebuild backlinks row iteration", e))?;
+
+        let mut created = 0usize;
+        let now = chrono::Utc::now().to_rfc3339();
+        // Wrap the repair pass in a single transaction so either all missing
+        // backlinks are written or none are (no partial repair state).
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin rebuild backlinks tx", e))?;
+        for (source_id, target_id) in rows {
+            if source_id == target_id {
+                continue;
+            }
+            let changed = tx
+                .execute(
+                    "INSERT OR IGNORE INTO memory_edges
+                        (source_id, target_id, edge_type, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![target_id, source_id, EDGE_REFERENCED_BY, now],
+                )
+                .map_err(|e| Error::db("rebuild backlinks insert", e))?;
+            created += changed;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit rebuild backlinks tx", e))?;
+        Ok(created)
+    }
+
     /// Count total edges in the store.
     pub fn count_memory_edges(&self) -> Result<usize, Error> {
         let n: i64 = self
@@ -537,6 +756,41 @@ impl crate::Uteke {
     /// Total edge count across the store.
     pub fn count_edges(&self) -> Result<usize, Error> {
         self.store.count_memory_edges()
+    }
+
+    /// Manually link two memories with an edge type, **and** generate the
+    /// `referenced_by` backlink automatically (#350).
+    ///
+    /// Public API for explicit edges (e.g. from CLI or API callers). The
+    /// forward edge is `(source → target, edge_type)`; the backlink is
+    /// `(target → source, referenced_by)`.
+    ///
+    /// Idempotent: calling twice with the same arguments inserts nothing new.
+    /// Returns `true` if the **forward** edge was newly inserted.
+    pub fn link_memories(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        edge_type: &str,
+    ) -> Result<bool, Error> {
+        self.store
+            .add_memory_edge_with_backlink(source_id, target_id, edge_type)
+    }
+
+    /// Rebuild all `referenced_by` backlinks from existing forward edges (#350).
+    ///
+    /// Scans every row in `memory_edges` whose `edge_type` is a backlinkable
+    /// forward type (see [`BACKLINKED_EDGE_TYPES`]) and ensures the inverse
+    /// `(target → source, referenced_by)` row exists. Idempotent: running it
+    /// twice produces no additional rows.
+    ///
+    /// Returns the number of new backlink rows inserted. Use after upgrading
+    /// a store from a pre-#350 version, or any time edges were inserted via
+    /// the low-level `add_memory_edge` (which skips backlinks).
+    pub fn rebuild_backlinks(&self) -> Result<usize, Error> {
+        let created = self.store.rebuild_backlinks()?;
+        tracing::info!("rebuild_backlinks: created {created} new backlink edges");
+        Ok(created)
     }
 
     /// Get related memories via edge table (replaces O(n) JSON scan).
@@ -758,14 +1012,37 @@ mod tests {
         store
             .add_memory_edge(&a.id, &b.id, EDGE_REFERENCES)
             .unwrap();
-        // Second identical insert must be a no-op.
+        // Second identical insert via the batch path (which now also ensures
+        // a #350 backlink) must still report 0 *new forward* rows — the
+        // forward edge is a duplicate. The backlink is best-effort and does
+        // not count toward the returned count.
         let n = store
             .add_memory_edges_batch(&a.id, &[(b.id.clone(), EDGE_REFERENCES.to_string())])
             .unwrap();
-        assert_eq!(n, 0, "duplicate insert should change 0 rows");
+        assert_eq!(n, 0, "duplicate forward insert should change 0 rows");
 
+        // Only the forward edge was created via add_memory_edge (no backlink).
+        // The subsequent add_memory_edges_batch call ALSO ensured the #350
+        // backlink, so a now has 1 incoming referenced_by from b.
         let edges = store.list_memory_edges(&a.id).unwrap();
-        assert_eq!(edges.total(), 1);
+        assert_eq!(edges.outgoing.len(), 1, "a has one outgoing forward edge");
+        assert_eq!(
+            edges.incoming.len(),
+            1,
+            "a has one incoming backlink (from batch call)"
+        );
+
+        // b has no outgoing edges; one incoming forward edge; one outgoing
+        // `referenced_by` backlink to a (#350).
+        let b_edges = store.list_memory_edges(&b.id).unwrap();
+        assert_eq!(b_edges.incoming.len(), 1, "b has one incoming forward edge");
+        assert!(
+            b_edges
+                .outgoing
+                .iter()
+                .any(|e| { e.edge_type == EDGE_REFERENCED_BY && e.target_id == a.id }),
+            "b should have a referenced_by backlink to a (#350)"
+        );
     }
 
     #[test]
@@ -934,5 +1211,312 @@ mod tests {
         // Same-namespace lookup must still work.
         let same = store.get_by_id_in_namespace(&a.id, Some("ns-a")).unwrap();
         assert!(same.is_some(), "same-namespace lookup must succeed");
+    }
+
+    // ── #350: backlink auto-generation tests ─────────────────────────────
+
+    #[test]
+    fn backlink_type_for_forward_types() {
+        assert_eq!(backlink_type_for(EDGE_REFERENCES), Some(EDGE_REFERENCED_BY));
+        assert_eq!(backlink_type_for(EDGE_TAGGED_AS), Some(EDGE_REFERENCED_BY));
+        assert_eq!(backlink_type_for(EDGE_SUPERSEDES), Some(EDGE_REFERENCED_BY));
+        assert_eq!(backlink_type_for(EDGE_REPLIES_TO), Some(EDGE_REFERENCED_BY));
+        // Inverse type itself is NOT backlinked (avoid ping-pong).
+        assert_eq!(backlink_type_for(EDGE_REFERENCED_BY), None);
+        // Custom/unknown type — no backlink.
+        assert_eq!(backlink_type_for("part_of"), None);
+    }
+
+    #[test]
+    fn ensure_backlink_creates_inverse() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        // (a → b, references) backlinked to (b → a, referenced_by).
+        let created = store
+            .ensure_backlink(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        assert!(created, "first ensure_backlink should insert a row");
+
+        // b should now have an outgoing referenced_by pointing back to a.
+        let b_edges = store.list_memory_edges(&b.id).unwrap();
+        assert_eq!(b_edges.outgoing.len(), 1);
+        assert_eq!(b_edges.outgoing[0].edge_type, EDGE_REFERENCED_BY);
+        assert_eq!(b_edges.outgoing[0].target_id, a.id);
+
+        // a should see it as incoming.
+        let a_edges = store.list_memory_edges(&a.id).unwrap();
+        assert_eq!(a_edges.incoming.len(), 1);
+        assert_eq!(a_edges.incoming[0].edge_type, EDGE_REFERENCED_BY);
+        assert_eq!(a_edges.incoming[0].source_id, b.id);
+    }
+
+    #[test]
+    fn ensure_backlink_is_idempotent() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        let first = store
+            .ensure_backlink(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        let second = store
+            .ensure_backlink(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        assert!(first, "first call inserts");
+        assert!(!second, "second call is a no-op (idempotent)");
+
+        // Still only one backlink row.
+        let b_edges = store.list_memory_edges(&b.id).unwrap();
+        let backlinks: Vec<_> = b_edges
+            .outgoing
+            .iter()
+            .filter(|e| e.edge_type == EDGE_REFERENCED_BY)
+            .collect();
+        assert_eq!(backlinks.len(), 1, "no duplicate backlinks");
+    }
+
+    #[test]
+    fn ensure_backlink_skips_inverse_and_unknown_types() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        // referenced_by is itself an inverse — no meta-backlink.
+        let created = store
+            .ensure_backlink(&a.id, &b.id, EDGE_REFERENCED_BY)
+            .unwrap();
+        assert!(!created, "backlinking a backlink type must be a no-op");
+
+        // Unknown / non-standard forward type — no backlink.
+        let created = store.ensure_backlink(&a.id, &b.id, "part_of").unwrap();
+        assert!(!created, "unknown edge type should not produce a backlink");
+    }
+
+    #[test]
+    fn ensure_backlink_skips_self_loop() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        store.insert(&a).unwrap();
+
+        let created = store
+            .ensure_backlink(&a.id, &a.id, EDGE_REFERENCES)
+            .unwrap();
+        assert!(!created, "self-referencing backlink must be skipped");
+        let edges = store.list_memory_edges(&a.id).unwrap();
+        assert_eq!(edges.total(), 0, "no rows inserted for a self-loop");
+    }
+
+    #[test]
+    fn add_memory_edge_with_backlink_creates_both() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        let inserted = store
+            .add_memory_edge_with_backlink(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        assert!(inserted, "forward edge was inserted");
+
+        // Forward.
+        let a_edges = store.list_memory_edges(&a.id).unwrap();
+        assert_eq!(a_edges.outgoing.len(), 1);
+        assert_eq!(a_edges.outgoing[0].edge_type, EDGE_REFERENCES);
+        assert_eq!(a_edges.outgoing[0].target_id, b.id);
+
+        // Backlink.
+        let b_edges = store.list_memory_edges(&b.id).unwrap();
+        assert_eq!(b_edges.incoming.len(), 1, "b has incoming forward edge");
+        let backlinks: Vec<_> = b_edges
+            .outgoing
+            .iter()
+            .filter(|e| e.edge_type == EDGE_REFERENCED_BY)
+            .collect();
+        assert_eq!(backlinks.len(), 1, "b has one referenced_by backlink to a");
+        assert_eq!(backlinks[0].target_id, a.id);
+    }
+
+    #[test]
+    fn add_memory_edge_with_backlink_idempotent() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        let first = store
+            .add_memory_edge_with_backlink(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        let second = store
+            .add_memory_edge_with_backlink(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        assert!(first, "first call inserts");
+        assert!(!second, "second call is a no-op for the forward edge");
+
+        let a_edges = store.list_memory_edges(&a.id).unwrap();
+        assert_eq!(a_edges.outgoing.len(), 1, "still one forward edge");
+        let b_edges = store.list_memory_edges(&b.id).unwrap();
+        let backlinks: Vec<_> = b_edges
+            .outgoing
+            .iter()
+            .filter(|e| e.edge_type == EDGE_REFERENCED_BY)
+            .collect();
+        assert_eq!(backlinks.len(), 1, "still one backlink");
+    }
+
+    #[test]
+    fn batch_insert_generates_backlinks() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        let c = mem("c", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+        store.insert(&c).unwrap();
+
+        let n = store
+            .add_memory_edges_batch(
+                &a.id,
+                &[
+                    (b.id.clone(), EDGE_REFERENCES.to_string()),
+                    (c.id.clone(), EDGE_REFERENCES.to_string()),
+                ],
+            )
+            .unwrap();
+        assert_eq!(n, 2, "two forward edges inserted");
+
+        // Each target should have a referenced_by backlink to a.
+        for target in [&b.id, &c.id] {
+            let edges = store.list_memory_edges(target).unwrap();
+            let has_backlink = edges
+                .outgoing
+                .iter()
+                .any(|e| e.edge_type == EDGE_REFERENCED_BY && e.target_id == a.id);
+            assert!(
+                has_backlink,
+                "target {} should have a referenced_by backlink to a",
+                &target[..8]
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_backlinks_from_existing_forward_edges() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        let c = mem("c", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+        store.insert(&c).unwrap();
+
+        // Use the low-level add_memory_edge which does NOT create backlinks.
+        store
+            .add_memory_edge(&a.id, &b.id, EDGE_REFERENCES)
+            .unwrap();
+        store
+            .add_memory_edge(&a.id, &c.id, EDGE_REFERENCES)
+            .unwrap();
+        // One backlink-type edge already present (should be left untouched).
+        store
+            .add_memory_edge(&b.id, &a.id, EDGE_REFERENCED_BY)
+            .unwrap();
+
+        let created = store.rebuild_backlinks().unwrap();
+        // Backlinks expected: (b→a) already present, (c→a) missing.
+        assert_eq!(
+            created, 1,
+            "exactly one new backlink (c→a) should be created"
+        );
+
+        // Running again must be a no-op.
+        let again = store.rebuild_backlinks().unwrap();
+        assert_eq!(again, 0, "rebuild_backlinks is idempotent");
+
+        // Both targets now have backlinks to a.
+        for target in [&b.id, &c.id] {
+            let edges = store.list_memory_edges(target).unwrap();
+            let has_backlink = edges
+                .outgoing
+                .iter()
+                .any(|e| e.edge_type == EDGE_REFERENCED_BY && e.target_id == a.id);
+            assert!(
+                has_backlink,
+                "target {} backlinked to a after rebuild",
+                &target[..8]
+            );
+        }
+    }
+
+    #[test]
+    fn rebuild_backlinks_ignores_non_forward_types() {
+        let store = Store::open(":memory:").unwrap();
+        let a = mem("a", &[]);
+        let b = mem("b", &[]);
+        store.insert(&a).unwrap();
+        store.insert(&b).unwrap();
+
+        // Only a referenced_by edge exists (no forward edge). Rebuild should
+        // not create a second inverse edge.
+        store
+            .add_memory_edge(&a.id, &b.id, EDGE_REFERENCED_BY)
+            .unwrap();
+        let created = store.rebuild_backlinks().unwrap();
+        assert_eq!(created, 0, "non-forward types are not backlinked");
+    }
+
+    #[test]
+    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
+    fn wire_edges_generates_backlinks() {
+        // End-to-end: Uteke::wire_edges should produce backlinks because it
+        // goes through add_memory_edges_batch (now backlink-aware).
+        let uteke = crate::Uteke::open(":memory:").unwrap();
+
+        // Create target memory first so the ^<uuid> reference resolves.
+        let target = uteke
+            .remember("target memory", &[], None, Some("default"))
+            .unwrap();
+
+        // Source memory references the target via ^<uuid> (supersedes).
+        // wire_edges resolves this to an EDGE_SUPERSEDES forward edge, which
+        // is backlinkable (#350).
+        let source = uteke
+            .remember(
+                &format!("new version ^{}", target),
+                &[],
+                None,
+                Some("default"),
+            )
+            .unwrap();
+
+        // Forward edge: source → target (supersedes).
+        let src_edges = uteke.edges_for(&source).unwrap();
+        assert!(
+            src_edges
+                .outgoing
+                .iter()
+                .any(|e| { e.edge_type == EDGE_SUPERSEDES && e.target_id == target }),
+            "expected forward supersedes edge source → target"
+        );
+
+        // Backlink edge: target → source (referenced_by).
+        let tgt_edges = uteke.edges_for(&target).unwrap();
+        let has_backlink = tgt_edges
+            .outgoing
+            .iter()
+            .any(|e| e.edge_type == EDGE_REFERENCED_BY && e.target_id == source);
+        assert!(
+            has_backlink,
+            "expected referenced_by backlink target → source (#350)"
+        );
     }
 }

@@ -408,11 +408,36 @@ uteke edges <memory-id>
 # Multi-hop BFS across the edge table
 uteke edges <memory-id> --deep 2
 
+# Only show incoming edges (backlinks)
+uteke edges <memory-id> --direction incoming
+
 # JSON output
 uteke edges <memory-id> --json
 ```
 
 With `--deep N`, returns memory ids reachable within N hops (cycles detected, start excluded).
+
+`--direction` accepts `incoming`, `outgoing`, or `both` (default `both`).
+
+## uteke rebuild-backlinks
+
+Rebuild `referenced_by` backlinks from existing forward edges (v0.2.1, #350).
+
+Every forward edge (`references`, `tagged_as`, `supersedes`, `replies_to`)
+automatically gets an inverse `referenced_by` edge on `remember()`. This
+command repairs stores that pre-date #350, or were written to via the
+low-level edge API. Idempotent.
+
+```bash
+# Rebuild and print a summary
+uteke rebuild-backlinks
+
+# Print only the count of new backlinks (script-friendly)
+uteke rebuild-backlinks --quiet
+
+# JSON output
+uteke rebuild-backlinks --json
+```
 
 ## Other Commands
 
