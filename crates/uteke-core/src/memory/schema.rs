@@ -165,6 +165,8 @@ impl super::Store {
                 7 => self.migrate_v6_to_v7()?,
                 // v8: memory_edges table + slug column (auto-wired graph, #346)
                 8 => self.migrate_v7_to_v8()?,
+                // v9: timeline_events table (per-memory audit log, #347)
+                9 => self.migrate_v8_to_v9()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -447,6 +449,33 @@ impl super::Store {
         if migrated > 0 {
             tracing::info!("Backfilled {migrated} edges from legacy metadata.relationships");
         }
+        Ok(())
+    }
+
+    /// v9: timeline_events table (#347).
+    ///
+    /// Append-only audit trail per memory (created, updated, recalled,
+    /// consolidated, tagged, forgot). Table is created in the SCHEMA constant
+    /// for fresh stores; this migration is for upgrading existing v8 stores.
+    /// No data backfill — timeline tracking starts from this version forward.
+    fn migrate_v8_to_v9(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v8 to v9: timeline_events table");
+        self.conn
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS timeline_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
+                CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
+                CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v8 to v9", e))?;
         Ok(())
     }
 }

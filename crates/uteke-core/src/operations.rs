@@ -129,6 +129,9 @@ impl crate::Uteke {
 
         self.store.insert(&memory)?;
 
+        // Timeline: record creation (#347). Best-effort, never fails the insert.
+        self.try_timeline_event(&id, crate::timeline::TimelineEventType::Created, None);
+
         // Auto-wire edges for the new memory (v8, #346).
         // Pattern-based extraction — best-effort, never fails the insert.
         self.wire_edges(

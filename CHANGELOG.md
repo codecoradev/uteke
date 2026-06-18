@@ -2,6 +2,21 @@
 
 ### Added
 
+- **Timeline event tracking** (#347)
+  - New `crates/uteke-core/src/timeline.rs` module: append-only audit log
+    per memory in the `timeline_events` table (schema v9).
+  - Event types: `created`, `updated`, `recalled`, `consolidated`, `tagged`,
+    `forgot`. Each event has optional JSON `event_data`.
+  - Store methods: `add_timeline_event`, `list_timeline_events`,
+    `count_timeline_events`.
+  - Uteke methods: `timeline(memory_id, limit)`,
+    `count_timeline_events(memory_id)`, `try_timeline_event()` (best-effort
+    append that never fails the primary operation).
+  - Auto-emission: `remember_precomputed` now emits a `created` event.
+  - CLI: new `uteke timeline <id> [--limit N]` command (default 20 events).
+  - Schema migration v8 → v9 (idempotent, no data backfill — timeline
+    tracking starts from this version forward).
+
 - **Backlink auto-generation** (#350)
   - Bidirectional links: whenever memory A creates a forward edge to B
     (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse

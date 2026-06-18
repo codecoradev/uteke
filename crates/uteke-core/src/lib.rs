@@ -22,6 +22,7 @@ pub mod memory;
 mod operations;
 mod recall_cache;
 mod rooms;
+mod timeline;
 mod types;
 
 pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
@@ -41,6 +42,7 @@ pub use memory::{
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
 };
+pub use timeline::{TimelineEvent, TimelineEventType};
 
 pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};

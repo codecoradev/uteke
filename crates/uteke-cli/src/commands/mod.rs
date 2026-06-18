@@ -13,6 +13,7 @@ mod remember;
 mod room;
 mod server;
 mod tags;
+mod timeline;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
@@ -242,5 +243,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         } => edges::run(cli, uteke, id, *deep, direction),
 
         Commands::RebuildBacklinks { quiet } => edges::run_rebuild_backlinks(cli, uteke, *quiet),
+
+        Commands::Timeline { id, limit } => timeline::run(cli, uteke, id, *limit),
     }
 }
