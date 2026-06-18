@@ -615,12 +615,17 @@ impl Store {
 
         let mut created = 0usize;
         let now = chrono::Utc::now().to_rfc3339();
+        // Wrap the repair pass in a single transaction so either all missing
+        // backlinks are written or none are (no partial repair state).
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin rebuild backlinks tx", e))?;
         for (source_id, target_id) in rows {
             if source_id == target_id {
                 continue;
             }
-            let changed = self
-                .conn
+            let changed = tx
                 .execute(
                     "INSERT OR IGNORE INTO memory_edges
                         (source_id, target_id, edge_type, created_at)
@@ -630,6 +635,8 @@ impl Store {
                 .map_err(|e| Error::db("rebuild backlinks insert", e))?;
             created += changed;
         }
+        tx.commit()
+            .map_err(|e| Error::db("commit rebuild backlinks tx", e))?;
         Ok(created)
     }
 
