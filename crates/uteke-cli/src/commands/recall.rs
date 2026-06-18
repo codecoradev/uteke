@@ -3,7 +3,7 @@
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::output;
-use uteke_core::Uteke;
+use uteke_core::{RecallStrategy, Uteke};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_recall(
@@ -17,6 +17,7 @@ pub(crate) fn run_recall(
     category: Option<&str>,
     min: Option<f32>,
     strict: bool,
+    strategy: Option<&str>,
     config: &Config,
     related: bool,
     depth: usize,
@@ -40,6 +41,18 @@ pub(crate) fn run_recall(
         Some(tag_refs.as_slice())
     };
 
+    // Resolve strategy: --strategy flag > config [recall].default_strategy
+    // > built-in default ("vector"). Unknown values fall back to vector with
+    // a warning so a typo never silently changes recall semantics.
+    let strategy_name = strategy.unwrap_or(&config.recall.default_strategy);
+    let resolved_strategy = match RecallStrategy::from_str_opt(strategy_name) {
+        Some(s) => s,
+        None => {
+            tracing::warn!("Unknown recall strategy '{strategy_name}', falling back to vector");
+            RecallStrategy::Vector
+        }
+    };
+
     // Time-travel mode: parse --at as RFC3339 and use recall_at_time
     let results = if let Some(at_str) = at {
         let point_in_time = chrono::DateTime::parse_from_rfc3339(at_str)
@@ -60,8 +73,12 @@ pub(crate) fn run_recall(
             .recall_related(query, limit, tags_filter, ns, min_score, depth)
             .map_err(|e| format!("Failed to recall: {e}"))?
     } else {
+        // recall_hybrid dispatches to recall() (vector), recall_fts5_only(),
+        // recall_rrf() (hybrid), or recall_rrf()+graph reranking (graph) based
+        // on the resolved strategy. Caching is strategy-keyed, so each
+        // strategy maintains its own cache (#378).
         uteke
-            .recall(query, limit, tags_filter, ns, min_score)
+            .recall_hybrid(query, limit, tags_filter, ns, resolved_strategy, min_score)
             .map_err(|e| format!("Failed to recall: {e}"))?
     };
 

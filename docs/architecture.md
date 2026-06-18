@@ -118,13 +118,25 @@ Read-heavy workload: recall/search operations far outnumber remember/forget. Mul
 
 Two systems with incompatible score scales (cosine 0..1 vs BM25 unbounded). Reciprocal Rank Fusion solves this by ranking based on position, not score magnitude. k=60 is the standard literature value.
 
+### Graph-Augmented Reranking (#378)
+
+The `graph` recall strategy layers graph signals on top of the RRF result.
+`compute_graph_signals()` issues a single batched query over `memory_edges`
+(derived from `[[slug]]` / `@tag` / `^id` auto-wiring, #346) and computes
+per-memory density/authority counts. `rerank_with_graph()` then applies an
+additive, log-scaled boost (`ln(1+x) * weight`) so well-connected memories
+drift upward while isolated ones are untouched. The boost saturates quickly
+(going 1→10 edges ≈ 100→1000 in lift), preventing hub dominance. The recall
+cache is strategy-keyed, so `graph` entries never collide with `hybrid`/
+`vector`/`fts5`.
+
 ### Atomic File Writes
 
 All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, `rename` is atomic — a crash mid-write never leaves a corrupt file, only the old version.
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v7 (knowledge graph tables — `graph_nodes` + `graph_edges`). Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column (text vs json), v7 knowledge graph. Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v8 (auto-wired `memory_edges` table + `slug` column, #346). Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column (text vs json), v7 knowledge graph (`graph_nodes` + `graph_edges`), v8 `memory_edges` + `slug`. Zero data loss guaranteed.
 
 ### Rooms
 

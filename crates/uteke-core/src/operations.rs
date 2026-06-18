@@ -317,6 +317,21 @@ impl crate::Uteke {
             RecallStrategy::Hybrid => {
                 self.recall_rrf(query, limit, tags_filter, namespace, min_score)?
             }
+            // Graph (#378): hybrid RRF, then fuse graph-signal boosts.
+            // The boost is additive + log-scaled, so isolated memories are
+            // untouched and well-connected memories drift upward. Reranking
+            // happens *before* caching so cache entries store the final scores.
+            RecallStrategy::Graph => {
+                let rrf = self.recall_rrf(query, limit, tags_filter, namespace, min_score)?;
+                if self.graph_rerank_config.enabled && !rrf.is_empty() {
+                    let ids: Vec<String> = rrf.iter().map(|r| r.memory.id.clone()).collect();
+                    let signals =
+                        crate::graph_rerank::compute_graph_signals(&self.store.conn, &ids)?;
+                    crate::graph_rerank::rerank_with_graph(rrf, &signals, &self.graph_rerank_config)
+                } else {
+                    rrf
+                }
+            }
         };
 
         // Cache results for future queries (without min_score filtering,

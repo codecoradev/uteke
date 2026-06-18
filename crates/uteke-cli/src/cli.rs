@@ -96,6 +96,11 @@ pub enum Commands {
         /// Use strict threshold from config (min_score_strict)
         #[arg(long)]
         strict: bool,
+        /// Recall strategy: vector, fts5, hybrid, or graph (graph = hybrid +
+        /// graph-signal reranking, #378). Defaults to config's
+        /// `[recall].default_strategy` (vector).
+        #[arg(long)]
+        strategy: Option<String>,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,

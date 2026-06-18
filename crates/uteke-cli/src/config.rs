@@ -153,6 +153,20 @@ pub struct RecallConfig {
     pub min_score: f64,
     /// Strict mode threshold (higher, for critical queries).
     pub min_score_strict: f64,
+    /// Default recall strategy for the `recall` command when `--strategy` is
+    /// not given. One of: `vector`, `fts5`, `hybrid`, `graph`. Default
+    /// `vector` preserves the original CLI behavior; `graph` enables
+    /// graph-augmented reranking (#378).
+    pub default_strategy: String,
+    /// Weight for the edge-density boost applied by the `graph` strategy.
+    /// 0.0 disables; 0.1 is subtle (default).
+    pub graph_density_weight: f32,
+    /// Weight for the incoming-edge authority boost applied by the `graph`
+    /// strategy. 0.0 disables; 0.1 is subtle (default).
+    pub graph_authority_weight: f32,
+    /// Feature flag for graph-augmented reranking. When `false`, the `graph`
+    /// strategy behaves like `hybrid` (no boost applied).
+    pub graph_rerank_enabled: bool,
 }
 
 impl Default for RecallConfig {
@@ -160,6 +174,11 @@ impl Default for RecallConfig {
         Self {
             min_score: 0.3,
             min_score_strict: 0.5,
+            // Preserve original CLI behavior (vector-only) by default.
+            default_strategy: "vector".to_string(),
+            graph_density_weight: 0.1,
+            graph_authority_weight: 0.1,
+            graph_rerank_enabled: true,
         }
     }
 }
@@ -346,6 +365,18 @@ impl Config {
             if recall.contains_key("min_score_strict") {
                 self.recall.min_score_strict = overlay.recall.min_score_strict;
             }
+            if recall.contains_key("default_strategy") {
+                self.recall.default_strategy = overlay.recall.default_strategy.clone();
+            }
+            if recall.contains_key("graph_density_weight") {
+                self.recall.graph_density_weight = overlay.recall.graph_density_weight;
+            }
+            if recall.contains_key("graph_authority_weight") {
+                self.recall.graph_authority_weight = overlay.recall.graph_authority_weight;
+            }
+            if recall.contains_key("graph_rerank_enabled") {
+                self.recall.graph_rerank_enabled = overlay.recall.graph_rerank_enabled;
+            }
         }
 
         // Merge server section
@@ -410,6 +441,48 @@ impl Config {
                 ),
                 Err(_) => tracing::warn!(
                     "Invalid UTEKE_RECALL_MIN_SCORE_STRICT='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+
+        // Graph-augmented reranking overrides (#378)
+        if let Ok(v) = std::env::var("UTEKE_RECALL_STRATEGY") {
+            if matches!(v.as_str(), "vector" | "fts5" | "hybrid" | "graph") {
+                self.recall.default_strategy = v;
+            } else {
+                tracing::warn!(
+                    "Invalid UTEKE_RECALL_STRATEGY='{v}', ignoring (expected vector|fts5|hybrid|graph)"
+                );
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_GRAPH_DENSITY_WEIGHT") {
+            match v.parse::<f32>() {
+                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_density_weight = w,
+                Ok(_) => tracing::warn!(
+                    "UTEKE_GRAPH_DENSITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
+                ),
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_GRAPH_DENSITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_GRAPH_AUTHORITY_WEIGHT") {
+            match v.parse::<f32>() {
+                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_authority_weight = w,
+                Ok(_) => tracing::warn!(
+                    "UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
+                ),
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_GRAPH_RERANK_ENABLED") {
+            match v.to_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.recall.graph_rerank_enabled = true,
+                "0" | "false" | "no" | "off" => self.recall.graph_rerank_enabled = false,
+                _ => tracing::warn!(
+                    "Invalid UTEKE_GRAPH_RERANK_ENABLED='{v}', ignoring (expected true/false)"
                 ),
             }
         }
@@ -500,6 +573,10 @@ impl Config {
 [recall]
 # min_score = 0.3
 # min_score_strict = 0.5
+# default_strategy = "vector"  # vector | fts5 | hybrid | graph
+# graph_density_weight = 0.1
+# graph_authority_weight = 0.1
+# graph_rerank_enabled = true
 
 [server]
 # enabled = false

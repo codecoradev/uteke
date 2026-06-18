@@ -322,6 +322,9 @@ pub enum RecallStrategy {
     Vector,
     /// FTS5 full-text search only.
     Fts5,
+    /// Graph-augmented: hybrid RRF + graph-signal reranking (#378).
+    /// Well-connected memories get a subtle log-scaled score boost.
+    Graph,
 }
 
 impl RecallStrategy {
@@ -331,6 +334,7 @@ impl RecallStrategy {
             "vector" => Some(Self::Vector),
             "fts5" => Some(Self::Fts5),
             "hybrid" => Some(Self::Hybrid),
+            "graph" => Some(Self::Graph),
             _ => None,
         }
     }
@@ -340,6 +344,7 @@ impl RecallStrategy {
             Self::Vector => "vector",
             Self::Fts5 => "fts5",
             Self::Hybrid => "hybrid",
+            Self::Graph => "graph",
         }
     }
 }
