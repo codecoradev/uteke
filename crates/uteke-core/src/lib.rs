@@ -20,6 +20,7 @@ mod import_export;
 mod maintenance;
 pub mod memory;
 mod operations;
+mod orphans;
 mod recall_cache;
 mod rooms;
 mod types;
@@ -41,6 +42,7 @@ pub use memory::{
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
 };
+pub use orphans::{compute_orphan_score, OrphanMemory, DEFAULT_ORPHAN_THRESHOLD};
 
 pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};

@@ -214,7 +214,7 @@ pub(super) fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
 }
 
 /// Convert a database row to a Memory.
-pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
+pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
     let id: String = row.get(0)?;
     let content: String = row.get(1)?;
     let embedding_blob: Option<Vec<u8>> = row.get(2)?;

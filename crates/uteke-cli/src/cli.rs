@@ -309,6 +309,15 @@ pub enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+    /// Find orphan memories — disconnected nodes with low importance (#351)
+    Orphans {
+        /// Importance threshold below which a memory is a candidate (default 0.3)
+        #[arg(long)]
+        threshold: Option<f64>,
+        /// Maximum results (0 = all, default 50)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
 }
 
 /// Subcommands for knowledge graph operations.

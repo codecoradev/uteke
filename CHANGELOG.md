@@ -2,6 +2,20 @@
 
 ### Added
 
+- **Orphan detection** (#351)
+  - New `crates/uteke-core/src/orphans.rs` module: detect memories with no
+    graph edges, no recall access, not pinned, and below an importance
+    threshold.
+  - Detection is a single SQL pass (LEFT JOIN on `memory_edges` twice) —
+    no O(n²) scan.
+  - `OrphanMemory` struct with `orphan_score` (0.0..=1.0):
+    `(1 - edge_density) × 0.4 + (1 - access_freq) × 0.3 + (1 - importance) × 0.3`.
+  - `Uteke::find_orphans(namespace, threshold, limit)` with namespace
+    scoping and `DEFAULT_ORPHAN_THRESHOLD = 0.3`.
+  - CLI: new `uteke orphans [--threshold 0.3] [--limit 50]` command.
+  - Leverages #350 backlinks: any memory referenced by another is
+    automatically excluded (it has an incoming `referenced_by` edge).
+
 - **Backlink auto-generation** (#350)
   - Bidirectional links: whenever memory A creates a forward edge to B
     (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse

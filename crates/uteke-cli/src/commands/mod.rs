@@ -8,6 +8,7 @@ pub(crate) mod graph;
 mod list;
 mod maintenance;
 mod namespace;
+mod orphans;
 mod recall;
 mod remember;
 mod room;
@@ -242,5 +243,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         } => edges::run(cli, uteke, id, *deep, direction),
 
         Commands::RebuildBacklinks { quiet } => edges::run_rebuild_backlinks(cli, uteke, *quiet),
+
+        Commands::Orphans { threshold, limit } => orphans::run(cli, uteke, ns, *threshold, *limit),
     }
 }
