@@ -101,6 +101,10 @@ pub(crate) fn run_recall(
             .map_err(|e| format!("Failed to recall: {e}"))?
     };
 
+    // Reset per-query boost config so later recalls on the same Uteke instance
+    // aren't affected (CodeCora #387).
+    uteke.reset_salience_recency_config();
+
     // Post-filter by entity/category metadata
     let filtered: Vec<_> = results
         .into_iter()

@@ -493,8 +493,21 @@ impl Uteke {
     ///
     /// Used by the CLI to forward the merged `[recall]` weights and the
     /// per-query `--salience` / `--recency` flag overrides.
+    ///
+    /// **Important:** this mutates shared state. Callers that serve
+    /// multiple queries on the same `Uteke` instance (server, MCP) MUST
+    /// call [`reset_salience_recency_config`] after the query to avoid
+    /// leaking boost state into later queries (CodeCora #387).
     pub fn set_salience_recency_config(&mut self, config: salience_recency::SalienceRecencyConfig) {
         self.salience_recency_config = config.sanitized();
+    }
+
+    /// Reset salience/recency boost config to its no-op default (CodeCora #387).
+    ///
+    /// Call after a per-query boost override so later queries on the same
+    /// `Uteke` instance aren't affected.
+    pub fn reset_salience_recency_config(&mut self) {
+        self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
     }
 
     /// Lazy-load the ONNX embedding engine on first use.
