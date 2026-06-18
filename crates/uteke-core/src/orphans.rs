@@ -84,19 +84,29 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| Error::db("find_orphans row iter", e))?;
 
-        let mut orphans = Vec::new();
-        for memory in rows {
-            let orphan_score = compute_orphan_score(&memory, 0, 0);
-            orphans.push(OrphanMemory {
-                memory,
-                orphan_score,
-                outgoing_edges: 0,
-                incoming_edges: 0,
-            });
-            if limit > 0 && orphans.len() >= limit {
-                break;
-            }
-        }
+        // Compute orphan_score for every candidate first, then sort +
+        // truncate. CodeCora #389: the previous version broke out of the
+        // loop as soon as `orphans.len() >= limit`, but the subsequent
+        // sort_by could reorder those rows — a higher-score orphan that
+        // appeared later in the SQL result set would be dropped. Fetching
+        // all candidates first guarantees the truncate picks the true
+        // top-N by orphan_score.
+        //
+        // Orphan result sets are typically small (each match has zero
+        // edges and zero accesses), so the full fetch is cheap.
+        let mut orphans: Vec<OrphanMemory> = rows
+            .into_iter()
+            .map(|memory| {
+                let orphan_score = compute_orphan_score(&memory, 0, 0);
+                OrphanMemory {
+                    memory,
+                    orphan_score,
+                    outgoing_edges: 0,
+                    incoming_edges: 0,
+                }
+            })
+            .collect();
+
         // Sort by orphan_score descending (strongest orphan signal first).
         orphans.sort_by(|a, b| {
             b.orphan_score
