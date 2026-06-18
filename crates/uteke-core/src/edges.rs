@@ -312,6 +312,9 @@ impl Store {
     /// failures rather than swallowing them — callers who ask for an edge
     /// *with backlink* expect bidirectional consistency.
     ///
+    /// Both inserts run inside a single SQLite transaction so the edge pair
+    /// is atomic: if the backlink fails, the forward insert is rolled back.
+    ///
     /// Returns whether a new forward row was inserted (duplicate inserts are
     /// a no-op for both forward and backlink rows).
     pub fn add_memory_edge_with_backlink(
@@ -321,8 +324,11 @@ impl Store {
         edge_type: &str,
     ) -> Result<bool, Error> {
         let now = chrono::Utc::now().to_rfc3339();
-        let changed = self
+        let tx = self
             .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin edge tx", e))?;
+        let changed = tx
             .execute(
                 "INSERT OR IGNORE INTO memory_edges
                     (source_id, target_id, edge_type, created_at)
@@ -330,18 +336,36 @@ impl Store {
                 params![source_id, target_id, edge_type, now],
             )
             .map_err(|e| Error::db("add memory edge (with backlink)", e))?;
-        // Always (try to) ensure the inverse, even if the forward row already
-        // existed — a previous insert may have happened before #350 shipped.
-        // Propagate the error: callers explicitly opted into backlinking.
-        self.ensure_backlink(source_id, target_id, edge_type)?;
+        // Insert the inverse inside the same transaction. If this fails the
+        // whole tx is rolled back and the caller observes the error with no
+        // partial state left behind.
+        let Some(backlink_type) = backlink_type_for(edge_type) else {
+            tx.commit()
+                .map_err(|e| Error::db("commit edge tx (no backlink)", e))?;
+            return Ok(changed > 0);
+        };
+        if source_id != target_id {
+            tx.execute(
+                "INSERT OR IGNORE INTO memory_edges
+                    (source_id, target_id, edge_type, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![target_id, source_id, backlink_type, now],
+            )
+            .map_err(|e| Error::db("ensure backlink (tx)", e))?;
+        }
+        tx.commit().map_err(|e| Error::db("commit edge tx", e))?;
         Ok(changed > 0)
     }
 
     /// Bulk insert edges. Silently ignores duplicates and dangling targets.
     ///
     /// Each inserted forward edge also receives an automatic `referenced_by`
-    /// backlink (#350). Backlink failures are propagated (use `wire_edges`
-    /// at the `Uteke` level for best-effort auto-wiring that swallows them).
+    /// backlink (#350). All inserts run inside a single transaction so the
+    /// batch is atomic — on failure, no partial state is left behind.
+    ///
+    /// Backlink failures are propagated (use `wire_edges` at the `Uteke`
+    /// level for best-effort auto-wiring that swallows them).
+    ///
     /// Returns the number of **forward** rows inserted (backlinks are
     /// guaranteed on success and do not count toward the return value).
     pub fn add_memory_edges_batch(
@@ -350,21 +374,37 @@ impl Store {
         edges: &[(String, String)],
     ) -> Result<usize, Error> {
         let now = chrono::Utc::now().to_rfc3339();
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin batch edge tx", e))?;
         let mut inserted = 0usize;
         for (target_id, edge_type) in edges {
-            let changed = self
-                .conn
+            let changed = tx
                 .execute(
-                    "INSERT OR IGNORE INTO memory_edges (source_id, target_id, edge_type, created_at)
+                    "INSERT OR IGNORE INTO memory_edges
+                        (source_id, target_id, edge_type, created_at)
                      VALUES (?1, ?2, ?3, ?4)",
                     params![source_id, target_id, edge_type, now],
                 )
                 .map_err(|e| Error::db("batch insert memory edge", e))?;
             inserted += changed;
-            // #350: ensure inverse backlink for every forward edge. Errors
-            // propagate so callers know the backlink was not created.
-            self.ensure_backlink(source_id, target_id, edge_type)?;
+            // #350: ensure inverse backlink for every forward edge inside the
+            // same transaction so the whole batch commits atomically.
+            if let Some(backlink_type) = backlink_type_for(edge_type) {
+                if source_id != target_id {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO memory_edges
+                            (source_id, target_id, edge_type, created_at)
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![target_id, source_id, backlink_type, now],
+                    )
+                    .map_err(|e| Error::db("batch ensure backlink", e))?;
+                }
+            }
         }
+        tx.commit()
+            .map_err(|e| Error::db("commit batch edge tx", e))?;
         Ok(inserted)
     }
 
