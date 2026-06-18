@@ -23,7 +23,7 @@ use uteke_core::Uteke;
 pub(crate) use server::{is_server_running, run_via_server};
 
 /// Dispatch all CLI subcommands to their handler implementations.
-pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(), String> {
+pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Result<(), String> {
     // Resolve effective namespace once: CLI > env > config > "default"
     let resolved_ns = resolve_namespace(cli, config);
     let ns: Option<&str> = Some(resolved_ns.as_str());
@@ -63,6 +63,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             min,
             strict,
             strategy,
+            salience,
+            recency,
             related,
             depth,
             context,
@@ -88,6 +90,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             at.as_deref(),
             content_format.as_str(),
             r#where.as_deref(),
+            *salience,
+            *recency,
         ),
 
         Commands::Search { query, limit, tags } => {

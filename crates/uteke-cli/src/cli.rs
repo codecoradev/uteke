@@ -101,6 +101,14 @@ pub enum Commands {
         /// `[recall].default_strategy` (vector).
         #[arg(long)]
         strategy: Option<String>,
+        /// Enable salience boost (how much each result matters) (#352).
+        /// Uses the configured `[recall].salience_weight` (default 0.15).
+        #[arg(long)]
+        salience: bool,
+        /// Enable recency boost (how fresh each result is) (#352).
+        /// Uses the configured `[recall].recency_weight` (default 0.15).
+        #[arg(long)]
+        recency: bool,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,

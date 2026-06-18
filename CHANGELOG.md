@@ -2,6 +2,23 @@
 
 ### Added
 
+- **Salience + recency dual-axis recall ranking** (#352)
+  - New `crates/uteke-core/src/salience_recency.rs` module with two
+    orthogonal, additive boost functions:
+    - `salience_score(memory)` — 0..=1 blend of `access_count`, `importance`,
+      and `pinned` (importance × 0.5 + access_freq × 0.3 + pinned 0.2).
+    - `recency_score(memory, now)` — per-type exponential decay
+      (`exp(-age_days / half_life)`). Half-lives: Decision/Preference 365d,
+      Fact/Reference 180d, Insight 240d, Event 30d, default 90d.
+  - `SalienceRecencyConfig { salience_weight, recency_weight }` defaults
+    to zero (opt-in per query). `sanitized()` clamps weights to [0, 1].
+  - `Uteke::set_salience_recency_config()` for per-query override.
+  - Boosts applied AFTER recall cache lookup (cache stays time-independent).
+  - CLI: `--salience` / `--recency` flags on `recall`. Default weights
+    (0.15 each) configurable via `[recall]` in `uteke.toml`.
+  - Public exports: `salience_score`, `recency_score`, `type_half_life_days`,
+    `apply_boosts`, `SalienceRecencyConfig`.
+
 - **Backlink auto-generation** (#350)
   - Bidirectional links: whenever memory A creates a forward edge to B
     (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse

@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 //! Recall and Search commands — semantic and keyword search.
 
 use crate::cli::Cli;
@@ -8,7 +9,7 @@ use uteke_core::{RecallStrategy, Uteke};
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_recall(
     cli: &Cli,
-    uteke: &Uteke,
+    uteke: &mut Uteke,
     ns: Option<&str>,
     query: &str,
     limit: usize,
@@ -25,6 +26,8 @@ pub(crate) fn run_recall(
     at: Option<&str>,
     content_format: &str,
     where_filter: Option<&str>,
+    salience: bool,
+    recency: bool,
 ) -> Result<(), String> {
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
@@ -52,6 +55,22 @@ pub(crate) fn run_recall(
             RecallStrategy::Vector
         }
     };
+
+    // #352: dual-axis salience/recency boost. Opt-in per query via
+    // --salience / --recency flags. Weights come from config so users can
+    // tune the boost strength in uteke.toml.
+    uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
+        salience_weight: if salience {
+            config.recall.salience_weight
+        } else {
+            0.0
+        },
+        recency_weight: if recency {
+            config.recall.recency_weight
+        } else {
+            0.0
+        },
+    });
 
     // Time-travel mode: parse --at as RFC3339 and use recall_at_time
     let results = if let Some(at_str) = at {
