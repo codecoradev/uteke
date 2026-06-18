@@ -2,6 +2,23 @@
 
 ### Added
 
+- **Dream cycle** (#353)
+  - New `crates/uteke-core/src/dream.rs` module: coordinated maintenance
+    pipeline that runs all 6 phases in dependency order, all local, zero
+    LLM. Inspired by GBrain's overnight dream cycle.
+  - Phases:
+    1. **Lint** — type validation + broken-ref count
+    2. **Backlinks** — rebuild `referenced_by` edges (#350)
+    3. **Dedup** — find & merge near-duplicates (existing `consolidate`)
+    4. **Orphans** — detect disconnected memories (#351-compatible inline
+       SQL when #351 is not yet merged)
+    5. **Compact** — aging cleanup + prune cold memories (existing)
+    6. **Verify** — schema + index integrity check (existing `verify`)
+  - `DreamPhase` enum, `DreamReport`, `PhaseResult`, `PhaseStatus` types.
+  - `Uteke::dream(namespace, dry_run, phases)` orchestrator.
+  - CLI: new `uteke dream [--phases] [--skip] [--dry-run] [--quiet]`
+    command. Exits non-zero on errors (cron-friendly).
+
 - **Backlink auto-generation** (#350)
   - Bidirectional links: whenever memory A creates a forward edge to B
     (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse

@@ -309,6 +309,21 @@ pub enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+    /// Run the full maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify (#353)
+    Dream {
+        /// Comma-separated list of phases to run (default: all)
+        #[arg(long, value_delimiter = ',')]
+        phases: Vec<String>,
+        /// Phases to skip (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        skip: Vec<String>,
+        /// Dry-run mode: report only, make no changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Quiet mode: warnings/errors only
+        #[arg(long)]
+        quiet: bool,
+    },
 }
 
 /// Subcommands for knowledge graph operations.
