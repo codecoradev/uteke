@@ -47,12 +47,27 @@ impl crate::Uteke {
         memory_type: &str,
     ) -> Result<String, Error> {
         crate::validate_input(content, tags)?;
-        // Validate memory_type against known variants
-        crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
-            Error::Validation(format!(
-                "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context"
-            ))
-        })?;
+        // Validate memory_type against known variants.
+        let parsed_type = crate::memory::types::MemoryType::from_str_opt(memory_type)
+            .ok_or_else(|| {
+                Error::Validation(format!(
+                    "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+                ))
+            })?;
+        let effective_type = if parsed_type == crate::memory::types::MemoryType::Fact {
+            // #349: when the caller uses the default ("fact"), run
+            // auto-inference and override — unless the inference result is
+            // `Note`, in which case we keep `Fact` as the more specific
+            // default (backward-compat with pre-#349 callers).
+            let inferred = crate::memory::types::MemoryType::infer_from_content(content);
+            if inferred == crate::memory::types::MemoryType::Note {
+                crate::memory::types::MemoryType::Fact
+            } else {
+                inferred
+            }
+        } else {
+            parsed_type
+        };
         // Detect JSON content and use flattened text for embedding
         let content_type = crate::memory::crud::detect_content_type(content);
         let embed_text = if content_type == "json" {
@@ -74,7 +89,7 @@ impl crate::Uteke {
             tags,
             metadata,
             namespace,
-            memory_type,
+            effective_type.as_str(),
             content_type,
             &embedding,
         )
