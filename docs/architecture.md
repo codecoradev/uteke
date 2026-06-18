@@ -138,6 +138,12 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v8 (auto-wired `memory_edges` table + `slug` column, #346). Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column (text vs json), v7 knowledge graph (`graph_nodes` + `graph_edges`), v8 `memory_edges` + `slug`. Zero data loss guaranteed.
 
+### Memory Edges & Backlinks
+
+Every `remember()` auto-wires typed edges from content patterns (`[[slug]]`, `@tag`, `^<uuid>`, `><uuid>`). Edge types: `references`, `tagged_as`, `supersedes`, `replies_to`. Stored in the `memory_edges` table (schema v8, #346).
+
+Backlinks (#350): each forward edge automatically receives an inverse `referenced_by` edge from target → source, making the graph navigable in both directions without an O(n) scan. Insertion is atomic (single SQLite transaction). Use `uteke rebuild-backlinks` to repair pre-#350 stores. `uteke edges <id> --direction incoming` shows backlinks.
+
 ### Rooms
 
 Rooms group related memories with author attribution. Stored in `rooms` and `room_memories` tables (schema v4). Semantic room recall over-fetches via `recall_hybrid()`, then post-filters to room memory IDs. Room summaries use tag co-occurrence clustering — no LLM call required. Room documents group memories by `memory_type` into sections (Decisions, Facts, Procedures, etc).

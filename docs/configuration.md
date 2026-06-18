@@ -285,3 +285,28 @@ Logs are written to `~/.uteke/logs/uteke.log` with daily rotation:
 ```
 
 Non-blocking async writer — logging never blocks memory operations. Rotated files are kept until manually deleted.
+
+## Memory Edges & Backlinks
+
+Memory references are auto-wired on every `remember()` — patterns like `[[slug]]`, `@tag`, `^<uuid>`, and `><uuid>` are parsed (no LLM) and resolved to typed edges in the `memory_edges` table (#346).
+
+Since #350, every forward edge (`references`, `tagged_as`, `supersedes`, `replies_to`) automatically gets an inverse `referenced_by` edge from target → source. Both inserts are wrapped in a single SQLite transaction so the pair is atomic.
+
+```bash
+# Inspect edges (both directions)
+uteke edges <memory-id>
+
+# Show only incoming edges (backlinks)
+uteke edges <memory-id> --direction incoming
+
+# Multi-hop BFS traversal
+uteke edges <memory-id> --deep 2
+
+# Repair pre-#350 stores or after manual edge inserts
+uteke rebuild-backlinks
+
+# Script-friendly count
+uteke rebuild-backlinks --quiet
+```
+
+Re-running `rebuild-backlinks` is a no-op — all inserts are `INSERT OR IGNORE` with a `UNIQUE(source_id, target_id, edge_type)` constraint.
