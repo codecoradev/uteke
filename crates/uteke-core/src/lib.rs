@@ -25,6 +25,10 @@ mod rooms;
 mod types;
 
 pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
+pub use edges::{
+    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REPLIES_TO,
+    EDGE_SUPERSEDES, EDGE_TAGGED_AS,
+};
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use graph_rerank::{compute_graph_signals, rerank_with_graph, GraphRerankConfig, GraphSignals};

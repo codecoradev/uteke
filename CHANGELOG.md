@@ -2,6 +2,28 @@
 
 ### Added
 
+- **Backlink auto-generation** (#350)
+  - Bidirectional links: whenever memory A creates a forward edge to B
+    (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse
+    `referenced_by` edge from B → A is automatically inserted. Makes the
+    graph navigable in both directions without an O(n) scan.
+  - New `Store::ensure_backlink()` (idempotent),
+    `Store::add_memory_edge_with_backlink()`, and
+    `Store::rebuild_backlinks()` (scan + repair pass).
+  - `add_memory_edges_batch()` (used by `wire_edges` on every `remember`)
+    now also ensures the backlink for each forward edge.
+  - New `Uteke::link_memories()` public API for explicit edges with
+    automatic backlink.
+  - New `Uteke::rebuild_backlinks()` for one-time migration of pre-#350
+    stores.
+  - New CLI command `uteke rebuild-backlinks [--quiet]` rebuilds all
+    `referenced_by` edges from existing forward edges.
+  - `uteke edges <id>` gains `--direction <incoming|outgoing|both>`
+    (default `both`); `incoming` shows backlinks.
+  - New public exports: `backlink_type_for`, `EdgeList`, `MemoryEdge`,
+    `EDGE_REFERENCES`, `EDGE_REFERENCED_BY`, `EDGE_REPLIES_TO`,
+    `EDGE_SUPERSEDES`, `EDGE_TAGGED_AS`.
+
 - **Graph-augmented RAG reranking** (#378)
   - New recall strategy `graph`: runs the hybrid (RRF) pipeline, then fuses
     graph signals from the `memory_edges` table into each result's score.

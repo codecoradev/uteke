@@ -297,6 +297,17 @@ pub enum Commands {
         /// N>0 performs BFS across the edge table and returns reachable memory ids.
         #[arg(long, default_value = "0")]
         deep: usize,
+        /// Filter by edge direction: `incoming`, `outgoing`, or `both` (default).
+        ///
+        /// `incoming` is useful for viewing backlinks (#350).
+        #[arg(long, default_value = "both")]
+        direction: String,
+    },
+    /// Rebuild `referenced_by` backlinks from existing forward edges (#350)
+    RebuildBacklinks {
+        /// Show only the count, no per-row detail (default: false)
+        #[arg(long)]
+        quiet: bool,
     },
 }
 
