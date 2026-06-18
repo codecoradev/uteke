@@ -566,8 +566,8 @@ impl Store {
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             )
             .map_err(|e| Error::db("rebuild backlinks scan", e))?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("rebuild backlinks row iteration", e))?;
 
         let mut created = 0usize;
         let now = chrono::Utc::now().to_rfc3339();
@@ -1424,6 +1424,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
     fn wire_edges_generates_backlinks() {
         // End-to-end: Uteke::wire_edges should produce backlinks because it
         // goes through add_memory_edges_batch (now backlink-aware).
