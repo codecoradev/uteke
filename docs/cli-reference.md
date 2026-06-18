@@ -217,6 +217,35 @@ uteke recall "deployment process" --at 2026-06-01T12:00:00Z
 # Relationship graph traversal
 uteke recall "auth" --related --depth 2
 
+# Recall strategy (vector | fts5 | hybrid | graph)
+uteke recall "auth" --strategy vector   # default — vector similarity only
+uteke recall "auth" --strategy fts5     # full-text search only
+uteke recall "auth" --strategy hybrid   # vector + FTS5 (RRF fusion)
+uteke recall "auth" --strategy graph    # hybrid + graph-signal reranking (#378)
+```
+
+### `--strategy graph` (Graph-augmented RAG)
+
+The `graph` strategy runs the hybrid (RRF) pipeline, then fuses graph
+signals from the `memory_edges` table into each result's score. A memory
+that is well-connected in the graph (referenced by many others, high edge
+density) drifts upward; isolated memories are untouched.
+
+The boost is **additive and log-scaled**, so it saturates quickly and never
+lets a single hub dominate. Configure the weights under `[recall]` in
+`uteke.toml` (see [Configuration](./configuration#recall)):
+
+```bash
+# Subtle boost (default): well-connected memories nudge up slightly
+uteke recall "architecture" --strategy graph
+
+# Stronger authority boost via env var
+UTEKE_GRAPH_AUTHORITY_WEIGHT=0.3 uteke recall "architecture" --strategy graph
+```
+
+Cold start (no edges yet): `graph` behaves identically to `hybrid` — the
+boost is zero when there are no signals.
+
 # AI-context formatted output
 uteke recall "api design" --context
 ```

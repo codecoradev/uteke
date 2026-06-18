@@ -136,14 +136,33 @@ min_score = 0.3
 
 # Strict-mode threshold (used with `--strict` flag)
 min_score_strict = 0.5
+
+# Default recall strategy for `uteke recall` when --strategy is not given.
+# One of: vector | fts5 | hybrid | graph.
+#   vector — vector similarity only (original behavior, default)
+#   fts5   — full-text search only
+#   hybrid — vector + FTS5 fused via Reciprocal Rank Fusion
+#   graph  — hybrid + graph-signal reranking (#378): well-connected memories
+#            get a subtle log-scaled score boost
+default_strategy = "vector"
+
+# Graph-augmented reranking weights (only affect the `graph` strategy).
+# Boosts are additive + log-scaled, so 0.1 is subtle and saturates quickly.
+graph_density_weight = 0.1    # edge-count boost
+graph_authority_weight = 0.1  # incoming-edge (referenced-by) boost
+graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `min_score` | 0.3 | Minimum similarity score (0.0-1.0) |
 | `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`) |
+| `default_strategy` | `vector` | Default recall strategy (`vector\|fts5\|hybrid\|graph`) |
+| `graph_density_weight` | 0.1 | Edge-density boost weight (graph strategy only) |
+| `graph_authority_weight` | 0.1 | Incoming-edge authority boost weight (graph strategy only) |
+| `graph_rerank_enabled` | true | Master switch for graph reranking |
 
-Use `--strict` flag or `--min <score>` to override per-query.
+Use `--strict` flag, `--min <score>`, or `--strategy <name>` to override per-query.
 
 ## Environment Variables
 
@@ -165,6 +184,10 @@ Resolution order (highest priority first):
 | `UTEKE_SERVER_PORT` | `[server] port` | `8767` | Server port |
 | `UTEKE_RECALL_MIN_SCORE` | `[recall] min_score` | `0.3` | Default similarity threshold |
 | `UTEKE_RECALL_MIN_SCORE_STRICT` | `[recall] min_score_strict` | `0.5` | Strict threshold |
+| `UTEKE_RECALL_STRATEGY` | `[recall] default_strategy` | `vector` | Default recall strategy (`vector\|fts5\|hybrid\|graph`) |
+| `UTEKE_GRAPH_DENSITY_WEIGHT` | `[recall] graph_density_weight` | `0.1` | Edge-density boost weight |
+| `UTEKE_GRAPH_AUTHORITY_WEIGHT` | `[recall] graph_authority_weight` | `0.1` | Incoming-edge authority boost weight |
+| `UTEKE_GRAPH_RERANK_ENABLED` | `[recall] graph_rerank_enabled` | `true` | Master switch for graph reranking |
 | `UTEKE_EMBEDDING_BACKEND` | `[embedding] backend` | `onnx` | Embedding backend: onnx, openai, ollama |
 | `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
 | `UTEKE_EMBEDDING_API_KEY` | `[embedding] api_key` | — | API key (OpenAI). Fallback: `OPENAI_API_KEY` |

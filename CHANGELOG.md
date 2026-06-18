@@ -1,5 +1,39 @@
 ## [Unreleased]
 
+### Added
+
+- **Graph-augmented RAG reranking** (#378)
+  - New recall strategy `graph`: runs the hybrid (RRF) pipeline, then fuses
+    graph signals from the `memory_edges` table into each result's score.
+    Well-connected memories drift upward; isolated memories are untouched.
+  - New `crates/uteke-core/src/graph_rerank.rs` module:
+    - `compute_graph_signals()` — single batched SQL query over
+      `memory_edges` computes per-memory `edge_count`, `neighbor_count`,
+      `edge_type_diversity`, `incoming_count`, `outgoing_count`.
+    - `rerank_with_graph()` — additive, log-scaled density + authority
+      boosts (`ln(1+x) * weight`), capped at 1.0. Disabled or empty-signal
+      inputs are a no-op (cold-start safe).
+    - `GraphRerankConfig { density_weight, authority_weight, enabled }`
+      with `sanitized()` clamping.
+  - `RecallStrategy::Graph` variant added (`memory/types.rs`); wired into
+    `recall_hybrid` so the boost runs *before* caching (cache is
+    strategy-keyed → `graph` has its own entries, no collision with
+    `hybrid`/`vector`/`fts5`).
+  - New `Uteke` field + `open_with_embedding_and_graph` constructor so the
+    CLI passes the merged `[recall]` weights.
+  - CLI: new `--strategy <vector|fts5|hybrid|graph>` flag on `recall`
+    (defaults to `[recall].default_strategy`, itself defaulting to
+    `vector` — preserves original behavior). Unknown strategies warn and
+    fall back to `vector`.
+  - Config: `[recall]` gains `default_strategy`, `graph_density_weight`,
+    `graph_authority_weight`, `graph_rerank_enabled`, plus env overrides
+    `UTEKE_RECALL_STRATEGY`, `UTEKE_GRAPH_DENSITY_WEIGHT`,
+    `UTEKE_GRAPH_AUTHORITY_WEIGHT`, `UTEKE_GRAPH_RERANK_ENABLED`.
+  - 10 new unit tests covering signal counting, hub boost, log-saturation,
+    score capping, cold-start no-op, disabled-flag no-op, and a <10ms
+    latency guard over 5000 edges.
+  - Backward compatible: existing strategies are unchanged; `graph` is opt-in.
+
 ### Changed
 
 - **Bump sha2 0.10 → 0.11** (supersedes Dependabot PR #364)

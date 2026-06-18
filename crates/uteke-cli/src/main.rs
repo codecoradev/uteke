@@ -88,7 +88,7 @@ fn main() {
 
     tracing::debug!("Opening store at: {store_path}");
 
-    let uteke = match Uteke::open_with_embedding(
+    let uteke = match Uteke::open_with_embedding_and_graph(
         &store_path,
         &config.embedding.backend,
         uteke_core::EmbeddingSettings {
@@ -104,6 +104,11 @@ fn main() {
         },
         uteke_core::RecallConfig {
             min_score: config.recall.min_score as f32,
+        },
+        uteke_core::GraphRerankConfig {
+            density_weight: config.recall.graph_density_weight,
+            authority_weight: config.recall.graph_authority_weight,
+            enabled: config.recall.graph_rerank_enabled,
         },
     ) {
         Ok(u) => u,

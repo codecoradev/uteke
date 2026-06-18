@@ -15,6 +15,7 @@ mod edges;
 mod embed;
 mod error;
 pub mod graph;
+pub mod graph_rerank;
 mod import_export;
 mod maintenance;
 pub mod memory;
@@ -26,6 +27,7 @@ mod types;
 pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
+pub use graph_rerank::{compute_graph_signals, rerank_with_graph, GraphRerankConfig, GraphSignals};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
@@ -223,6 +225,9 @@ pub struct Uteke {
     tier_config: TierConfig,
     #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
+    /// Graph-augmented reranking config (#378). Applied only for
+    /// [`RecallStrategy::Graph`]. Defaults to enabled with subtle weights.
+    graph_rerank_config: graph_rerank::GraphRerankConfig,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
 }
@@ -333,13 +338,38 @@ impl Uteke {
         recall_config: RecallConfig,
     ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(
+        Self::finish_open_full(
             store,
             None,
             backend.to_string(),
             tier_config,
             recall_config,
             settings,
+            graph_rerank::GraphRerankConfig::default(),
+        )
+    }
+
+    /// Open with caller-supplied embedding settings **and** graph-reranking
+    /// config. Used by the CLI to pass the merged `[recall]` graph weights
+    /// (#378). Equivalent to [`Self::open_with_embedding`] with default graph
+    /// reranking when graph reranking is not needed.
+    pub fn open_with_embedding_and_graph(
+        path: impl AsRef<Path>,
+        backend: &str,
+        settings: EmbeddingSettings,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+        graph_rerank_config: graph_rerank::GraphRerankConfig,
+    ) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        Self::finish_open_full(
+            store,
+            None,
+            backend.to_string(),
+            tier_config,
+            recall_config,
+            settings,
+            graph_rerank_config,
         )
     }
 
@@ -357,6 +387,26 @@ impl Uteke {
         tier_config: TierConfig,
         recall_config: RecallConfig,
         embedding_settings: EmbeddingSettings,
+    ) -> Result<Self, Error> {
+        Self::finish_open_full(
+            store,
+            embedder,
+            embedder_backend,
+            tier_config,
+            recall_config,
+            embedding_settings,
+            graph_rerank::GraphRerankConfig::default(),
+        )
+    }
+
+    fn finish_open_full(
+        store: Store,
+        embedder: Option<Box<dyn Embedder>>,
+        embedder_backend: String,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+        embedding_settings: EmbeddingSettings,
+        graph_rerank_config: graph_rerank::GraphRerankConfig,
     ) -> Result<Self, Error> {
         // Determine index path: same directory as SQLite DB
         let index_path = store.path().map(|p| {
@@ -422,6 +472,7 @@ impl Uteke {
             embedding_settings,
             tier_config,
             recall_config,
+            graph_rerank_config: graph_rerank_config.sanitized(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
         })
     }
