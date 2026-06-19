@@ -194,7 +194,9 @@ pub(crate) fn run(
     // Set source provenance using the exact stored ID (#348).
     if source.is_some() || source_type.is_some() {
         let st = source_type.unwrap_or("user");
-        let _ = uteke.set_source(&stored_id, source, st);
+        uteke
+            .set_source(&stored_id, source, st)
+            .map_err(|e| format!("Failed to set source: {e}"))?;
     }
 
     Ok(())
