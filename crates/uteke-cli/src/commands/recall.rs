@@ -59,6 +59,10 @@ pub(crate) fn run_recall(
     // #352: dual-axis salience/recency boost. Opt-in per query via
     // --salience / --recency flags. Weights come from config so users can
     // tune the boost strength in uteke.toml.
+    //
+    // RAII guard: ensures reset runs on every exit path (early return,
+    // error propagation, success) so boost state never leaks across
+    // queries on a shared Uteke instance (CodeCora #387).
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
         salience_weight: if salience {
             config.recall.salience_weight

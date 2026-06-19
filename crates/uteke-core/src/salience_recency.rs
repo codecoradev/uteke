@@ -80,11 +80,12 @@ pub fn salience_score(memory: &Memory) -> f32 {
     blended.clamp(0.0, 1.0)
 }
 
-/// Per-memory-type half-life in days (#352).
+/// Per-memory-type time constant (τ) in days for exponential decay (#352).
 ///
 /// Evergreen types (Decision, Preference) decay slowly; time-bound types
-/// (Event) decay fast. The half-life is the age at which recency drops to
-/// ~0.37 (1/e) of full freshness.
+/// (Event) decay fast. This is the exponential time constant τ at which
+/// recency drops to 1/e (~0.37) of full freshness. (For a true half-life
+/// — the age at which recency is exactly 0.5 — multiply by ln(2) ≈ 0.693.)
 pub fn type_half_life_days(memory_type: &str) -> f32 {
     match memory_type {
         "decision" | "preference" => 365.0,
@@ -98,8 +99,9 @@ pub fn type_half_life_days(memory_type: &str) -> f32 {
 
 /// Compute the recency score for a memory (0.0..=1.0).
 ///
-/// Exponential decay: `exp(-age_days / half_life)`. A memory created today
-/// scores ~1.0; at one half-life old it scores ~0.37.
+/// Exponential decay: `exp(-age_days / tau)` where tau is the per-type
+/// time constant. A memory created today scores ~1.0; at one time
+/// constant old it scores ~0.37 (1/e).
 pub fn recency_score(memory: &Memory, now: chrono::DateTime<chrono::Utc>) -> f32 {
     let age_secs = (now - memory.created_at).num_seconds().max(0) as f32;
     let age_days = age_secs / 86_400.0;
