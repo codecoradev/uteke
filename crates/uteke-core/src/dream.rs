@@ -389,10 +389,17 @@ impl crate::Uteke {
         // Prune deprecated memories older than 30 days.
         const TTL_DAYS: u32 = 30;
         let result = self.prune(TTL_DAYS, namespace, dry_run)?;
-        let summary = format!(
-            "✓ {} memories pruned ({} deprecated)",
-            result.pruned, result.deprecated
-        );
+        let summary = if dry_run {
+            format!(
+                "✓ {} memories would be pruned ({} deprecated)",
+                result.pruned, result.deprecated
+            )
+        } else {
+            format!(
+                "✓ {} memories pruned ({} deprecated)",
+                result.pruned, result.deprecated
+            )
+        };
         Ok(PhaseResult {
             phase: DreamPhase::Compact.as_str().to_string(),
             status: PhaseStatus::Ok,
