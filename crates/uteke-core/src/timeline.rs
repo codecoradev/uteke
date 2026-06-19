@@ -82,7 +82,15 @@ impl Store {
         event_type: TimelineEventType,
         event_data: Option<&serde_json::Value>,
     ) -> Result<(), Error> {
-        let data_str = event_data.map(|v| serde_json::to_string(v).unwrap_or_default());
+        let data_str = event_data.map(|v| match serde_json::to_string(v) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("timeline: failed to serialize event data: {e}");
+                // Store null sentinel instead of empty string to make the
+                // failure detectable downstream (CodeCora #388).
+                "null".to_string()
+            }
+        });
         self.conn
             .execute(
                 "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at)
