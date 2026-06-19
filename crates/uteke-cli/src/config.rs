@@ -167,6 +167,12 @@ pub struct RecallConfig {
     /// Feature flag for graph-augmented reranking. When `false`, the `graph`
     /// strategy behaves like `hybrid` (no boost applied).
     pub graph_rerank_enabled: bool,
+    /// Weight for the salience boost applied when the `--salience` flag is
+    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
+    pub salience_weight: f32,
+    /// Weight for the recency boost applied when the `--recency` flag is
+    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
+    pub recency_weight: f32,
 }
 
 impl Default for RecallConfig {
@@ -179,6 +185,8 @@ impl Default for RecallConfig {
             graph_density_weight: 0.1,
             graph_authority_weight: 0.1,
             graph_rerank_enabled: true,
+            salience_weight: 0.15,
+            recency_weight: 0.15,
         }
     }
 }

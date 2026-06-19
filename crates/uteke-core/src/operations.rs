@@ -17,7 +17,10 @@ impl crate::Uteke {
         metadata: Option<serde_json::Value>,
         namespace: Option<&str>,
     ) -> Result<String, Error> {
-        self.remember_typed(content, tags, metadata, namespace, "fact")
+        // Default path uses auto-inference (#349). Passing "fact" explicitly
+        // would bypass inference — use remember_auto_infer(None) so content
+        // signals drive the type.
+        self.remember_auto_infer(content, tags, metadata, namespace, None)
     }
 
     /// Store a JSON-structured memory. Content must be valid JSON.
@@ -37,6 +40,10 @@ impl crate::Uteke {
 
     /// Store a new memory with explicit type.
     ///
+    /// The caller-chosen type is honored as-is — no auto-inference runs
+    /// (CodeCora #386). Use [`Self::remember_auto_infer`] for the
+    /// pattern-based auto-inference path.
+    ///
     /// Returns the UUID of the created memory.
     pub fn remember_typed(
         &self,
@@ -47,10 +54,71 @@ impl crate::Uteke {
         memory_type: &str,
     ) -> Result<String, Error> {
         crate::validate_input(content, tags)?;
-        // Validate memory_type against known variants
+        // Validate memory_type against known variants. The type is used
+        // as-is — no inference, no override.
         crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
             Error::Validation(format!(
-                "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context"
+                "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+            ))
+        })?;
+        self.remember_embed(content, tags, metadata, namespace, memory_type)
+    }
+
+    /// Store a new memory with auto-inferred type (#349).
+    ///
+    /// Runs pattern-based inference on the content. If the caller passes
+    /// `Some(explicit_type)`, that type wins and inference is skipped. If
+    /// `None`, the inference result is used (falling back to `Fact` when
+    /// the content is ambiguous, preserving backward compatibility with
+    /// pre-#349 callers).
+    ///
+    /// Returns the UUID of the created memory.
+    pub fn remember_auto_infer(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        explicit_type: Option<&str>,
+    ) -> Result<String, Error> {
+        let effective_type = match explicit_type {
+            Some(t) => {
+                // Validate explicit type — same check as remember_typed
+                // (CodeCora #386 r2).
+                crate::memory::types::MemoryType::from_str_opt(t).ok_or_else(|| {
+                    Error::Validation(format!(
+                        "Unknown memory type '{t}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+                    ))
+                })?;
+                t.to_string()
+            }
+            None => {
+                let inferred = crate::memory::types::MemoryType::infer_from_content(content);
+                if inferred == crate::memory::types::MemoryType::Note {
+                    // Ambiguous content → keep Fact (backward compat).
+                    "fact".to_string()
+                } else {
+                    inferred.as_str().to_string()
+                }
+            }
+        };
+        self.remember_embed(content, tags, metadata, namespace, &effective_type)
+    }
+
+    /// Embed-then-store shared by [`remember_typed`] and [`remember_auto_infer`].
+    fn remember_embed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+    ) -> Result<String, Error> {
+        crate::validate_input(content, tags)?;
+        // Validate memory_type against known variants.
+        crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
+            Error::Validation(format!(
+                "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
             ))
         })?;
         // Detect JSON content and use flattened text for embedding
@@ -128,6 +196,12 @@ impl crate::Uteke {
             .map_err(|_| Error::lock("index write lock during remember"))?;
 
         self.store.insert(&memory)?;
+
+        // Timeline: record creation (#347). This hook lives in the single
+        // shared creation path so every remember() / remember_typed() /
+        // remember_precomputed() / consolidate() call records a Created
+        // event. Best-effort, never fails the insert.
+        self.try_timeline_event(&id, crate::timeline::TimelineEventType::Created, None);
 
         // Auto-wire edges for the new memory (v8, #346).
         // Pattern-based extraction — best-effort, never fails the insert.
@@ -338,6 +412,28 @@ impl crate::Uteke {
         // so cached results are reusable for any threshold)
         self.recall_cache
             .put(query, ns, limit, tags_filter, strategy, results.clone());
+
+        // Apply salience/recency boosts AFTER caching so cached entries
+        // store the raw scores (time-independent). Boosts are recomputed
+        // on every call (#352).
+        let mut results = results;
+        if !self.salience_recency_config.is_noop() {
+            let now = chrono::Utc::now();
+            for sr in &mut results {
+                sr.score = crate::salience_recency::apply_boosts(
+                    sr.score,
+                    &sr.memory,
+                    now,
+                    self.salience_recency_config,
+                );
+            }
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            results.truncate(limit);
+        }
 
         Ok(results)
     }

@@ -52,7 +52,9 @@ pub enum Commands {
         /// Tags for categorization (comma-separated)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
-        /// Memory type: fact, procedure, preference, decision, context
+        /// Memory type: fact, procedure, preference, decision, context,
+        /// note, insight, reference, event. Default 'fact' triggers pattern-based
+        /// auto-inference (#349) unless an explicit type is passed.
         #[arg(long, default_value = "fact")]
         r#type: String,
         /// Enable contradiction detection (auto-deprecate conflicting memories)
@@ -101,6 +103,14 @@ pub enum Commands {
         /// `[recall].default_strategy` (vector).
         #[arg(long)]
         strategy: Option<String>,
+        /// Enable salience boost (how much each result matters) (#352).
+        /// Uses the configured `[recall].salience_weight` (default 0.15).
+        #[arg(long)]
+        salience: bool,
+        /// Enable recency boost (how fresh each result is) (#352).
+        /// Uses the configured `[recall].recency_weight` (default 0.15).
+        #[arg(long)]
+        recency: bool,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,
@@ -323,6 +333,23 @@ pub enum Commands {
         /// Quiet mode: warnings/errors only
         #[arg(long)]
         quiet: bool,
+    },
+    /// Find orphan memories — disconnected nodes with low importance (#351)
+    Orphans {
+        /// Importance threshold below which a memory is a candidate (default 0.3)
+        #[arg(long)]
+        threshold: Option<f64>,
+        /// Maximum results (0 = all, default 50)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Show timeline events for a memory (audit log, #347)
+    Timeline {
+        /// Memory ID (UUID)
+        id: String,
+        /// Maximum events to return (0 = all)
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
 }
 
