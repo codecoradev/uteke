@@ -175,28 +175,55 @@ impl crate::Uteke {
         }
     }
 
-    fn phase_lint(&self, _namespace: Option<&str>) -> Result<PhaseResult, Error> {
+    fn phase_lint(&self, namespace: Option<&str>) -> Result<PhaseResult, Error> {
         // Lightweight lint: count memories with unknown memory_type values.
         // Uses SQL COUNTs to avoid loading every memory into RAM (CodeCora
-        // #390). Errors propagate — never silently mask DB failures.
-        let total: i64 = self
-            .store
-            .conn
-            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
-            .map_err(|e| Error::db("dream lint total count", e))?;
-        // Unknown types: anything not in the known set.
-        let bad_count: i64 = self
-            .store
-            .conn
-            .query_row(
-                "SELECT COUNT(*) FROM memories
-                 WHERE memory_type NOT IN
-                   ('fact','procedure','preference','decision','context',
-                    'note','insight','reference','event')",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| Error::db("dream lint bad type count", e))?;
+        // #390). Namespace-aware when a namespace is provided.
+        // Errors propagate — never silently mask DB failures.
+        let (total, bad_count): (i64, i64) = if let Some(ns) = namespace {
+            let t: i64 = self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories WHERE namespace = ?1",
+                    rusqlite::params![ns],
+                    |r| r.get(0),
+                )
+                .map_err(|e| Error::db("dream lint total count", e))?;
+            let b: i64 = self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories
+                     WHERE namespace = ?1
+                       AND memory_type NOT IN
+                       ('fact','procedure','preference','decision','context',
+                        'note','insight','reference','event')",
+                    rusqlite::params![ns],
+                    |r| r.get(0),
+                )
+                .map_err(|e| Error::db("dream lint bad type count", e))?;
+            (t, b)
+        } else {
+            let t: i64 = self
+                .store
+                .conn
+                .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+                .map_err(|e| Error::db("dream lint total count", e))?;
+            let b: i64 = self
+                .store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories
+                     WHERE memory_type NOT IN
+                       ('fact','procedure','preference','decision','context',
+                        'note','insight','reference','event')",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| Error::db("dream lint bad type count", e))?;
+            (t, b)
+        };
         let warnings = bad_count as usize;
         let total = total as usize;
         let summary = if warnings == 0 {
@@ -295,6 +322,7 @@ impl crate::Uteke {
                    AND in_e.id IS NULL
                    AND m.access_count = 0
                    AND m.pinned = 0
+                   AND m.deprecated = 0
                    AND m.importance < ?1
                    AND m.namespace = ?2",
                 rusqlite::params![THRESHOLD, ns],
@@ -310,6 +338,7 @@ impl crate::Uteke {
                    AND in_e.id IS NULL
                    AND m.access_count = 0
                    AND m.pinned = 0
+                   AND m.deprecated = 0
                    AND m.importance < ?1",
                 rusqlite::params![THRESHOLD],
                 |r| r.get(0),
