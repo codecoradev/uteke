@@ -126,11 +126,17 @@ impl crate::Uteke {
         phases: &[DreamPhase],
     ) -> Result<DreamReport, Error> {
         let start = std::time::Instant::now();
-        let selected: Vec<DreamPhase> = if phases.is_empty() {
+        let mut selected: Vec<DreamPhase> = if phases.is_empty() {
             DreamPhase::all_in_order().to_vec()
         } else {
             phases.to_vec()
         };
+        // Always execute in canonical dependency order, regardless of the
+        // order the user passed --phases in (CodeCora #390 r4).
+        let canonical = DreamPhase::all_in_order();
+        selected.sort_by_key(|p| canonical.iter().position(|c| c == p).unwrap_or(usize::MAX));
+        // Dedup: if the user passed the same phase twice, run it once.
+        selected.dedup();
 
         let mut results = Vec::with_capacity(selected.len());
         for phase in &selected {
@@ -465,5 +471,37 @@ mod tests {
         assert_eq!(report.phases.len(), 2);
         assert_eq!(report.phases[0].phase, "lint");
         assert_eq!(report.phases[1].phase, "verify");
+    }
+
+    #[test]
+    fn dream_phase_order_reversed() {
+        // CodeCora #390 r4: even if user passes phases in non-canonical
+        // order, they must execute in dependency order.
+        let uteke = crate::Uteke::open(":memory:").unwrap();
+        let report = uteke
+            .dream(
+                None,
+                true,
+                &[DreamPhase::Verify, DreamPhase::Lint, DreamPhase::Backlinks],
+            )
+            .unwrap();
+        assert_eq!(report.phases.len(), 3);
+        // Must be in canonical order: lint → backlinks → verify.
+        assert_eq!(report.phases[0].phase, "lint");
+        assert_eq!(report.phases[1].phase, "backlinks");
+        assert_eq!(report.phases[2].phase, "verify");
+    }
+
+    #[test]
+    fn dream_phase_dedup() {
+        let uteke = crate::Uteke::open(":memory:").unwrap();
+        let report = uteke
+            .dream(
+                None,
+                true,
+                &[DreamPhase::Lint, DreamPhase::Lint, DreamPhase::Lint],
+            )
+            .unwrap();
+        assert_eq!(report.phases.len(), 1, "duplicate phases should be deduped");
     }
 }
