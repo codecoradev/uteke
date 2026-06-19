@@ -193,77 +193,40 @@ fn init_cursor(json: bool) -> Result<(), String> {
 /// Initialize uteke integration for Hermes (#384).
 /// Generates a uteke-tool plugin in the Hermes plugins directory.
 fn init_hermes(json: bool) -> Result<(), String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
-    let plugin_dir = cwd.join("uteke-tool");
+    // #385: Auto-install to ~/.hermes/plugins/uteke-tool/ when possible.
+    // Fall back to CWD if the home directory isn't available.
+    // Check HOME (Unix) then USERPROFILE (Windows).
+    let plugin_dir = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| {
+            let mut p = std::path::PathBuf::from(h);
+            // Use platform-native separators.
+            p.push(".hermes");
+            p.push("plugins");
+            p.push("uteke-tool");
+            p
+        })
+        .or_else(|| std::env::current_dir().ok().map(|d| d.join("uteke-tool")))
+        .ok_or_else(|| "Cannot determine plugin install directory".to_string())?;
+
+    let installed_to_home = plugin_dir.components().any(|c| c.as_os_str() == ".hermes");
+
     std::fs::create_dir_all(&plugin_dir)
         .map_err(|e| format!("Failed to create plugin dir: {e}"))?;
 
     // plugin.yaml — Hermes plugin manifest.
-    let plugin_yaml = r#"name: uteke-tool
-description: Semantic memory recall and storage via uteke
-version: 0.1.0
-author: CodeCoraDev
-"#;
+    let plugin_yaml = "name: uteke-tool\ndescription: Semantic memory recall and storage via uteke — includes room operations\nversion: 0.2.0\nauthor: CodeCoraDev\nactions:\n  - uteke\n";
     std::fs::write(plugin_dir.join("plugin.yaml"), plugin_yaml)
         .map_err(|e| format!("Failed to write plugin.yaml: {e}"))?;
 
-    // tool.py — Hermes plugin entry point.
-    let tool_py = r#"import json
-import requests
-
-UTEKE_URL = "http://127.0.0.1:8767"
-
-def uteke(action="recall", content="", tags="", namespace="hermes", limit=5):
-    """Call uteke server for memory operations."""
-    if action == "remember":
-        resp = requests.post(f"{UTEKE_URL}/remember", json={
-            "content": content,
-            "tags": tags.split(",") if tags else [],
-            "namespace": namespace
-        })
-        return f"Stored: {content[:50]}..."
-
-    elif action == "recall":
-        resp = requests.post(f"{UTEKE_URL}/recall", json={
-            "query": content,
-            "limit": limit,
-            "namespace": namespace
-        })
-        results = resp.json()
-        if isinstance(results, list) and results:
-            memories = [m["memory"]["content"] for m in results]
-            return "\n".join(memories)
-        return "No memories found."
-
-    elif action == "stats":
-        resp = requests.get(f"{UTEKE_URL}/stats?namespace={namespace}")
-        return json.dumps(resp.json(), indent=2)
-
-    return f"Unknown action: {action}"
-"#;
+    // tool.py — Hermes plugin entry point (#395: includes room operations).
+    // Uses only stdlib (urllib) so no pip install needed.
+    let tool_py = "#!/usr/bin/env python3\n\"\"\"uteke-tool: Semantic memory plugin for Hermes.\n\nActions:\n  Memory: remember, recall, search, list, forget, stats\n  Room:   room_create, room_recall, room_list, room_summary, room_stats, room_delete\n\"\"\"\nimport json\nimport os\nimport urllib.request\nimport urllib.error\n\nUTEKE_URL = os.environ.get(\"UTEKE_SERVER_URL\", \"http://127.0.0.1:8767\")\n\n\ndef _request(method, path, data=None):\n    \"\"\"Make an HTTP request to the uteke server.\"\"\"\n    url = f\"{UTEKE_URL}{path}\"\n    body = json.dumps(data).encode() if data else None\n    req = urllib.request.Request(url, data=body, method=method)\n    req.add_header(\"Content-Type\", \"application/json\")\n    try:\n        with urllib.request.urlopen(req) as resp:\n            return json.loads(resp.read().decode())\n    except urllib.error.HTTPError as e:\n        return {\"error\": e.read().decode(), \"status\": e.code}\n    except urllib.error.URLError:\n        return {\"error\": \"uteke-serve not running. Start it: uteke-serve --port 8767\"}\n\n\ndef uteke(action=\"recall\", **kwargs):\n    \"\"\"Call uteke for memory and room operations.\n\n    Memory actions:\n        uteke(action=\"remember\", content=\"...\", tags=\"t1,t2\", namespace=\"hermes\")\n        uteke(action=\"recall\", content=\"query\", namespace=\"hermes\", limit=5)\n        uteke(action=\"search\", content=\"query\", namespace=\"hermes\")\n        uteke(action=\"list\", namespace=\"hermes\", limit=20)\n        uteke(action=\"forget\", id=\"memory-id\")\n        uteke(action=\"stats\", namespace=\"hermes\")\n\n    Room actions (#395):\n        uteke(action=\"room_create\", room_id=\"planning\", title=\"Sprint Planning\")\n        uteke(action=\"room_recall\", room_id=\"planning\", content=\"deadline\")\n        uteke(action=\"room_list\")\n        uteke(action=\"room_summary\", room_id=\"planning\")\n        uteke(action=\"room_stats\", room_id=\"planning\")\n        uteke(action=\"room_delete\", room_id=\"planning\")\n    \"\"\"\n    content = kwargs.get(\"content\", \"\")\n    namespace = kwargs.get(\"namespace\", \"hermes\")\n    tags = kwargs.get(\"tags\", \"\")\n    limit = kwargs.get(\"limit\", 5)\n\n    # -- Memory actions ----\n    if action == \"remember\":\n        result = _request(\"POST\", \"/remember\", {\n            \"content\": content,\n            \"tags\": tags.split(\",\") if tags else [],\n            \"namespace\": namespace,\n        })\n        if \"error\" not in result:\n            return f\"\\u2713 Stored: {content[:80]}\"\n        return result\n\n    elif action == \"recall\":\n        result = _request(\"POST\", \"/recall\", {\n            \"query\": content,\n            \"limit\": limit,\n            \"namespace\": namespace,\n        })\n        if isinstance(result, list) and result:\n            lines = []\n            for m in result:\n                score = m.get(\"score\", 0)\n                text = m.get(\"memory\", {}).get(\"content\", \"?\")\n                lines.append(f\"[{score:.2f}] {text}\")\n            return \"\\n\".join(lines)\n        return \"No memories found.\"\n\n    elif action == \"search\":\n        result = _request(\"POST\", \"/search\", {\n            \"query\": content,\n            \"limit\": limit,\n            \"namespace\": namespace,\n        })\n        if isinstance(result, list) and result:\n            lines = []\n            for m in result:\n                score = m.get(\"score\", 0)\n                text = m.get(\"content\", \"?\")\n                lines.append(f\"[{score:.2f}] {text}\")\n            return \"\\n\".join(lines)\n        return \"No memories found.\"\n\n    elif action == \"list\":\n        result = _request(\"POST\", \"/list\", {\n            \"limit\": limit,\n            \"namespace\": namespace,\n        })\n        if isinstance(result, list) and result:\n            lines = []\n            for m in result:\n                mid = m.get(\"id\", \"?\")[:8]\n                text = m.get(\"content\", \"?\")[:60]\n                lines.append(f\"[{mid}] {text}\")\n            return \"\\n\".join(lines)\n        return \"No memories found.\"\n\n    elif action == \"forget\":\n        mid = kwargs.get(\"id\", \"\")\n        result = _request(\"DELETE\", f\"/forget?id={mid}\")\n        return f\"\\u2713 Deleted memory: {mid}\" if \"error\" not in result else result\n\n    elif action == \"stats\":\n        result = _request(\"GET\", f\"/stats?namespace={namespace}\")\n        return json.dumps(result, indent=2)\n\n    # -- Room actions (#395) ----\n    elif action == \"room_create\":\n        room_id = kwargs.get(\"room_id\", \"\")\n        title = kwargs.get(\"title\")\n        result = _request(\"POST\", \"/room/create\", {\n            \"room_id\": room_id,\n            \"title\": title,\n            \"namespace\": namespace,\n        })\n        if \"error\" not in result:\n            return f\"\\u2713 Room '{room_id}' created\"\n        return result\n\n    elif action == \"room_recall\":\n        room_id = kwargs.get(\"room_id\", \"\")\n        result = _request(\"POST\", \"/room/recall\", {\n            \"room_id\": room_id,\n            \"query\": content,\n            \"limit\": limit,\n        })\n        if isinstance(result, list) and result:\n            lines = []\n            for m in result:\n                score = m.get(\"score\", 0)\n                text = m.get(\"memory\", {}).get(\"content\", \"?\")\n                lines.append(f\"[{score:.2f}] {text}\")\n            return \"\\n\".join(lines)\n        return \"No memories found in room.\"\n\n    elif action == \"room_list\":\n        result = _request(\"GET\", \"/room/list\")\n        if isinstance(result, list) and result:\n            lines = []\n            for r in result:\n                rid = r.get(\"id\", \"?\")\n                title = r.get(\"title\", \"(untitled)\")\n                ns = r.get(\"namespace\", \"?\")\n                lines.append(f\"  {rid}  {title}  [{ns}]\")\n            return \"\\n\".join(lines)\n        return \"No rooms found.\"\n\n    elif action == \"room_summary\":\n        room_id = kwargs.get(\"room_id\", \"\")\n        result = _request(\"POST\", \"/room/summary\", {\"room_id\": room_id})\n        return json.dumps(result, indent=2) if result else \"Room not found.\"\n\n    elif action == \"room_stats\":\n        room_id = kwargs.get(\"room_id\", \"\")\n        result = _request(\"POST\", \"/room/stats\", {\"room_id\": room_id})\n        return json.dumps(result, indent=2) if result else \"Room not found.\"\n\n    elif action == \"room_delete\":\n        room_id = kwargs.get(\"room_id\", \"\")\n        result = _request(\"DELETE\", \"/room/delete\", {\"room_id\": room_id})\n        if \"error\" not in result:\n            return f\"\\u2713 Room '{room_id}' deleted (memories preserved)\"\n        return result\n\n    return f\"Unknown action: {action}\"\n";
     std::fs::write(plugin_dir.join("tool.py"), tool_py)
         .map_err(|e| format!("Failed to write tool.py: {e}"))?;
 
     // README.md — quick start guide.
-    let readme = r#"# uteke-tool
-
-Semantic memory plugin for Hermes via [uteke](https://github.com/codecoradev/uteke).
-
-## Setup
-
-1. Install uteke: `curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh`
-2. Start daemon: `uteke-serve --port 8767`
-3. Copy this directory to your Hermes plugins folder
-4. Enable in Hermes config: `plugins: enabled: [uteke-tool]`
-
-## Usage
-
-```python
-uteke(action="remember", content="User prefers dark mode", tags="preference,ui")
-uteke(action="recall", content="user preferences")
-uteke(action="stats")
-```
-"#;
+    let readme = "# uteke-tool\n\nSemantic memory plugin for Hermes via [uteke](https://github.com/codecoradev/uteke).\n\n## Setup\n\n1. Install uteke: `curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh`\n2. Start daemon: `uteke-serve --port 8767`\n3. This plugin is installed in `~/.hermes/plugins/uteke-tool/`\n4. Start a new Hermes session (plugin loads automatically)\n\n### MCP Server (alternative)\n\nFor MCP-compatible agents, use the uteke MCP server instead:\n\n```bash\nhermes mcp add uteke --command uteke-mcp\n```\n\n## Usage\n\n### Memory Operations\n\n```python\nuteke(action=\"remember\", content=\"User prefers dark mode\", tags=\"preference,ui\")\nuteke(action=\"recall\", content=\"user preferences\")\nuteke(action=\"search\", content=\"dark mode\")\nuteke(action=\"list\", limit=10)\nuteke(action=\"stats\")\nuteke(action=\"forget\", id=\"abc12345\")\n```\n\n### Room Operations (multi-agent collaboration)\n\n```python\n# Create a shared room\nuteke(action=\"room_create\", room_id=\"sprint-planning\", title=\"Sprint Planning\")\n\n# Recall from a room\nuteke(action=\"room_recall\", room_id=\"sprint-planning\", content=\"deadline\")\n\n# List all rooms\nuteke(action=\"room_list\")\n\n# Room analytics\nuteke(action=\"room_stats\", room_id=\"sprint-planning\")\nuteke(action=\"room_summary\", room_id=\"sprint-planning\")\n```\n\n## Configuration\n\n| Environment Variable | Default | Description |\n|---------------------|---------|-------------|\n| `UTEKE_SERVER_URL`  | `http://127.0.0.1:8767` | uteke server URL |\n";
     std::fs::write(plugin_dir.join("README.md"), readme)
         .map_err(|e| format!("Failed to write README.md: {e}"))?;
 
@@ -272,15 +235,23 @@ uteke(action="stats")
             "agent": "hermes",
             "directory": plugin_dir.to_string_lossy(),
             "files": ["plugin.yaml", "tool.py", "README.md"],
-            "status": "installed"
+            "status": "installed",
+            "auto_registered": installed_to_home
         });
         println!("{obj}");
     } else {
-        println!("✓ Hermes plugin generated: {}/", plugin_dir.display());
-        println!("  Next steps:");
-        println!("    1. Copy to your Hermes plugins directory");
-        println!("    2. Enable in Hermes config: plugins.enabled: [uteke-tool]");
-        println!("    3. Start uteke daemon: uteke-serve --port 8767");
+        println!("✓ Hermes plugin installed: {}/", plugin_dir.display());
+        if installed_to_home {
+            println!("  Location: ~/.hermes/plugins/uteke-tool/");
+            println!("  Start a new Hermes session to activate.");
+        } else {
+            println!("  Location: {}/", plugin_dir.display());
+            println!("  Copy to your Hermes plugins directory to activate.");
+        }
+        println!("\n  Memory actions: remember, recall, search, list, forget, stats");
+        println!("  Room actions:   room_create, room_recall, room_list, room_summary, room_stats, room_delete");
+        println!("\n  Make sure uteke-serve is running: uteke-serve --port 8767");
+        println!("  Or use MCP: hermes mcp add uteke --command uteke-mcp");
     }
     Ok(())
 }

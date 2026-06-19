@@ -369,6 +369,55 @@ fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<
     serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))
 }
 
+/// Decode percent-encoded URL query values (e.g. `%20` → space, `+` → space).
+/// Handles multi-byte UTF-8 sequences correctly.
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                decoded.push(b' ');
+            }
+            b'%' if i + 2 < bytes.len() => {
+                let hex = &s[i + 1..i + 3];
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    decoded.push(byte);
+                    i += 2;
+                } else {
+                    decoded.push(b'%');
+                }
+            }
+            c => decoded.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8(decoded).unwrap_or_else(|_| s.to_string())
+}
+
+/// Parse a query parameter value from a query string like `"namespace=foo&bar=1"`.
+fn parse_query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|pair| {
+        let mut kv = pair.splitn(2, '=');
+        if kv.next()? == key {
+            Some(url_decode(kv.next()?))
+        } else {
+            None
+        }
+    })
+}
+
+/// Extract `?namespace=` from a full path like `"/room/list?namespace=foo"`.
+fn parse_query_namespace(path: &str) -> Option<String> {
+    let query = path.split('?').nth(1)?;
+    parse_query_param(query, "namespace")
+}
+
+fn default_namespace() -> String {
+    "default".to_string()
+}
+
 fn ns(ns: &Option<String>) -> Option<&str> {
     ns.as_deref()
 }
@@ -862,7 +911,109 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
             Err(e) => ctx.error_response_for(req, 400, e),
         },
 
-        // ── MCP JSON-RPC endpoint (#381) ───────────────────────────────
+        // ── Room management endpoints (#395) ────────────────────────────
+        (Method::Post, "/room/create") => {
+            #[derive(Deserialize)]
+            struct RoomCreateRequest {
+                room_id: String,
+                #[serde(default)]
+                title: Option<String>,
+                #[serde(default = "default_namespace")]
+                namespace: String,
+            }
+            match read_body::<RoomCreateRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    match uteke.create_room(
+                        &req_data.room_id,
+                        req_data.title.as_deref(),
+                        &req_data.namespace,
+                    ) {
+                        Ok(()) => ctx.ok_response_for(
+                            req,
+                            &serde_json::json!({
+                                "created": req_data.room_id,
+                                "namespace": req_data.namespace
+                            }),
+                        ),
+                        Err(e) => {
+                            let msg = format!("Failed to create room: {e}");
+                            ctx.error_response_for(req, 400, &msg)
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        (Method::Get, "/room/list") => {
+            let ns_param = parse_query_namespace(&path);
+            match uteke.list_rooms(ns_param.as_deref()) {
+                Ok(rooms) => ctx.ok_response_for(req, &rooms),
+                Err(e) => {
+                    error!("Internal error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
+        (Method::Post, "/room/stats") => {
+            #[derive(Deserialize)]
+            struct RoomStatsRequest {
+                room_id: String,
+            }
+            match read_body::<RoomStatsRequest>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_stats(&req_data.room_id) {
+                    Ok(Some(stats)) => ctx.ok_response_for(req, &stats),
+                    Ok(None) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Room not found: {}", req_data.room_id),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        (Method::Delete, p) if p == "/room/delete" || p.starts_with("/room/delete?") => {
+            let room_id = if let Some(q) = p.strip_prefix("/room/delete?") {
+                parse_query_param(q, "room_id")
+            } else {
+                // Try reading from query params in headers or body
+                None
+            };
+            let room_id = match room_id {
+                Some(id) => id,
+                None => {
+                    // Try body as JSON
+                    #[derive(Deserialize)]
+                    struct RoomDeleteRequest {
+                        room_id: String,
+                    }
+                    match read_body::<RoomDeleteRequest>(req.as_reader()) {
+                        Ok(data) => data.room_id,
+                        Err(_) => {
+                            return ctx.error_response_for(req, 400, "Missing 'room_id' parameter")
+                        }
+                    }
+                }
+            };
+            match uteke.delete_room(&room_id) {
+                Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"deleted": room_id})),
+                Err(e) => {
+                    let msg = format!("{e}");
+                    if msg.contains("not found") {
+                        ctx.error_response_for(req, 404, &msg)
+                    } else {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+        }
         (Method::Post, "/mcp") => {
             // Enforce a body size limit to prevent memory exhaustion
             // (CodeCora #397). 1 MiB is generous for JSON-RPC.
@@ -996,8 +1147,13 @@ fn main() {
                 println!("  GET  /memory?id=UUID       → {{ memory }}");
                 println!("  GET  /stats               → {{ stats }}");
                 println!("  GET  /namespaces           → {{ namespaces }}");
+                println!("  POST /room/create          → {{ room_id, title, namespace }} → {{ created }}");
+                println!("  GET  /room/list            → [?namespace=] → [rooms]");
+                println!("  POST /room/recall          → {{ room_id, query }} → ranked memories");
                 println!("  POST /room/summary         → {{ room_id }} → {{ summary }}");
                 println!("  POST /room/document        → {{ room_id }} → {{ document }}");
+                println!("  POST /room/stats           → {{ room_id }} → room stats");
+                println!("  DEL  /room/delete          → {{ room_id }} → {{ deleted }}");
                 std::process::exit(0);
             }
             _ => {
