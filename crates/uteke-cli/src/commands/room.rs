@@ -26,7 +26,7 @@ pub(crate) fn run(
             } else {
                 println!("✓ Room '{room_id}' created");
             }
-            return Ok(());
+            Ok(())
         }
         RoomCommands::List { namespace } => {
             // Rooms are cross-namespace collaboration spaces (#392).
