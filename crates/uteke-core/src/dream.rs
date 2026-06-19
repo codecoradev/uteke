@@ -123,7 +123,22 @@ impl crate::Uteke {
 
         let mut results = Vec::with_capacity(selected.len());
         for phase in &selected {
-            let r = self.run_phase(*phase, namespace, dry_run)?;
+            // Each phase runs independently — a failure in one phase is
+            // recorded as an error result but does NOT abort the whole
+            // pipeline (CodeCora #390). Subsequent phases still run.
+            let r = match self.run_phase(*phase, namespace, dry_run) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("dream phase {:?} failed: {e}", phase);
+                    PhaseResult {
+                        phase: phase.as_str().to_string(),
+                        status: PhaseStatus::Error,
+                        summary: format!("✗ phase failed: {e}"),
+                        changes: 0,
+                        warnings: 1,
+                    }
+                }
+            };
             results.push(r);
         }
 
@@ -162,26 +177,29 @@ impl crate::Uteke {
 
     fn phase_lint(&self, _namespace: Option<&str>) -> Result<PhaseResult, Error> {
         // Lightweight lint: count memories with unknown memory_type values.
-        let all = self.store.load_all(None)?;
-        let total = all.len();
-        let known: std::collections::HashSet<&str> = [
-            "fact",
-            "procedure",
-            "preference",
-            "decision",
-            "context",
-            "note",
-            "insight",
-            "reference",
-            "event",
-        ]
-        .into_iter()
-        .collect();
-        let bad_types: Vec<_> = all
-            .iter()
-            .filter(|m| !known.contains(m.memory_type.as_str()))
-            .collect();
-        let warnings = bad_types.len();
+        // Uses SQL COUNTs to avoid loading every memory into RAM (CodeCora
+        // #390).
+        let total: i64 = self
+            .store
+            .conn
+            .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
+            .unwrap_or(0);
+        // Unknown types: anything not in the known set. SQLite doesn't have
+        // an array IN for TEXT without a subquery, so we enumerate.
+        let bad_count: i64 = self
+            .store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories
+                 WHERE memory_type NOT IN
+                   ('fact','procedure','preference','decision','context',
+                    'note','insight','reference','event')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let warnings = bad_count as usize;
+        let total = total as usize;
         let summary = if warnings == 0 {
             format!("✓ {total} memories, all types valid")
         } else {
