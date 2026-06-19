@@ -866,13 +866,19 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
         (Method::Post, "/mcp") => {
             // Enforce a body size limit to prevent memory exhaustion
             // (CodeCora #397). 1 MiB is generous for JSON-RPC.
-            const MAX_MCP_BODY: usize = 1024 * 1024;
+            const MAX_MCP_BODY: u64 = 1024 * 1024;
+            // Check Content-Length and reject oversized requests.
+            let content_length = req
+                .headers()
+                .iter()
+                .find(|h| h.field.as_str() == "content-length")
+                .and_then(|h| h.value.as_str().parse::<u64>().ok())
+                .unwrap_or(0);
+            if content_length > MAX_MCP_BODY {
+                return ctx.error_response_for(req, 413, "Payload too large");
+            }
             let mut body = String::new();
-            if let Err(e) = req
-                .as_reader()
-                .take(MAX_MCP_BODY as u64)
-                .read_to_string(&mut body)
-            {
+            if let Err(e) = req.as_reader().take(MAX_MCP_BODY).read_to_string(&mut body) {
                 return ctx.error_response_for(req, 400, format!("Failed to read body: {e}"));
             }
             let response = uteke_mcp::handle_jsonrpc(&uteke, &body);

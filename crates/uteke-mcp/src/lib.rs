@@ -329,7 +329,10 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let lines: Vec<String> = memories
         .iter()
-        .map(|m| format!("[{}] {} ({})", &m.id[..8], m.content, m.tags.join(", ")))
+        .map(|m| {
+            let short_id = m.id.get(..8).unwrap_or(&m.id);
+            format!("[{short_id}] {} ({})", m.content, m.tags.join(", "))
+        })
         .collect();
 
     Ok(ToolResult {
