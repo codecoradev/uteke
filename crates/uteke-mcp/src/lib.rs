@@ -150,13 +150,14 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
 fn tool_remember() -> Value {
     serde_json::json!({
         "name": "uteke_remember",
-        "description": "Store a new memory in uteke. The content will be embedded and indexed for semantic search. Optionally specify tags for categorization and a room for collaborative memory.",
+        "description": "Store a new memory in uteke. The content will be embedded and indexed for semantic search.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "content": { "type": "string", "description": "The text content to remember" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for categorization (optional)" },
-                "namespace": { "type": "string", "description": "Namespace for isolation (default: 'default')" }
+                "namespace": { "type": "string", "description": "Namespace for isolation (default: 'default')" },
+                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" }
             },
             "required": ["content"]
         }
@@ -172,7 +173,9 @@ fn tool_recall() -> Value {
             "properties": {
                 "query": { "type": "string", "description": "The search query" },
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
-                "namespace": { "type": "string", "description": "Namespace to search (default: 'default')" }
+                "namespace": { "type": "string", "description": "Namespace to search (default: 'default')" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
+                "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" }
             },
             "required": ["query"]
         }
@@ -188,6 +191,7 @@ fn tool_list() -> Value {
             "properties": {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
                 "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
+                "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
                 "namespace": { "type": "string", "description": "Namespace (optional)" }
             }
         }
@@ -230,9 +234,10 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
     let namespace = args["namespace"].as_str();
+    let memory_type = args["type"].as_str().unwrap_or("fact");
 
     let id = uteke
-        .remember(content, &tags, None, namespace)
+        .remember_typed(content, &tags, None, namespace, memory_type)
         .map_err(|e| format!("Failed: {e}"))?;
 
     Ok(ToolResult {
@@ -249,8 +254,14 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
     let namespace = args["namespace"].as_str();
 
+    let tags_filter: Option<Vec<&str>> = args["tags"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>());
+    let tags_ref = tags_filter.as_deref();
+    let min_score = args["min_score"].as_f64().unwrap_or(0.0) as f32;
+
     let results = uteke
-        .recall(query, limit, None, namespace, 0.0)
+        .recall(query, limit, tags_ref, namespace, min_score)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if results.is_empty() {
@@ -281,10 +292,11 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tag = args["tag"].as_str();
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let namespace = args["namespace"].as_str();
 
     let memories = uteke
-        .list(tag, limit, 0, namespace)
+        .list(tag, limit, offset, namespace)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if memories.is_empty() {
