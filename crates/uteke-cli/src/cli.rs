@@ -319,6 +319,14 @@ pub enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+    /// Show timeline events for a memory (audit log, #347)
+    Timeline {
+        /// Memory ID (UUID)
+        id: String,
+        /// Maximum events to return (0 = all)
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
 }
 
 /// Subcommands for knowledge graph operations.

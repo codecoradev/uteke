@@ -23,6 +23,7 @@ mod operations;
 mod recall_cache;
 mod rooms;
 pub mod salience_recency;
+mod timeline;
 mod types;
 
 pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
@@ -45,6 +46,7 @@ pub use memory::{
 pub use salience_recency::{
     apply_boosts, recency_score, salience_score, type_half_life_days, SalienceRecencyConfig,
 };
+pub use timeline::{TimelineEvent, TimelineEventType};
 
 pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};

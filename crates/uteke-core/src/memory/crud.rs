@@ -560,6 +560,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 8); // v8 = memory_edges + slug column (graph tables were v7)
+        assert_eq!(version, 9); // v9 = timeline_events (#347); v8 = memory_edges + slug; v7 = graph tables
     }
 }
