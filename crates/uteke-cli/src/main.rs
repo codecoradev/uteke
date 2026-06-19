@@ -88,7 +88,7 @@ fn main() {
 
     tracing::debug!("Opening store at: {store_path}");
 
-    let uteke = match Uteke::open_with_embedding_and_graph(
+    let mut uteke = match Uteke::open_with_embedding_and_graph(
         &store_path,
         &config.embedding.backend,
         uteke_core::EmbeddingSettings {
@@ -124,7 +124,7 @@ fn main() {
     })
     .expect("Failed to set SIGINT handler");
 
-    let result = commands::run_command(&cli, &uteke, &config);
+    let result = commands::run_command(&cli, &mut uteke, &config);
 
     if let Err(e) = uteke.shutdown() {
         tracing::warn!("Shutdown flush failed: {e}");

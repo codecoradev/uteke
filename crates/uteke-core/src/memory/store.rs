@@ -76,10 +76,22 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
 -- Not globally unique — resolution picks the most recently updated match
 -- (see Store::resolve_slug). Use a unique slug per namespace for deterministic links.
 CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
+
+-- v9: Timeline events log (#347). Append-only audit trail per memory.
+CREATE TABLE IF NOT EXISTS timeline_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    event_data TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
+CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 8;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 9;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
