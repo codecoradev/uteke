@@ -92,10 +92,13 @@ pub(crate) fn run(
         Some(serde_json::Value::Object(meta_map))
     };
 
+    let stored_id: String; // captured for set_source (#348)
+
     if detect_contradiction {
         let (id, contradiction) = uteke
             .remember_with_contradiction(content, &tag_refs, ns, Some(r#type), true, 0.65)
             .map_err(|e| format!("Failed to store memory: {e}"))?;
+        stored_id = id.clone();
         tracing::info!("Memory stored with ID: {id}");
         if cli.json {
             let mut obj = serde_json::json!({
@@ -150,6 +153,7 @@ pub(crate) fn run(
                 .remember(content, &tag_refs, metadata, ns)
                 .map_err(|e| format!("Failed to store memory: {e}"))?
         };
+        stored_id = id.clone();
         tracing::info!("Memory stored with ID: {id}");
         if cli.json {
             let mut obj = serde_json::json!({"id": id});
@@ -187,18 +191,10 @@ pub(crate) fn run(
         }
     }
 
-    // Set source provenance if provided (#348).
-    // We need the ID from the remember call. The ID is captured in the
-    // `id` variable inside the if/else blocks above. We need to hoist it.
-    // Simplest: query the most recent memory for this namespace.
+    // Set source provenance using the exact stored ID (#348).
     if source.is_some() || source_type.is_some() {
-        // Get the latest memory to find its ID.
-        if let Ok(memories) = uteke.list(None, 1, 0, ns) {
-            if let Some(latest) = memories.first() {
-                let st = source_type.unwrap_or("user");
-                let _ = uteke.set_source(&latest.id, source, st);
-            }
-        }
+        let st = source_type.unwrap_or("user");
+        let _ = uteke.set_source(&stored_id, source, st);
     }
 
     Ok(())
