@@ -52,7 +52,9 @@ pub enum Commands {
         /// Tags for categorization (comma-separated)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
-        /// Memory type: fact, procedure, preference, decision, context
+        /// Memory type: fact, procedure, preference, decision, context,
+        /// note, insight, reference, event. Default 'fact' triggers pattern-based
+        /// auto-inference (#349) unless an explicit type is passed.
         #[arg(long, default_value = "fact")]
         r#type: String,
         /// Enable contradiction detection (auto-deprecate conflicting memories)
@@ -101,6 +103,14 @@ pub enum Commands {
         /// `[recall].default_strategy` (vector).
         #[arg(long)]
         strategy: Option<String>,
+        /// Enable salience boost (how much each result matters) (#352).
+        /// Uses the configured `[recall].salience_weight` (default 0.15).
+        #[arg(long)]
+        salience: bool,
+        /// Enable recency boost (how fresh each result is) (#352).
+        /// Uses the configured `[recall].recency_weight` (default 0.15).
+        #[arg(long)]
+        recency: bool,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,
