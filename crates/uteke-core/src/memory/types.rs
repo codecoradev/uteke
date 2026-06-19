@@ -473,17 +473,24 @@ fn has_iso_date(text: &str) -> bool {
 }
 
 fn is_iso_date_bytes(b: &[u8]) -> bool {
-    b.len() == 10
-        && b[0].is_ascii_digit()
-        && b[1].is_ascii_digit()
-        && b[2].is_ascii_digit()
-        && b[3].is_ascii_digit()
-        && b[4] == b'-'
-        && b[5].is_ascii_digit()
-        && b[6].is_ascii_digit()
-        && b[7] == b'-'
-        && b[8].is_ascii_digit()
-        && b[9].is_ascii_digit()
+    if b.len() != 10
+        || !b[0].is_ascii_digit()
+        || !b[1].is_ascii_digit()
+        || !b[2].is_ascii_digit()
+        || !b[3].is_ascii_digit()
+        || b[4] != b'-'
+        || !b[5].is_ascii_digit()
+        || !b[6].is_ascii_digit()
+        || b[7] != b'-'
+        || !b[8].is_ascii_digit()
+        || !b[9].is_ascii_digit()
+    {
+        return false;
+    }
+    // Validate month and day ranges (CodeCora #386 r4).
+    let month = (b[5] - b'0') * 10 + (b[6] - b'0');
+    let day = (b[8] - b'0') * 10 + (b[9] - b'0');
+    month >= 1 && month <= 12 && day >= 1 && day <= 31
 }
 
 /// Result of a consolidation (deduplication) operation.
@@ -776,6 +783,13 @@ mod tests {
         assert!(has_iso_date("2026-12-31"));
         assert!(!has_iso_date("18/06/2026")); // not ISO
         assert!(!has_iso_date("no date here"));
+        // Invalid dates should NOT match (CodeCora #386 r4).
+        assert!(!has_iso_date("meeting on 2026-99-99"));
+        assert!(!has_iso_date("date: 2026-13-40"));
+        assert!(!has_iso_date("abc2026-00-00xyz"));
+        // But valid ones should.
+        assert!(has_iso_date("meeting on 2026-12-31"));
+        assert!(has_iso_date("2026-01-01"));
     }
 
     #[test]
