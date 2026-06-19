@@ -727,14 +727,26 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
             }
         }
 
-        // ── Stats (GET = all, POST = by namespace) ─────────────────────
-        (Method::Get, "/stats") => match uteke.stats(None) {
-            Ok(stats) => ctx.ok_response_for(req, &stats),
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
+        // ── Stats (GET = all or ?namespace=<name>) ───────────────────
+        (Method::Get, "/stats") => {
+            // Parse ?namespace= query parameter for scoped stats (#382).
+            let query = req.url().split('?').nth(1).unwrap_or("");
+            let params: std::collections::HashMap<String, String> = query
+                .split('&')
+                .filter_map(|pair| {
+                    let mut kv = pair.splitn(2, '=');
+                    Some((kv.next()?.to_string(), kv.next()?.to_string()))
+                })
+                .collect();
+            let ns_param = params.get("namespace").map(|s| s.as_str());
+            match uteke.stats(ns_param) {
+                Ok(stats) => ctx.ok_response_for(req, &stats),
+                Err(e) => {
+                    error!("Internal error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
             }
-        },
+        }
         (Method::Post, "/stats") => {
             #[derive(Deserialize)]
             struct StatsReq {

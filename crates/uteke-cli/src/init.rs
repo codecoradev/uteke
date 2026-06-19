@@ -17,8 +17,9 @@ pub(crate) fn run_init(agent: &str, json: bool) -> Result<(), String> {
         "pi" => init_pi(json),
         "claude" => init_claude(json),
         "cursor" => init_cursor(json),
+        "hermes" => init_hermes(json),
         _ => Err(format!(
-            "Unknown agent: {agent}. Supported: pi, claude, cursor"
+            "Unknown agent: {agent}. Supported: pi, claude, cursor, hermes"
         )),
     }
 }
@@ -185,6 +186,101 @@ fn init_cursor(json: bool) -> Result<(), String> {
         println!("{obj}");
     } else {
         println!("✓ Cursor rules installed: {}", rules_path.display());
+    }
+    Ok(())
+}
+
+/// Initialize uteke integration for Hermes (#384).
+/// Generates a uteke-tool plugin in the Hermes plugins directory.
+fn init_hermes(json: bool) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+    let plugin_dir = cwd.join("uteke-tool");
+    std::fs::create_dir_all(&plugin_dir)
+        .map_err(|e| format!("Failed to create plugin dir: {e}"))?;
+
+    // plugin.yaml — Hermes plugin manifest.
+    let plugin_yaml = r#"name: uteke-tool
+description: Semantic memory recall and storage via uteke
+version: 0.1.0
+author: CodeCoraDev
+"#;
+    std::fs::write(plugin_dir.join("plugin.yaml"), plugin_yaml)
+        .map_err(|e| format!("Failed to write plugin.yaml: {e}"))?;
+
+    // tool.py — Hermes plugin entry point.
+    let tool_py = r#"import json
+import requests
+
+UTEKE_URL = "http://127.0.0.1:8767"
+
+def uteke(action="recall", content="", tags="", namespace="hermes", limit=5):
+    """Call uteke server for memory operations."""
+    if action == "remember":
+        resp = requests.post(f"{UTEKE_URL}/remember", json={
+            "content": content,
+            "tags": tags.split(",") if tags else [],
+            "namespace": namespace
+        })
+        return f"Stored: {content[:50]}..."
+
+    elif action == "recall":
+        resp = requests.post(f"{UTEKE_URL}/recall", json={
+            "query": content,
+            "limit": limit,
+            "namespace": namespace
+        })
+        results = resp.json()
+        if isinstance(results, list) and results:
+            memories = [m["memory"]["content"] for m in results]
+            return "\n".join(memories)
+        return "No memories found."
+
+    elif action == "stats":
+        resp = requests.get(f"{UTEKE_URL}/stats?namespace={namespace}")
+        return json.dumps(resp.json(), indent=2)
+
+    return f"Unknown action: {action}"
+"#;
+    std::fs::write(plugin_dir.join("tool.py"), tool_py)
+        .map_err(|e| format!("Failed to write tool.py: {e}"))?;
+
+    // README.md — quick start guide.
+    let readme = r#"# uteke-tool
+
+Semantic memory plugin for Hermes via [uteke](https://github.com/codecoradev/uteke).
+
+## Setup
+
+1. Install uteke: `curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh`
+2. Start daemon: `uteke-serve --port 8767`
+3. Copy this directory to your Hermes plugins folder
+4. Enable in Hermes config: `plugins: enabled: [uteke-tool]`
+
+## Usage
+
+```python
+uteke(action="remember", content="User prefers dark mode", tags="preference,ui")
+uteke(action="recall", content="user preferences")
+uteke(action="stats")
+```
+"#;
+    std::fs::write(plugin_dir.join("README.md"), readme)
+        .map_err(|e| format!("Failed to write README.md: {e}"))?;
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "hermes",
+            "directory": plugin_dir.to_string_lossy(),
+            "files": ["plugin.yaml", "tool.py", "README.md"],
+            "status": "installed"
+        });
+        println!("{obj}");
+    } else {
+        println!("✓ Hermes plugin generated: {}/", plugin_dir.display());
+        println!("  Next steps:");
+        println!("    1. Copy to your Hermes plugins directory");
+        println!("    2. Enable in Hermes config: plugins.enabled: [uteke-tool]");
+        println!("    3. Start uteke daemon: uteke-serve --port 8767");
     }
     Ok(())
 }
