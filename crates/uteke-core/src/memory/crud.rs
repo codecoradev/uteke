@@ -70,8 +70,8 @@ impl super::Store {
 
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     memory.id,
                     memory.content,
@@ -91,6 +91,8 @@ impl super::Store {
                     memory.pinned as i32,
                     memory.content_type,
                     memory.slug,
+                    memory.source,
+                    memory.source_type,
                 ],
             )
             .map_err(|e| Error::db("Failed to insert memory", e))?;
@@ -516,6 +518,8 @@ mod content_type_tests {
             pinned: false,
             content_type: "json".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
         store.insert(&memory).unwrap();
 
@@ -546,6 +550,8 @@ mod content_type_tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
         store.insert(&memory).unwrap();
 
@@ -560,6 +566,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 9); // v9 = timeline_events (#347); v8 = memory_edges + slug; v7 = graph tables
+        assert_eq!(version, 10); // v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
     }
 }

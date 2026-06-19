@@ -57,7 +57,8 @@ impl Store {
             SELECT m.id, m.content, m.embedding, m.tags, m.metadata,
                    m.created_at, m.updated_at, m.namespace, m.access_count,
                    m.last_accessed, m.deprecated, m.valid_from, m.valid_until,
-                   m.memory_type, m.importance, m.pinned, m.content_type, m.slug
+                   m.memory_type, m.importance, m.pinned, m.content_type, m.slug,
+                   m.source, m.source_type
             FROM memories m
             LEFT JOIN memory_edges out_e ON out_e.source_id = m.id
             LEFT JOIN memory_edges in_e  ON in_e.target_id  = m.id
@@ -182,6 +183,8 @@ mod tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 

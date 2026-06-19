@@ -157,6 +157,8 @@ mod tests {
             pinned,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 

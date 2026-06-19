@@ -17,6 +17,7 @@ impl crate::Uteke {
                 tags: m.tags,
                 metadata: m.metadata,
                 created_at: m.created_at,
+                source: m.source,
             })
             .collect();
 
@@ -89,6 +90,8 @@ impl crate::Uteke {
                 pinned: false,
                 content_type: "text".to_string(),
                 slug: None,
+                source: Some(format!("import:{}", entry.source.unwrap_or_default())),
+                source_type: "import".to_string(),
             };
 
             // Write-ahead: vector index first (can be rolled back), then SQLite.
@@ -148,6 +151,7 @@ mod tests {
             tags: vec!["greeting".to_string()],
             metadata: serde_json::json!({}),
             created_at: chrono::Utc::now(),
+            source: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let restored: ExportEntry = serde_json::from_str(&json).unwrap();
