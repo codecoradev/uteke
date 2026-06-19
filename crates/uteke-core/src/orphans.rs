@@ -128,8 +128,18 @@ impl Store {
 /// - `(1 - importance)` × 0.3 — low importance = 1.0
 pub fn compute_orphan_score(memory: &Memory, outgoing: usize, incoming: usize) -> f32 {
     let edge_density = ((outgoing + incoming).min(10) as f32) / 10.0;
-    let access_freq = ((memory.access_count.max(1) as f32).log10() / 3.0).clamp(0.0, 1.0);
-    let importance = memory.importance as f32;
+    // Never-accessed (0) should score worse than accessed-once (1).
+    // log10(1) = 0 which is the same as 0 accesses, so we add a small
+    // floor for any non-zero access count to differentiate (CodeCora #389).
+    let access_freq = if memory.access_count == 0 {
+        0.0
+    } else {
+        // access_count >= 1: log10(n+1) ensures access_count=1 → non-zero.
+        (((memory.access_count + 1) as f32).log10() / 3.0).clamp(0.0, 1.0)
+    };
+    // Clamp importance to [0, 1] to guard against corrupt/imported data
+    // (CodeCora #389).
+    let importance = (memory.importance as f32).clamp(0.0, 1.0);
 
     let score = (1.0 - edge_density) * 0.4 + (1.0 - access_freq) * 0.3 + (1.0 - importance) * 0.3;
     score.clamp(0.0, 1.0)
@@ -284,5 +294,37 @@ mod tests {
         }
         let limited = store.find_orphans(None, 0.3, 3).unwrap();
         assert_eq!(limited.len(), 3);
+    }
+
+    #[test]
+    fn orphan_score_never_accessed_worse_than_once() {
+        // CodeCora #389: access_count=0 and =1 must NOT produce the same
+        // score. Never-accessed should be more orphaned.
+        let m0 = mem("never accessed", 0.1);
+        let mut m1 = mem("accessed once", 0.1);
+        m1.access_count = 1;
+        let s0 = compute_orphan_score(&m0, 0, 0);
+        let s1 = compute_orphan_score(&m1, 0, 0);
+        assert!(
+            s0 > s1,
+            "never-accessed ({s0}) must score higher than once-accessed ({s1})"
+        );
+    }
+
+    #[test]
+    fn orphan_score_importance_bounds() {
+        // CodeCora #389: out-of-range importance should be clamped, not
+        // produce negative or >1 scores.
+        let mut m = mem("corrupt", 5.0);
+        m.importance = 5.0; // out of range — should clamp to 1.0
+        let s = compute_orphan_score(&m, 0, 0);
+        assert!(s >= 0.0 && s <= 1.0, "score must be in [0,1], got {s}");
+        // importance=5.0 clamped to 1.0 → importance component = (1-1)*0.3 = 0.
+        // edge_density=0 → 0.4. access_count=0 → 0.3. Total = 0.7.
+        // Without clamping, (1-5)*0.3 = -1.2 → negative score (wrong).
+        assert!(
+            (s - 0.7_f32).abs() < 0.01,
+            "clamped importance=1.0 → score ~0.7, got {s}"
+        );
     }
 }
