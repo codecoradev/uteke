@@ -2,6 +2,7 @@
 
 mod aging;
 pub(crate) mod bench;
+mod dream;
 mod edges;
 mod forget;
 pub(crate) mod graph;
@@ -248,6 +249,13 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         } => edges::run(cli, uteke, id, *deep, direction),
 
         Commands::RebuildBacklinks { quiet } => edges::run_rebuild_backlinks(cli, uteke, *quiet),
+
+        Commands::Dream {
+            phases,
+            skip,
+            dry_run,
+            quiet,
+        } => dream::run(cli, uteke, ns, phases, skip, *dry_run, *quiet),
 
         Commands::Orphans { threshold, limit } => orphans::run(cli, uteke, ns, *threshold, *limit),
 
