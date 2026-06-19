@@ -488,9 +488,20 @@ fn is_iso_date_bytes(b: &[u8]) -> bool {
         return false;
     }
     // Validate month and day ranges (CodeCora #386 r4).
+    // Per-month max day (non-leap year approximation — good enough for
+    // pattern detection; we're not a date library).
     let month = (b[5] - b'0') * 10 + (b[6] - b'0');
     let day = (b[8] - b'0') * 10 + (b[9] - b'0');
-    (1..=12).contains(&month) && (1..=31).contains(&day)
+    if !(1..=12).contains(&month) {
+        return false;
+    }
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => 29, // accept leap day; worst case false positive
+        _ => return false,
+    };
+    day >= 1 && day <= max_day
 }
 
 /// Result of a consolidation (deduplication) operation.
@@ -787,9 +798,14 @@ mod tests {
         assert!(!has_iso_date("meeting on 2026-99-99"));
         assert!(!has_iso_date("date: 2026-13-40"));
         assert!(!has_iso_date("abc2026-00-00xyz"));
+        // Per-month validation: Feb 30, Apr 31 are impossible.
+        assert!(!has_iso_date("2026-02-31 deadline"));
+        assert!(!has_iso_date("2026-04-31 event"));
+        assert!(!has_iso_date("2026-02-30 meeting"));
         // But valid ones should.
         assert!(has_iso_date("meeting on 2026-12-31"));
         assert!(has_iso_date("2026-01-01"));
+        assert!(has_iso_date("2026-02-29 leap")); // leap day accepted
     }
 
     #[test]
