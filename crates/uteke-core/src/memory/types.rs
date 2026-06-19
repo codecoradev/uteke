@@ -490,7 +490,7 @@ fn is_iso_date_bytes(b: &[u8]) -> bool {
     // Validate month and day ranges (CodeCora #386 r4).
     let month = (b[5] - b'0') * 10 + (b[6] - b'0');
     let day = (b[8] - b'0') * 10 + (b[9] - b'0');
-    month >= 1 && month <= 12 && day >= 1 && day <= 31
+    (1..=12).contains(&month) && (1..=31).contains(&day)
 }
 
 /// Result of a consolidation (deduplication) operation.
