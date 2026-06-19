@@ -82,7 +82,16 @@ impl crate::Uteke {
         explicit_type: Option<&str>,
     ) -> Result<String, Error> {
         let effective_type = match explicit_type {
-            Some(t) => t.to_string(),
+            Some(t) => {
+                // Validate explicit type — same check as remember_typed
+                // (CodeCora #386 r2).
+                crate::memory::types::MemoryType::from_str_opt(t).ok_or_else(|| {
+                    Error::Validation(format!(
+                        "Unknown memory type '{t}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+                    ))
+                })?;
+                t.to_string()
+            }
             None => {
                 let inferred = crate::memory::types::MemoryType::infer_from_content(content);
                 if inferred == crate::memory::types::MemoryType::Note {
