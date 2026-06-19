@@ -65,6 +65,7 @@ impl Store {
               AND in_e.id IS NULL
               AND m.access_count = 0
               AND m.pinned = 0
+              AND m.deprecated = 0
               AND m.importance < ?1
               AND (?2 IS NULL OR m.namespace = ?2)
             GROUP BY m.id
@@ -318,7 +319,7 @@ mod tests {
         let mut m = mem("corrupt", 5.0);
         m.importance = 5.0; // out of range — should clamp to 1.0
         let s = compute_orphan_score(&m, 0, 0);
-        assert!(s >= 0.0 && s <= 1.0, "score must be in [0,1], got {s}");
+        assert!((0.0..=1.0).contains(&s), "score must be in [0,1], got {s}");
         // importance=5.0 clamped to 1.0 → importance component = (1-1)*0.3 = 0.
         // edge_density=0 → 0.4. access_count=0 → 0.3. Total = 0.7.
         // Without clamping, (1-5)*0.3 = -1.2 → negative score (wrong).
