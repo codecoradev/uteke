@@ -432,18 +432,21 @@ fn is_numbered_list(content: &str) -> bool {
         let rest = &trimmed[num_str.len()..];
         // "1. " / "1) " style
         if rest.starts_with('.') || rest.starts_with(')') {
-            // Best-effort numeric check on the prefix; we don't strictly
-            // enforce ordering to keep the detector cheap.
-            if let Ok(n) = num_str.parse::<u32>() {
-                if n == expected {
+            match num_str.parse::<u32>() {
+                Ok(n) if n == expected => {
                     consecutive += 1;
                     expected += 1;
                     if consecutive >= 2 {
                         return true;
                     }
                 }
-                continue;
+                _ => {
+                    // Parse failure (overflow) or out-of-order → reset.
+                    consecutive = 0;
+                    expected = 1;
+                }
             }
+            continue;
         }
         // Non-numbered line resets the counter.
         if !trimmed.is_empty() {
