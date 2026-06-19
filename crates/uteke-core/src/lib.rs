@@ -22,6 +22,7 @@ pub mod memory;
 mod operations;
 mod recall_cache;
 mod rooms;
+pub mod salience_recency;
 mod types;
 
 pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
@@ -40,6 +41,9 @@ pub use memory::types::{
 pub use memory::{
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
+};
+pub use salience_recency::{
+    apply_boosts, recency_score, salience_score, type_half_life_days, SalienceRecencyConfig,
 };
 
 pub use embed::{Embedder, OnnxEmbedder};
@@ -232,6 +236,9 @@ pub struct Uteke {
     /// Graph-augmented reranking config (#378). Applied only for
     /// [`RecallStrategy::Graph`]. Defaults to enabled with subtle weights.
     graph_rerank_config: graph_rerank::GraphRerankConfig,
+    /// Salience + recency dual-axis boost config (#352). Defaults to all
+    /// weights zero (opt-in per query via CLI flags / API params).
+    salience_recency_config: salience_recency::SalienceRecencyConfig,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
 }
@@ -477,8 +484,30 @@ impl Uteke {
             tier_config,
             recall_config,
             graph_rerank_config: graph_rerank_config.sanitized(),
+            salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
         })
+    }
+
+    /// Override the salience/recency dual-axis boost config (#352).
+    ///
+    /// Used by the CLI to forward the merged `[recall]` weights and the
+    /// per-query `--salience` / `--recency` flag overrides.
+    ///
+    /// **Important:** this mutates shared state. Callers that serve
+    /// multiple queries on the same `Uteke` instance (server, MCP) MUST
+    /// call [`reset_salience_recency_config`] after the query to avoid
+    /// leaking boost state into later queries (CodeCora #387).
+    pub fn set_salience_recency_config(&mut self, config: salience_recency::SalienceRecencyConfig) {
+        self.salience_recency_config = config.sanitized();
+    }
+
+    /// Reset salience/recency boost config to its no-op default (CodeCora #387).
+    ///
+    /// Call after a per-query boost override so later queries on the same
+    /// `Uteke` instance aren't affected.
+    pub fn reset_salience_recency_config(&mut self) {
+        self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
     }
 
     /// Lazy-load the ONNX embedding engine on first use.

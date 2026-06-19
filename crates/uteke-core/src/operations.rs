@@ -407,6 +407,28 @@ impl crate::Uteke {
         self.recall_cache
             .put(query, ns, limit, tags_filter, strategy, results.clone());
 
+        // Apply salience/recency boosts AFTER caching so cached entries
+        // store the raw scores (time-independent). Boosts are recomputed
+        // on every call (#352).
+        let mut results = results;
+        if !self.salience_recency_config.is_noop() {
+            let now = chrono::Utc::now();
+            for sr in &mut results {
+                sr.score = crate::salience_recency::apply_boosts(
+                    sr.score,
+                    &sr.memory,
+                    now,
+                    self.salience_recency_config,
+                );
+            }
+            results.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            results.truncate(limit);
+        }
+
         Ok(results)
     }
 

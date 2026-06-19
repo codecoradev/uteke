@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 //! Recall and Search commands — semantic and keyword search.
 
 use crate::cli::Cli;
@@ -8,7 +9,7 @@ use uteke_core::{RecallStrategy, Uteke};
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_recall(
     cli: &Cli,
-    uteke: &Uteke,
+    uteke: &mut Uteke,
     ns: Option<&str>,
     query: &str,
     limit: usize,
@@ -25,6 +26,8 @@ pub(crate) fn run_recall(
     at: Option<&str>,
     content_format: &str,
     where_filter: Option<&str>,
+    salience: bool,
+    recency: bool,
 ) -> Result<(), String> {
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
@@ -53,34 +56,57 @@ pub(crate) fn run_recall(
         }
     };
 
-    // Time-travel mode: parse --at as RFC3339 and use recall_at_time
-    let results = if let Some(at_str) = at {
-        let point_in_time = chrono::DateTime::parse_from_rfc3339(at_str)
-            .map_err(|e| {
-                format!(
-                    "Invalid --at timestamp: {e}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
-                )
-            })?
-            .with_timezone(&chrono::Utc);
-        if related {
-            return Err("--at and --related cannot be used together".into());
-        }
-        uteke
-            .recall_at_time(query, limit, tags_filter, ns, point_in_time, min_score)
-            .map_err(|e| format!("Failed to recall at time: {e}"))?
-    } else if related {
-        uteke
-            .recall_related(query, limit, tags_filter, ns, min_score, depth)
-            .map_err(|e| format!("Failed to recall: {e}"))?
-    } else {
-        // recall_hybrid dispatches to recall() (vector), recall_fts5_only(),
-        // recall_rrf() (hybrid), or recall_rrf()+graph reranking (graph) based
-        // on the resolved strategy. Caching is strategy-keyed, so each
-        // strategy maintains its own cache (#378).
-        uteke
-            .recall_hybrid(query, limit, tags_filter, ns, resolved_strategy, min_score)
-            .map_err(|e| format!("Failed to recall: {e}"))?
-    };
+    // #352: dual-axis salience/recency boost. Opt-in per query via
+    // --salience / --recency flags. Weights come from config so users can
+    // tune the boost strength in uteke.toml.
+    uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
+        salience_weight: if salience {
+            config.recall.salience_weight
+        } else {
+            0.0
+        },
+        recency_weight: if recency {
+            config.recall.recency_weight
+        } else {
+            0.0
+        },
+    });
+
+    // Wrap recall in a closure so reset always runs, even on error paths
+    // (CodeCora #387: boost config must not leak on early return).
+    let recall_result: Result<_, String> = (|| {
+        // Time-travel mode: parse --at as RFC3339 and use recall_at_time
+        let results = if let Some(at_str) = at {
+            let point_in_time = chrono::DateTime::parse_from_rfc3339(at_str)
+                .map_err(|e| {
+                    format!(
+                        "Invalid --at timestamp: {e}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+                    )
+                })?
+                .with_timezone(&chrono::Utc);
+            if related {
+                return Err("--at and --related cannot be used together".into());
+            }
+            uteke
+                .recall_at_time(query, limit, tags_filter, ns, point_in_time, min_score)
+                .map_err(|e| format!("Failed to recall at time: {e}"))?
+        } else if related {
+            uteke
+                .recall_related(query, limit, tags_filter, ns, min_score, depth)
+                .map_err(|e| format!("Failed to recall: {e}"))?
+        } else {
+            uteke
+                .recall_hybrid(query, limit, tags_filter, ns, resolved_strategy, min_score)
+                .map_err(|e| format!("Failed to recall: {e}"))?
+        };
+        Ok(results)
+    })();
+
+    // Reset per-query boost config so later recalls on the same Uteke instance
+    // aren't affected — runs on EVERY path (CodeCora #387).
+    uteke.reset_salience_recency_config();
+
+    let results = recall_result?;
 
     // Post-filter by entity/category metadata
     let filtered: Vec<_> = results
