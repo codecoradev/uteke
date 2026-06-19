@@ -178,14 +178,13 @@ impl crate::Uteke {
     fn phase_lint(&self, _namespace: Option<&str>) -> Result<PhaseResult, Error> {
         // Lightweight lint: count memories with unknown memory_type values.
         // Uses SQL COUNTs to avoid loading every memory into RAM (CodeCora
-        // #390).
+        // #390). Errors propagate — never silently mask DB failures.
         let total: i64 = self
             .store
             .conn
             .query_row("SELECT COUNT(*) FROM memories", [], |r| r.get(0))
-            .unwrap_or(0);
-        // Unknown types: anything not in the known set. SQLite doesn't have
-        // an array IN for TEXT without a subquery, so we enumerate.
+            .map_err(|e| Error::db("dream lint total count", e))?;
+        // Unknown types: anything not in the known set.
         let bad_count: i64 = self
             .store
             .conn
@@ -197,7 +196,7 @@ impl crate::Uteke {
                 [],
                 |r| r.get(0),
             )
-            .unwrap_or(0);
+            .map_err(|e| Error::db("dream lint bad type count", e))?;
         let warnings = bad_count as usize;
         let total = total as usize;
         let summary = if warnings == 0 {
@@ -221,7 +220,9 @@ impl crate::Uteke {
     }
 
     fn phase_backlinks(&self, dry_run: bool) -> Result<PhaseResult, Error> {
-        let edges_before = self.count_edges().unwrap_or(0);
+        let edges_before = self
+            .count_edges()
+            .map_err(|e| Error::db("dream count edges", e))?;
         if dry_run {
             return Ok(PhaseResult {
                 phase: DreamPhase::Backlinks.as_str().to_string(),
@@ -231,11 +232,10 @@ impl crate::Uteke {
                 warnings: 0,
             });
         }
-        let created = self.rebuild_backlinks().unwrap_or_else(|e| {
-            tracing::warn!("dream: backlinks phase failed: {e}");
-            0
-        });
-        let edges_after = self.count_edges().unwrap_or(edges_before + created);
+        let created = self.rebuild_backlinks()?;
+        let edges_after = self
+            .count_edges()
+            .map_err(|e| Error::db("dream count edges after rebuild", e))?;
         let summary = if created == 0 {
             format!("✓ {edges_after} edges verified, no backlinks needed")
         } else {
@@ -278,15 +278,30 @@ impl crate::Uteke {
         })
     }
 
-    fn phase_orphans(&self, _namespace: Option<&str>) -> Result<PhaseResult, Error> {
+    fn phase_orphans(&self, namespace: Option<&str>) -> Result<PhaseResult, Error> {
         // Detection only — never auto-delete. Inline SQL count of memories
         // with no edges (incoming or outgoing), access_count=0, not pinned,
         // and below the default threshold (#351 provides a richer API).
         const THRESHOLD: f64 = 0.3;
-        let count: i64 = self
-            .store
-            .conn
-            .query_row(
+        // Namespace-aware query: when a namespace is specified, only count
+        // orphans in that namespace (CodeCora #390).
+        let count: i64 = if let Some(ns) = namespace {
+            self.store.conn.query_row(
+                "SELECT COUNT(DISTINCT m.id)
+                 FROM memories m
+                 LEFT JOIN memory_edges out_e ON out_e.source_id = m.id
+                 LEFT JOIN memory_edges in_e  ON in_e.target_id  = m.id
+                 WHERE out_e.id IS NULL
+                   AND in_e.id IS NULL
+                   AND m.access_count = 0
+                   AND m.pinned = 0
+                   AND m.importance < ?1
+                   AND m.namespace = ?2",
+                rusqlite::params![THRESHOLD, ns],
+                |r| r.get(0),
+            )
+        } else {
+            self.store.conn.query_row(
                 "SELECT COUNT(DISTINCT m.id)
                  FROM memories m
                  LEFT JOIN memory_edges out_e ON out_e.source_id = m.id
@@ -299,7 +314,8 @@ impl crate::Uteke {
                 rusqlite::params![THRESHOLD],
                 |r| r.get(0),
             )
-            .unwrap_or(0);
+        }
+        .map_err(|e| Error::db("dream orphan count", e))?;
         let count = count as usize;
         let summary = if count == 0 {
             "✓ no orphan memories detected".to_string()

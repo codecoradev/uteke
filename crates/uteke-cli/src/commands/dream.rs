@@ -15,8 +15,14 @@ pub(crate) fn run(
     // Parse --phases into DreamPhase values. Empty = all.
     let mut selected: Vec<DreamPhase> = phases
         .iter()
-        .filter_map(|s| DreamPhase::from_str_opt(s))
-        .collect();
+        .map(|s| {
+            DreamPhase::from_str_opt(s).ok_or_else(|| {
+                format!(
+                    "Unknown phase '{s}'. Valid: lint, backlinks, dedup, orphans, compact, verify"
+                )
+            })
+        })
+        .collect::<Result<_, _>>()?;
     if selected.is_empty() {
         selected = DreamPhase::all_in_order().to_vec();
     }
