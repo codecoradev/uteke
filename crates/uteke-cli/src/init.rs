@@ -195,7 +195,9 @@ fn init_cursor(json: bool) -> Result<(), String> {
 fn init_hermes(json: bool) -> Result<(), String> {
     // #385: Auto-install to ~/.hermes/plugins/uteke-tool/ when possible.
     // Fall back to CWD if the home directory isn't available.
+    // Check HOME (Unix) then USERPROFILE (Windows).
     let plugin_dir = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|h| std::path::PathBuf::from(h).join(".hermes/plugins/uteke-tool"))
         .or_else(|| std::env::current_dir().ok().map(|d| d.join("uteke-tool")))
         .ok_or_else(|| "Cannot determine plugin install directory".to_string())?;

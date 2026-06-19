@@ -369,12 +369,36 @@ fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<
     serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))
 }
 
+/// Decode percent-encoded URL query values (e.g. `%20` → space, `+` → space).
+fn url_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => result.push(' '),
+            b'%' if i + 2 < bytes.len() => {
+                let hex = &s[i + 1..i + 3];
+                if let Ok(byte) = u8::from_str_radix(hex, 16) {
+                    result.push(byte as char);
+                    i += 2;
+                } else {
+                    result.push('%');
+                }
+            }
+            c => result.push(c as char),
+        }
+        i += 1;
+    }
+    result
+}
+
 /// Parse a query parameter value from a query string like `"namespace=foo&bar=1"`.
 fn parse_query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let mut kv = pair.splitn(2, '=');
         if kv.next()? == key {
-            Some(kv.next()?.to_string())
+            Some(url_decode(kv.next()?))
         } else {
             None
         }
@@ -977,8 +1001,13 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
             match uteke.delete_room(&room_id) {
                 Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"deleted": room_id})),
                 Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
+                    let msg = format!("{e}");
+                    if msg.contains("not found") {
+                        ctx.error_response_for(req, 404, &msg)
+                    } else {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
         }
