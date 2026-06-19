@@ -108,6 +108,17 @@ impl crate::Uteke {
     /// Phases run in dependency order: lint → backlinks → dedup → orphans →
     /// compact → verify. Pass `dry_run = true` to report without changes.
     /// `phases` filters which phases to run (empty slice = all).
+    ///
+    /// **Namespace scope**: lint, dedup, orphans, and compact honor the
+    /// namespace filter. Backlinks and verify are always global (they
+    /// operate on the edge graph and schema, which are not
+    /// namespace-partitioned).
+    ///
+    /// **Dry-run**: phases report against the *current* database state.
+    /// Orphan counts in a dry run do not reflect projected post-maintenance
+    /// state (because backlinks and dedup skip mutations). This is by
+    /// design — dry-run answers "what would happen?" not "what will the
+    /// state look like after?".
     pub fn dream(
         &self,
         namespace: Option<&str>,
