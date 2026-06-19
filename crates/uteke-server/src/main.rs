@@ -370,27 +370,30 @@ fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<
 }
 
 /// Decode percent-encoded URL query values (e.g. `%20` → space, `+` → space).
+/// Handles multi-byte UTF-8 sequences correctly.
 fn url_decode(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
     let bytes = s.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' => result.push(' '),
+            b'+' => {
+                decoded.push(b' ');
+            }
             b'%' if i + 2 < bytes.len() => {
                 let hex = &s[i + 1..i + 3];
                 if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    result.push(byte as char);
+                    decoded.push(byte);
                     i += 2;
                 } else {
-                    result.push('%');
+                    decoded.push(b'%');
                 }
             }
-            c => result.push(c as char),
+            c => decoded.push(c),
         }
         i += 1;
     }
-    result
+    String::from_utf8(decoded).unwrap_or_else(|_| s.to_string())
 }
 
 /// Parse a query parameter value from a query string like `"namespace=foo&bar=1"`.

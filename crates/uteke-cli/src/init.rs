@@ -198,7 +198,14 @@ fn init_hermes(json: bool) -> Result<(), String> {
     // Check HOME (Unix) then USERPROFILE (Windows).
     let plugin_dir = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|h| std::path::PathBuf::from(h).join(".hermes/plugins/uteke-tool"))
+        .map(|h| {
+            let mut p = std::path::PathBuf::from(h);
+            // Use platform-native separators.
+            p.push(".hermes");
+            p.push("plugins");
+            p.push("uteke-tool");
+            p
+        })
         .or_else(|| std::env::current_dir().ok().map(|d| d.join("uteke-tool")))
         .ok_or_else(|| "Cannot determine plugin install directory".to_string())?;
 
