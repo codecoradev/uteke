@@ -2,6 +2,20 @@
 
 ### Added
 
+- **Citation & source attribution** (#348)
+  - Schema v10 migration: adds `source` and `source_type` columns to
+    `memories` table. Existing rows get `source_type = 'unknown'`.
+  - Source types: `user`, `url`, `file`, `import`, `derived`, `system`,
+    `unknown`.
+  - `Memory` struct gains `source: Option<String>` and `source_type: String`
+    fields. Defaults: `source=None`, `source_type="user"`.
+  - `Uteke::set_source(id, source, source_type)` for post-insert provenance
+    updates.
+  - `ExportEntry` gains optional `source` field for round-trip preservation.
+  - CLI: `--source <URL/path>` and `--source-type <type>` flags on
+    `uteke remember`.
+  - Import sets `source_type = 'import'` with `source = 'import:<filename>'`.
+
 - **Dream cycle** (#353)
   - New `crates/uteke-core/src/dream.rs` module: coordinated maintenance
     pipeline that runs all 6 phases in dependency order, all local, zero

@@ -61,6 +61,8 @@ pub(crate) fn run(
     meta: &[String],
     room: Option<&str>,
     author: Option<&str>,
+    source: Option<&str>,
+    source_type: Option<&str>,
 ) -> Result<(), String> {
     tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
@@ -184,5 +186,20 @@ pub(crate) fn run(
             }
         }
     }
+
+    // Set source provenance if provided (#348).
+    // We need the ID from the remember call. The ID is captured in the
+    // `id` variable inside the if/else blocks above. We need to hoist it.
+    // Simplest: query the most recent memory for this namespace.
+    if source.is_some() || source_type.is_some() {
+        // Get the latest memory to find its ID.
+        if let Ok(memories) = uteke.list(None, 1, 0, ns) {
+            if let Some(latest) = memories.first() {
+                let st = source_type.unwrap_or("user");
+                let _ = uteke.set_source(&latest.id, source, st);
+            }
+        }
+    }
+
     Ok(())
 }

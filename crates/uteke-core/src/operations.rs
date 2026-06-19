@@ -185,6 +185,8 @@ impl crate::Uteke {
             pinned: false,
             content_type: content_type.to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
 
         // Acquire index write lock BEFORE any writes so lock failures are detected early.

@@ -57,10 +57,29 @@ pub struct Memory {
     /// Populated lazily when a memory is referenced by slug.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slug: Option<String>,
+    /// Provenance: free-form source identifier (URL, file path, "user", #348).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Provenance type: user, url, file, import, derived, system, unknown (#348).
+    #[serde(
+        default = "default_source_type",
+        skip_serializing_if = "is_default_source_type"
+    )]
+    pub source_type: String,
 }
 
 fn default_namespace() -> String {
     DEFAULT_NAMESPACE.to_string()
+}
+
+/// Default source type for memories without explicit provenance (#348).
+pub fn default_source_type() -> String {
+    "user".to_string()
+}
+
+/// Serde predicate: skip if source_type equals the default.
+fn is_default_source_type(s: &str) -> bool {
+    s == "user"
 }
 
 fn default_importance() -> f64 {
@@ -161,6 +180,9 @@ pub struct ExportEntry {
     pub metadata: serde_json::Value,
     /// When this memory was originally created.
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Optional source provenance (#348).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Result of an import operation.

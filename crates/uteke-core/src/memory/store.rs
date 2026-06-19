@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS memories (
     importance REAL NOT NULL DEFAULT 0.5,
     pinned INTEGER NOT NULL DEFAULT 0,
     content_type TEXT NOT NULL DEFAULT 'text',
-    slug TEXT
+    slug TEXT,
+    source TEXT,
+    source_type TEXT NOT NULL DEFAULT 'user'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -91,7 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 9;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 10;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -141,6 +143,23 @@ impl Store {
                 rusqlite::params![id],
             )
             .map_err(|e| Error::db("unpin memory", e))?;
+        Ok(rows > 0)
+    }
+
+    /// Set source provenance on a memory (#348).
+    pub fn set_source(
+        &self,
+        id: &str,
+        source: Option<&str>,
+        source_type: &str,
+    ) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET source = ?1, source_type = ?2 WHERE id = ?3",
+                rusqlite::params![source, source_type, id],
+            )
+            .map_err(|e| Error::db("set source", e))?;
         Ok(rows > 0)
     }
 
@@ -296,6 +315,8 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     let pinned: bool = row.get(15).unwrap_or(false);
     let content_type: String = row.get(16).unwrap_or_else(|_| "text".to_string());
     let slug: Option<String> = row.get(17).ok().flatten();
+    let source: Option<String> = row.get(18).ok().flatten();
+    let source_type: String = row.get(19).unwrap_or_else(|_| "unknown".to_string());
 
     Ok(Memory {
         id,
@@ -316,6 +337,8 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         pinned,
         content_type,
         slug,
+        source,
+        source_type,
     })
 }
 
@@ -345,6 +368,8 @@ mod tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 
@@ -368,6 +393,8 @@ mod tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 
@@ -1373,6 +1400,8 @@ mod tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 
@@ -1512,5 +1541,29 @@ mod tests {
         let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "past_vf");
+    }
+
+    #[test]
+    fn test_set_source() {
+        let store = Store::open(":memory:").unwrap();
+        let m = make_test_memory("src1", "test source", &["t"]);
+        store.insert(&m).unwrap();
+
+        // Set source.
+        assert!(store
+            .set_source("src1", Some("https://rust-lang.org"), "url")
+            .unwrap());
+
+        // Verify via direct SQL.
+        let (source, source_type): (Option<String>, String) = store
+            .conn
+            .query_row(
+                "SELECT source, source_type FROM memories WHERE id = ?1",
+                rusqlite::params!["src1"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(source.as_deref(), Some("https://rust-lang.org"));
+        assert_eq!(source_type, "url");
     }
 }

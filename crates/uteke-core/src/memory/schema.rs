@@ -167,6 +167,8 @@ impl super::Store {
                 8 => self.migrate_v7_to_v8()?,
                 // v9: timeline_events table (per-memory audit log, #347)
                 9 => self.migrate_v8_to_v9()?,
+                // v10: source + source_type columns (citation/provenance, #348)
+                10 => self.migrate_v9_to_v10()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -476,6 +478,23 @@ impl super::Store {
                 "#,
             )
             .map_err(|e| Error::db("schema migration v8 to v9", e))?;
+        Ok(())
+    }
+
+    /// v10: source + source_type columns (citation/provenance, #348).
+    ///
+    /// Adds provenance tracking to every memory. Existing rows get
+    /// `source_type = 'unknown'` (legacy data without source info).
+    fn migrate_v9_to_v10(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v9 to v10: source columns");
+        self.conn
+            .execute_batch(
+                r#"
+                ALTER TABLE memories ADD COLUMN source TEXT;
+                ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL DEFAULT 'unknown';
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v9 to v10", e))?;
         Ok(())
     }
 }

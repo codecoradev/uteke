@@ -42,6 +42,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             meta,
             room,
             author,
+            source,
+            source_type,
         } => remember::run(
             cli,
             uteke,
@@ -55,6 +57,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             meta,
             room.as_deref(),
             author.as_deref(),
+            source.as_deref(),
+            source_type.as_deref(),
         ),
 
         Commands::Recall {

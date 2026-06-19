@@ -298,6 +298,8 @@ mod tests {
                 pinned: false,
                 content_type: String::from("text"),
                 slug: None,
+                source: None,
+                source_type: "user".to_string(),
             },
             score,
         }

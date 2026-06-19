@@ -219,6 +219,8 @@ mod tests {
                 pinned: false,
                 content_type: "text".to_string(),
                 slug: None,
+                source: None,
+                source_type: "user".to_string(),
             },
             score: 0.95,
         }];

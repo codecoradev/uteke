@@ -51,6 +51,8 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             meta,
             room,
             author,
+            source,
+            source_type,
         } => {
             let mut body = serde_json::json!({
                 "content": content,
@@ -87,6 +89,12 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
             if let Some(author_name) = author {
                 body["author"] = serde_json::json!(author_name);
+            }
+            if let Some(src) = source {
+                body["source"] = serde_json::json!(src);
+            }
+            if let Some(st) = source_type {
+                body["source_type"] = serde_json::json!(st);
             }
             let resp = client
                 .post(format!("{server_url}/remember"))

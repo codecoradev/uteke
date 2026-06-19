@@ -75,6 +75,12 @@ pub enum Commands {
         /// Author attribution when storing in a room
         #[arg(long)]
         author: Option<String>,
+        /// Source provenance: URL, file path, or identifier (#348)
+        #[arg(long)]
+        source: Option<String>,
+        /// Source type: user, url, file, import, derived, system, unknown (#348)
+        #[arg(long)]
+        source_type: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {

@@ -621,6 +621,16 @@ impl Uteke {
         self.store.unpin(id)
     }
 
+    /// Set source provenance on a memory (#348).
+    pub fn set_source(
+        &self,
+        id: &str,
+        source: Option<&str>,
+        source_type: &str,
+    ) -> Result<bool, Error> {
+        self.store.set_source(id, source, source_type)
+    }
+
     /// Recalculate importance scores for all memories.
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         self.store.recompute_importance()
@@ -684,6 +694,8 @@ mod tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -730,6 +742,8 @@ mod tests {
             pinned: false,
             content_type: "text".to_string(),
             slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
 
         let sr = SearchResult {
