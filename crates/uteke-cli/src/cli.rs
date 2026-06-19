@@ -226,7 +226,7 @@ pub enum Commands {
     },
     /// Initialize uteke integration for an AI agent
     Init {
-        /// Agent type: pi, claude, cursor, copilot, codex
+        /// Agent type: pi, claude, cursor, hermes
         #[arg(long, default_value = "pi")]
         agent: String,
     },
