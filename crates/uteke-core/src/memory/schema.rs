@@ -124,7 +124,8 @@ impl super::Store {
             Some(v) => {
                 return Err(Error::db_msg(format!(
                     "database schema version {v} is newer than supported version {CURRENT_SCHEMA_VERSION}; \
-                     please upgrade uteke"
+                     please upgrade uteke (current binary: uteke-core v{}, schema v{CURRENT_SCHEMA_VERSION})",
+                    env!("CARGO_PKG_VERSION")
                 )));
             }
         }
