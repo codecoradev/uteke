@@ -105,17 +105,21 @@ impl crate::Uteke {
         )?;
 
         // Timeline: if this is a contradiction-aware remember that
-        // supersedes an older memory, record a Consolidated event (#347).
-        // The Created event was already emitted inside remember_precomputed.
+        // supersedes an older memory, record a Consolidated event (#347)
+        // on the OLD (superseded) memory — that's the one being retired.
+        // The Created event for the new memory was already emitted inside
+        // remember_precomputed.
         if contradiction.contradicted {
-            self.try_timeline_event(
-                &id,
-                crate::timeline::TimelineEventType::Consolidated,
-                Some(&serde_json::json!({
-                    "superseded": contradiction.deprecated_id,
-                    "namespace": ns,
-                })),
-            );
+            if let Some(ref deprecated_id) = contradiction.deprecated_id {
+                self.try_timeline_event(
+                    deprecated_id,
+                    crate::timeline::TimelineEventType::Consolidated,
+                    Some(&serde_json::json!({
+                        "replaced_by": id,
+                        "namespace": ns,
+                    })),
+                );
+            }
         }
 
         // Only deprecate the old memory AFTER the new one is safely persisted.

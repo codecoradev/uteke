@@ -108,10 +108,10 @@ impl Store {
     ) -> Result<Vec<TimelineEvent>, Error> {
         let sql = if limit == 0 {
             "SELECT id, memory_id, event_type, event_data, created_at FROM timeline_events
-             WHERE memory_id = ?1 ORDER BY created_at DESC"
+             WHERE memory_id = ?1 ORDER BY created_at DESC, id DESC"
         } else {
             "SELECT id, memory_id, event_type, event_data, created_at FROM timeline_events
-             WHERE memory_id = ?1 ORDER BY created_at DESC LIMIT ?2"
+             WHERE memory_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
         };
         let mut stmt = self
             .conn
