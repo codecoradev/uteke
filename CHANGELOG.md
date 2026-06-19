@@ -2,6 +2,24 @@
 
 ### Added
 
+- **Memory type formalization** (#349)
+  - `MemoryType` enum expanded from 5 to 9 variants: original (Fact,
+    Procedure, Preference, Decision, Context) + new (Note, Insight,
+    Reference, Event).
+  - Pattern-based auto-inference (`MemoryType::infer_from_content`):
+    URL prefix → `Reference`; decided/chose/will use → `Decision`;
+    realized/learned/discovered → `Insight`; how-to/numbered list →
+    `Procedure`; always/never/prefer/hate → `Preference`; ISO date +
+    time word → `Event`; fallback → `Note`. Zero LLM.
+  - When callers pass the default `"fact"`, `remember_typed` now runs
+    inference and overrides with a more specific type when one is
+    detected (falls back to `Fact` for ambiguous content, preserving
+    backward compatibility).
+  - `MemoryType::recall_boost()` — small additive score boost per type
+    (Decision/Preference +0.05, Insight +0.03, Event +0.02, Note -0.02).
+    To be wired into recall scoring by #352.
+  - CLI: `--type` help text documents the new types and auto-inference.
+
 - **Backlink auto-generation** (#350)
   - Bidirectional links: whenever memory A creates a forward edge to B
     (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse
