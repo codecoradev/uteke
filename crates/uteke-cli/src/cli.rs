@@ -447,6 +447,14 @@ pub enum NamespaceCommands {
 /// Subcommands for room management.
 #[derive(Subcommand)]
 pub enum RoomCommands {
+    /// Create a new room explicitly (#393)
+    Create {
+        /// Room ID (unique identifier)
+        room_id: String,
+        /// Optional title for the room
+        #[arg(long)]
+        title: Option<String>,
+    },
     /// List all rooms
     List {
         /// Filter by namespace

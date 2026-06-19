@@ -140,6 +140,9 @@ impl super::Store {
 
     /// List rooms that a namespace has participated in.
     pub fn list_rooms(&self, namespace: Option<&str>) -> Result<Vec<Room>, Error> {
+        // Rooms are cross-namespace collaboration spaces (#392).
+        // By default, list ALL rooms across all namespaces.
+        // When a namespace is provided, filter to that namespace only.
         let sql = match namespace {
             Some(_) => {
                 "SELECT DISTINCT r.id, r.title, r.namespace, r.created_at, r.updated_at \

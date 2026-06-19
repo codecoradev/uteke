@@ -13,8 +13,26 @@ pub(crate) fn run(
     config: &Config,
 ) -> Result<(), String> {
     match command {
+        RoomCommands::Create { room_id, title } => {
+            let ns_str = ns.unwrap_or("default");
+            uteke
+                .create_room(room_id, title.as_deref(), ns_str)
+                .map_err(|e| format!("Failed to create room: {e}"))?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"created": room_id, "namespace": ns_str})
+                );
+            } else {
+                println!("✓ Room '{room_id}' created");
+            }
+            return Ok(());
+        }
         RoomCommands::List { namespace } => {
-            let filter_ns = namespace.as_deref().or(ns);
+            // Rooms are cross-namespace collaboration spaces (#392).
+            // Only filter when --namespace is explicitly passed on the
+            // room subcommand, not from the global --namespace flag.
+            let filter_ns = namespace.as_deref();
             let rooms = uteke
                 .list_rooms(filter_ns)
                 .map_err(|e| format!("Failed to list rooms: {e}"))?;
