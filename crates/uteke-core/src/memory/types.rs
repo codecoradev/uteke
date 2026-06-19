@@ -354,8 +354,8 @@ impl MemoryType {
         // non-empty line. Use first_line (not lower) so leading whitespace
         // doesn't matter.
         let first_lower = first_line.to_ascii_lowercase();
-        if first_line.starts_with("http://")
-            || first_line.starts_with("https://")
+        if first_lower.starts_with("http://")
+            || first_lower.starts_with("https://")
             || first_lower.starts_with("ref:")
             || first_lower.starts_with("see:")
             || first_lower.starts_with("docs:")
@@ -424,22 +424,25 @@ fn is_numbered_list(content: &str) -> bool {
     let mut expected = 1u32;
     for line in content.lines() {
         let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
-            // "1. " / "1) " style
-            if rest.starts_with('.') || rest.starts_with(')') {
-                // Best-effort numeric check on the prefix; we don't strictly
-                // enforce ordering to keep the detector cheap.
-                let num_str: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if let Ok(n) = num_str.parse::<u32>() {
-                    if n == expected {
-                        consecutive += 1;
-                        expected += 1;
-                        if consecutive >= 2 {
-                            return true;
-                        }
+        // Strip ALL leading digits (handles multi-digit like "10. ", "123) ").
+        let num_str: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if num_str.is_empty() {
+            continue;
+        }
+        let rest = &trimmed[num_str.len()..];
+        // "1. " / "1) " style
+        if rest.starts_with('.') || rest.starts_with(')') {
+            // Best-effort numeric check on the prefix; we don't strictly
+            // enforce ordering to keep the detector cheap.
+            if let Ok(n) = num_str.parse::<u32>() {
+                if n == expected {
+                    consecutive += 1;
+                    expected += 1;
+                    if consecutive >= 2 {
+                        return true;
                     }
-                    continue;
                 }
+                continue;
             }
         }
         // Non-numbered line resets the counter.
@@ -610,6 +613,15 @@ mod tests {
             MemoryType::infer_from_content("docs: https://example.com"),
             MemoryType::Reference
         );
+        // Uppercase URL schemes should also match (CodeCora #386 round 2).
+        assert_eq!(
+            MemoryType::infer_from_content("HTTPS://rust-lang.org/docs"),
+            MemoryType::Reference
+        );
+        assert_eq!(
+            MemoryType::infer_from_content("Http://example.com/spec"),
+            MemoryType::Reference
+        );
     }
 
     #[test]
@@ -672,6 +684,18 @@ mod tests {
         );
         assert_eq!(
             MemoryType::infer_from_content("steps:\n1. foo\n2. bar"),
+            MemoryType::Procedure
+        );
+        // Multi-digit numbered lists should also be detected (CodeCora #386 r2).
+        assert_eq!(
+            MemoryType::infer_from_content(
+                "1. first step\n2. second step\n3. third step\n4. fourth step\n5. fifth step\n6. sixth step\n7. seventh step\n8. eighth step\n9. ninth step\n10. tenth step"
+            ),
+            MemoryType::Procedure
+        );
+        // Parenthesis style with multi-digit.
+        assert_eq!(
+            MemoryType::infer_from_content("1) alpha\n2) beta\n3) gamma"),
             MemoryType::Procedure
         );
     }
