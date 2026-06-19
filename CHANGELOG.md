@@ -8,8 +8,9 @@
     - `salience_score(memory)` — 0..=1 blend of `access_count`, `importance`,
       and `pinned` (importance × 0.5 + access_freq × 0.3 + pinned 0.2).
     - `recency_score(memory, now)` — per-type exponential decay
-      (`exp(-age_days / half_life)`). Half-lives: Decision/Preference 365d,
+      (`exp(-age_days / τ)`). Time constants: Decision/Preference 365d,
       Fact/Reference 180d, Insight 240d, Event 30d, default 90d.
+      (τ is the age at which recency drops to ~0.37 = 1/e.)
   - `SalienceRecencyConfig { salience_weight, recency_weight }` defaults
     to zero (opt-in per query). `sanitized()` clamps weights to [0, 1].
   - `Uteke::set_salience_recency_config()` for per-query override.
