@@ -292,16 +292,17 @@ impl crate::Uteke {
                 result.duplicates_found, result.merged
             )
         };
+        let has_warnings = result.duplicates_found > 0 && result.merged == 0;
         Ok(PhaseResult {
             phase: DreamPhase::Dedup.as_str().to_string(),
-            status: PhaseStatus::Ok,
+            status: if has_warnings {
+                PhaseStatus::Warning
+            } else {
+                PhaseStatus::Ok
+            },
             summary,
             changes: result.merged,
-            warnings: if result.duplicates_found > 0 && result.merged == 0 {
-                1
-            } else {
-                0
-            },
+            warnings: if has_warnings { 1 } else { 0 },
         })
     }
 
