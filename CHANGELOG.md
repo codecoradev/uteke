@@ -2,6 +2,35 @@
 
 ### Added
 
+- **Hermes plugin auto-install** (#385)
+  - `uteke init --agent hermes` now installs directly to
+    `~/.hermes/plugins/uteke-tool/` instead of generating to CWD.
+  - Plugin uses Python stdlib only (no `requests` dependency needed).
+  - MCP server discovery: README documents `hermes mcp add uteke --command
+    uteke-mcp` as an alternative integration path.
+
+- **Room operations in Hermes plugin** (#395)
+  - Plugin now exposes `room_create`, `room_recall`, `room_list`,
+    `room_summary`, `room_stats`, `room_delete` actions.
+  - Added server endpoints: `POST /room/create`, `GET /room/list`,
+    `POST /room/stats`, `DELETE /room/delete`.
+
+- **`uteke room create` command** (#393)
+  - Explicit room creation: `uteke room create <id> [--title "Name"]`
+
+### Fixed
+
+- **Room list cross-namespace visibility** (#392)
+  - `uteke room list` now shows ALL rooms by default, not just those in
+    the current `--namespace`. Rooms are collaboration spaces spanning
+    namespaces.
+
+- **Schema mismatch error message** (#394)
+  - Error now includes binary name and version: "please upgrade uteke
+    (current binary: uteke-core v0.2.0, schema v10)".
+
+### Added (previous)
+
 - **MCP Streamable HTTP transport** (#381)
   - `uteke-mcp` protocol version bumped from `2024-11-05` to `2025-06-18`
     (current MCP spec).
