@@ -157,7 +157,9 @@ fn tool_remember() -> Value {
                 "content": { "type": "string", "description": "The text content to remember" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for categorization (optional)" },
                 "namespace": { "type": "string", "description": "Namespace for isolation (default: 'default')" },
-                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" }
+                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" },
+                "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
+                "author": { "type": "string", "description": "Author attribution when storing in a room (default: anonymous)" }
             },
             "required": ["content"]
         }
@@ -235,10 +237,26 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .unwrap_or_default();
     let namespace = args["namespace"].as_str();
     let memory_type = args["type"].as_str().unwrap_or("fact");
+    let room = args["room"].as_str();
+    let author = args["author"].as_str().unwrap_or("anonymous");
 
-    let id = uteke
-        .remember_typed(content, &tags, None, namespace, memory_type)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let id = if let Some(room_id) = room {
+        uteke
+            .remember_in_room(
+                content,
+                &tags,
+                None,
+                namespace,
+                memory_type,
+                room_id,
+                author,
+            )
+            .map_err(|e| format!("Failed: {e}"))?
+    } else {
+        uteke
+            .remember_typed(content, &tags, None, namespace, memory_type)
+            .map_err(|e| format!("Failed: {e}"))?
+    };
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
