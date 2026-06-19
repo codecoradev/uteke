@@ -2,6 +2,17 @@
 
 ### Added
 
+- **MCP Streamable HTTP transport** (#381)
+  - `uteke-mcp` protocol version bumped from `2024-11-05` to `2025-06-18`
+    (current MCP spec).
+  - New `POST /mcp` endpoint on `uteke-server` exposing the full MCP
+    JSON-RPC API over HTTP. Returns `Content-Type: application/json` with
+    `MCP-Protocol-Version: 2025-06-18` header.
+  - Shared handler extracted into `uteke_mcp` library crate — used by both
+    the stdio binary (`uteke-mcp`) and the HTTP endpoint (`uteke-serve`).
+  - Enables remote MCP clients (Claude Desktop, web agents) to connect
+    without spawning a subprocess.
+
 - **Citation & source attribution** (#348)
   - Schema v10 migration: adds `source` and `source_type` columns to
     `memories` table. Existing rows get `source_type = 'unknown'`.
