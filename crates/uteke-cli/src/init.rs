@@ -221,7 +221,7 @@ fn init_hermes(json: bool) -> Result<(), String> {
         .map_err(|e| format!("Failed to write __init__.py: {e}"))?;
 
     // plugin.yaml — Hermes plugin manifest.
-    let plugin_yaml = "name: uteke-tool\ndescription: Semantic memory recall and storage via uteke — includes room operations\nversion: 0.2.0\nauthor: CodeCoraDev\nactions:\n  - uteke\n";
+    let plugin_yaml = "name: uteke-tool\ndescription: Semantic memory recall and storage via uteke — includes room operations\nversion: 0.2.1\nauthor: CodeCoraDev\nactions:\n  - uteke\n";
     std::fs::write(plugin_dir.join("plugin.yaml"), plugin_yaml)
         .map_err(|e| format!("Failed to write plugin.yaml: {e}"))?;
 

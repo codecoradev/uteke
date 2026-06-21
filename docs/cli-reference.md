@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.2.0**.
+Complete reference for all uteke commands. Version **0.2.1**.
 
 ## Global Flags
 
@@ -38,6 +38,9 @@ uteke remember "Server runs on port 8080" --tags config --detect-contradiction
 # With memory type
 uteke remember "API rate limit is 1000/min" --type fact
 
+# With source attribution (#348)
+uteke remember "Deploy at 3pm Friday" --tags deploy --source "https://slack.com/msg/123" --source-type url
+
 # In a specific namespace
 uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 ```
@@ -48,7 +51,9 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | `--entity <name>` | Associate memory with an entity (e.g. "staging-server") |
 | `--category <cat>` | Categorize the memory (e.g. "infrastructure") |
 | `--meta <pairs>` | Key:value pairs, comma-separated. Auto-detects type (string/number/bool) |
-| `--type <type>` | Memory type: fact, procedure, preference, decision, context |
+| `--type <type>` | Memory type: fact, procedure, preference, decision, context, note, insight, reference, event |
+| `--source <url-or-path>` | Source attribution (URL, file path, or description) |
+| `--source-type <type>` | Source type: user, url, file, import, derived, system (default: user) |
 | `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
 | `--room <room_id>` | Link memory to a room (collaborative context) |
 | `--author <name>` | Author attribution when storing in a room |
@@ -258,6 +263,8 @@ uteke recall "api design" --context
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |
+| `--salience` | Enable salience boost (higher score for decision/insight types) |
+| `--recency` | Enable recency boost (higher score for recently created memories) |
 
 ## uteke list (enhanced)
 
@@ -274,8 +281,9 @@ Room-based memory management:
 # Create a room
 uteke room create "project-kickoff" --title "Project Kickoff"
 
-# List rooms
+# List rooms (cross-namespace by default, #392)
 uteke room list
+uteke room list --namespace my-agent  # scoped
 
 # Add memory to room
 uteke room add "project-kickoff" <memory-id> --author cto
@@ -439,6 +447,91 @@ uteke rebuild-backlinks --quiet
 uteke rebuild-backlinks --json
 ```
 
+## uteke dream
+
+Run the full maintenance pipeline in one command (v0.2.1, #353).
+
+Executes phases in dependency order: lint → backlinks → dedup → orphans → compact → verify.
+Each phase records its status. Errors in individual phases are recorded but do not abort the pipeline.
+
+```bash
+# Run all phases
+uteke dream
+
+# Run specific phases only
+uteke dream --phases lint,orphans
+
+# Dry-run (preview what would change)
+uteke dream --dry-run
+
+# Scoped to a namespace
+uteke dream --namespace my-agent
+```
+
+| Flag | Description |
+|------|-------------|
+| `--phases <list>` | Comma-separated subset: lint, backlinks, dedup, orphans, compact, verify |
+| `--dry-run` | Preview without making changes |
+| `--namespace <ns>` | Run scoped to a specific namespace (backlinks and verify are global) |
+| `--json` | JSON output |
+
+### Phases
+
+| Phase | Description |
+|-------|-------------|
+| `lint` | Check for invalid memory types, missing slugs, stale deprecated flags |
+| `backlinks` | Rebuild `referenced_by` edges (same as `rebuild-backlinks`) |
+| `dedup` | Find and merge near-duplicate memories (cosine ≥ 0.90) |
+| `orphans` | Find disconnected, low-importance memories |
+| `compact` | Apply auto-prune to cold-tier and deprecated memories |
+| `verify` | Verify DB and index consistency |
+
+## uteke orphans
+
+Find orphan memories — disconnected nodes with low importance and few accesses (v0.2.1, #351).
+
+```bash
+# Find orphans with default thresholds
+uteke orphans
+
+# Custom thresholds
+uteke orphans --min-age-days 14 --max-access-count 3
+
+# JSON output for scripting
+uteke orphans --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--min-age-days <n>` | Minimum age in days (default: 7) |
+| `--max-access-count <n>` | Maximum access count (default: 2) |
+| `--limit <n>` | Max results (default: 50) |
+| `--namespace <ns>` | Scope to namespace |
+| `--json` | JSON output |
+
+## uteke timeline
+
+View chronological event log for a memory (v0.2.1, #347).
+
+Every memory has an audit trail: creation, updates, type changes, supersession,
+edge additions, and pin/unpin events.
+
+```bash
+# Show timeline for a memory
+uteke timeline <memory-id>
+
+# Limit to last N events
+uteke timeline <memory-id> --limit 10
+
+# JSON output
+uteke timeline <memory-id> --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--limit <n>` | Max events (default: 50) |
+| `--json` | JSON output |
+
 ## Other Commands
 
 | Command | Description |
@@ -480,3 +573,43 @@ RUST_LOG=info uteke-serve --port 8767
 ```
 
 When `[server] enabled = true` is set in config, the CLI auto-routes commands through the server. Falls back to local store if server is not running.
+
+### HTTP Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| POST | `/remember` | Store a memory |
+| POST | `/recall` | Semantic search |
+| POST | `/search` | Keyword search |
+| POST | `/list` | List memories |
+| DELETE | `/forget` | Delete memory |
+| GET | `/stats` | Store statistics (supports `?namespace=`) |
+| POST | `/stats` | Store statistics (body params) |
+| GET | `/namespaces` | List all namespaces |
+| GET | `/memory?id=` | Get single memory |
+| POST | `/room/create` | Create a room |
+| GET | `/room/list` | List rooms (supports `?namespace=`) |
+| POST | `/room/recall` | Recall from a room |
+| POST | `/room/summary` | Room summary |
+| POST | `/room/document` | Generate document from room |
+| POST | `/room/stats` | Room statistics |
+| DELETE | `/room/delete` | Delete a room |
+| POST | `/mcp` | MCP JSON-RPC endpoint (#381) |
+
+### MCP Server
+
+Two MCP transport modes are available (v0.2.1, #381):
+
+```bash
+# stdio transport (for Claude Desktop, Cursor, etc.)
+uteke-mcp
+
+# HTTP transport (POST /mcp on uteke-serve)
+curl -X POST http://127.0.0.1:8767/mcp \
+  -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2025-06-18" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+```
+
+Protocol version: `2025-06-18` (Streamable HTTP spec).

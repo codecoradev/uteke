@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.2.0-green.svg" alt="v0.1.0" />
+  <img src="https://img.shields.io/badge/status-v0.2.1-green.svg" alt="v0.2.1" />
 </p>
 
 <p align="center">
@@ -88,6 +88,14 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 🔒 **Fully Offline** — Local ONNX embeddings (768d), no telemetry, no cloud, no API calls
 - 📦 **Single Binary** — Zero dependencies. No Docker, no database server, no Python, no API keys
 - 📥 **Import/Export** — JSONL-based backup and restore
+- 🧩 **Memory Types** — Typed categories (fact, procedure, decision, etc.) with auto-inference
+- 🔗 **Backlinks** — Bidirectional memory edges — references are automatically reciprocal
+- 📜 **Timeline Events** — Chronological audit log per memory (created, updated, superseded)
+- 📈 **Salience + Recency** — Dual-axis recall boost by memory type and age
+- 🌙 **Dream Cycle** — One-command maintenance pipeline (lint → backlinks → dedup → orphans)
+- 🔍 **Orphan Detection** — Find disconnected, low-importance memories for cleanup
+- 📎 **Citations** — Source attribution on every memory (URL, file, user, import)
+- 🔌 **MCP Server** — JSON-RPC over stdio + Streamable HTTP transport
 
 📖 [Full documentation](docs/getting-started.md) · [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md)
 
@@ -97,7 +105,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (180 unit tests)
+cargo test --workspace         # Test (283 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
