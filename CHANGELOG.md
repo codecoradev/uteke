@@ -1,3 +1,56 @@
+## [0.3.0] — 2026-06-21
+
+### Added
+
+- **Document engine — wiki/knowledge base** (#406)
+  - Schema v11: `documents` + `document_chunks` tables
+  - Full markdown content with slug, title, tags, version
+  - Auto-chunking via markdown chunker (#405) + per-chunk embeddings
+  - Foundation for Obsidian/Outline-style wiki
+
+- **Document CLI commands** (#411)
+  - `uteke doc create/get/list/delete/export`
+  - Accept content from --file, --content, or stdin
+  - Auto-derive title from first heading
+
+- **Markdown/prose chunker** (#405)
+  - Split by headings (levels 1-6), respect code block fences
+  - Paragraph-level fallback for oversized sections
+  - `TextChunk { heading, content, level, char_start, char_end }`
+
+- **Embed-aware chunking** (#407)
+  - `chunk_markdown_embed_aware()` derives chunk size from `embedder.max_seq_len()`
+  - ~4 chars per token heuristic
+
+- **Cosine-based auto-linking + dedup** (#401)
+  - `auto_link_cosine()` runs after every `remember()`
+  - `similar_to` edge when cosine >= 0.80
+  - `possible_duplicate` edge when cosine >= 0.92
+  - Namespace-scoped (no cross-namespace links)
+
+- **Configurable limits** (#404)
+  - `LimitsConfig` struct with env var overrides
+  - MAX_CONTENT_LENGTH: 10K → 100K
+  - `[limits]` section in uteke.toml
+
+- **`/graph` API endpoint** (#408)
+  - `GET /graph` returns all nodes + edges + stats as JSON
+  - For visualization clients
+
+- **View-only API key** (#409)
+  - `--read-only-token` for GET-only access
+  - Dual-role: Admin (full) + ReadOnly (GET only)
+  - Env vars: `UTEKE_AUTH_TOKEN`, `UTEKE_READ_ONLY_TOKEN`
+
+- **Hermes plugin room_remember** (#410)
+  - New `room_remember` action in plugin template
+
+### Changed
+
+- Schema version bumped from v10 to v11
+- Internal dependency versions widened from `0.2.0` to `0.3`
+- `serialize_embedding` visibility changed to `pub(crate)`
+
 ## [0.2.1] — 2026-06-21
 
 ### Added
