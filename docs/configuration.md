@@ -301,3 +301,48 @@ Logs are written to `~/.uteke/logs/uteke.log` with daily rotation:
 ```
 
 Non-blocking async writer — logging never blocks memory operations. Rotated files are kept until manually deleted.
+
+## Configurable Limits (#404)
+
+All hardcoded limits can be overridden via env vars or the `[limits]` section:
+
+```toml
+[limits]
+max_content_length = 100000   # Max memory content (chars). 0 = disable
+max_tags_count = 20           # Max tags per memory
+max_tag_length = 50           # Max single tag length (chars)
+max_payload_size = 10485760   # Max server payload (bytes, default 10MB)
+default_recall_limit = 5      # Default recall limit
+```
+
+Environment variables override config values:
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `UTEKE_MAX_CONTENT_LENGTH` | 100000 | Max memory content length |
+| `UTEKE_MAX_TAGS_COUNT` | 20 | Max tags per memory |
+| `UTEKE_MAX_TAG_LENGTH` | 50 | Max tag length |
+| `UTEKE_MAX_PAYLOAD_SIZE` | 10485760 | Max server payload |
+| `UTEKE_DEFAULT_RECALL_LIMIT` | 5 | Default recall limit |
+
+## View-Only API Token (#409)
+
+The server supports dual-role authentication:
+
+```toml
+[server]
+enabled = true
+host = "127.0.0.1"
+port = 8767
+```
+
+```bash
+# Start with admin + read-only tokens
+uteke-serve --auth-token admin-secret --read-only-token viewer-key
+
+# Or via env vars
+UTEKE_AUTH_TOKEN=admin-secret UTEKE_READ_ONLY_TOKEN=viewer-key uteke-serve
+```
+
+Read-only tokens can only access GET endpoints (recall, search, list, stats, graph, health).
+POST/DELETE operations return `403 Forbidden`.

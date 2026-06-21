@@ -6,6 +6,26 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
+## v0.3.0 — Graph RAG `✓ Released 2026-06-21`
+
+- [#401 Cosine auto-linking + dedup](https://github.com/codecoradev/uteke/issues/401) `✓ Done`
+  - `similar_to` (≥0.80) and `possible_duplicate` (≥0.92) edges
+- [#404 Configurable limits](https://github.com/codecoradev/uteke/issues/404) `✓ Done`
+  - Env vars + `[limits]` config section
+- [#405 Markdown/prose chunker](https://github.com/codecoradev/uteke/issues/405) `✓ Done`
+  - Heading-aware splitting, code block protection
+- [#406 Document engine](https://github.com/codecoradev/uteke/issues/406) `✓ Done`
+  - Wiki/knowledge base, schema v11, documents + document_chunks
+- [#407 Embed-aware chunking](https://github.com/codecoradev/uteke/issues/407) `✓ Done`
+  - Chunk size from `embedder.max_seq_len()`
+- [#408 /graph API endpoint](https://github.com/codecoradev/uteke/issues/408) `✓ Done`
+  - Nodes + edges JSON for visualization
+- [#409 View-only API key](https://github.com/codecoradev/uteke/issues/409) `✓ Done`
+  - Dual-role tokens (admin + read-only)
+- [#410 Hermes plugin room_remember](https://github.com/codecoradev/uteke/issues/410) `✓ Done`
+- [#411 Document CLI commands](https://github.com/codecoradev/uteke/issues/411) `✓ Done`
+  - `uteke doc create/get/list/delete/export`
+
 ## v0.2.1 — DX & Ecosystem `✓ Released 2026-06-21`
 
 - [#337 OpenAI + Ollama embedding backends](https://github.com/codecoradev/uteke/issues/337) `✓ Done`

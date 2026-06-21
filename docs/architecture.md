@@ -225,3 +225,58 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
 | Embedder requires Mutex | Architectural | ONNX tokenizer internally uses `&mut self` |
 | Consolidate is O(n²) | Algorithm | Pairwise cosine — slow above 1K memories |
 | FTS5-only score is placeholder | Design | BM25 can't normalize to 0..1; actual ranking via RRF |
+
+## Document Engine (#406)
+
+Full markdown content → SQLite (`documents` table), chunked summaries → embeddings (`document_chunks`).
+
+### Schema (v11)
+
+```sql
+-- Full documents with unlimited content
+documents: id, slug, title, content, namespace, tags, metadata,
+           version, content_type, created_at, updated_at
+
+-- Chunked sections with per-chunk embeddings
+document_chunks: id, document_id, chunk_index, heading, content,
+                 embedding BLOB, char_start, char_end, tags
+```
+
+### Chunking Pipeline
+
+1. Document content → `chunk_markdown()` (#405) splits by headings
+2. Each chunk → `embedder.embed()` creates section-level embedding
+3. Chunks stored with heading, content, char offsets, embedding BLOB
+
+Chunk size derived from `embedder.max_seq_len()` (#407): ~4 chars per token.
+
+- ONNX (256 tokens): 1,024 chars/chunk
+- OpenAI (8191 tokens): 32,764 chars/chunk
+
+### Search Paths
+
+1. Direct ID/slug → SQLite PK → full content
+2. Semantic → embed query → ANN chunk search → resolve to document
+3. FTS5 → full text across all document content
+4. Graph → BFS from entity → connected documents
+
+## Cosine Auto-Linking (#401)
+
+After every `remember()`, the vector index is searched for the top-20 most similar memories:
+
+- Cosine ≥ 0.80 → `similar_to` edge
+- Cosine ≥ 0.92 → `possible_duplicate` edge
+
+Edges are namespace-scoped (no cross-namespace links). Best-effort: errors logged, never fail `remember()`.
+
+## Graph API (#408)
+
+`GET /graph` returns all graph nodes, edges, and stats as JSON for visualization clients:
+
+```json
+{
+  "nodes": [{ "id": "...", "label": "...", "entity_type": "..." }],
+  "edges": [{ "source_id": "...", "target_id": "...", "relation": "..." }],
+  "stats": { "node_count": N, "edge_count": N }
+}
+```

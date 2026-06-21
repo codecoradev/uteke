@@ -18,7 +18,7 @@ Hermes Agent
 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
-### 2. Auto-install Hermes plugin (v0.2.1+)
+### 2. Auto-install Hermes plugin (v0.3.0+)
 
 ```bash
 uteke init --agent hermes
@@ -63,12 +63,13 @@ uteke(action="forget", id="abc12345")
 uteke(action="stats")
 ```
 
-### Room Operations (v0.2.1+, #395)
+### Room Operations (v0.3.0+, #395, #410)
 
 Rooms enable multi-agent collaborative memory — multiple agents share a room and contribute memories with author attribution.
 
 ```python
 # Create a shared room
+uteke(action="room_remember", room_id="sprint-planning", content="Deploy scheduled for Friday", author="agent1")
 uteke(action="room_create", room_id="sprint-planning", title="Sprint Planning")
 
 # Add a memory to a room (use remember with room_id)
@@ -117,6 +118,7 @@ The MCP server provides the same tools via JSON-RPC (protocol version `2025-06-1
 | `list` | List memories |
 | `forget` | Delete memory |
 | `stats` | Store statistics |
+| `room_remember` | Store memory in a room with author |
 | `room_create` | Create a room |
 | `room_recall` | Recall from a room |
 | `room_list` | List all rooms |
@@ -150,6 +152,6 @@ The MCP server provides the same tools via JSON-RPC (protocol version `2025-06-1
 
 ## Requirements
 
-- uteke v0.2.1+ (includes `uteke-mcp` binary)
+- uteke v0.3.0+ (includes `uteke-mcp` binary)
 - `uteke-serve` running (daemon mode)
 - Python 3.7+ (stdlib only — no pip install needed)

@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.2.1**.
+Complete reference for all uteke commands. Version **0.3.1**.
 
 ## Global Flags
 
@@ -613,3 +613,106 @@ curl -X POST http://127.0.0.1:8767/mcp \
 ```
 
 Protocol version: `2025-06-18` (Streamable HTTP spec).
+
+## Document Commands (#406, #411)
+
+Wiki/knowledge base engine — full markdown documents with auto-chunking and semantic search.
+
+### `uteke doc create`
+
+Create or update a document from file, content, or stdin.
+
+```bash
+# From file
+uteke doc create architecture --file guide.md --tags wiki,tech
+
+# From inline content
+uteke doc create notes --content "# Notes\n\nQuick notes" --title "My Notes"
+
+# From stdin
+cat README.md | uteke doc create readme --file -
+```
+
+| Flag | Description |
+|------|-------------|
+| `--title <title>` | Document title (auto-derived from first `#` heading if omitted) |
+| `--file <path>` | Read content from file (`-` for stdin) |
+| `--content <text>` | Inline content (alternative to `--file`) |
+| `--tags <tags>` | Comma-separated tags |
+
+### `uteke doc get`
+
+Get a document by slug or ID.
+
+```bash
+uteke doc get architecture
+uteke doc get architecture --json
+```
+
+### `uteke doc list`
+
+List documents in the current namespace.
+
+```bash
+uteke doc list --limit 20
+```
+
+### `uteke doc delete`
+
+Delete a document by ID (cascades to chunks).
+
+```bash
+uteke doc delete <id>
+```
+
+### `uteke doc export`
+
+Export all documents as JSON or markdown.
+
+```bash
+uteke doc export           # markdown to stdout
+uteke doc export --json    # JSON to stdout
+```
+
+## Graph API (#408)
+
+The server exposes a graph visualization endpoint:
+
+```bash
+# All nodes + edges + stats
+curl http://127.0.0.1:8767/graph
+
+# Response: { nodes: [...], edges: [...], stats: {...} }
+```
+
+## Server Authentication (#409)
+
+Dual-role API token model:
+
+| Flag / Env | Role | Access |
+|------------|------|--------|
+| `--auth-token` / `UTEKE_AUTH_TOKEN` | Admin | All endpoints (GET, POST, DELETE) |
+| `--read-only-token` / `UTEKE_READ_ONLY_TOKEN` | ReadOnly | GET endpoints only (403 on writes) |
+
+```bash
+# Start with dual tokens
+uteke-serve --auth-token admin-secret --read-only-token viewer-key
+
+# Read-only client (GET only)
+curl -H "Authorization: Bearer viewer-key" http://127.0.0.1:8767/stats
+
+# Write attempt fails
+curl -X POST -H "Authorization: Bearer viewer-key" ...  # 403 Forbidden
+```
+
+## Configurable Limits (#404)
+
+All limits can be overridden via env vars or `[limits]` config section:
+
+| Env Var | Config Key | Default | Description |
+|---------|-----------|---------|-------------|
+| `UTEKE_MAX_CONTENT_LENGTH` | `max_content_length` | 100000 | Max memory content (chars, 0=disable) |
+| `UTEKE_MAX_TAGS_COUNT` | `max_tags_count` | 20 | Max tags per memory |
+| `UTEKE_MAX_TAG_LENGTH` | `max_tag_length` | 50 | Max single tag length (chars) |
+| `UTEKE_MAX_PAYLOAD_SIZE` | `max_payload_size` | 10485760 | Max server payload (bytes) |
+| `UTEKE_DEFAULT_RECALL_LIMIT` | `default_recall_limit` | 5 | Default recall limit |
