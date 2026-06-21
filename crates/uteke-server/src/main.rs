@@ -145,15 +145,13 @@ fn unauthorized_response(
     )
 }
 
-/// Check bearer token auth on a request.
-/// Returns Ok(()) if auth passes or is disabled.
-/// Returns Err(response) with 401 if auth fails.
-fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>>>> {
-    let token_hash = match &ctx.auth_token_hash {
-        // No token configured — auth disabled
-        None => return Ok(()),
-        Some(h) => h,
-    };
+/// Check bearer token auth on a request (#409: dual-role tokens).
+/// Returns the role the request is authenticated as.
+fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<AuthResult, Response<Cursor<Vec<u8>>>> {
+    // No tokens configured — auth disabled.
+    if ctx.auth_token_hash.is_none() && ctx.read_only_token_hash.is_none() {
+        return Ok(AuthResult::Disabled);
+    }
 
     // Look for Authorization: Bearer <token>
     let auth_header = req
@@ -161,10 +159,9 @@ fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>
         .iter()
         .find(|h| h.field.equiv("Authorization"));
 
-    match auth_header {
+    let token = match auth_header {
         Some(h) => {
             let val = h.value.as_str().trim();
-            // RFC 7235: scheme is case-insensitive, exactly 2 parts expected
             let parts: Vec<&str> = val.split_whitespace().collect();
             if parts.len() != 2 {
                 return Err(unauthorized_response(
@@ -173,30 +170,40 @@ fn check_auth(req: &Request, ctx: &ReqCtx) -> Result<(), Response<Cursor<Vec<u8>
                     "Invalid auth header format. Use: Authorization: Bearer <token>",
                 ));
             }
-            if parts[0].eq_ignore_ascii_case("Bearer") {
-                // Constant-time comparison of precomputed SHA-256 digests.
-                // Only the incoming token is hashed per-request; the configured
-                // token's hash was precomputed at startup.
-                let provided_hash: [u8; 32] = Sha256::digest(parts[1].as_bytes()).into();
-                if constant_time_eq_digest(&provided_hash, token_hash) {
-                    Ok(())
-                } else {
-                    Err(unauthorized_response(ctx, req, "Invalid or expired token"))
-                }
-            } else {
-                Err(unauthorized_response(
+            if !parts[0].eq_ignore_ascii_case("Bearer") {
+                return Err(unauthorized_response(
                     ctx,
                     req,
                     "Invalid auth scheme. Use: Authorization: Bearer <token>",
-                ))
+                ));
             }
+            parts[1]
         }
-        None => Err(unauthorized_response(
-            ctx,
-            req,
-            "Authentication required. Provide Authorization: Bearer <token>",
-        )),
+        None => {
+            return Err(unauthorized_response(
+                ctx,
+                req,
+                "Authentication required. Provide Authorization: Bearer <token>",
+            ));
+        }
+    };
+
+    // Check against admin token first, then read-only token.
+    let provided_hash: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+
+    if let Some(admin_hash) = &ctx.auth_token_hash {
+        if constant_time_eq_digest(&provided_hash, admin_hash) {
+            return Ok(AuthResult::Authenticated(ApiRole::Admin));
+        }
     }
+
+    if let Some(ro_hash) = &ctx.read_only_token_hash {
+        if constant_time_eq_digest(&provided_hash, ro_hash) {
+            return Ok(AuthResult::Authenticated(ApiRole::ReadOnly));
+        }
+    }
+
+    Err(unauthorized_response(ctx, req, "Invalid or expired token"))
 }
 
 /// Constant-time comparison of two fixed-length SHA-256 digests.
@@ -210,11 +217,30 @@ fn constant_time_eq_digest(a: &[u8; 32], b: &[u8; 32]) -> bool {
     result == 0
 }
 
+/// API key role (#409).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ApiRole {
+    /// Full access — all endpoints (default token).
+    Admin,
+    /// Read-only access — GET endpoints only (recall, search, list, stats, graph).
+    ReadOnly,
+}
+
+/// Result of authentication: which role this request is authorized as.
+enum AuthResult {
+    /// Auth disabled — full access.
+    Disabled,
+    /// Authenticated with a specific role.
+    Authenticated(ApiRole),
+}
+
 #[derive(Clone)]
 struct ReqCtx {
-    /// Hashed auth token for constant-time comparison.
+    /// Hashed admin auth token for constant-time comparison.
     /// If None, auth is disabled.
     auth_token_hash: Option<[u8; 32]>,
+    /// Hashed read-only token (#409). Read-only requests can use this.
+    read_only_token_hash: Option<[u8; 32]>,
     /// Allowed CORS origins from config. Empty = wildcard.
     cors_origins: Vec<String>,
     /// Recall threshold config from [recall] section in uteke.toml.
@@ -443,9 +469,19 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
     let is_health = matches!((&method, path.as_str()), (Method::Get, "/health"));
 
     // Authenticate all non-health requests
-    if !is_health {
-        if let Err(resp) = check_auth(req, ctx) {
-            return resp;
+    let auth_role = if !is_health {
+        match check_auth(req, ctx) {
+            Ok(role) => role,
+            Err(resp) => return resp,
+        }
+    } else {
+        AuthResult::Disabled
+    };
+
+    // Enforce read-only restriction (#409): ReadOnly tokens can only use GET.
+    if let AuthResult::Authenticated(ApiRole::ReadOnly) = auth_role {
+        if method != Method::Get {
+            return ctx.error_response_for(req, 403, "Read-only token cannot perform write operations");
         }
     }
 
@@ -1078,6 +1114,7 @@ fn main() {
     let mut cli_host: Option<String> = None;
     let mut cli_port: Option<u16> = None;
     let mut cli_auth_token: Option<String> = None;
+    let mut cli_read_only_token: Option<String> = None;
     let mut cli_cors_origins: Vec<String> = Vec::new();
 
     let mut i = 1;
@@ -1113,6 +1150,15 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--read-only-token" => {
+                i += 1;
+                if i < args.len() {
+                    cli_read_only_token = Some(args[i].clone());
+                } else {
+                    eprintln!("Error: --read-only-token requires a value");
+                    std::process::exit(1);
+                }
+            }
             "--cors-origin" => {
                 i += 1;
                 if i < args.len() {
@@ -1132,6 +1178,7 @@ fn main() {
                 println!("  --port <PORT>        Port number (default: 8767)");
                 println!("  --auth-token <TOKEN> Bearer token for API auth");
                 println!("  --cors-origin <URL>  Allowed CORS origin (repeatable)");
+                println!("  --read-only-token <T> Read-only API token (GET endpoints only) (#409)");
                 println!("  -h, --help           Show this help");
                 println!();
                 println!("Config: reads [server] section from uteke.toml");
@@ -1140,10 +1187,12 @@ fn main() {
                 println!("Environment:");
                 println!("  UTEKE_HOME          Data directory (default: ~/.uteke)");
                 println!("  UTEKE_AUTH_TOKEN     Bearer token (alternative to --auth-token)");
+                println!("  UTEKE_READ_ONLY_TOKEN  Read-only token (alternative to --read-only-token)");
                 println!();
                 println!("Security:");
                 println!("  If --auth-token or UTEKE_AUTH_TOKEN is set, all endpoints");
                 println!("  (except GET /health) require Authorization: Bearer <TOKEN>.");
+                println!("  --read-only-token grants GET-only access (recall, search, list, stats, graph).");
                 println!("  Configure CORS origins in uteke.toml [server].cors_origins.");
                 println!();
                 println!("API:");
@@ -1237,6 +1286,11 @@ fn main() {
     // need hashing per-request (avoids double-hash on every auth check).
     let auth_token_hash = auth_token.as_deref().map(|t| Sha256::digest(t).into());
 
+    // Read-only token (#409): CLI arg or env var.
+    let read_only_token = cli_read_only_token
+        .or_else(|| std::env::var("UTEKE_READ_ONLY_TOKEN").ok());
+    let read_only_token_hash = read_only_token.as_deref().map(|t| Sha256::digest(t).into());
+
     // Build request context
     // Warn if auth is configured but CORS origins are not — this is safe for
     // non-browser clients (curl, SDKs, agents) but risky if browser access is needed.
@@ -1247,6 +1301,7 @@ fn main() {
     }
     let ctx = ReqCtx {
         auth_token_hash,
+        read_only_token_hash,
         cors_origins: cors_origins.clone(),
         recall_config: config.recall.clone(),
     };
@@ -1265,6 +1320,9 @@ fn main() {
         info!("Authentication: enabled (Bearer token)");
     } else {
         warn!("Authentication: disabled — set --auth-token or UTEKE_AUTH_TOKEN for production");
+    }
+    if read_only_token.is_some() {
+        info!("Read-only token: enabled (GET-only access, #409)");
     }
     if cors_origins.is_empty() {
         warn!("CORS: wildcard (*) — restrict cors_origins in uteke.toml for production");
