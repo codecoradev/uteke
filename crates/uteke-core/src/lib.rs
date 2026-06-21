@@ -28,7 +28,9 @@ pub mod salience_recency;
 mod timeline;
 mod types;
 
-pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
+pub use chunker::{
+    chunk_code, chunk_markdown, detect_language, extract_imports, CodeChunk, TextChunk,
+};
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
     backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REPLIES_TO,
@@ -56,32 +58,51 @@ pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
-/// Maximum memory content length (characters).
-pub const MAX_CONTENT_LENGTH: usize = 10_000;
+/// Maximum memory content length (characters) — default, overridable via config (#404).
+pub const MAX_CONTENT_LENGTH: usize = 100_000;
 /// Maximum number of tags per memory.
 pub const MAX_TAGS_COUNT: usize = 20;
 /// Maximum single tag length (characters).
 pub const MAX_TAG_LENGTH: usize = 50;
 /// Maximum payload size for server API (bytes).
-pub const MAX_PAYLOAD_SIZE: usize = 1_048_576; // 1MB
+pub const MAX_PAYLOAD_SIZE: usize = 10_485_760; // 10MB
 
 /// Validate input parameters before processing.
+/// Uses default limits. For configurable limits, use `validate_input_with_limits`.
 pub fn validate_input(content: &str, tags: &[impl AsRef<str>]) -> Result<(), Error> {
+    validate_input_with_limits(
+        content,
+        tags,
+        MAX_CONTENT_LENGTH,
+        MAX_TAGS_COUNT,
+        MAX_TAG_LENGTH,
+    )
+}
+
+/// Validate input with configurable limits (#404).
+/// Set max_content_length to 0 to disable content length check.
+pub fn validate_input_with_limits(
+    content: &str,
+    tags: &[impl AsRef<str>],
+    max_content_length: usize,
+    max_tags_count: usize,
+    max_tag_length: usize,
+) -> Result<(), Error> {
     if content.trim().is_empty() {
         return Err(Error::Validation("Content must not be empty".into()));
     }
-    if content.len() > MAX_CONTENT_LENGTH {
+    if max_content_length > 0 && content.len() > max_content_length {
         return Err(Error::Validation(format!(
             "Content too long: {} chars (max {})",
             content.len(),
-            MAX_CONTENT_LENGTH
+            max_content_length
         )));
     }
-    if tags.len() > MAX_TAGS_COUNT {
+    if tags.len() > max_tags_count {
         return Err(Error::Validation(format!(
             "Too many tags: {} (max {})",
             tags.len(),
-            MAX_TAGS_COUNT
+            max_tags_count
         )));
     }
     for tag in tags {
@@ -89,11 +110,11 @@ pub fn validate_input(content: &str, tags: &[impl AsRef<str>]) -> Result<(), Err
         if t.is_empty() {
             return Err(Error::Validation("Tags must not be empty".into()));
         }
-        if t.len() > MAX_TAG_LENGTH {
+        if max_tag_length > 0 && t.len() > max_tag_length {
             return Err(Error::Validation(format!(
                 "Tag too long: {} chars (max {})",
                 t.len(),
-                MAX_TAG_LENGTH
+                max_tag_length
             )));
         }
     }
