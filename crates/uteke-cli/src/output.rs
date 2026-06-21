@@ -117,7 +117,7 @@ pub(crate) fn print_stats_human(stats: &uteke_core::StoreStats) {
     } else {
         format!("{:.1} MB", stats.db_size_bytes as f64 / (1024.0 * 1024.0))
     };
-    println!("  Database size:  {}", size_str);
+    println!("  Database size:  {}  (global, shared)", size_str);
 
     // Recall cache metrics
     let total_queries = stats.cache_hits + stats.cache_misses;
