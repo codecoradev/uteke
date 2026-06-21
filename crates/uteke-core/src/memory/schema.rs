@@ -3,7 +3,7 @@
 use crate::Error;
 use rusqlite::{params, OptionalExtension};
 
-use super::store::{CURRENT_SCHEMA_VERSION, SCHEMA};
+use super::store::{CURRENT_SCHEMA_VERSION, SCHEMA, SCHEMA_INDEXES};
 
 impl super::Store {
     /// Run initial schema creation + legacy column migrations.
@@ -24,13 +24,6 @@ impl super::Store {
                 )
                 .map_err(|e| Error::db("database operation", e))?;
         }
-
-        // Create namespace index (safe after column exists)
-        self.conn
-            .execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
-            )
-            .map_err(|e| Error::db("database operation", e))?;
 
         // Migration: add access tracking columns
         if !self.column_exists("access_count") {
@@ -72,14 +65,18 @@ impl super::Store {
                 .map_err(|e| Error::db("database operation", e))?;
         }
 
-        // Create deprecation index
-        self.conn
-            .execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
-            )
-            .map_err(|e| Error::db("database operation", e))?;
-
+        // Run versioned migrations (adds slug, source, source_type, etc.)
         self.ensure_schema_version()?;
+
+        // Create indexes on migration-added columns AFTER migrations complete.
+        // These are safe now — all columns exist regardless of original DB version.
+        for stmt in SCHEMA_INDEXES {
+            // Best-effort: ignore errors if index already exists or column
+            // somehow still missing (shouldn't happen after migrations).
+            if let Err(e) = self.conn.execute_batch(stmt) {
+                tracing::debug!("Schema index (best-effort): {stmt} → {e}");
+            }
+        }
 
         Ok(())
     }

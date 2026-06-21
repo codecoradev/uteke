@@ -1,3 +1,18 @@
+## [0.3.1] — 2026-06-21
+
+### Fixed
+
+- **Critical: schema migration failure for existing databases**
+  - DBs created with v0.2.x or earlier (schema v7) failed to open after
+    upgrading to v0.3.0. `CREATE INDEX ... ON memories(slug)` in the SCHEMA
+    constant was executed BEFORE migrations added the `slug` column.
+  - Fix: Split schema init into two phases. `SCHEMA` contains only
+    `CREATE TABLE` + safe indexes. `SCHEMA_INDEXES` (indexes on
+    migration-added columns) runs AFTER `ensure_schema_version()` completes.
+    Index creation is best-effort (errors logged, not fatal).
+  - The problematic indexes (`idx_memories_namespace`, `idx_memories_deprecated`,
+    `idx_memories_slug`) are now created post-migration.
+
 ## [0.3.0] — 2026-06-21
 
 ### Added
