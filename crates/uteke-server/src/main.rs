@@ -481,7 +481,11 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
     // Enforce read-only restriction (#409): ReadOnly tokens can only use GET.
     if let AuthResult::Authenticated(ApiRole::ReadOnly) = auth_role {
         if method != Method::Get {
-            return ctx.error_response_for(req, 403, "Read-only token cannot perform write operations");
+            return ctx.error_response_for(
+                req,
+                403,
+                "Read-only token cannot perform write operations",
+            );
         }
     }
 
@@ -1187,7 +1191,9 @@ fn main() {
                 println!("Environment:");
                 println!("  UTEKE_HOME          Data directory (default: ~/.uteke)");
                 println!("  UTEKE_AUTH_TOKEN     Bearer token (alternative to --auth-token)");
-                println!("  UTEKE_READ_ONLY_TOKEN  Read-only token (alternative to --read-only-token)");
+                println!(
+                    "  UTEKE_READ_ONLY_TOKEN  Read-only token (alternative to --read-only-token)"
+                );
                 println!();
                 println!("Security:");
                 println!("  If --auth-token or UTEKE_AUTH_TOKEN is set, all endpoints");
@@ -1287,8 +1293,8 @@ fn main() {
     let auth_token_hash = auth_token.as_deref().map(|t| Sha256::digest(t).into());
 
     // Read-only token (#409): CLI arg or env var.
-    let read_only_token = cli_read_only_token
-        .or_else(|| std::env::var("UTEKE_READ_ONLY_TOKEN").ok());
+    let read_only_token =
+        cli_read_only_token.or_else(|| std::env::var("UTEKE_READ_ONLY_TOKEN").ok());
     let read_only_token_hash = read_only_token.as_deref().map(|t| Sha256::digest(t).into());
 
     // Build request context
