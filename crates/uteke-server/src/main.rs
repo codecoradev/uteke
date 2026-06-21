@@ -832,7 +832,7 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
                     ctx.error_response_for(req, 500, "Internal server error")
                 }
             }
-        },
+        }
 
         // ── Room Summary ────────────────────────────────────────────────
         (Method::Post, "/room/summary") => {
