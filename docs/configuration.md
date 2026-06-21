@@ -162,6 +162,22 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 | `graph_authority_weight` | 0.1 | Incoming-edge authority boost weight (graph strategy only) |
 | `graph_rerank_enabled` | true | Master switch for graph reranking |
 
+### Salience + Recency Boost (#352)
+
+Dual-axis recall ranking boost. Applied **after** the RRF merge and recall cache lookup.
+
+- **Salience** — higher score for high-value memory types (decision > insight > fact > note). Per-type decay rates are hardcoded in `type_half_life_days()`.
+- **Recency** — exponential decay `exp(-age/τ)` where τ is a per-type time constant.
+
+Opt-in per query via `--salience` / `--recency` CLI flags. The `dream` cycle's `compact` phase can use these for smarter pruning.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `salience_weight` | 0.0 | Salience boost weight (0 = off, 0.15 recommended) |
+| `recency_weight` | 0.0 | Recency boost weight (0 = off, 0.15 recommended) |
+
+Default is off (0.0) to preserve backward-compatible ranking. Enable via CLI flags or API.
+
 Use `--strict` flag, `--min <score>`, or `--strategy <name>` to override per-query.
 
 ## Environment Variables

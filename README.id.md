@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.1.0-green.svg" alt="v0.1.0" />
+  <img src="https://img.shields.io/badge/status-v0.2.1-green.svg" alt="v0.2.1" />
 </p>
 
 <p align="center">
@@ -80,6 +80,15 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 - 🔒 **Sepenuhnya Offline** — Embedding ONNX lokal (768d), tanpa telemetri, tanpa cloud, tanpa panggilan API
 - 📦 **Satu Binary** — Zero dependensi. Tanpa Docker, tanpa server database, tanpa Python, tanpa API key
 - 📥 **Import/Export** — Backup dan restore berbasis JSONL
+- 🧩 **Tipe Memori** — Kategori bertipe (fact, procedure, decision, dll.) dengan auto-inferensi
+- 🔗 **Backlinks** — Edge memori dua arah — referensi otomatis timbal balik
+- 📜 **Timeline Events** — Log audit kronologis per memori
+- 📈 **Salience + Recency** — Boost recall dua sumbu berdasarkan tipe dan usia
+- 🌙 **Dream Cycle** — Pipeline maintenance satu perintah (lint → backlinks → dedup → orphans)
+- 🔍 **Orphan Detection** — Temukan memori terputus dengan importance rendah
+- 📎 **Citations** — Atribusi sumber pada setiap memori (URL, file, user, import)
+- 🔌 **MCP Server** — JSON-RPC via stdio + Streamable HTTP transport
+- 📥 **Import/Export** — Backup dan restore berbasis JSONL
 
 📖 [Dokumentasi lengkap](docs/getting-started.md) · [Referensi CLI](docs/cli-reference.md) · [Konfigurasi](docs/configuration.md)
 
@@ -89,7 +98,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (108 unit tests)
+cargo test --workspace         # Test (283 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```

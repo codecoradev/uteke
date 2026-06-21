@@ -1,4 +1,4 @@
-## [Unreleased]
+## [0.2.1] — 2026-06-21
 
 ### Added
 
@@ -28,6 +28,22 @@
 - **Schema mismatch error message** (#394)
   - Error now includes binary name and version: "please upgrade uteke
     (current binary: uteke-core v0.2.0, schema v10)".
+
+- **Hermes plugin missing `__init__.py`** (#402)
+  - `uteke init --agent hermes` now generates `__init__.py` in the plugin
+    directory. Without it, Hermes logs a warning and the plugin never
+    loads.
+
+- **Contradictory server detection log** (#403)
+  - When server was detected but command unsupported via HTTP (aging,
+    doctor, etc.), the fallback path logged "No server detected" —
+    contradicting the earlier detection message. Now logs accurately
+    based on actual server state.
+
+- **Misleading `db_size_bytes` in stats** (#403)
+  - Stats output now labels database size as "(global, shared)" to
+    clarify it reflects the entire shared SQLite file, not just the
+    queried namespace.
 
 ### Added (previous)
 

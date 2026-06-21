@@ -7,10 +7,10 @@
 ```
 Hermes Agent
 ├── hybrid-memory (existing)  → entities + relationships + knowledge lifecycle
-└── uteke-tool (new, opt-in)  → quick semantic recall via uteke-serve
+└── uteke-tool (opt-in)       → semantic recall + room operations via uteke-serve
 ```
 
-## Setup
+## Quick Setup
 
 ### 1. Install uteke
 
@@ -18,108 +18,124 @@ Hermes Agent
 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
-### 2. Enable server mode
+### 2. Auto-install Hermes plugin (v0.2.1+)
 
-```toml
-# ~/.uteke/uteke.toml
-[server]
-enabled = true
-host = "127.0.0.1"
-port = 8767
+```bash
+uteke init --agent hermes
 ```
 
-Start the daemon:
+This generates the plugin directly to `~/.hermes/plugins/uteke-tool/` with:
+- `plugin.yaml` — manifest
+- `tool.py` — Python entry point (stdlib only, no `requests` dependency)
+- `README.md` — usage guide
+
+### 3. Start the server
 
 ```bash
 uteke-serve --port 8767
 ```
 
-### 3. Add plugin to Hermes config
+### 4. Start a new Hermes session
 
-```yaml
-# hermes config.yaml
-plugins:
-  enabled:
-    - agentboard-tool
-    - memory-tool
-    - uteke-tool  # opt-in
-```
-
-### 4. Plugin directory
-
-Create `uteke-tool` plugin in your Hermes plugins directory:
-
-```
-plugins/uteke-tool/
-├── plugin.yaml
-├── tool.py
-└── README.md
-```
-
-#### plugin.yaml
-
-```yaml
-name: uteke-tool
-description: Semantic memory recall and storage via uteke
-version: 0.1.0
-author: CodeCoraDev
-```
-
-#### tool.py
-
-```python
-import json
-import requests
-
-UTEKE_URL = "http://127.0.0.1:8767"
-
-def uteke(action="recall", content="", tags="", namespace="hermes", limit=5):
-    """Call uteke server for memory operations."""
-    if action == "remember":
-        resp = requests.post(f"{UTEKE_URL}/remember", json={
-            "content": content,
-            "tags": tags.split(",") if tags else [],
-            "namespace": namespace
-        })
-        return f"Stored: {content[:50]}..."
-
-    elif action == "recall":
-        resp = requests.post(f"{UTEKE_URL}/recall", json={
-            "query": content,
-            "limit": limit,
-            "namespace": namespace
-        })
-        results = resp.json()
-        if isinstance(results, list) and results:
-            memories = [m["memory"]["content"] for m in results]
-            return "\n".join(memories)
-        return "No memories found."
-
-    elif action == "stats":
-        resp = requests.get(f"{UTEKE_URL}/stats?namespace={namespace}")
-        return json.dumps(resp.json(), indent=2)
-
-    return f"Unknown action: {action}"
-```
+The plugin loads automatically.
 
 ## Usage
 
-```
+### Memory Operations
+
+```python
 # Store a memory
 uteke(action="remember", content="User prefers dark mode", tags="preference,ui")
 
-# Recall relevant context
+# Semantic recall
 uteke(action="recall", content="user preferences")
 
-# Check stats
+# Keyword search
+uteke(action="search", content="dark mode")
+
+# List memories
+uteke(action="list", limit=10)
+
+# Delete a memory
+uteke(action="forget", id="abc12345")
+
+# Stats
 uteke(action="stats")
 ```
+
+### Room Operations (v0.2.1+, #395)
+
+Rooms enable multi-agent collaborative memory — multiple agents share a room and contribute memories with author attribution.
+
+```python
+# Create a shared room
+uteke(action="room_create", room_id="sprint-planning", title="Sprint Planning")
+
+# Add a memory to a room (use remember with room_id)
+uteke(action="remember", content="Deploy at 3pm", room_id="sprint-planning", namespace="team")
+
+# Recall from a room
+uteke(action="room_recall", room_id="sprint-planning", content="deploy deadline")
+
+# List all rooms (cross-namespace)
+uteke(action="room_list")
+
+# Room analytics
+uteke(action="room_stats", room_id="sprint-planning")
+uteke(action="room_summary", room_id="sprint-planning")
+
+# Delete a room (memories preserved)
+uteke(action="room_delete", room_id="sprint-planning")
+```
+
+### MCP Server (Alternative)
+
+For MCP-compatible agents, use the uteke MCP server instead of the HTTP plugin:
+
+```bash
+# Register with Hermes
+hermes mcp add uteke --command uteke-mcp
+
+# Or use the HTTP transport
+hermes mcp add uteke --url http://127.0.0.1:8767/mcp
+```
+
+The MCP server provides the same tools via JSON-RPC (protocol version `2025-06-18`):
+- `uteke_remember` — store memory (supports type, room, author, tags)
+- `uteke_recall` — semantic search (supports tags filter, min_score)
+- `uteke_list` — list memories (supports pagination via offset)
+- `uteke_forget` — delete memory
+- `uteke_stats` — store statistics
+
+## Available Actions
+
+| Action | Description |
+|--------|-------------|
+| `remember` | Store a new memory |
+| `recall` | Semantic search |
+| `search` | Keyword search |
+| `list` | List memories |
+| `forget` | Delete memory |
+| `stats` | Store statistics |
+| `room_create` | Create a room |
+| `room_recall` | Recall from a room |
+| `room_list` | List all rooms |
+| `room_summary` | Room topic summary |
+| `room_stats` | Room statistics |
+| `room_delete` | Delete a room |
+
+## Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `UTEKE_SERVER_URL` | `http://127.0.0.1:8767` | uteke server URL |
 
 ## How It Works
 
 - **Remember**: POST to `/remember` — content is embedded (EmbeddingGemma Q4, 768d) and stored in SQLite + HNSW vector index
 - **Recall**: POST to `/recall` — semantic search via hybrid RRF (vector + FTS5), returns ranked results
-- **Stats**: GET `/stats` — memory count, namespace breakdown
+- **Rooms**: Cross-namespace collaboration spaces — rooms span namespaces, enabling multi-agent coordination
+- **MCP**: JSON-RPC over stdio or HTTP — standard MCP protocol for AI agent integration
 
 ## Why Uteke Alongside Hybrid-Memory?
 
@@ -129,12 +145,11 @@ uteke(action="stats")
 | Storage | SQLite + Qdrant | SQLite + usearch |
 | Embedding | Cloud (OpenAI) | Local ONNX (offline) |
 | Latency | ~100ms (network) | ~42ms (local daemon) |
+| Rooms | — | Cross-namespace collaboration |
 | Best for | Complex graph queries | Quick context injection |
-
-Uteke complements hybrid-memory by providing instant offline semantic search — no API calls needed for every recall.
 
 ## Requirements
 
-- uteke binary in `$PATH`
+- uteke v0.2.1+ (includes `uteke-mcp` binary)
 - `uteke-serve` running (daemon mode)
-- Python `requests` library
+- Python 3.7+ (stdlib only — no pip install needed)

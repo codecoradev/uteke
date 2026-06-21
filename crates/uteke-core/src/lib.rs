@@ -671,6 +671,7 @@ fn resolve_db_path(db_path: &Path) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_memory_types_serialization() {
@@ -955,6 +956,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn embedding_settings_env_overrides_caller_config() {
         // Env vars win over caller-supplied settings.
         std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-wins");
@@ -977,6 +979,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn embedding_settings_empty_env_does_not_overwrite_config() {
         // Explicitly empty env var must NOT clobber a non-empty config value
         // (CodeCora finding: std::env::var returns Ok("") for empty vars).
@@ -1002,6 +1005,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn embedding_settings_config_used_when_env_absent() {
         std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
         std::env::remove_var("OPENAI_API_KEY");
