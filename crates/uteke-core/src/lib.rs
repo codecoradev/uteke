@@ -29,7 +29,8 @@ mod timeline;
 mod types;
 
 pub use chunker::{
-    chunk_code, chunk_markdown, detect_language, extract_imports, CodeChunk, TextChunk,
+    chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language, extract_imports,
+    CodeChunk, TextChunk,
 };
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
