@@ -822,6 +822,18 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
             }
         },
 
+        // ── Graph Visualization (#408) ───────────────────────────────────
+        (Method::Get, p) if p == "/graph" || p.starts_with("/graph?") => {
+            let ns = parse_query_namespace(&path);
+            match uteke.graph_data(ns.as_deref()) {
+                Ok(data) => ctx.ok_response_for(req, &data),
+                Err(e) => {
+                    error!("Graph data error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        },
+
         // ── Room Summary ────────────────────────────────────────────────
         (Method::Post, "/room/summary") => {
             #[derive(Deserialize)]
