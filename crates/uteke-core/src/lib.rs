@@ -46,6 +46,7 @@ pub use memory::types::{
     SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
 pub use memory::{
+    documents::{Document, DocumentChunk, DocumentSummary},
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
 };
@@ -695,6 +696,112 @@ impl Uteke {
             edges,
             stats,
         })
+    }
+
+    // ── Document engine (#406) ───────────────────────────────────────────
+
+    /// Create or update a document (#406).
+    ///
+    /// If the slug exists in the namespace, updates content and re-chunks.
+    /// Chunks are created via the markdown chunker (#405) and embedded.
+    pub fn doc_upsert(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        namespace: Option<&str>,
+    ) -> Result<String, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Check if document exists to get current version.
+        let existing = self.store.get_document_by_slug(slug, ns)?;
+        let (id, version) = match &existing {
+            Some(doc) => (doc.id.clone(), doc.version),
+            None => (uuid::Uuid::new_v4().to_string(), 1),
+        };
+
+        let doc = Document {
+            id: id.clone(),
+            slug: slug.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            namespace: ns.to_string(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            metadata: serde_json::Value::Null,
+            version,
+            content_type: "markdown".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let doc_id = self.store.upsert_document(&doc)?;
+
+        // Chunk and embed the content.
+        self.ensure_embedder()?;
+        let embedder = self
+            .embedder
+            .lock()
+            .map_err(|_| Error::lock("embedder lock during document chunking"))?;
+        let embedder = embedder.as_ref().expect("embedder ensured");
+
+        let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
+        let chunks = crate::chunker::chunk_markdown(content, max_chars);
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let chunk_id = uuid::Uuid::new_v4().to_string();
+            let embedding = embedder.embed(&chunk.content)?;
+
+            self.store.insert_document_chunk(
+                &DocumentChunk {
+                    id: chunk_id,
+                    document_id: doc_id.clone(),
+                    chunk_index: i as i64,
+                    heading: chunk.heading.clone(),
+                    content: chunk.content.clone(),
+                    char_start: chunk.char_start as i64,
+                    char_end: chunk.char_end as i64,
+                    tags: tags.iter().map(|t| t.to_string()).collect(),
+                },
+                &embedding,
+            )?;
+        }
+
+        tracing::info!(
+            "Document '{slug}' upserted in namespace '{ns}': {} chunks",
+            chunks.len()
+        );
+
+        Ok(doc_id)
+    }
+
+    /// Get a document by ID or slug.
+    pub fn doc_get(
+        &self,
+        id_or_slug: &str,
+        namespace: Option<&str>,
+    ) -> Result<Option<Document>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Try by slug first, then by ID.
+        if let Some(doc) = self.store.get_document_by_slug(id_or_slug, ns)? {
+            return Ok(Some(doc));
+        }
+        self.store.get_document(id_or_slug)
+    }
+
+    /// List documents in a namespace.
+    pub fn doc_list(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_documents(namespace, limit)
+    }
+
+    /// Delete a document by ID.
+    pub fn doc_delete(&self, id: &str) -> Result<bool, Error> {
+        self.store.delete_document(id)
     }
 }
 

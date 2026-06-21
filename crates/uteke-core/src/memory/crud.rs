@@ -581,6 +581,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 10); // v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
+        assert_eq!(version, 11); // v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
     }
 }
