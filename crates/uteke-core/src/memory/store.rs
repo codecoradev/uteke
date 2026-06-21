@@ -5,6 +5,8 @@ use crate::Error;
 use rusqlite::Connection;
 
 /// Schema SQL for initial table creation.
+/// Base schema — CREATE TABLE statements only.
+/// Indexes on migration-added columns are in SCHEMA_INDEXES, run after migrations.
 pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
@@ -60,8 +62,6 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id);
 
 -- memory_edges: typed auto-wired edges between memories (v8, #346).
--- Populated by pattern extraction on remember(): [[slug]], @tag, ^id, >uuid,
--- and legacy metadata.relationships JSON.
 CREATE TABLE IF NOT EXISTS memory_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
@@ -74,12 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
 CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
 
--- slug: short identifier for [[slug]] auto-linking (v8, #346).
--- Not globally unique — resolution picks the most recently updated match
--- (see Store::resolve_slug). Use a unique slug per namespace for deterministic links.
-CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
-
--- v9: Timeline events log (#347). Append-only audit trail per memory.
+-- v9: Timeline events log (#347).
 CREATE TABLE IF NOT EXISTS timeline_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
@@ -91,8 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
 
--- v11: Document engine (#406). Wiki/knowledge base support.
--- Full markdown content lives in documents, chunked summaries → embeddings.
+-- v11: Document engine (#406).
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL COLLATE NOCASE,
@@ -127,6 +121,15 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_doc_chunks_heading ON document_chunks(heading);
 "#;
+
+/// Indexes that depend on migration-added columns.
+/// Run AFTER migrations complete so columns like `slug` exist.
+/// Each statement is executed individually with error tolerance.
+pub(super) const SCHEMA_INDEXES: &[&str] = &[
+    "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
+    "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
+    "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;",
+];
 
 /// Current schema version. Increment when adding migrations.
 pub(super) const CURRENT_SCHEMA_VERSION: i32 = 11;
