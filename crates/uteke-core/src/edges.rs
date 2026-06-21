@@ -30,6 +30,10 @@ pub const EDGE_TAGGED_AS: &str = "tagged_as";
 pub const EDGE_SUPERSEDES: &str = "supersedes";
 /// Edge type for `><uuid>` (replies_to).
 pub const EDGE_REPLIES_TO: &str = "replies_to";
+/// Cosine-similarity auto-link edge (#401).
+pub const EDGE_SIMILAR_TO: &str = "similar_to";
+/// Possible duplicate edge — high cosine similarity (#401).
+pub const EDGE_POSSIBLE_DUPLICATE: &str = "possible_duplicate";
 /// Inverse edge type created automatically by backlink auto-generation (#350).
 ///
 /// Whenever `(A → B, references)` is inserted, `ensure_backlink()` also inserts
@@ -748,6 +752,93 @@ impl crate::Uteke {
         }
     }
 
+    /// Cosine-similarity auto-linking (#401).
+    ///
+    /// After inserting a new memory, search the vector index for the top-K
+    /// most similar memories. Create `similar_to` edges for high-similarity
+    /// matches and `possible_duplicate` edges for near-duplicates.
+    ///
+    /// Best-effort: errors are logged, never fail the remember() call.
+    ///
+    /// Thresholds (configurable in future via graph config):
+    /// - `similar_to`: cosine similarity >= 0.80
+    /// - `possible_duplicate`: cosine similarity >= 0.92
+    pub(crate) fn auto_link_cosine(
+        &self,
+        source_id: &str,
+        embedding: &[f32],
+        namespace: Option<&str>,
+    ) {
+        const SIMILAR_THRESHOLD: f32 = 0.80;
+        const DUPLICATE_THRESHOLD: f32 = 0.92;
+        const TOP_K: usize = 20;
+
+        let index = match self.index.read() {
+            Ok(i) => i,
+            Err(_) => {
+                tracing::debug!("auto_link_cosine: index lock failed, skipping");
+                return;
+            }
+        };
+
+        let results = index.search(embedding, TOP_K, 100);
+        drop(index); // Release read lock ASAP
+
+        if results.is_empty() {
+            return;
+        }
+
+        // Filter by namespace if specified (#401 cora finding: cross-namespace links are wrong).
+        let ns_set: Option<std::collections::HashSet<String>> = if let Some(ns) = namespace {
+            match self.store.memories_in_namespace(ns) {
+                Ok(ids) => Some(ids.into_iter().collect()),
+                Err(e) => {
+                    tracing::warn!("auto_link_cosine: failed to get namespace ids: {e}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        // usearch returns distances (lower = more similar for cosine).
+        // Convert distance to similarity: sim = 1.0 - dist.
+        let edges: Vec<(String, String)> = results
+            .iter()
+            .filter(|(id, _)| id != source_id) // skip self
+            .filter(|(id, _)| {
+                // Skip memories outside our namespace.
+                match &ns_set {
+                    Some(set) => set.contains(id),
+                    None => true,
+                }
+            })
+            .filter_map(|(id, dist)| {
+                // Cosine distance → similarity (clamp to [0, 1]).
+                let sim = (1.0 - dist).clamp(0.0, 1.0);
+                if sim >= DUPLICATE_THRESHOLD {
+                    tracing::debug!(
+                        "auto_link: {source_id} → {id} possible_duplicate (sim={sim:.3})"
+                    );
+                    Some((id.clone(), EDGE_POSSIBLE_DUPLICATE.to_string()))
+                } else if sim >= SIMILAR_THRESHOLD {
+                    tracing::debug!("auto_link: {source_id} → {id} similar_to (sim={sim:.3})");
+                    Some((id.clone(), EDGE_SIMILAR_TO.to_string()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if edges.is_empty() {
+            return;
+        }
+
+        if let Err(e) = self.store.add_memory_edges_batch(source_id, &edges) {
+            tracing::warn!("auto_link_cosine edge insert failed for {source_id}: {e}");
+        }
+    }
+
     /// List edges for a memory (both directions). Public for `uteke edges <id>`.
     pub fn edges_for(&self, memory_id: &str) -> Result<EdgeList, Error> {
         self.store.list_memory_edges(memory_id)
@@ -1185,7 +1276,7 @@ mod tests {
     fn migration_dispatcher_reaches_v8() {
         let store = Store::open(":memory:").unwrap();
         let v = store.schema_version().unwrap();
-        assert_eq!(v, 10, "fresh store must reach CURRENT_SCHEMA_VERSION=10");
+        assert_eq!(v, 11, "fresh store must reach CURRENT_SCHEMA_VERSION=11");
 
         // memory_edges table must exist and be queryable after migration.
         let n = store.count_memory_edges().unwrap();
@@ -1519,6 +1610,73 @@ mod tests {
         assert!(
             has_backlink,
             "expected referenced_by backlink target → source (#350)"
+        );
+    }
+
+    #[test]
+    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
+    fn auto_link_cosine_creates_similar_edges() {
+        // Two very similar memories should get a similar_to edge (#401).
+        let uteke = crate::Uteke::open(":memory:").unwrap();
+
+        let _id1 = uteke
+            .remember(
+                "The project deadline is next Friday",
+                &[],
+                None,
+                Some("default"),
+            )
+            .unwrap();
+
+        let id2 = uteke
+            .remember(
+                "The project deadline is next Friday",
+                &[],
+                None,
+                Some("default"),
+            )
+            .unwrap();
+
+        // The second memory should have an edge to the first.
+        let edges = uteke.edges_for(&id2).unwrap();
+        let has_similar = edges
+            .outgoing
+            .iter()
+            .any(|e| e.edge_type == EDGE_SIMILAR_TO || e.edge_type == EDGE_POSSIBLE_DUPLICATE);
+        assert!(
+            has_similar,
+            "expected similar_to or possible_duplicate edge for near-identical memories"
+        );
+    }
+
+    #[test]
+    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
+    fn auto_link_cosine_no_false_positives() {
+        // Very different memories should NOT get similar_to edges.
+        let uteke = crate::Uteke::open(":memory:").unwrap();
+
+        let _id1 = uteke
+            .remember("The weather is sunny today", &[], None, Some("default"))
+            .unwrap();
+
+        let id2 = uteke
+            .remember(
+                "Rust programming language memory safety",
+                &[],
+                None,
+                Some("default"),
+            )
+            .unwrap();
+
+        let edges = uteke.edges_for(&id2).unwrap();
+        let has_similar = edges
+            .outgoing
+            .iter()
+            .any(|e| e.edge_type == EDGE_SIMILAR_TO || e.edge_type == EDGE_POSSIBLE_DUPLICATE);
+        // Unlikely to be similar (different topics).
+        assert!(
+            !has_similar,
+            "should not have similar edge for dissimilar memories"
         );
     }
 }

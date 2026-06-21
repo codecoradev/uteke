@@ -170,6 +170,8 @@ impl super::Store {
                 9 => self.migrate_v8_to_v9()?,
                 // v10: source + source_type columns (citation/provenance, #348)
                 10 => self.migrate_v9_to_v10()?,
+                // v11: Document engine tables (#406)
+                11 => self.migrate_v10_to_v11()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -496,6 +498,55 @@ impl super::Store {
                 "#,
             )
             .map_err(|e| Error::db("schema migration v9 to v10", e))?;
+        Ok(())
+    }
+
+    /// v11: Document engine tables (#406).
+    ///
+    /// Creates `documents` and `document_chunks` tables for wiki/knowledge
+    /// base support. Full markdown content → documents table, chunked
+    /// summaries → document_chunks with embeddings.
+    fn migrate_v10_to_v11(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v10 to v11: document engine tables");
+        self.conn
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS documents (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL COLLATE NOCASE,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    namespace TEXT NOT NULL DEFAULT 'default',
+                    tags TEXT DEFAULT '[]',
+                    metadata TEXT DEFAULT '{}',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    content_type TEXT NOT NULL DEFAULT 'markdown',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(namespace, slug)
+                );
+                CREATE INDEX IF NOT EXISTS idx_documents_namespace ON documents(namespace);
+                CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
+                CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
+
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    id TEXT PRIMARY KEY,
+                    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                    chunk_index INTEGER NOT NULL,
+                    heading TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL,
+                    embedding BLOB,
+                    char_start INTEGER NOT NULL DEFAULT 0,
+                    char_end INTEGER NOT NULL DEFAULT 0,
+                    tags TEXT DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    UNIQUE(document_id, chunk_index)
+                );
+                CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
+                CREATE INDEX IF NOT EXISTS idx_doc_chunks_heading ON document_chunks(heading);
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v10 to v11", e))?;
         Ok(())
     }
 }

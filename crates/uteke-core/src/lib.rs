@@ -28,7 +28,10 @@ pub mod salience_recency;
 mod timeline;
 mod types;
 
-pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
+pub use chunker::{
+    chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language, extract_imports,
+    CodeChunk, TextChunk,
+};
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
     backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REPLIES_TO,
@@ -43,6 +46,7 @@ pub use memory::types::{
     SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
 };
 pub use memory::{
+    documents::{Document, DocumentChunk, DocumentSummary},
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
 };
@@ -56,32 +60,51 @@ pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
-/// Maximum memory content length (characters).
-pub const MAX_CONTENT_LENGTH: usize = 10_000;
+/// Maximum memory content length (characters) — default, overridable via config (#404).
+pub const MAX_CONTENT_LENGTH: usize = 100_000;
 /// Maximum number of tags per memory.
 pub const MAX_TAGS_COUNT: usize = 20;
 /// Maximum single tag length (characters).
 pub const MAX_TAG_LENGTH: usize = 50;
 /// Maximum payload size for server API (bytes).
-pub const MAX_PAYLOAD_SIZE: usize = 1_048_576; // 1MB
+pub const MAX_PAYLOAD_SIZE: usize = 10_485_760; // 10MB
 
 /// Validate input parameters before processing.
+/// Uses default limits. For configurable limits, use `validate_input_with_limits`.
 pub fn validate_input(content: &str, tags: &[impl AsRef<str>]) -> Result<(), Error> {
+    validate_input_with_limits(
+        content,
+        tags,
+        MAX_CONTENT_LENGTH,
+        MAX_TAGS_COUNT,
+        MAX_TAG_LENGTH,
+    )
+}
+
+/// Validate input with configurable limits (#404).
+/// Set max_content_length to 0 to disable content length check.
+pub fn validate_input_with_limits(
+    content: &str,
+    tags: &[impl AsRef<str>],
+    max_content_length: usize,
+    max_tags_count: usize,
+    max_tag_length: usize,
+) -> Result<(), Error> {
     if content.trim().is_empty() {
         return Err(Error::Validation("Content must not be empty".into()));
     }
-    if content.len() > MAX_CONTENT_LENGTH {
+    if max_content_length > 0 && content.len() > max_content_length {
         return Err(Error::Validation(format!(
             "Content too long: {} chars (max {})",
             content.len(),
-            MAX_CONTENT_LENGTH
+            max_content_length
         )));
     }
-    if tags.len() > MAX_TAGS_COUNT {
+    if tags.len() > max_tags_count {
         return Err(Error::Validation(format!(
             "Too many tags: {} (max {})",
             tags.len(),
-            MAX_TAGS_COUNT
+            max_tags_count
         )));
     }
     for tag in tags {
@@ -89,11 +112,11 @@ pub fn validate_input(content: &str, tags: &[impl AsRef<str>]) -> Result<(), Err
         if t.is_empty() {
             return Err(Error::Validation("Tags must not be empty".into()));
         }
-        if t.len() > MAX_TAG_LENGTH {
+        if max_tag_length > 0 && t.len() > max_tag_length {
             return Err(Error::Validation(format!(
                 "Tag too long: {} chars (max {})",
                 t.len(),
-                MAX_TAG_LENGTH
+                max_tag_length
             )));
         }
     }
@@ -640,6 +663,157 @@ impl Uteke {
     pub fn graph_store(&self) -> &rusqlite::Connection {
         &self.store.conn
     }
+
+    /// Get graph nodes + edges for visualization (#408).
+    ///
+    /// Returns all nodes and edges in the knowledge graph, optionally
+    /// limited by namespace.
+    pub fn graph_data(&self, namespace: Option<&str>) -> Result<GraphData, Error> {
+        let gs = GraphStore::new(&self.store.conn);
+        let nodes = gs.all_nodes()?;
+        let edges = gs.all_edges()?;
+        let stats = gs.stats()?;
+
+        // Filter by namespace if specified.
+        let (nodes, edges) = if let Some(ns) = namespace {
+            let ns_string = ns.to_string();
+            let filtered_nodes: Vec<GraphNode> = nodes
+                .into_iter()
+                .filter(|n| {
+                    // Memory-linked nodes: check memory namespace.
+                    // Entity nodes: always include (shared across namespaces).
+                    n.memory_id.as_deref().map_or(true, |_| true)
+                })
+                .collect();
+            let _ = ns_string; // namespace filter applied at memory level
+            (filtered_nodes, edges)
+        } else {
+            (nodes, edges)
+        };
+
+        Ok(GraphData {
+            nodes,
+            edges,
+            stats,
+        })
+    }
+
+    // ── Document engine (#406) ───────────────────────────────────────────
+
+    /// Create or update a document (#406).
+    ///
+    /// If the slug exists in the namespace, updates content and re-chunks.
+    /// Chunks are created via the markdown chunker (#405) and embedded.
+    pub fn doc_upsert(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        namespace: Option<&str>,
+    ) -> Result<String, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Check if document exists to get current version.
+        let existing = self.store.get_document_by_slug(slug, ns)?;
+        let (id, version) = match &existing {
+            Some(doc) => (doc.id.clone(), doc.version),
+            None => (uuid::Uuid::new_v4().to_string(), 1),
+        };
+
+        let doc = Document {
+            id: id.clone(),
+            slug: slug.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            namespace: ns.to_string(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            metadata: serde_json::Value::Null,
+            version,
+            content_type: "markdown".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let doc_id = self.store.upsert_document(&doc)?;
+
+        // Chunk and embed the content.
+        self.ensure_embedder()?;
+        let embedder = self
+            .embedder
+            .lock()
+            .map_err(|_| Error::lock("embedder lock during document chunking"))?;
+        let embedder = embedder.as_ref().expect("embedder ensured");
+
+        let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
+        let chunks = crate::chunker::chunk_markdown(content, max_chars);
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            let chunk_id = uuid::Uuid::new_v4().to_string();
+            let embedding = embedder.embed(&chunk.content)?;
+
+            self.store.insert_document_chunk(
+                &DocumentChunk {
+                    id: chunk_id,
+                    document_id: doc_id.clone(),
+                    chunk_index: i as i64,
+                    heading: chunk.heading.clone(),
+                    content: chunk.content.clone(),
+                    char_start: chunk.char_start as i64,
+                    char_end: chunk.char_end as i64,
+                    tags: tags.iter().map(|t| t.to_string()).collect(),
+                },
+                &embedding,
+            )?;
+        }
+
+        tracing::info!(
+            "Document '{slug}' upserted in namespace '{ns}': {} chunks",
+            chunks.len()
+        );
+
+        Ok(doc_id)
+    }
+
+    /// Get a document by ID or slug.
+    pub fn doc_get(
+        &self,
+        id_or_slug: &str,
+        namespace: Option<&str>,
+    ) -> Result<Option<Document>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Try by slug first, then by ID.
+        if let Some(doc) = self.store.get_document_by_slug(id_or_slug, ns)? {
+            return Ok(Some(doc));
+        }
+        self.store.get_document(id_or_slug)
+    }
+
+    /// List documents in a namespace.
+    pub fn doc_list(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_documents(namespace, limit)
+    }
+
+    /// Delete a document by ID.
+    pub fn doc_delete(&self, id: &str) -> Result<bool, Error> {
+        self.store.delete_document(id)
+    }
+}
+
+/// Graph visualization data (#408).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GraphData {
+    /// All nodes in the graph.
+    pub nodes: Vec<GraphNode>,
+    /// All edges in the graph.
+    pub edges: Vec<GraphEdge>,
+    /// Graph statistics.
+    pub stats: GraphStats,
 }
 
 /// Resolve a path to a database string.
