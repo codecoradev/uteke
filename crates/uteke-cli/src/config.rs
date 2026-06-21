@@ -226,6 +226,37 @@ pub struct Config {
     pub aging: AgingConfig,
     pub recall: RecallConfig,
     pub server: ServerConfig,
+    pub limits: LimitsConfig,
+}
+
+/// Configurable limits (#404).
+/// All limits can be overridden via config or env vars.
+#[derive(serde::Deserialize, Clone)]
+#[serde(default)]
+pub struct LimitsConfig {
+    /// Maximum memory content length in characters. Set to 0 to disable.
+    pub max_content_length: usize,
+    /// Maximum number of tags per memory.
+    pub max_tags_count: usize,
+    /// Maximum single tag length in characters.
+    pub max_tag_length: usize,
+    /// Maximum payload size for server API in bytes.
+    pub max_payload_size: usize,
+    /// Default recall limit when --limit not specified.
+    pub default_recall_limit: usize,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        // Env var overrides with fallback to defaults.
+        Self {
+            max_content_length: env_or("UTEKE_MAX_CONTENT_LENGTH", 100_000),
+            max_tags_count: env_or("UTEKE_MAX_TAGS_COUNT", 20),
+            max_tag_length: env_or("UTEKE_MAX_TAG_LENGTH", 50),
+            max_payload_size: env_or("UTEKE_MAX_PAYLOAD_SIZE", 10_485_760),
+            default_recall_limit: env_or("UTEKE_DEFAULT_RECALL_LIMIT", 5),
+        }
+    }
 }
 
 impl Config {
@@ -590,6 +621,15 @@ impl Config {
 # enabled = false
 # host = "127.0.0.1"
 # port = 8767
+
+[limits]
+# Configurable limits (#404). Override via config or env vars:
+# UTEKE_MAX_CONTENT_LENGTH, UTEKE_MAX_TAGS_COUNT, etc.
+# max_content_length = 100000  # Set to 0 to disable
+# max_tags_count = 20
+# max_tag_length = 50
+# max_payload_size = 10485760  # 10MB
+# default_recall_limit = 5
 "#;
         std::fs::write(&config_path, default).ok();
     }
@@ -633,6 +673,14 @@ impl Config {
 // ── Legacy migration ────────────────────────────────────────────────────────
 
 /// Migrate legacy `~/.uteke/config.toml` → `~/.uteke/uteke.toml`.
+/// Read an env var as a type T, falling back to default if unset or invalid.
+fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 fn migrate_legacy_global() {
     let home = match dirs::home_dir() {
         Some(h) => h,
