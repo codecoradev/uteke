@@ -3,6 +3,7 @@
 pub mod aging;
 pub mod bulk;
 pub mod crud;
+pub mod documents;
 pub mod fts5;
 pub mod rooms;
 pub mod schema;

@@ -90,10 +90,46 @@ CREATE TABLE IF NOT EXISTS timeline_events (
 CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
+
+-- v11: Document engine (#406). Wiki/knowledge base support.
+-- Full markdown content lives in documents, chunked summaries → embeddings.
+CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL COLLATE NOCASE,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    namespace TEXT NOT NULL DEFAULT 'default',
+    tags TEXT DEFAULT '[]',
+    metadata TEXT DEFAULT '{}',
+    version INTEGER NOT NULL DEFAULT 1,
+    content_type TEXT NOT NULL DEFAULT 'markdown',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(namespace, slug)
+);
+CREATE INDEX IF NOT EXISTS idx_documents_namespace ON documents(namespace);
+CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
+CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
+
+CREATE TABLE IF NOT EXISTS document_chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    heading TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL,
+    embedding BLOB,
+    char_start INTEGER NOT NULL DEFAULT 0,
+    char_end INTEGER NOT NULL DEFAULT 0,
+    tags TEXT DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    UNIQUE(document_id, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_heading ON document_chunks(heading);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 10;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 11;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -223,7 +259,7 @@ impl Store {
 }
 
 /// Serialize an embedding vector to a byte blob (little-endian f32).
-pub(super) fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
+pub(crate) fn serialize_embedding(embedding: &[f32]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(embedding.len() * 4);
     for &val in embedding {
         blob.extend_from_slice(&val.to_le_bytes());
