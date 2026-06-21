@@ -214,6 +214,12 @@ fn init_hermes(json: bool) -> Result<(), String> {
     std::fs::create_dir_all(&plugin_dir)
         .map_err(|e| format!("Failed to create plugin dir: {e}"))?;
 
+    // __init__.py — required by Hermes plugin loader (#402).
+    // Without this, Hermes logs "No __init__.py" and skips the plugin.
+    let init_py = "\"\"\"uteke-tool plugin package marker.\n\nHermes requires __init__.py in every plugin directory to load it\nas a Python package. This file marks the directory as importable.\n\"\"\"\n";
+    std::fs::write(plugin_dir.join("__init__.py"), init_py)
+        .map_err(|e| format!("Failed to write __init__.py: {e}"))?;
+
     // plugin.yaml — Hermes plugin manifest.
     let plugin_yaml = "name: uteke-tool\ndescription: Semantic memory recall and storage via uteke — includes room operations\nversion: 0.2.0\nauthor: CodeCoraDev\nactions:\n  - uteke\n";
     std::fs::write(plugin_dir.join("plugin.yaml"), plugin_yaml)
@@ -234,7 +240,7 @@ fn init_hermes(json: bool) -> Result<(), String> {
         let obj = serde_json::json!({
             "agent": "hermes",
             "directory": plugin_dir.to_string_lossy(),
-            "files": ["plugin.yaml", "tool.py", "README.md"],
+            "files": ["__init__.py", "plugin.yaml", "tool.py", "README.md"],
             "status": "installed",
             "auto_registered": installed_to_home
         });
