@@ -11,20 +11,32 @@
 
 pub mod chunker;
 mod consolidate;
+mod dream;
+mod edges;
 mod embed;
 mod error;
 pub mod graph;
+pub mod graph_rerank;
 mod import_export;
 mod maintenance;
 pub mod memory;
 mod operations;
+mod orphans;
 mod recall_cache;
 mod rooms;
+pub mod salience_recency;
+mod timeline;
 mod types;
 
 pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
+pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
+pub use edges::{
+    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REPLIES_TO,
+    EDGE_SUPERSEDES, EDGE_TAGGED_AS,
+};
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
+pub use graph_rerank::{compute_graph_signals, rerank_with_graph, GraphRerankConfig, GraphSignals};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
@@ -34,6 +46,11 @@ pub use memory::{
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
 };
+pub use orphans::{compute_orphan_score, OrphanMemory, DEFAULT_ORPHAN_THRESHOLD};
+pub use salience_recency::{
+    apply_boosts, recency_score, salience_score, type_half_life_days, SalienceRecencyConfig,
+};
+pub use timeline::{TimelineEvent, TimelineEventType};
 
 pub use embed::{Embedder, OnnxEmbedder};
 pub use error::{format_bytes, Error};
@@ -153,6 +170,59 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
     }
 }
 
+/// Resolved embedder configuration used by lazy backend dispatch.
+///
+/// Mirrors the CLI-side `EmbeddingConfig` but kept inside `uteke-core` so
+/// the core library can construct OpenAI/Ollama backends without depending
+/// on the CLI crate. Field values are sourced from the merged CLI config
+/// (env vars + uteke.toml) by the caller, then further env-var overrides
+/// take precedence at resolve time.
+#[derive(Clone, Default)]
+pub struct EmbeddingSettings {
+    /// API key for OpenAI (or compatible). Empty = ONNX/Ollama.
+    pub api_key: String,
+    /// Custom endpoint. Empty = backend default.
+    pub base_url: String,
+    /// Model name. Empty = backend default.
+    pub model: String,
+    /// Force dims. 0 = backend/model default.
+    pub dims: usize,
+}
+
+impl EmbeddingSettings {
+    /// Merge caller-provided settings with env-var overrides. Env vars
+    /// (UTEKE_EMBEDDING_*) win over the caller-supplied values; the caller
+    /// is responsible for having already merged uteke.toml into the input.
+    fn resolve_with_defaults(input: &EmbeddingSettings) -> Self {
+        // Env vars win over caller-supplied values, but an explicitly empty
+        // env var is treated as "unset" so it cannot clobber a non-empty
+        // config-provided value (CodeCora finding: empty
+        // UTEKE_EMBEDDING_API_KEY previously overwrote a populated
+        // [embedding].api_key).
+        let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let api_key = env_or("UTEKE_EMBEDDING_API_KEY")
+            .or_else(|| env_or("OPENAI_API_KEY"))
+            .unwrap_or_else(|| input.api_key.clone());
+        let base_url = env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|| input.base_url.clone());
+        let model = env_or("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|| input.model.clone());
+        let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(input.dims);
+        Self {
+            api_key,
+            base_url,
+            model,
+            dims,
+        }
+    }
+}
+
+// Backward-compat alias removed — use EmbeddingSettings::resolve_with_defaults
+// directly. The old EmbedderEnv struct was only used inside lib.rs and is
+// now replaced by the public EmbeddingSettings API.
+
 /// Uteke — AI agent memory engine.
 ///
 /// Combines SQLite persistence, HNSW vector search, and ONNX embedding
@@ -161,11 +231,20 @@ pub struct Uteke {
     store: Store,
     index: RwLock<VectorIndex>,
     embedder: Mutex<Option<Box<dyn Embedder>>>,
-    /// Embedding backend name ("onnx", "openai", etc.). Used by lazy init.
+    /// Embedding backend name ("onnx", "openai", "ollama", "custom"). Used by lazy init.
     embedder_backend: String,
+    /// Caller-supplied embedding settings (from uteke.toml). Env vars still
+    /// override these at resolve time.
+    embedding_settings: EmbeddingSettings,
     tier_config: TierConfig,
     #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
+    /// Graph-augmented reranking config (#378). Applied only for
+    /// [`RecallStrategy::Graph`]. Defaults to enabled with subtle weights.
+    graph_rerank_config: graph_rerank::GraphRerankConfig,
+    /// Salience + recency dual-axis boost config (#352). Defaults to all
+    /// weights zero (opt-in per query via CLI flags / API params).
+    salience_recency_config: salience_recency::SalienceRecencyConfig,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
 }
@@ -195,6 +274,7 @@ impl Uteke {
             "custom".to_string(),
             TierConfig::default(),
             RecallConfig::default(),
+            EmbeddingSettings::default(),
         )
     }
 
@@ -210,6 +290,7 @@ impl Uteke {
             "onnx".to_string(),
             tier_config,
             RecallConfig::default(),
+            EmbeddingSettings::default(),
         )
     }
 
@@ -226,6 +307,7 @@ impl Uteke {
             backend.to_string(),
             tier_config,
             RecallConfig::default(),
+            EmbeddingSettings::default(),
         )
     }
 
@@ -241,6 +323,7 @@ impl Uteke {
             "onnx".to_string(),
             TierConfig::default(),
             recall_config,
+            EmbeddingSettings::default(),
         )
     }
 
@@ -255,6 +338,55 @@ impl Uteke {
             backend.to_string(),
             TierConfig::default(),
             RecallConfig::default(),
+            EmbeddingSettings::default(),
+        )
+    }
+
+    /// Open with caller-supplied embedding settings (CLI passes merged config).
+    ///
+    /// `backend` selects onnx/openai/ollama/custom. `settings` carries the
+    /// api_key/base_url/model/dims resolved from uteke.toml; env vars still
+    /// take precedence at first-embed resolve time.
+    pub fn open_with_embedding(
+        path: impl AsRef<Path>,
+        backend: &str,
+        settings: EmbeddingSettings,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+    ) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        Self::finish_open_full(
+            store,
+            None,
+            backend.to_string(),
+            tier_config,
+            recall_config,
+            settings,
+            graph_rerank::GraphRerankConfig::default(),
+        )
+    }
+
+    /// Open with caller-supplied embedding settings **and** graph-reranking
+    /// config. Used by the CLI to pass the merged `[recall]` graph weights
+    /// (#378). Equivalent to [`Self::open_with_embedding`] with default graph
+    /// reranking when graph reranking is not needed.
+    pub fn open_with_embedding_and_graph(
+        path: impl AsRef<Path>,
+        backend: &str,
+        settings: EmbeddingSettings,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+        graph_rerank_config: graph_rerank::GraphRerankConfig,
+    ) -> Result<Self, Error> {
+        let (_db_str, store) = Self::open_store(path)?;
+        Self::finish_open_full(
+            store,
+            None,
+            backend.to_string(),
+            tier_config,
+            recall_config,
+            settings,
+            graph_rerank_config,
         )
     }
 
@@ -271,6 +403,27 @@ impl Uteke {
         embedder_backend: String,
         tier_config: TierConfig,
         recall_config: RecallConfig,
+        embedding_settings: EmbeddingSettings,
+    ) -> Result<Self, Error> {
+        Self::finish_open_full(
+            store,
+            embedder,
+            embedder_backend,
+            tier_config,
+            recall_config,
+            embedding_settings,
+            graph_rerank::GraphRerankConfig::default(),
+        )
+    }
+
+    fn finish_open_full(
+        store: Store,
+        embedder: Option<Box<dyn Embedder>>,
+        embedder_backend: String,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+        embedding_settings: EmbeddingSettings,
+        graph_rerank_config: graph_rerank::GraphRerankConfig,
     ) -> Result<Self, Error> {
         // Determine index path: same directory as SQLite DB
         let index_path = store.path().map(|p| {
@@ -283,10 +436,28 @@ impl Uteke {
         let dims = match embedder.as_ref() {
             Some(e) => e.dims(),
             None => match embedder_backend.as_str() {
-                "onnx" | "" | "custom" => OnnxEmbedder::dims(),
+                "onnx" | "" | "custom" => crate::embed::OnnxEmbedder::dims(),
+                "openai" => {
+                    // User-configurable via uteke.toml or UTEKE_EMBEDDING_DIMS.
+                    // Default 1536 (text-embedding-3-small).
+                    let cfg = EmbeddingSettings::resolve_with_defaults(&embedding_settings);
+                    if cfg.dims == 0 {
+                        crate::embed::openai::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    }
+                }
+                "ollama" => {
+                    let cfg = EmbeddingSettings::resolve_with_defaults(&embedding_settings);
+                    if cfg.dims == 0 {
+                        crate::embed::ollama::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    }
+                }
                 other => {
                     return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
                     )));
                 }
             },
@@ -315,10 +486,34 @@ impl Uteke {
             index: RwLock::new(index),
             embedder: Mutex::new(embedder),
             embedder_backend,
+            embedding_settings,
             tier_config,
             recall_config,
+            graph_rerank_config: graph_rerank_config.sanitized(),
+            salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
         })
+    }
+
+    /// Override the salience/recency dual-axis boost config (#352).
+    ///
+    /// Used by the CLI to forward the merged `[recall]` weights and the
+    /// per-query `--salience` / `--recency` flag overrides.
+    ///
+    /// **Important:** this mutates shared state. Callers that serve
+    /// multiple queries on the same `Uteke` instance (server, MCP) MUST
+    /// call [`reset_salience_recency_config`] after the query to avoid
+    /// leaking boost state into later queries (CodeCora #387).
+    pub fn set_salience_recency_config(&mut self, config: salience_recency::SalienceRecencyConfig) {
+        self.salience_recency_config = config.sanitized();
+    }
+
+    /// Reset salience/recency boost config to its no-op default (CodeCora #387).
+    ///
+    /// Call after a per-query boost override so later queries on the same
+    /// `Uteke` instance aren't affected.
+    pub fn reset_salience_recency_config(&mut self) {
+        self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
     }
 
     /// Lazy-load the ONNX embedding engine on first use.
@@ -333,19 +528,85 @@ impl Uteke {
             .map_err(|_| Error::lock("embedder lock during lazy init"))?;
         if guard.is_none() {
             tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
-            *guard = Some(match self.embedder_backend.as_str() {
-                "onnx" | "" => Box::new(OnnxEmbedder::new()?),
+            let backend = self.embedder_backend.as_str();
+            let embedder: Box<dyn crate::embed::Embedder> = match backend {
+                "onnx" | "" => Box::new(crate::embed::OnnxEmbedder::new()?),
                 "custom" => {
                     return Err(Error::generic(
                         "Custom embedder backend set but no embedder was provided",
                     ));
                 }
+                "openai" => {
+                    let cfg = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
+                    let model = if cfg.model.is_empty() {
+                        crate::embed::openai::DEFAULT_MODEL.to_string()
+                    } else {
+                        cfg.model
+                    };
+                    let base_url = if cfg.base_url.is_empty() {
+                        crate::embed::openai::DEFAULT_BASE_URL.to_string()
+                    } else {
+                        cfg.base_url
+                    };
+                    let dims = if cfg.dims == 0 {
+                        crate::embed::openai::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    };
+                    Box::new(crate::embed::OpenAiEmbedder::new(
+                        &cfg.api_key,
+                        &model,
+                        &base_url,
+                        dims,
+                    )?)
+                }
+                "ollama" => {
+                    let cfg = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
+                    let model = if cfg.model.is_empty() {
+                        crate::embed::ollama::DEFAULT_MODEL.to_string()
+                    } else {
+                        cfg.model
+                    };
+                    let base_url = if cfg.base_url.is_empty() {
+                        crate::embed::ollama::DEFAULT_BASE_URL.to_string()
+                    } else {
+                        cfg.base_url
+                    };
+                    let dims = if cfg.dims == 0 {
+                        crate::embed::ollama::DEFAULT_DIMS
+                    } else {
+                        cfg.dims
+                    };
+                    Box::new(crate::embed::OllamaEmbedder::new(&base_url, &model, dims)?)
+                }
                 other => {
                     return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: 'onnx'."
+                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
                     )));
                 }
-            });
+            };
+
+            // Dim mismatch detection (#337): refuse to silently mix vectors
+            // from different backends in one index. Catch it at first use
+            // so the user gets a clear error instead of garbage recall.
+            //
+            // Escape hatch: UTEKE_ALLOW_DIM_MISMATCH=1 skips the check so the
+            // user can open the store with a different backend to run
+            // `uteke repair` (which rebuilds vectors with the new backend).
+            // Without this, a user who flips backend on an existing store
+            // can never recover (CodeCora finding #154).
+            let backend_dims = embedder.dims();
+            let index_dims = self.index.read().map(|i| i.dims()).unwrap_or(backend_dims);
+            if index_dims != backend_dims
+                && std::env::var("UTEKE_ALLOW_DIM_MISMATCH").as_deref() != Ok("1")
+            {
+                return Err(Error::Validation(format!(
+                    "Embedding dimension mismatch: index has {index_dims}d vectors but backend '{backend}' produces {backend_dims}d. \
+                     Rebuild the index (`UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair`) or switch backend."
+                )));
+            }
+
+            *guard = Some(embedder);
         }
         Ok(())
     }
@@ -358,6 +619,16 @@ impl Uteke {
     /// Unpin a memory.
     pub fn unpin(&self, id: &str) -> Result<bool, Error> {
         self.store.unpin(id)
+    }
+
+    /// Set source provenance on a memory (#348).
+    pub fn set_source(
+        &self,
+        id: &str,
+        source: Option<&str>,
+        source_type: &str,
+    ) -> Result<bool, Error> {
+        self.store.set_source(id, source, source_type)
     }
 
     /// Recalculate importance scores for all memories.
@@ -400,6 +671,7 @@ fn resolve_db_path(db_path: &Path) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_memory_types_serialization() {
@@ -422,6 +694,9 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -467,6 +742,9 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
 
         let sr = SearchResult {
@@ -666,5 +944,84 @@ mod tests {
             .recall("rust programming", 5, None, None, 0.0)
             .unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn embedding_settings_defaults_empty() {
+        let d = EmbeddingSettings::default();
+        assert!(d.api_key.is_empty());
+        assert!(d.base_url.is_empty());
+        assert!(d.model.is_empty());
+        assert_eq!(d.dims, 0);
+    }
+
+    #[test]
+    #[serial]
+    fn embedding_settings_env_overrides_caller_config() {
+        // Env vars win over caller-supplied settings.
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-wins");
+        std::env::set_var("UTEKE_EMBEDDING_MODEL", "env-model");
+        let input = EmbeddingSettings {
+            api_key: "sk-config".to_string(),
+            base_url: "https://config.example.com".to_string(),
+            model: "config-model".to_string(),
+            dims: 1024,
+        };
+        let merged = EmbeddingSettings::resolve_with_defaults(&input);
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        // Env overrides
+        assert_eq!(merged.api_key, "sk-env-wins");
+        assert_eq!(merged.model, "env-model");
+        // Non-overridden fields fall through from the caller config.
+        assert_eq!(merged.base_url, "https://config.example.com");
+        assert_eq!(merged.dims, 1024);
+    }
+
+    #[test]
+    #[serial]
+    fn embedding_settings_empty_env_does_not_overwrite_config() {
+        // Explicitly empty env var must NOT clobber a non-empty config value
+        // (CodeCora finding: std::env::var returns Ok("") for empty vars).
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
+        std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
+        let input = EmbeddingSettings {
+            api_key: "sk-from-config".to_string(),
+            base_url: "https://config.example.com".to_string(),
+            model: "config-model".to_string(),
+            dims: 1536,
+        };
+        let merged = EmbeddingSettings::resolve_with_defaults(&input);
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        assert_eq!(
+            merged.api_key, "sk-from-config",
+            "empty env must not clobber config"
+        );
+        assert_eq!(
+            merged.model, "config-model",
+            "empty env must not clobber config"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn embedding_settings_config_used_when_env_absent() {
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("OPENAI_API_KEY");
+        std::env::remove_var("UTEKE_EMBEDDING_BASE_URL");
+        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        let input = EmbeddingSettings {
+            api_key: "sk-config-only".to_string(),
+            base_url: "https://from-toml.example.com".to_string(),
+            model: "from-toml-model".to_string(),
+            dims: 2048,
+        };
+        let merged = EmbeddingSettings::resolve_with_defaults(&input);
+        assert_eq!(merged.api_key, "sk-config-only");
+        assert_eq!(merged.base_url, "https://from-toml.example.com");
+        assert_eq!(merged.model, "from-toml-model");
+        assert_eq!(merged.dims, 2048);
     }
 }

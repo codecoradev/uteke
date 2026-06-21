@@ -52,7 +52,9 @@ pub enum Commands {
         /// Tags for categorization (comma-separated)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
-        /// Memory type: fact, procedure, preference, decision, context
+        /// Memory type: fact, procedure, preference, decision, context,
+        /// note, insight, reference, event. Default 'fact' triggers pattern-based
+        /// auto-inference (#349) unless an explicit type is passed.
         #[arg(long, default_value = "fact")]
         r#type: String,
         /// Enable contradiction detection (auto-deprecate conflicting memories)
@@ -73,6 +75,12 @@ pub enum Commands {
         /// Author attribution when storing in a room
         #[arg(long)]
         author: Option<String>,
+        /// Source provenance: URL, file path, or identifier (#348)
+        #[arg(long)]
+        source: Option<String>,
+        /// Source type: user, url, file, import, derived, system, unknown (#348)
+        #[arg(long)]
+        source_type: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -96,6 +104,19 @@ pub enum Commands {
         /// Use strict threshold from config (min_score_strict)
         #[arg(long)]
         strict: bool,
+        /// Recall strategy: vector, fts5, hybrid, or graph (graph = hybrid +
+        /// graph-signal reranking, #378). Defaults to config's
+        /// `[recall].default_strategy` (vector).
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Enable salience boost (how much each result matters) (#352).
+        /// Uses the configured `[recall].salience_weight` (default 0.15).
+        #[arg(long)]
+        salience: bool,
+        /// Enable recency boost (how fresh each result is) (#352).
+        /// Uses the configured `[recall].recency_weight` (default 0.15).
+        #[arg(long)]
+        recency: bool,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,
@@ -211,7 +232,7 @@ pub enum Commands {
     },
     /// Initialize uteke integration for an AI agent
     Init {
-        /// Agent type: pi, claude, cursor, copilot, codex
+        /// Agent type: pi, claude, cursor, hermes
         #[arg(long, default_value = "pi")]
         agent: String,
     },
@@ -283,6 +304,58 @@ pub enum Commands {
     Graph {
         #[command(subcommand)]
         command: GraphCommands,
+    },
+    /// List auto-wired edges for a memory (v8, #346)
+    Edges {
+        /// Memory ID (UUID)
+        id: String,
+        /// Multi-hop traversal depth. 0 (default) = list direct edges only.
+        /// N>0 performs BFS across the edge table and returns reachable memory ids.
+        #[arg(long, default_value = "0")]
+        deep: usize,
+        /// Filter by edge direction: `incoming`, `outgoing`, or `both` (default).
+        ///
+        /// `incoming` is useful for viewing backlinks (#350).
+        #[arg(long, default_value = "both")]
+        direction: String,
+    },
+    /// Rebuild `referenced_by` backlinks from existing forward edges (#350)
+    RebuildBacklinks {
+        /// Show only the count, no per-row detail (default: false)
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Run the full maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify (#353)
+    Dream {
+        /// Comma-separated list of phases to run (default: all)
+        #[arg(long, value_delimiter = ',')]
+        phases: Vec<String>,
+        /// Phases to skip (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        skip: Vec<String>,
+        /// Dry-run mode: report only, make no changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Quiet mode: warnings/errors only
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Find orphan memories — disconnected nodes with low importance (#351)
+    Orphans {
+        /// Importance threshold below which a memory is a candidate (default 0.3)
+        #[arg(long)]
+        threshold: Option<f64>,
+        /// Maximum results (0 = all, default 50)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Show timeline events for a memory (audit log, #347)
+    Timeline {
+        /// Memory ID (UUID)
+        id: String,
+        /// Maximum events to return (0 = all)
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
 }
 
@@ -374,6 +447,14 @@ pub enum NamespaceCommands {
 /// Subcommands for room management.
 #[derive(Subcommand)]
 pub enum RoomCommands {
+    /// Create a new room explicitly (#393)
+    Create {
+        /// Room ID (unique identifier)
+        room_id: String,
+        /// Optional title for the room
+        #[arg(long)]
+        title: Option<String>,
+    },
     /// List all rooms
     List {
         /// Filter by namespace

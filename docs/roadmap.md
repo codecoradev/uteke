@@ -6,6 +6,35 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
+## v0.2.1 — DX & Ecosystem `✓ Released 2026-06-21`
+
+- [#337 OpenAI + Ollama embedding backends](https://github.com/codecoradev/uteke/issues/337) `✓ Done`
+  - reqwest-based HTTP backends, ONNX stays default
+- [#346 Typed auto-edges — self-wiring knowledge graph](https://github.com/codecoradev/uteke/issues/346) `✓ Done`
+  - Auto-wired memory edges on every `remember()`
+- [#347 Timeline event tracking](https://github.com/codecoradev/uteke/issues/347) `✓ Done`
+  - Per-memory chronological audit log
+- [#348 Citation & source attribution](https://github.com/codecoradev/uteke/issues/348) `✓ Done`
+  - `source`, `source_type` columns (schema v10)
+- [#349 Memory type formalization](https://github.com/codecoradev/uteke/issues/349) `✓ Done`
+  - Typed categories with auto-inference
+- [#350 Backlink auto-generation](https://github.com/codecoradev/uteke/issues/350) `✓ Done`
+  - Bidirectional memory edges
+- [#351 Orphan detection](https://github.com/codecoradev/uteke/issues/351) `✓ Done`
+  - Find disconnected memories in the graph
+- [#352 Salience + recency dual-axis recall](https://github.com/codecoradev/uteke/issues/352) `✓ Done`
+  - Boost by memory type and age
+- [#353 Dream cycle](https://github.com/codecoradev/uteke/issues/353) `✓ Done`
+  - Coordinated maintenance pipeline (lint → backlinks → dedup → orphans)
+- [#381 MCP Streamable HTTP transport](https://github.com/codecoradev/uteke/issues/381) `✓ Done`
+  - Protocol version `2025-06-18`, `POST /mcp` endpoint
+- [#385 Hermes plugin auto-install](https://github.com/codecoradev/uteke/issues/385) `✓ Done`
+  - Direct install to `~/.hermes/plugins/uteke-tool/`
+- [#393 `uteke room create` command](https://github.com/codecoradev/uteke/issues/393) `✓ Done`
+- [#395 Room operations in Hermes plugin](https://github.com/codecoradev/uteke/issues/395) `✓ Done`
+- [#402 Fix: plugin missing `__init__.py`](https://github.com/codecoradev/uteke/issues/402) `✓ Done`
+- [#403 Fix: contradictory server log + DB size label](https://github.com/codecoradev/uteke/issues/403) `✓ Done`
+
 ## v0.1.0 — Rooms, Intelligence & Pluggability `✓ Done`
 
 - [#292 Time-travel queries](https://github.com/codecoradev/uteke/issues/292) `✓ Done`

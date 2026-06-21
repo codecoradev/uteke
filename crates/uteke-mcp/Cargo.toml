@@ -12,6 +12,10 @@ categories = ["command-line-utilities", "development-tools"]
 name = "uteke-mcp"
 path = "src/main.rs"
 
+[lib]
+name = "uteke_mcp"
+path = "src/lib.rs"
+
 [dependencies]
 uteke-core = { path = "../uteke-core", version = "0.2.0" }
 serde = { version = "1", features = ["derive"] }

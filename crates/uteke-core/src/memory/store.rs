@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS memories (
     memory_type TEXT NOT NULL DEFAULT 'fact',
     importance REAL NOT NULL DEFAULT 0.5,
     pinned INTEGER NOT NULL DEFAULT 0,
-    content_type TEXT NOT NULL DEFAULT 'text'
+    content_type TEXT NOT NULL DEFAULT 'text',
+    slug TEXT,
+    source TEXT,
+    source_type TEXT NOT NULL DEFAULT 'user'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
@@ -55,10 +58,42 @@ CREATE TABLE IF NOT EXISTS graph_edges (
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(label);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target_id);
+
+-- memory_edges: typed auto-wired edges between memories (v8, #346).
+-- Populated by pattern extraction on remember(): [[slug]], @tag, ^id, >uuid,
+-- and legacy metadata.relationships JSON.
+CREATE TABLE IF NOT EXISTS memory_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    edge_type TEXT NOT NULL COLLATE NOCASE,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_id, target_id, edge_type)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
+CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
+
+-- slug: short identifier for [[slug]] auto-linking (v8, #346).
+-- Not globally unique — resolution picks the most recently updated match
+-- (see Store::resolve_slug). Use a unique slug per namespace for deterministic links.
+CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
+
+-- v9: Timeline events log (#347). Append-only audit trail per memory.
+CREATE TABLE IF NOT EXISTS timeline_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    event_data TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
+CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
 "#;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 7;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 10;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -108,6 +143,23 @@ impl Store {
                 rusqlite::params![id],
             )
             .map_err(|e| Error::db("unpin memory", e))?;
+        Ok(rows > 0)
+    }
+
+    /// Set source provenance on a memory (#348).
+    pub fn set_source(
+        &self,
+        id: &str,
+        source: Option<&str>,
+        source_type: &str,
+    ) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET source = ?1, source_type = ?2 WHERE id = ?3",
+                rusqlite::params![source, source_type, id],
+            )
+            .map_err(|e| Error::db("set source", e))?;
         Ok(rows > 0)
     }
 
@@ -193,7 +245,7 @@ pub(super) fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
 }
 
 /// Convert a database row to a Memory.
-pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
+pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
     let id: String = row.get(0)?;
     let content: String = row.get(1)?;
     let embedding_blob: Option<Vec<u8>> = row.get(2)?;
@@ -262,6 +314,9 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     let importance: f64 = row.get(14).unwrap_or(0.5);
     let pinned: bool = row.get(15).unwrap_or(false);
     let content_type: String = row.get(16).unwrap_or_else(|_| "text".to_string());
+    let slug: Option<String> = row.get(17).ok().flatten();
+    let source: Option<String> = row.get(18).ok().flatten();
+    let source_type: String = row.get(19).unwrap_or_else(|_| "unknown".to_string());
 
     Ok(Memory {
         id,
@@ -281,6 +336,9 @@ pub(super) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         importance,
         pinned,
         content_type,
+        slug,
+        source,
+        source_type,
     })
 }
 
@@ -309,6 +367,9 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 
@@ -331,6 +392,9 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 
@@ -1335,6 +1399,9 @@ mod tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         }
     }
 
@@ -1474,5 +1541,29 @@ mod tests {
         let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "past_vf");
+    }
+
+    #[test]
+    fn test_set_source() {
+        let store = Store::open(":memory:").unwrap();
+        let m = make_test_memory("src1", "test source", &["t"]);
+        store.insert(&m).unwrap();
+
+        // Set source.
+        assert!(store
+            .set_source("src1", Some("https://rust-lang.org"), "url")
+            .unwrap());
+
+        // Verify via direct SQL.
+        let (source, source_type): (Option<String>, String) = store
+            .conn
+            .query_row(
+                "SELECT source, source_type FROM memories WHERE id = ?1",
+                rusqlite::params!["src1"],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(source.as_deref(), Some("https://rust-lang.org"));
+        assert_eq!(source_type, "url");
     }
 }

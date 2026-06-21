@@ -30,12 +30,23 @@ impl Default for StoreConfig {
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
 pub struct EmbeddingConfig {
-    /// Embedding backend: "onnx" (default), future: "openai", "ollama".
+    /// Embedding backend: "onnx" (default), "openai", "ollama".
     pub backend: String,
     /// Embedding model name.
     pub model: String,
     /// Maximum sequence length for the embedding model.
     pub max_seq_length: usize,
+    /// API key for backends that require one (OpenAI). Leave empty for ONNX/Ollama.
+    /// Can also be supplied via UTEKE_EMBEDDING_API_KEY / OPENAI_API_KEY.
+    pub api_key: String,
+    /// Custom endpoint URL. Empty string = backend default.
+    /// - OpenAI: https://api.openai.com/v1
+    /// - Ollama: http://localhost:11434
+    /// - Azure OpenAI: your endpoint base
+    pub base_url: String,
+    /// Embedding dimensions. 0 = use backend/model default.
+    /// Override only when you know your model's output dim.
+    pub dims: usize,
 }
 
 impl Default for EmbeddingConfig {
@@ -44,13 +55,16 @@ impl Default for EmbeddingConfig {
             backend: "onnx".to_string(),
             model: "embeddinggemma-q4".to_string(),
             max_seq_length: 256,
+            api_key: String::new(),
+            base_url: String::new(),
+            dims: 0,
         }
     }
 }
 
 impl EmbeddingConfig {
     /// Supported embedding backends.
-    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx"];
+    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx", "openai", "ollama"];
 
     /// Validate the backend field.
     ///
@@ -139,6 +153,26 @@ pub struct RecallConfig {
     pub min_score: f64,
     /// Strict mode threshold (higher, for critical queries).
     pub min_score_strict: f64,
+    /// Default recall strategy for the `recall` command when `--strategy` is
+    /// not given. One of: `vector`, `fts5`, `hybrid`, `graph`. Default
+    /// `vector` preserves the original CLI behavior; `graph` enables
+    /// graph-augmented reranking (#378).
+    pub default_strategy: String,
+    /// Weight for the edge-density boost applied by the `graph` strategy.
+    /// 0.0 disables; 0.1 is subtle (default).
+    pub graph_density_weight: f32,
+    /// Weight for the incoming-edge authority boost applied by the `graph`
+    /// strategy. 0.0 disables; 0.1 is subtle (default).
+    pub graph_authority_weight: f32,
+    /// Feature flag for graph-augmented reranking. When `false`, the `graph`
+    /// strategy behaves like `hybrid` (no boost applied).
+    pub graph_rerank_enabled: bool,
+    /// Weight for the salience boost applied when the `--salience` flag is
+    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
+    pub salience_weight: f32,
+    /// Weight for the recency boost applied when the `--recency` flag is
+    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
+    pub recency_weight: f32,
 }
 
 impl Default for RecallConfig {
@@ -146,6 +180,13 @@ impl Default for RecallConfig {
         Self {
             min_score: 0.3,
             min_score_strict: 0.5,
+            // Preserve original CLI behavior (vector-only) by default.
+            default_strategy: "vector".to_string(),
+            graph_density_weight: 0.1,
+            graph_authority_weight: 0.1,
+            graph_rerank_enabled: true,
+            salience_weight: 0.15,
+            recency_weight: 0.15,
         }
     }
 }
@@ -272,10 +313,19 @@ impl Config {
                 self.embedding.backend = overlay.embedding.backend.clone();
             }
             if emb.contains_key("model") {
-                self.embedding.model = overlay.embedding.model;
+                self.embedding.model = overlay.embedding.model.clone();
             }
             if emb.contains_key("max_seq_length") {
                 self.embedding.max_seq_length = overlay.embedding.max_seq_length;
+            }
+            if emb.contains_key("api_key") {
+                self.embedding.api_key = overlay.embedding.api_key.clone();
+            }
+            if emb.contains_key("base_url") {
+                self.embedding.base_url = overlay.embedding.base_url.clone();
+            }
+            if emb.contains_key("dims") {
+                self.embedding.dims = overlay.embedding.dims;
             }
         }
 
@@ -322,6 +372,18 @@ impl Config {
             }
             if recall.contains_key("min_score_strict") {
                 self.recall.min_score_strict = overlay.recall.min_score_strict;
+            }
+            if recall.contains_key("default_strategy") {
+                self.recall.default_strategy = overlay.recall.default_strategy.clone();
+            }
+            if recall.contains_key("graph_density_weight") {
+                self.recall.graph_density_weight = overlay.recall.graph_density_weight;
+            }
+            if recall.contains_key("graph_authority_weight") {
+                self.recall.graph_authority_weight = overlay.recall.graph_authority_weight;
+            }
+            if recall.contains_key("graph_rerank_enabled") {
+                self.recall.graph_rerank_enabled = overlay.recall.graph_rerank_enabled;
             }
         }
 
@@ -391,6 +453,85 @@ impl Config {
             }
         }
 
+        // Graph-augmented reranking overrides (#378)
+        if let Ok(v) = std::env::var("UTEKE_RECALL_STRATEGY") {
+            if matches!(v.as_str(), "vector" | "fts5" | "hybrid" | "graph") {
+                self.recall.default_strategy = v;
+            } else {
+                tracing::warn!(
+                    "Invalid UTEKE_RECALL_STRATEGY='{v}', ignoring (expected vector|fts5|hybrid|graph)"
+                );
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_GRAPH_DENSITY_WEIGHT") {
+            match v.parse::<f32>() {
+                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_density_weight = w,
+                Ok(_) => tracing::warn!(
+                    "UTEKE_GRAPH_DENSITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
+                ),
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_GRAPH_DENSITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_GRAPH_AUTHORITY_WEIGHT") {
+            match v.parse::<f32>() {
+                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_authority_weight = w,
+                Ok(_) => tracing::warn!(
+                    "UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
+                ),
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
+                ),
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_GRAPH_RERANK_ENABLED") {
+            match v.to_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => self.recall.graph_rerank_enabled = true,
+                "0" | "false" | "no" | "off" => self.recall.graph_rerank_enabled = false,
+                _ => tracing::warn!(
+                    "Invalid UTEKE_GRAPH_RERANK_ENABLED='{v}', ignoring (expected true/false)"
+                ),
+            }
+        }
+
+        // Embedding backend overrides (#337)
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BACKEND") {
+            if !v.is_empty() {
+                self.embedding.backend = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_MODEL") {
+            if !v.is_empty() {
+                self.embedding.model = v;
+            }
+        }
+        // API key: prefer UTEKE_EMBEDDING_API_KEY, then OPENAI_API_KEY fallback.
+        // An explicitly empty env var is treated as unset so it cannot clobber
+        // a non-empty [embedding].api_key from uteke.toml (CodeCora finding).
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_API_KEY") {
+            if !v.is_empty() {
+                self.embedding.api_key = v;
+            }
+        } else if let Ok(v) = std::env::var("OPENAI_API_KEY") {
+            if !v.is_empty() {
+                self.embedding.api_key = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BASE_URL") {
+            if !v.is_empty() {
+                self.embedding.base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
+            match v.parse::<usize>() {
+                Ok(d) => self.embedding.dims = d,
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)"
+                ),
+            }
+        }
+
         self
     }
 
@@ -440,6 +581,10 @@ impl Config {
 [recall]
 # min_score = 0.3
 # min_score_strict = 0.5
+# default_strategy = "vector"  # vector | fts5 | hybrid | graph
+# graph_density_weight = 0.1
+# graph_authority_weight = 0.1
+# graph_rerank_enabled = true
 
 [server]
 # enabled = false
@@ -916,6 +1061,77 @@ backend = "ollama"
         // Other embedding fields stay default
         assert_eq!(merged.embedding.model, "embeddinggemma-q4");
         assert_eq!(merged.embedding.max_seq_length, 256);
+    }
+
+    #[test]
+    fn merge_embedding_full_openai_config() {
+        let toml = r#"
+[embedding]
+backend = "openai"
+model = "text-embedding-3-large"
+api_key = "sk-test-123"
+base_url = "https://my-proxy.example.com/v1"
+dims = 3072
+max_seq_length = 8191
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_openai_full.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+        assert_eq!(merged.embedding.backend, "openai");
+        assert_eq!(merged.embedding.model, "text-embedding-3-large");
+        assert_eq!(merged.embedding.api_key, "sk-test-123");
+        assert_eq!(merged.embedding.base_url, "https://my-proxy.example.com/v1");
+        assert_eq!(merged.embedding.dims, 3072);
+        assert_eq!(merged.embedding.max_seq_length, 8191);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_overrides_embedding_backend() {
+        std::env::set_var("UTEKE_EMBEDDING_BACKEND", "openai");
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-test");
+        std::env::set_var("UTEKE_EMBEDDING_MODEL", "text-embedding-3-small");
+        std::env::set_var("UTEKE_EMBEDDING_DIMS", "1536");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_EMBEDDING_BACKEND");
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        assert_eq!(cfg.embedding.backend, "openai");
+        assert_eq!(cfg.embedding.api_key, "sk-env-test");
+        assert_eq!(cfg.embedding.model, "text-embedding-3-small");
+        assert_eq!(cfg.embedding.dims, 1536);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_openai_api_key_fallback() {
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::set_var("OPENAI_API_KEY", "sk-fallback");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("OPENAI_API_KEY");
+        assert_eq!(cfg.embedding.api_key, "sk-fallback");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_uteke_api_key_wins_over_openai() {
+        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-uteke");
+        std::env::set_var("OPENAI_API_KEY", "sk-openai");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        std::env::remove_var("OPENAI_API_KEY");
+        assert_eq!(cfg.embedding.api_key, "sk-uteke");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_invalid_dims_ignored() {
+        std::env::set_var("UTEKE_EMBEDDING_DIMS", "not-a-number");
+        let cfg = Config::default().apply_env_overrides();
+        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        assert_eq!(cfg.embedding.dims, 0, "invalid dims should keep default 0");
     }
 
     #[test]

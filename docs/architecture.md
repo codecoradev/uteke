@@ -13,7 +13,7 @@ title: Architecture
 ├─────────────────────────────────────────────────────┤
 │              HTTP API (uteke-serve)                  │
 │  /health /remember /recall /search /list /forget    │
-│  /stats /namespaces — CORS enabled, ~42ms recall    │
+│  /stats /namespaces /room/* /mcp — CORS, ~42ms     │
 ├─────────────────────────────────────────────────────┤
 │                    Uteke API                         │
 │          uteke-core crate (lib)                      │
@@ -36,6 +36,7 @@ title: Architecture
 | `uteke-core` | Library — storage, embedding, vector search, FTS5, operations |
 | `uteke-cli` | CLI binary — clap commands, JSON output, server proxy |
 | `uteke-server` | HTTP server — persistent daemon for fast agent access |
+| `uteke-mcp` | MCP JSON-RPC server — stdio + Streamable HTTP transport (#381) |
 
 ## Components
 
@@ -118,17 +119,61 @@ Read-heavy workload: recall/search operations far outnumber remember/forget. Mul
 
 Two systems with incompatible score scales (cosine 0..1 vs BM25 unbounded). Reciprocal Rank Fusion solves this by ranking based on position, not score magnitude. k=60 is the standard literature value.
 
+### Graph-Augmented Reranking (#378)
+
+The `graph` recall strategy layers graph signals on top of the RRF result.
+`compute_graph_signals()` issues a single batched query over `memory_edges`
+(derived from `[[slug]]` / `@tag` / `^id` auto-wiring, #346) and computes
+per-memory density/authority counts. `rerank_with_graph()` then applies an
+additive, log-scaled boost (`ln(1+x) * weight`) so well-connected memories
+drift upward while isolated ones are untouched. The boost saturates quickly
+(going 1→10 edges ≈ 100→1000 in lift), preventing hub dominance. The recall
+cache is strategy-keyed, so `graph` entries never collide with `hybrid`/
+`vector`/`fts5`.
+
 ### Atomic File Writes
 
 All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, `rename` is atomic — a crash mid-write never leaves a corrupt file, only the old version.
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v5 (memory_tags junction table). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v10 (`source` + `source_type` columns, #348). Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348). Zero data loss guaranteed.
 
 ### Rooms
 
 Rooms group related memories with author attribution. Stored in `rooms` and `room_memories` tables (schema v4). Semantic room recall over-fetches via `recall_hybrid()`, then post-filters to room memory IDs. Room summaries use tag co-occurrence clustering — no LLM call required. Room documents group memories by `memory_type` into sections (Decisions, Facts, Procedures, etc).
+
+### Memory Types (#349)
+
+Every memory has a `memory_type`: `fact`, `procedure`, `preference`, `decision`, `context`, `note`, `insight`, `reference`, `event`. Type is set explicitly via `--type` or auto-inferred from content patterns (questions → `context`, URLs → `reference`, dates → `event`, etc.).
+
+### Timeline Events (#347)
+
+The `timeline_events` table (schema v9) records an append-only audit log per memory: creation, updates, type changes, supersession, edge additions, pin/unpin. Events store metadata as JSON. Consolidation events attach to the OLD memory with `replaced_by` metadata.
+
+### Salience + Recency (#352)
+
+Dual-axis recall boost applied after the RRF merge:
+- **Salience**: higher-scored by type weight (decision > insight > fact > note)
+- **Recency**: exponential decay `exp(-age/τ)` where τ is a per-type time constant
+
+Both are opt-in via `--salience` / `--recency` CLI flags or the API. Config leaks are prevented by setting/resetting config around each query.
+
+### Dream Cycle (#353)
+
+The `dream` command runs a coordinated maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify. Phases run in canonical dependency order regardless of user-supplied order. Individual phase errors are recorded but don't abort the pipeline. Namespace-scoped phases (lint, dedup, orphans, compact) only affect the target namespace; global phases (backlinks, verify) run across all namespaces.
+
+### Citation & Source Attribution (#348)
+
+The `source` and `source_type` columns (schema v10) track where a memory came from. Source types: `user`, `url`, `file`, `import`, `derived`, `system`, `unknown`. Set via `--source` / `--source-type` on remember or `set_source()` post-insert.
+
+### MCP Transport (#381)
+
+The `uteke-mcp` crate provides a shared JSON-RPC handler used by both:
+- **stdio binary** (`uteke-mcp`) — for local agents (Claude Desktop, Cursor)
+- **HTTP endpoint** (`POST /mcp` on `uteke-serve`) — for remote MCP clients
+
+Protocol version: `2025-06-18` (Streamable HTTP spec). 1 MiB body limit enforced on HTTP endpoint.
 
 ## Performance
 

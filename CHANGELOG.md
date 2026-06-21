@@ -1,3 +1,271 @@
+## [0.2.1] — 2026-06-21
+
+### Added
+
+- **Hermes plugin auto-install** (#385)
+  - `uteke init --agent hermes` now installs directly to
+    `~/.hermes/plugins/uteke-tool/` instead of generating to CWD.
+  - Plugin uses Python stdlib only (no `requests` dependency needed).
+  - MCP server discovery: README documents `hermes mcp add uteke --command
+    uteke-mcp` as an alternative integration path.
+
+- **Room operations in Hermes plugin** (#395)
+  - Plugin now exposes `room_create`, `room_recall`, `room_list`,
+    `room_summary`, `room_stats`, `room_delete` actions.
+  - Added server endpoints: `POST /room/create`, `GET /room/list`,
+    `POST /room/stats`, `DELETE /room/delete`.
+
+- **`uteke room create` command** (#393)
+  - Explicit room creation: `uteke room create <id> [--title "Name"]`
+
+### Fixed
+
+- **Room list cross-namespace visibility** (#392)
+  - `uteke room list` now shows ALL rooms by default, not just those in
+    the current `--namespace`. Rooms are collaboration spaces spanning
+    namespaces.
+
+- **Schema mismatch error message** (#394)
+  - Error now includes binary name and version: "please upgrade uteke
+    (current binary: uteke-core v0.2.0, schema v10)".
+
+- **Hermes plugin missing `__init__.py`** (#402)
+  - `uteke init --agent hermes` now generates `__init__.py` in the plugin
+    directory. Without it, Hermes logs a warning and the plugin never
+    loads.
+
+- **Contradictory server detection log** (#403)
+  - When server was detected but command unsupported via HTTP (aging,
+    doctor, etc.), the fallback path logged "No server detected" —
+    contradicting the earlier detection message. Now logs accurately
+    based on actual server state.
+
+- **Misleading `db_size_bytes` in stats** (#403)
+  - Stats output now labels database size as "(global, shared)" to
+    clarify it reflects the entire shared SQLite file, not just the
+    queried namespace.
+
+### Added (previous)
+
+- **MCP Streamable HTTP transport** (#381)
+  - `uteke-mcp` protocol version bumped from `2024-11-05` to `2025-06-18`
+    (current MCP spec).
+  - New `POST /mcp` endpoint on `uteke-server` exposing the full MCP
+    JSON-RPC API over HTTP. Returns `Content-Type: application/json` with
+    `MCP-Protocol-Version: 2025-06-18` header.
+  - Shared handler extracted into `uteke_mcp` library crate — used by both
+    the stdio binary (`uteke-mcp`) and the HTTP endpoint (`uteke-serve`).
+  - Enables remote MCP clients (Claude Desktop, web agents) to connect
+    without spawning a subprocess.
+
+- **Citation & source attribution** (#348)
+  - Schema v10 migration: adds `source` and `source_type` columns to
+    `memories` table. Existing rows get `source_type = 'unknown'`.
+  - Source types: `user`, `url`, `file`, `import`, `derived`, `system`,
+    `unknown`.
+  - `Memory` struct gains `source: Option<String>` and `source_type: String`
+    fields. Defaults: `source=None`, `source_type="user"`.
+  - `Uteke::set_source(id, source, source_type)` for post-insert provenance
+    updates.
+  - `ExportEntry` gains optional `source` field for round-trip preservation.
+  - CLI: `--source <URL/path>` and `--source-type <type>` flags on
+    `uteke remember`.
+  - Import sets `source_type = 'import'` with `source = 'import:<filename>'`.
+
+- **Dream cycle** (#353)
+  - New `crates/uteke-core/src/dream.rs` module: coordinated maintenance
+    pipeline that runs all 6 phases in dependency order, all local, zero
+    LLM. Inspired by GBrain's overnight dream cycle.
+  - Phases:
+    1. **Lint** — type validation + broken-ref count
+    2. **Backlinks** — rebuild `referenced_by` edges (#350)
+    3. **Dedup** — find & merge near-duplicates (existing `consolidate`)
+    4. **Orphans** — detect disconnected memories (#351-compatible inline
+       SQL when #351 is not yet merged)
+    5. **Compact** — aging cleanup + prune cold memories (existing)
+    6. **Verify** — schema + index integrity check (existing `verify`)
+  - `DreamPhase` enum, `DreamReport`, `PhaseResult`, `PhaseStatus` types.
+  - `Uteke::dream(namespace, dry_run, phases)` orchestrator.
+  - CLI: new `uteke dream [--phases] [--skip] [--dry-run] [--quiet]`
+    command. Exits non-zero on errors (cron-friendly).
+
+- **Orphan detection** (#351)
+  - New `crates/uteke-core/src/orphans.rs` module: detect memories with no
+    graph edges, no recall access, not pinned, and below an importance
+    threshold.
+  - Detection is a single SQL pass (LEFT JOIN on `memory_edges` twice) —
+    no O(n²) scan.
+  - `OrphanMemory` struct with `orphan_score` (0.0..=1.0):
+    `(1 - edge_density) × 0.4 + (1 - access_freq) × 0.3 + (1 - importance) × 0.3`.
+  - `Uteke::find_orphans(namespace, threshold, limit)` with namespace
+    scoping and `DEFAULT_ORPHAN_THRESHOLD = 0.3`.
+  - CLI: new `uteke orphans [--threshold 0.3] [--limit 50]` command.
+  - Leverages #350 backlinks: any memory referenced by another is
+    automatically excluded (it has an incoming `referenced_by` edge).
+
+- **Timeline event tracking** (#347)
+  - New `crates/uteke-core/src/timeline.rs` module: append-only audit log
+    per memory in the `timeline_events` table (schema v9).
+  - Event types: `created`, `updated`, `recalled`, `consolidated`, `tagged`,
+    `forgot`. Each event has optional JSON `event_data`.
+  - Store methods: `add_timeline_event`, `list_timeline_events`,
+    `count_timeline_events`.
+  - Uteke methods: `timeline(memory_id, limit)`,
+    `count_timeline_events(memory_id)`, `try_timeline_event()` (best-effort
+    append that never fails the primary operation).
+  - Auto-emission: `remember_precomputed` now emits a `created` event.
+  - CLI: new `uteke timeline <id> [--limit N]` command (default 20 events).
+  - Schema migration v8 → v9 (idempotent, no data backfill — timeline
+    tracking starts from this version forward).
+
+- **Memory type formalization** (#349)
+  - `MemoryType` enum expanded from 5 to 9 variants: original (Fact,
+    Procedure, Preference, Decision, Context) + new (Note, Insight,
+    Reference, Event).
+  - Pattern-based auto-inference (`MemoryType::infer_from_content`):
+    URL prefix → `Reference`; decided/chose/will use → `Decision`;
+    realized/learned/discovered → `Insight`; how-to/numbered list →
+    `Procedure`; always/never/prefer/hate → `Preference`; ISO date +
+    time word → `Event`; fallback → `Note`. Zero LLM.
+  - When callers pass the default `"fact"`, `remember_typed` now runs
+    inference and overrides with a more specific type when one is
+    detected (falls back to `Fact` for ambiguous content, preserving
+    backward compatibility).
+  - `MemoryType::recall_boost()` — small additive score boost per type
+    (Decision/Preference +0.05, Insight +0.03, Event +0.02, Note -0.02).
+    To be wired into recall scoring by #352.
+  - CLI: `--type` help text documents the new types and auto-inference.
+
+- **Salience + recency dual-axis recall ranking** (#352)
+  - New `crates/uteke-core/src/salience_recency.rs` module with two
+    orthogonal, additive boost functions:
+    - `salience_score(memory)` — 0..=1 blend of `access_count`, `importance`,
+      and `pinned` (importance × 0.5 + access_freq × 0.3 + pinned 0.2).
+    - `recency_score(memory, now)` — per-type exponential decay
+      (`exp(-age_days / τ)`). Time constants: Decision/Preference 365d,
+      Fact/Reference 180d, Insight 240d, Event 30d, default 90d.
+      (τ is the age at which recency drops to ~0.37 = 1/e.)
+  - `SalienceRecencyConfig { salience_weight, recency_weight }` defaults
+    to zero (opt-in per query). `sanitized()` clamps weights to [0, 1].
+  - `Uteke::set_salience_recency_config()` for per-query override.
+  - Boosts applied AFTER recall cache lookup (cache stays time-independent).
+  - CLI: `--salience` / `--recency` flags on `recall`. Default weights
+    (0.15 each) configurable via `[recall]` in `uteke.toml`.
+  - Public exports: `salience_score`, `recency_score`, `type_half_life_days`,
+    `apply_boosts`, `SalienceRecencyConfig`.
+
+- **Backlink auto-generation** (#350)
+  - Bidirectional links: whenever memory A creates a forward edge to B
+    (`references`, `tagged_as`, `supersedes`, `replies_to`), an inverse
+    `referenced_by` edge from B → A is automatically inserted. Makes the
+    graph navigable in both directions without an O(n) scan.
+  - New `Store::ensure_backlink()` (idempotent),
+    `Store::add_memory_edge_with_backlink()`, and
+    `Store::rebuild_backlinks()` (scan + repair pass).
+  - `add_memory_edges_batch()` (used by `wire_edges` on every `remember`)
+    now also ensures the backlink for each forward edge.
+  - New `Uteke::link_memories()` public API for explicit edges with
+    automatic backlink.
+  - New `Uteke::rebuild_backlinks()` for one-time migration of pre-#350
+    stores.
+  - New CLI command `uteke rebuild-backlinks [--quiet]` rebuilds all
+    `referenced_by` edges from existing forward edges.
+  - `uteke edges <id>` gains `--direction <incoming|outgoing|both>`
+    (default `both`); `incoming` shows backlinks.
+  - New public exports: `backlink_type_for`, `EdgeList`, `MemoryEdge`,
+    `EDGE_REFERENCES`, `EDGE_REFERENCED_BY`, `EDGE_REPLIES_TO`,
+    `EDGE_SUPERSEDES`, `EDGE_TAGGED_AS`.
+
+- **Graph-augmented RAG reranking** (#378)
+  - New recall strategy `graph`: runs the hybrid (RRF) pipeline, then fuses
+    graph signals from the `memory_edges` table into each result's score.
+    Well-connected memories drift upward; isolated memories are untouched.
+  - New `crates/uteke-core/src/graph_rerank.rs` module:
+    - `compute_graph_signals()` — single batched SQL query over
+      `memory_edges` computes per-memory `edge_count`, `neighbor_count`,
+      `edge_type_diversity`, `incoming_count`, `outgoing_count`.
+    - `rerank_with_graph()` — additive, log-scaled density + authority
+      boosts (`ln(1+x) * weight`), capped at 1.0. Disabled or empty-signal
+      inputs are a no-op (cold-start safe).
+    - `GraphRerankConfig { density_weight, authority_weight, enabled }`
+      with `sanitized()` clamping.
+  - `RecallStrategy::Graph` variant added (`memory/types.rs`); wired into
+    `recall_hybrid` so the boost runs *before* caching (cache is
+    strategy-keyed → `graph` has its own entries, no collision with
+    `hybrid`/`vector`/`fts5`).
+  - New `Uteke` field + `open_with_embedding_and_graph` constructor so the
+    CLI passes the merged `[recall]` weights.
+  - CLI: new `--strategy <vector|fts5|hybrid|graph>` flag on `recall`
+    (defaults to `[recall].default_strategy`, itself defaulting to
+    `vector` — preserves original behavior). Unknown strategies warn and
+    fall back to `vector`.
+  - Config: `[recall]` gains `default_strategy`, `graph_density_weight`,
+    `graph_authority_weight`, `graph_rerank_enabled`, plus env overrides
+    `UTEKE_RECALL_STRATEGY`, `UTEKE_GRAPH_DENSITY_WEIGHT`,
+    `UTEKE_GRAPH_AUTHORITY_WEIGHT`, `UTEKE_GRAPH_RERANK_ENABLED`.
+  - 10 new unit tests covering signal counting, hub boost, log-saturation,
+    score capping, cold-start no-op, disabled-flag no-op, and a <10ms
+    latency guard over 5000 edges.
+  - Backward compatible: existing strategies are unchanged; `graph` is opt-in.
+
+### Changed
+
+- **Bump sha2 0.10 → 0.11** (supersedes Dependabot PR #364)
+  - sha2 0.11 dropped the `LowerHex` impl on the digest output, breaking
+    `format!("{:x}", hasher.finalize())` in `engine.rs`.
+  - Fix: iterate the digest bytes and format each as `{:02x}`.
+  - Unifies the crate on a single sha2 version (uteke-server was already
+    on 0.11).
+
+### Added
+
+- **OpenAI + Ollama embedding backends** (#337)
+  - New `OpenAiEmbedder` (`crates/uteke-core/src/embed/openai.rs`) — HTTP
+    call to `{base_url}/embeddings`, default model `text-embedding-3-small`
+    (1536d). Azure OpenAI compatible via `base_url`.
+  - New `OllamaEmbedder` (`crates/uteke-core/src/embed/ollama.rs`) — HTTP
+    call to `{base_url}/api/embed`, default model `nomic-embed-text` (768d).
+  - `[embedding]` config section extended with `api_key`, `base_url`, `dims`.
+  - New env vars: `UTEKE_EMBEDDING_BACKEND`, `UTEKE_EMBEDDING_MODEL`,
+    `UTEKE_EMBEDDING_API_KEY` (fallback: `OPENAI_API_KEY`),
+    `UTEKE_EMBEDDING_BASE_URL`, `UTEKE_EMBEDDING_DIMS`.
+  - Dim mismatch detection: opening an existing store with a backend that
+    produces a different dims now returns a clear error pointing the user
+    at `uteke repair` instead of silently corrupting the index.
+  - `reqwest` `json` feature added (always included — no feature flag).
+  - 16 new unit tests (backend construction, endpoint normalization, default
+    constants, response parsing, config merge + env var precedence).
+  - ONNX remains the default — fully backward compatible.
+
+- **Auto-wired memory edges** (#346)
+  - New `memory_edges` SQLite table (schema v8) for typed edges between
+    memories.
+  - Optional `slug` column on memories for `[[slug]]` Wikilink-style
+    references.
+  - Pattern-based entity extraction on every `remember()` call — zero LLM,
+    pure string parsing:
+    - `[[slug]]` → `references` edge
+    - `@tag` → `tagged_as` edge (most recent memory with that tag)
+    - `^<uuid>` → `supersedes` edge
+    - `><uuid>` → `replies_to` edge
+    - `rel:<type>:<uuid>` (legacy `--meta` form) → `<type>` edge
+  - New `uteke edges <id> [--deep N]` CLI subcommand: lists direct edges or
+    runs BFS across the edge table.
+  - Rewrote `get_related()` to prefer the edge table (indexed SQL) over the
+    old O(n) JSON metadata scan. Legacy path retained as fallback.
+  - Migration v7→v8 backfills existing `metadata.relationships` JSON entries
+    into `memory_edges` rows.
+  - 20 new unit tests (extraction patterns, edge roundtrip, BFS cycle safety,
+    slug/tag resolution).
+
+### Changed
+
+- Schema version v7 → v8.
+- `Memory` struct gains optional `slug: Option<String>` field.
+- Clippy: cleaned up pre-existing `else { if .. }` collapse warnings in
+  `commands/graph.rs` (3 sites) so `cargo clippy --workspace -- -D warnings`
+  now passes cleanly.
+
 ## [0.2.0] — 2026-06-14
 
 ### Added

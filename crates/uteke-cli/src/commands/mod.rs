@@ -2,16 +2,20 @@
 
 mod aging;
 pub(crate) mod bench;
+mod dream;
+mod edges;
 mod forget;
 pub(crate) mod graph;
 mod list;
 mod maintenance;
 mod namespace;
+mod orphans;
 mod recall;
 mod remember;
 mod room;
 mod server;
 mod tags;
+mod timeline;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
@@ -22,7 +26,7 @@ use uteke_core::Uteke;
 pub(crate) use server::{is_server_running, run_via_server};
 
 /// Dispatch all CLI subcommands to their handler implementations.
-pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(), String> {
+pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Result<(), String> {
     // Resolve effective namespace once: CLI > env > config > "default"
     let resolved_ns = resolve_namespace(cli, config);
     let ns: Option<&str> = Some(resolved_ns.as_str());
@@ -38,6 +42,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             meta,
             room,
             author,
+            source,
+            source_type,
         } => remember::run(
             cli,
             uteke,
@@ -51,6 +57,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             meta,
             room.as_deref(),
             author.as_deref(),
+            source.as_deref(),
+            source_type.as_deref(),
         ),
 
         Commands::Recall {
@@ -61,6 +69,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             category,
             min,
             strict,
+            strategy,
+            salience,
+            recency,
             related,
             depth,
             context,
@@ -78,6 +89,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             category.as_deref(),
             *min,
             *strict,
+            strategy.as_deref(),
             config,
             *related,
             *depth,
@@ -85,6 +97,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
             at.as_deref(),
             content_format.as_str(),
             r#where.as_deref(),
+            *salience,
+            *recency,
         ),
 
         Commands::Search { query, limit, tags } => {
@@ -231,5 +245,24 @@ pub(crate) fn run_command(cli: &Cli, uteke: &Uteke, config: &Config) -> Result<(
         Commands::Bench { .. } => Ok(()),
 
         Commands::Graph { command } => crate::commands::graph::run(cli, uteke, command),
+
+        Commands::Edges {
+            id,
+            deep,
+            direction,
+        } => edges::run(cli, uteke, id, *deep, direction),
+
+        Commands::RebuildBacklinks { quiet } => edges::run_rebuild_backlinks(cli, uteke, *quiet),
+
+        Commands::Dream {
+            phases,
+            skip,
+            dry_run,
+            quiet,
+        } => dream::run(cli, uteke, ns, phases, skip, *dry_run, *quiet),
+
+        Commands::Orphans { threshold, limit } => orphans::run(cli, uteke, ns, *threshold, *limit),
+
+        Commands::Timeline { id, limit } => timeline::run(cli, uteke, id, *limit),
     }
 }

@@ -70,8 +70,8 @@ impl super::Store {
 
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     memory.id,
                     memory.content,
@@ -90,6 +90,9 @@ impl super::Store {
                     memory.importance,
                     memory.pinned as i32,
                     memory.content_type,
+                    memory.slug,
+                    memory.source,
+                    memory.source_type,
                 ],
             )
             .map_err(|e| Error::db("Failed to insert memory", e))?;
@@ -111,13 +114,37 @@ impl super::Store {
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type FROM memories WHERE id = ?1")
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE id = ?1")
             .map_err(|e| Error::db("Failed to prepare statement for get_by_id", e))?;
 
         let result = stmt
             .query_row(params![id], row_to_memory)
             .optional()
             .map_err(|e| Error::db("Failed to get memory by ID", e))?;
+
+        Ok(result)
+    }
+
+    /// Get a memory by its ID, only if it belongs to `namespace`.
+    ///
+    /// Used by edge auto-wiring (#346) to enforce namespace isolation on
+    /// `^<uuid>` / `><uuid>` / `rel:*:<id>` references. Returns None when the
+    /// memory does not exist OR exists in a different namespace.
+    pub fn get_by_id_in_namespace(
+        &self,
+        id: &str,
+        namespace: Option<&str>,
+    ) -> Result<Option<Memory>, Error> {
+        let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE id = ?1 AND namespace = ?2")
+            .map_err(|e| Error::db("Failed to prepare statement for get_by_id_in_namespace", e))?;
+
+        let result = stmt
+            .query_row(params![id, ns], row_to_memory)
+            .optional()
+            .map_err(|e| Error::db("Failed to get memory by ID in namespace", e))?;
 
         Ok(result)
     }
@@ -190,8 +217,8 @@ impl super::Store {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
         let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
         };
 
         let mut memories = Vec::new();
@@ -244,7 +271,7 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug
                  FROM memories WHERE namespace = ?1 AND content LIKE ?2 ESCAPE '!'
                  ORDER BY created_at DESC LIMIT ?3",
             )
@@ -265,8 +292,8 @@ impl super::Store {
     /// Load all memories for index rebuilding, optionally filtered by namespace.
     pub fn load_all(&self, namespace: Option<&str>) -> Result<Vec<Memory>, Error> {
         let sql = match namespace {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type FROM memories WHERE namespace = ?1 ORDER BY created_at",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type FROM memories ORDER BY created_at",
+            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 ORDER BY created_at",
+            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories ORDER BY created_at",
         };
 
         let mut memories = Vec::new();
@@ -490,6 +517,9 @@ mod content_type_tests {
             importance: 0.5,
             pinned: false,
             content_type: "json".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
         store.insert(&memory).unwrap();
 
@@ -519,6 +549,9 @@ mod content_type_tests {
             importance: 0.5,
             pinned: false,
             content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
         };
         store.insert(&memory).unwrap();
 
@@ -533,6 +566,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 7); // v7 = graph tables added
+        assert_eq!(version, 10); // v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
     }
 }

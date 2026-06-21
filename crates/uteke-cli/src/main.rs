@@ -78,7 +78,15 @@ fn main() {
     }
 
     // Fallback: open local store
-    tracing::debug!("No server detected, using local store");
+    // This branch is reached when:
+    //   1. No server detected (server_available == false)
+    //   2. Server detected but command not supported via HTTP (aging, doctor, etc.)
+    // Log appropriately to avoid contradictory messages (#403).
+    if server_available {
+        tracing::debug!("Opening local store for server-unsupported command");
+    } else {
+        tracing::debug!("No server detected, using local store");
+    }
 
     let store_path = cli
         .store
@@ -88,14 +96,28 @@ fn main() {
 
     tracing::debug!("Opening store at: {store_path}");
 
-    let uteke = match Uteke::open_with_tier_and_backend(
+    let mut uteke = match Uteke::open_with_embedding_and_graph(
         &store_path,
+        &config.embedding.backend,
+        uteke_core::EmbeddingSettings {
+            api_key: config.embedding.api_key.clone(),
+            base_url: config.embedding.base_url.clone(),
+            model: config.embedding.model.clone(),
+            dims: config.embedding.dims,
+        },
         uteke_core::TierConfig {
             hot_days: config.tier.hot_days as i64,
             warm_days: config.tier.warm_days as i64,
             hot_boost: config.tier.hot_boost,
         },
-        &config.embedding.backend,
+        uteke_core::RecallConfig {
+            min_score: config.recall.min_score as f32,
+        },
+        uteke_core::GraphRerankConfig {
+            density_weight: config.recall.graph_density_weight,
+            authority_weight: config.recall.graph_authority_weight,
+            enabled: config.recall.graph_rerank_enabled,
+        },
     ) {
         Ok(u) => u,
         Err(e) => {
@@ -110,7 +132,7 @@ fn main() {
     })
     .expect("Failed to set SIGINT handler");
 
-    let result = commands::run_command(&cli, &uteke, &config);
+    let result = commands::run_command(&cli, &mut uteke, &config);
 
     if let Err(e) = uteke.shutdown() {
         tracing::warn!("Shutdown flush failed: {e}");

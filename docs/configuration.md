@@ -14,7 +14,7 @@ Uteke searches for config in this order. Last match wins (highest priority):
 2. **`~/.uteke/uteke.toml`** — Global user-level config
 3. **`.uteke/uteke.toml`** — Project-level (in current working directory)
 
-Override the config file path with the `--config` flag.
+Config file path is auto-resolved (no `--config` flag). Layered merge: each file overlays the previous, with field-level granularity (only keys explicitly present override).
 
 ## Config File Format
 
@@ -28,12 +28,12 @@ path = "~/.uteke"
 # Default namespace (default: "default")
 namespace = "default"
 
-[log]
+[logging]
 # Log level: trace, debug, info, warn, error
 level = "info"
 
-# Log directory (default: ~/.uteke/logs)
-dir = "~/.uteke/logs"
+# Optional log file path. Empty = stderr only.
+# file = ""
 
 [server]
 # Enable CLI auto-routing to server
@@ -70,25 +70,59 @@ If the server is not running, CLI falls back to local store automatically.
 
 ## Embedding Backend
 
-Configure the embedding backend:
+Configure the embedding backend. Three backends are supported:
+
+- **`onnx`** (default) — fully offline, EmbeddingGemma Q4, 768d. Zero API keys, zero network.
+- **`openai`** — OpenAI `text-embedding-3-small` (1536d) or `text-embedding-3-large` (3072d). Requires API key.
+- **`ollama`** — local Ollama server with models like `nomic-embed-text` (768d) or `mxbai-embed-large` (1024d). No API key, runs on `http://localhost:11434`.
 
 ```toml
 [embedding]
-# Backend: "onnx" (default), future: "openai", "ollama"
-backend = "onnx"
-
-# Model name (for ONNX backend)
-model = "embeddinggemma-q4"
-
-# Maximum sequence length in tokens
+backend = "onnx"              # onnx | openai | ollama
+model = "embeddinggemma-q4"   # backend-specific
 max_seq_length = 256
+api_key = ""                  # OpenAI only (or use UTEKE_EMBEDDING_API_KEY)
+base_url = ""                 # custom endpoint (Azure OpenAI, Ollama URL, proxy)
+dims = 0                     # 0 = use model default (override only if you know)
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `backend` | onnx | Embedding backend |
-| `model` | embeddinggemma-q4 | Model identifier |
-| `max_seq_length` | 256 | Max tokens per input |
+| `backend` | `onnx` | `onnx`, `openai`, or `ollama` |
+| `model` | `embeddinggemma-q4` | Backend-specific model name |
+| `max_seq_length` | `256` | Max tokens per input |
+| `api_key` | `""` | OpenAI API key (ONNX/Ollama ignore) |
+| `base_url` | `""` | Custom endpoint. Empty = backend default |
+| `dims` | `0` | Force dims. 0 = backend/model default |
+
+### Backend-specific defaults
+
+When you set `backend = "openai"` or `"ollama"` and leave `model`/`base_url`/`dims` empty, uteke picks:
+
+| Backend | Model | Base URL | Dims |
+|---|---|---|---|
+| `onnx` | `embeddinggemma-q4` | (local) | 768 |
+| `openai` | `text-embedding-3-small` | `https://api.openai.com/v1` | 1536 |
+| `ollama` | `nomic-embed-text` | `http://localhost:11434` | 768 |
+
+### Azure OpenAI
+
+Set `backend = "openai"`, `base_url = "https://<your-resource>.openai.azure.com/openai/deployments/<deployment>?api-version=2024-10-21"` and `api_key` to your Azure key. The request path `/embeddings` is appended automatically. Azure requires the `api-version` query param — include it in `base_url`.
+
+### Dim mismatch detection
+
+If you open an existing store with a different backend (different dims), the first embedding operation returns a clear error instead of silently corrupting the index:
+
+```
+Embedding dimension mismatch: index has 768d vectors but backend 'openai' produces 1536d.
+Rebuild the index (`uteke repair`) or switch backend.
+```
+
+To migrate, run `uteke repair` after switching backends — it rebuilds the vector index from the SQLite source of truth using the new backend's embeddings. Because the dim-mismatch guard will block any embed-based operation on first contact, set `UTEKE_ALLOW_DIM_MISMATCH=1` once to let `uteke repair` open the store with the new backend:
+
+```bash
+UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair
+```
 
 ## Recall Threshold
 
@@ -97,14 +131,54 @@ Control minimum similarity score for recall results:
 ```toml
 [recall]
 # Minimum similarity score (0.0-1.0). Memories below this score are excluded.
-min_score = 0.0
+# Default: 0.3 (balanced). Use 0.0 to disable filtering.
+min_score = 0.3
+
+# Strict-mode threshold (used with `--strict` flag)
+min_score_strict = 0.5
+
+# Default recall strategy for `uteke recall` when --strategy is not given.
+# One of: vector | fts5 | hybrid | graph.
+#   vector — vector similarity only (original behavior, default)
+#   fts5   — full-text search only
+#   hybrid — vector + FTS5 fused via Reciprocal Rank Fusion
+#   graph  — hybrid + graph-signal reranking (#378): well-connected memories
+#            get a subtle log-scaled score boost
+default_strategy = "vector"
+
+# Graph-augmented reranking weights (only affect the `graph` strategy).
+# Boosts are additive + log-scaled, so 0.1 is subtle and saturates quickly.
+graph_density_weight = 0.1    # edge-count boost
+graph_authority_weight = 0.1  # incoming-edge (referenced-by) boost
+graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `min_score` | 0.0 | Minimum similarity score |
+| `min_score` | 0.3 | Minimum similarity score (0.0-1.0) |
+| `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`) |
+| `default_strategy` | `vector` | Default recall strategy (`vector\|fts5\|hybrid\|graph`) |
+| `graph_density_weight` | 0.1 | Edge-density boost weight (graph strategy only) |
+| `graph_authority_weight` | 0.1 | Incoming-edge authority boost weight (graph strategy only) |
+| `graph_rerank_enabled` | true | Master switch for graph reranking |
 
-Use `--strict` flag or `--min 0.7` to override per-query.
+### Salience + Recency Boost (#352)
+
+Dual-axis recall ranking boost. Applied **after** the RRF merge and recall cache lookup.
+
+- **Salience** — higher score for high-value memory types (decision > insight > fact > note). Per-type decay rates are hardcoded in `type_half_life_days()`.
+- **Recency** — exponential decay `exp(-age/τ)` where τ is a per-type time constant.
+
+Opt-in per query via `--salience` / `--recency` CLI flags. The `dream` cycle's `compact` phase can use these for smarter pruning.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `salience_weight` | 0.0 | Salience boost weight (0 = off, 0.15 recommended) |
+| `recency_weight` | 0.0 | Recency boost weight (0 = off, 0.15 recommended) |
+
+Default is off (0.0) to preserve backward-compatible ranking. Enable via CLI flags or API.
+
+Use `--strict` flag, `--min <score>`, or `--strategy <name>` to override per-query.
 
 ## Environment Variables
 
@@ -126,6 +200,15 @@ Resolution order (highest priority first):
 | `UTEKE_SERVER_PORT` | `[server] port` | `8767` | Server port |
 | `UTEKE_RECALL_MIN_SCORE` | `[recall] min_score` | `0.3` | Default similarity threshold |
 | `UTEKE_RECALL_MIN_SCORE_STRICT` | `[recall] min_score_strict` | `0.5` | Strict threshold |
+| `UTEKE_RECALL_STRATEGY` | `[recall] default_strategy` | `vector` | Default recall strategy (`vector\|fts5\|hybrid\|graph`) |
+| `UTEKE_GRAPH_DENSITY_WEIGHT` | `[recall] graph_density_weight` | `0.1` | Edge-density boost weight |
+| `UTEKE_GRAPH_AUTHORITY_WEIGHT` | `[recall] graph_authority_weight` | `0.1` | Incoming-edge authority boost weight |
+| `UTEKE_GRAPH_RERANK_ENABLED` | `[recall] graph_rerank_enabled` | `true` | Master switch for graph reranking |
+| `UTEKE_EMBEDDING_BACKEND` | `[embedding] backend` | `onnx` | Embedding backend: onnx, openai, ollama |
+| `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
+| `UTEKE_EMBEDDING_API_KEY` | `[embedding] api_key` | — | API key (OpenAI). Fallback: `OPENAI_API_KEY` |
+| `UTEKE_EMBEDDING_BASE_URL` | `[embedding] base_url` | backend-specific | Custom endpoint URL |
+| `UTEKE_EMBEDDING_DIMS` | `[embedding] dims` | `0` (auto) | Force embedding dimensionality |
 
 ### Docker Example
 
@@ -154,7 +237,7 @@ log_level = "info"
 path = "~/.uteke"
 namespace = "default"
 
-[log]
+[logging]
 level = "info"
 ```
 
@@ -181,7 +264,7 @@ Place a `.uteke/uteke.toml` in your project root to override defaults for that p
 path = "./.uteke"
 namespace = "my-project"
 
-[log]
+[logging]
 level = "warn"
 
 [server]
@@ -198,9 +281,6 @@ CLI flags always take precedence over config file values:
 ```bash
 # Override store path
 uteke --store /path/to/project/.uteke remember "project note"
-
-# Override config file
-uteke --config ./my-config.toml stats
 
 # Override namespace
 uteke --namespace agent-1 recall "context"

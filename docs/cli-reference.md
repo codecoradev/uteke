@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.1.0**.
+Complete reference for all uteke commands. Version **0.2.1**.
 
 ## Global Flags
 
@@ -12,9 +12,10 @@ Complete reference for all uteke commands. Version **0.1.0**.
 |------|-------------|---------|
 | `--store <path>` | Override store location | `~/.uteke` |
 | `--namespace <name>` | Namespace for multi-agent isolation | `default` |
-| `--config <path>` | Override config file path | auto-resolved |
 | `--json` | Output as JSON | off |
 | `--verbose` | Enable debug logging | off |
+
+Config file path is auto-resolved (`~/.uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
 
 ## uteke remember
 
@@ -34,8 +35,11 @@ uteke remember "Deploy staging to AWS us-east-1" \
 # With contradiction detection
 uteke remember "Server runs on port 8080" --tags config --detect-contradiction
 
-# With memory type and temporal bounds
-uteke remember "API rate limit is 1000/min" --type fact --valid-from 2026-01-01 --valid-until 2026-12-31
+# With memory type
+uteke remember "API rate limit is 1000/min" --type fact
+
+# With source attribution (#348)
+uteke remember "Deploy at 3pm Friday" --tags deploy --source "https://slack.com/msg/123" --source-type url
 
 # In a specific namespace
 uteke remember "User prefers dark mode" --tags pref --namespace my-agent
@@ -47,11 +51,12 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | `--entity <name>` | Associate memory with an entity (e.g. "staging-server") |
 | `--category <cat>` | Categorize the memory (e.g. "infrastructure") |
 | `--meta <pairs>` | Key:value pairs, comma-separated. Auto-detects type (string/number/bool) |
-| `--metadata <json>` | Arbitrary JSON metadata |
+| `--type <type>` | Memory type: fact, procedure, preference, decision, context, note, insight, reference, event |
+| `--source <url-or-path>` | Source attribution (URL, file path, or description) |
+| `--source-type <type>` | Source type: user, url, file, import, derived, system (default: user) |
 | `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
-| `--type <type>` | Memory type: fact, procedure, preference, decision, context |
-| `--valid-from <datetime>` | Start of validity period (ISO 8601) |
-| `--valid-until <datetime>` | End of validity period (ISO 8601) |
+| `--room <room_id>` | Link memory to a room (collaborative context) |
+| `--author <name>` | Author attribution when storing in a room |
 | `--json` | Output stored memory as JSON |
 
 ## uteke recall
@@ -71,6 +76,8 @@ uteke recall "config" --category infrastructure --limit 5
 | `--limit <n>` | Max results (default: 5) |
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
+| `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
+| `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`) |
 | `--json` | Output as JSON array |
 
 ## uteke search
@@ -86,7 +93,7 @@ uteke search "api" --namespace backend --json
 | Flag | Description |
 |------|-------------|
 | `--tags <tags>` | Filter by comma-separated tags |
-| `--limit <n>` | Max results (default: 20) |
+| `--limit <n>` | Max results (default: 10) |
 | `--json` | Output as JSON |
 
 ## uteke list
@@ -207,13 +214,42 @@ Semantic search with new flags:
 ```bash
 # Minimum similarity score filter
 uteke recall "database config" --min 0.7
-uteke recall "database config" --strict    # uses 0.7 default
+uteke recall "database config" --strict    # uses min_score_strict (default 0.5)
 
 # Time-travel: query memories at specific point in time
 uteke recall "deployment process" --at 2026-06-01T12:00:00Z
 
 # Relationship graph traversal
 uteke recall "auth" --related --depth 2
+
+# Recall strategy (vector | fts5 | hybrid | graph)
+uteke recall "auth" --strategy vector   # default — vector similarity only
+uteke recall "auth" --strategy fts5     # full-text search only
+uteke recall "auth" --strategy hybrid   # vector + FTS5 (RRF fusion)
+uteke recall "auth" --strategy graph    # hybrid + graph-signal reranking (#378)
+```
+
+### `--strategy graph` (Graph-augmented RAG)
+
+The `graph` strategy runs the hybrid (RRF) pipeline, then fuses graph
+signals from the `memory_edges` table into each result's score. A memory
+that is well-connected in the graph (referenced by many others, high edge
+density) drifts upward; isolated memories are untouched.
+
+The boost is **additive and log-scaled**, so it saturates quickly and never
+lets a single hub dominate. Configure the weights under `[recall]` in
+`uteke.toml` (see [Configuration](./configuration#recall)):
+
+```bash
+# Subtle boost (default): well-connected memories nudge up slightly
+uteke recall "architecture" --strategy graph
+
+# Stronger authority boost via env var
+UTEKE_GRAPH_AUTHORITY_WEIGHT=0.3 uteke recall "architecture" --strategy graph
+```
+
+Cold start (no edges yet): `graph` behaves identically to `hybrid` — the
+boost is zero when there are no signals.
 
 # AI-context formatted output
 uteke recall "api design" --context
@@ -222,11 +258,13 @@ uteke recall "api design" --context
 | Flag | Description |
 |------|-------------|
 | `--min <score>` | Minimum similarity score (0.0-1.0) |
-| `--strict` | Use strict threshold (0.7) |
+| `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |
+| `--salience` | Enable salience boost (higher score for decision/insight types) |
+| `--recency` | Enable recency boost (higher score for recently created memories) |
 
 ## uteke list (enhanced)
 
@@ -243,8 +281,9 @@ Room-based memory management:
 # Create a room
 uteke room create "project-kickoff" --title "Project Kickoff"
 
-# List rooms
+# List rooms (cross-namespace by default, #392)
 uteke room list
+uteke room list --namespace my-agent  # scoped
 
 # Add memory to room
 uteke room add "project-kickoff" <memory-id> --author cto
@@ -308,11 +347,190 @@ Memory aging management with auto-cleanup.
 uteke aging status
 
 # Preview memories older than 90 days
-uteke aging preview --days 90
+uteke aging preview --older-than-days 90
 
 # Delete memories older than 180 days
-uteke aging cleanup --days 180 --confirm
+uteke aging cleanup --older-than-days 180 --yes
 ```
+
+| Subcommand | Flags | Description |
+|------------|-------|-------------|
+| `status` | — | Show hot/warm/cold/never-accessed counts |
+| `preview` | `--older-than-days N` (default 180), `--max-access-count N` (default 1) | Dry-run preview of cleanup candidates |
+| `cleanup` | `--older-than-days N` (default 180), `--max-access-count N` (default 1), `--yes` | Delete aged memories (`--yes` skips confirmation) |
+
+## uteke graph
+
+Knowledge graph operations (v0.2.0). Nodes and edges stored in SQLite (`graph_nodes`, `graph_edges` tables, schema v7).
+
+```bash
+# List all nodes (optionally filter by entity type)
+uteke graph nodes
+uteke graph nodes --entity-type person
+
+# List all edges (optionally filter by relation)
+uteke graph edges --relation owns
+
+# Find neighbors of a node via BFS
+uteke graph neighbors alice --depth 2
+
+# Shortest path between two nodes
+uteke graph path alice "project-x" --max-depth 5
+
+# Query edges by relation type
+uteke graph query part_of
+
+# Show graph statistics
+uteke graph stats
+```
+
+| Subcommand | Flags | Description |
+|------------|-------|-------------|
+| `nodes` | `--entity-type <t>` | List graph nodes |
+| `edges` | `--relation <r>` | List graph edges |
+| `neighbors <label>` | `--depth N` (default 1) | BFS neighbors of a node |
+| `path <source> <target>` | `--max-depth N` (default 5) | BFS shortest path |
+| `query <relation>` | — | Query edges by relation type |
+| `stats` | — | Show graph statistics |
+
+## uteke edges
+
+List auto-wired edges for a memory (v0.2.1, #346). Edges are auto-extracted from content on every `remember()` call using pure pattern matching — no LLM.
+
+### Supported patterns
+
+| Pattern | Edge type | Resolved via |
+|---------|-----------|--------------|
+| `[[slug]]` | `references` | `memories.slug` lookup |
+| `@tag` | `tagged_as` | most recent memory with that tag |
+| `^<uuid>` | `supersedes` | direct memory UUID |
+| `><uuid>` | `replies_to` | direct memory UUID |
+| `rel:<type>:<uuid>` in `--meta` | `<type>` | direct memory UUID (legacy compat) |
+
+### Usage
+
+```bash
+# List direct edges (both directions)
+uteke edges <memory-id>
+
+# Multi-hop BFS across the edge table
+uteke edges <memory-id> --deep 2
+
+# Only show incoming edges (backlinks)
+uteke edges <memory-id> --direction incoming
+
+# JSON output
+uteke edges <memory-id> --json
+```
+
+With `--deep N`, returns memory ids reachable within N hops (cycles detected, start excluded).
+
+`--direction` accepts `incoming`, `outgoing`, or `both` (default `both`).
+
+## uteke rebuild-backlinks
+
+Rebuild `referenced_by` backlinks from existing forward edges (v0.2.1, #350).
+
+Every forward edge (`references`, `tagged_as`, `supersedes`, `replies_to`)
+automatically gets an inverse `referenced_by` edge on `remember()`. This
+command repairs stores that pre-date #350, or were written to via the
+low-level edge API. Idempotent.
+
+```bash
+# Rebuild and print a summary
+uteke rebuild-backlinks
+
+# Print only the count of new backlinks (script-friendly)
+uteke rebuild-backlinks --quiet
+
+# JSON output
+uteke rebuild-backlinks --json
+```
+
+## uteke dream
+
+Run the full maintenance pipeline in one command (v0.2.1, #353).
+
+Executes phases in dependency order: lint → backlinks → dedup → orphans → compact → verify.
+Each phase records its status. Errors in individual phases are recorded but do not abort the pipeline.
+
+```bash
+# Run all phases
+uteke dream
+
+# Run specific phases only
+uteke dream --phases lint,orphans
+
+# Dry-run (preview what would change)
+uteke dream --dry-run
+
+# Scoped to a namespace
+uteke dream --namespace my-agent
+```
+
+| Flag | Description |
+|------|-------------|
+| `--phases <list>` | Comma-separated subset: lint, backlinks, dedup, orphans, compact, verify |
+| `--dry-run` | Preview without making changes |
+| `--namespace <ns>` | Run scoped to a specific namespace (backlinks and verify are global) |
+| `--json` | JSON output |
+
+### Phases
+
+| Phase | Description |
+|-------|-------------|
+| `lint` | Check for invalid memory types, missing slugs, stale deprecated flags |
+| `backlinks` | Rebuild `referenced_by` edges (same as `rebuild-backlinks`) |
+| `dedup` | Find and merge near-duplicate memories (cosine ≥ 0.90) |
+| `orphans` | Find disconnected, low-importance memories |
+| `compact` | Apply auto-prune to cold-tier and deprecated memories |
+| `verify` | Verify DB and index consistency |
+
+## uteke orphans
+
+Find orphan memories — disconnected nodes with low importance and few accesses (v0.2.1, #351).
+
+```bash
+# Find orphans with default thresholds
+uteke orphans
+
+# Custom thresholds
+uteke orphans --min-age-days 14 --max-access-count 3
+
+# JSON output for scripting
+uteke orphans --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--min-age-days <n>` | Minimum age in days (default: 7) |
+| `--max-access-count <n>` | Maximum access count (default: 2) |
+| `--limit <n>` | Max results (default: 50) |
+| `--namespace <ns>` | Scope to namespace |
+| `--json` | JSON output |
+
+## uteke timeline
+
+View chronological event log for a memory (v0.2.1, #347).
+
+Every memory has an audit trail: creation, updates, type changes, supersession,
+edge additions, and pin/unpin events.
+
+```bash
+# Show timeline for a memory
+uteke timeline <memory-id>
+
+# Limit to last N events
+uteke timeline <memory-id> --limit 10
+
+# JSON output
+uteke timeline <memory-id> --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--limit <n>` | Max events (default: 50) |
+| `--json` | JSON output |
 
 ## Other Commands
 
@@ -327,14 +545,16 @@ uteke aging cleanup --days 180 --confirm
 | `uteke prune` | Remove deprecated/expired memories |
 | `uteke stats` | Show store statistics with tier breakdown |
 | `uteke export` | Export memories to JSONL (no embeddings) |
-| `uteke import <file>` | Import memories from JSONL |
+| `uteke import <file>` | Import memories from JSONL/Markdown/text |
 | `uteke doctor` | Health check (DB, index, model, consistency) |
 | `uteke verify` | Verify DB and index consistency |
+| `uteke verify-checksums --binary <path>` | Verify binary integrity against SHA256 checksums |
 | `uteke repair` | Rebuild index from SQLite |
 | `uteke namespace list` | List all namespaces with memory counts |
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
-| `uteke hook install <shell>` | Install shell hook (bash/zsh/fish) |
+| `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
+| `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, copilot, codex) |
 | `uteke completions <shell>` | Generate shell completions |
 
 ## uteke-serve (Server Mode)
@@ -353,3 +573,43 @@ RUST_LOG=info uteke-serve --port 8767
 ```
 
 When `[server] enabled = true` is set in config, the CLI auto-routes commands through the server. Falls back to local store if server is not running.
+
+### HTTP Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| POST | `/remember` | Store a memory |
+| POST | `/recall` | Semantic search |
+| POST | `/search` | Keyword search |
+| POST | `/list` | List memories |
+| DELETE | `/forget` | Delete memory |
+| GET | `/stats` | Store statistics (supports `?namespace=`) |
+| POST | `/stats` | Store statistics (body params) |
+| GET | `/namespaces` | List all namespaces |
+| GET | `/memory?id=` | Get single memory |
+| POST | `/room/create` | Create a room |
+| GET | `/room/list` | List rooms (supports `?namespace=`) |
+| POST | `/room/recall` | Recall from a room |
+| POST | `/room/summary` | Room summary |
+| POST | `/room/document` | Generate document from room |
+| POST | `/room/stats` | Room statistics |
+| DELETE | `/room/delete` | Delete a room |
+| POST | `/mcp` | MCP JSON-RPC endpoint (#381) |
+
+### MCP Server
+
+Two MCP transport modes are available (v0.2.1, #381):
+
+```bash
+# stdio transport (for Claude Desktop, Cursor, etc.)
+uteke-mcp
+
+# HTTP transport (POST /mcp on uteke-serve)
+curl -X POST http://127.0.0.1:8767/mcp \
+  -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2025-06-18" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{},"id":1}'
+```
+
+Protocol version: `2025-06-18` (Streamable HTTP spec).

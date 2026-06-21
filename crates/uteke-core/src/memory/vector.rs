@@ -233,6 +233,14 @@ impl VectorIndex {
         self.index.size()
     }
 
+    /// Embedding dimensionality of this index.
+    ///
+    /// Used by backend dispatch to detect dim mismatch when the user swaps
+    /// embedding backends on an existing store (#337).
+    pub fn dims(&self) -> usize {
+        self.index.dimensions()
+    }
+
     /// Check if the index is empty.
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
