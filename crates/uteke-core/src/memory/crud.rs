@@ -347,6 +347,21 @@ impl super::Store {
         Ok(count)
     }
 
+    /// Get all memory IDs in a namespace (#401).
+    /// Used for namespace-scoped cosine auto-linking.
+    pub fn memories_in_namespace(&self, namespace: &str) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM memories WHERE namespace = ?1")
+            .map_err(|e| Error::db("prepare memories_in_namespace", e))?;
+        let ids: Vec<String> = stmt
+            .query_map(params![namespace], |row| row.get(0))
+            .map_err(|e| Error::db("query memories_in_namespace", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(ids)
+    }
+
     /// List memories that existed at a specific point in time.
     ///
     /// A memory existed at `point_in_time` if:

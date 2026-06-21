@@ -226,6 +226,11 @@ impl crate::Uteke {
             );
         }
 
+        // Cosine-similarity auto-linking (#401).
+        // Must run AFTER index.insert() so the new memory is searchable.
+        // Best-effort: errors logged, never fails remember().
+        self.auto_link_cosine(&id, embedding, Some(memory.namespace.as_str()));
+
         Ok(id)
     }
 
