@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.2.1-green.svg" alt="v0.2.1" />
+  <img src="https://img.shields.io/badge/status-v0.3.1-green.svg" alt="v0.3.1" />
 </p>
 
 <p align="center">
@@ -96,6 +96,11 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 🔍 **Orphan Detection** — Find disconnected, low-importance memories for cleanup
 - 📎 **Citations** — Source attribution on every memory (URL, file, user, import)
 - 🔌 **MCP Server** — JSON-RPC over stdio + Streamable HTTP transport
+- 📝 **Document Engine** — Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking
+- 🤖 **Cosine Auto-Linking** — Automatically creates `similar_to` edges between related memories
+- 🌐 **Graph API** — `GET /graph` endpoint returns nodes + edges JSON for visualization
+- 🔑 **View-Only API Keys** — Read-only tokens for safe GET-only access to the server
+- 📄 **Markdown Chunker** — Splits documents by headings, respects code blocks and token limits
 
 📖 [Full documentation](docs/getting-started.md) · [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md)
 
@@ -105,7 +110,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (283 unit tests)
+cargo test --workspace         # Test (295 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
