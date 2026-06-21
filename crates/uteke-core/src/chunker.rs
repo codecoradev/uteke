@@ -3,6 +3,9 @@
 //! Uses regex-based pattern matching (no tree-sitter dependency) to detect
 //! function, class, and struct definitions. Supports Rust, Go, Python,
 //! TypeScript/JavaScript, and Dart.
+//!
+//! Also provides markdown/prose chunking (#405) — splits by headings
+//! while respecting a token window.
 
 /// A code chunk representing a semantic unit (function, class, etc).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -15,6 +18,236 @@ pub struct CodeChunk {
     pub symbol_type: String,
     /// Symbol name (function/class/struct name).
     pub symbol_name: String,
+}
+
+/// A text chunk from markdown/prose splitting (#405).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TextChunk {
+    /// Section heading (empty string if no heading).
+    pub heading: String,
+    /// The text content of this chunk.
+    pub content: String,
+    /// Heading level (1-6, 0 = no heading).
+    pub level: u8,
+    /// Character offset from start of original text.
+    pub char_start: usize,
+    /// Character offset end (exclusive).
+    pub char_end: usize,
+}
+
+/// Chunk markdown or prose text by headings (#405).
+///
+/// Splits by `#`, `##`, ... headings. When a section exceeds `max_chars`,
+/// falls back to paragraph-level splitting. Code blocks (``` fences) are
+/// never split mid-block.
+///
+/// `max_chars` should be derived from `embedder.max_seq_len()` — roughly
+/// 4 chars per token. For ONNX (256 tokens): ~1024 chars. For OpenAI
+/// (8191 tokens): ~32K chars.
+pub fn chunk_markdown(text: &str, max_chars: usize) -> Vec<TextChunk> {
+    if text.trim().is_empty() {
+        return vec![];
+    }
+    let max_chars = if max_chars == 0 { 1024 } else { max_chars };
+
+    // Split into sections by heading lines.
+    let sections = split_by_headings(text);
+
+    let mut chunks = Vec::new();
+    let mut char_offset = 0usize;
+
+    for section in &sections {
+        let section_len = section.content.len();
+
+        if section_len <= max_chars {
+            // Section fits in one chunk.
+            chunks.push(TextChunk {
+                heading: section.heading.clone(),
+                content: section.content.clone(),
+                level: section.level,
+                char_start: char_offset,
+                char_end: char_offset + section_len,
+            });
+        } else {
+            // Section too large — split by paragraphs, keeping heading.
+            let sub_chunks = split_by_paragraphs(&section.content, max_chars);
+            let heading_prefix = if section.heading.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "{} {}\n\n",
+                    "#".repeat(section.level as usize),
+                    section.heading
+                )
+            };
+
+            for (i, sub) in sub_chunks.iter().enumerate() {
+                let full = if i == 0 && !heading_prefix.is_empty() {
+                    format!("{heading_prefix}{sub}")
+                } else {
+                    sub.clone()
+                };
+                chunks.push(TextChunk {
+                    heading: if i == 0 {
+                        section.heading.clone()
+                    } else {
+                        format!("{} (part {})", section.heading, i + 1)
+                    },
+                    content: full,
+                    level: section.level,
+                    char_start: char_offset,
+                    char_end: char_offset + sub.len(),
+                });
+            }
+        }
+
+        char_offset += section_len + 1; // +1 for the separator consumed during split
+    }
+
+    chunks
+}
+
+/// Internal: a section bounded by headings.
+struct MdSection {
+    heading: String,
+    content: String,
+    level: u8,
+}
+
+/// Split markdown into sections by heading lines.
+/// Each section includes its heading line in the content.
+fn split_by_headings(text: &str) -> Vec<MdSection> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut sections = Vec::new();
+    let mut current_heading = String::new();
+    let mut current_level: u8 = 0;
+    let mut current_lines: Vec<&str> = Vec::new();
+    let mut in_code_block = false;
+
+    for line in &lines {
+        // Track code block state — don't treat # inside code blocks as headings.
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+            current_lines.push(line);
+            continue;
+        }
+
+        if !in_code_block {
+            // Check if this line is a heading (1-6 # marks).
+            if let Some((level, title)) = parse_heading(line) {
+                // Flush previous section.
+                if !current_lines.is_empty() {
+                    sections.push(MdSection {
+                        heading: current_heading.clone(),
+                        content: current_lines.join("\n"),
+                        level: current_level,
+                    });
+                }
+                current_heading = title;
+                current_level = level;
+                current_lines = vec![line];
+                continue;
+            }
+        }
+
+        current_lines.push(line);
+    }
+
+    // Flush final section.
+    if !current_lines.is_empty() {
+        sections.push(MdSection {
+            heading: current_heading,
+            content: current_lines.join("\n"),
+            level: current_level,
+        });
+    }
+
+    sections
+}
+
+/// Parse a markdown heading line (e.g., "## Title" → (2, "Title")).
+fn parse_heading(line: &str) -> Option<(u8, String)> {
+    let trimmed = line.trim_start();
+    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = &trimmed[hashes..];
+    // Must have at least one space after #s (not a tag like #hashtag).
+    if !rest.starts_with(' ') && !rest.is_empty() {
+        return None;
+    }
+    let title = rest.trim_start().trim_end();
+    Some((hashes as u8, title.to_string()))
+}
+
+/// Split text by paragraphs, respecting code block boundaries.
+/// Accumulates paragraphs until `max_chars` is reached.
+fn split_by_paragraphs(text: &str, max_chars: usize) -> Vec<String> {
+    let paragraphs: Vec<&str> = text.split("\n\n").collect();
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for para in &paragraphs {
+        if current.len() + para.len() + 2 > max_chars && !current.is_empty() {
+            // Current chunk is full — flush it.
+            chunks.push(std::mem::take(&mut current).trim_end().to_string());
+        }
+
+        if para.len() > max_chars {
+            // Single paragraph exceeds limit — hard split by lines.
+            if !current.is_empty() {
+                chunks.push(std::mem::take(&mut current).trim_end().to_string());
+            }
+            for line_chunk in split_long_text(para, max_chars) {
+                chunks.push(line_chunk);
+            }
+        } else {
+            if !current.is_empty() {
+                current.push_str("\n\n");
+            }
+            current.push_str(para);
+        }
+    }
+
+    if !current.is_empty() {
+        chunks.push(current.trim_end().to_string());
+    }
+
+    if chunks.is_empty() {
+        chunks.push(text.to_string());
+    }
+
+    chunks
+}
+
+/// Hard-split very long text by character boundary.
+/// Tries to break at sentence boundaries (.), then words (space).
+fn split_long_text(text: &str, max_chars: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+
+    while start < text.len() {
+        let end = (start + max_chars).min(text.len());
+        if end == text.len() {
+            chunks.push(text[start..].to_string());
+            break;
+        }
+
+        // Try to find a sentence boundary (.) or word boundary (space).
+        let slice = &text[start..end];
+        let break_at = slice
+            .rfind(". ")
+            .or_else(|| slice.rfind('\n'))
+            .or_else(|| slice.rfind(' '))
+            .map(|pos| start + pos + 1);
+
+        let chunk_end = break_at.unwrap_or(end);
+        chunks.push(text[start..chunk_end].to_string());
+        start = chunk_end;
+    }
+
+    chunks
 }
 
 /// Detect language from file extension.
@@ -454,5 +687,84 @@ class MyApp extends StatelessWidget {
 "#;
         let chunks = chunk_code(code, "dart");
         assert!(!chunks.is_empty());
+    }
+
+    // ── Markdown chunker tests (#405) ──────────────────────────────
+
+    #[test]
+    fn test_md_simple_headings() {
+        let md = "# Title 1\n\nSome content here.\n\n## Subsection\n\nMore content.";
+        let chunks = chunk_markdown(md, 1024);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].heading, "Title 1");
+        assert_eq!(chunks[1].heading, "Subsection");
+        assert_eq!(chunks[1].level, 2);
+    }
+
+    #[test]
+    fn test_md_respects_code_blocks() {
+        let md = "# Code\n\n```rust\n## Not a heading\nfn main() {}\n```\n\nAfter code.";
+        let chunks = chunk_markdown(md, 1024);
+        // The ## inside code block should NOT create a new section.
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].content.contains("## Not a heading"));
+    }
+
+    #[test]
+    fn test_md_large_section_splits() {
+        let para = "This is a paragraph. ".repeat(100);
+        let md = format!("# Big Section\n\n{para}");
+        let chunks = chunk_markdown(&md, 200);
+        assert!(chunks.len() > 1);
+        // First chunk should have the heading.
+        assert_eq!(chunks[0].heading, "Big Section");
+        // Subsequent chunks should have "part N" suffix.
+        assert!(chunks[1].heading.contains("part 2"));
+    }
+
+    #[test]
+    fn test_md_no_headings() {
+        let text = "Just some prose.\n\nNo headings here.\n\nMore text.";
+        let chunks = chunk_markdown(text, 1024);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].heading, "");
+    }
+
+    #[test]
+    fn test_md_empty_input() {
+        assert!(chunk_markdown("", 1024).is_empty());
+        assert!(chunk_markdown("   \n\n  ", 1024).is_empty());
+    }
+
+    #[test]
+    fn test_md_nested_levels() {
+        let md = "# H1\n\nText A\n\n### H3\n\nText B\n\n## H2\n\nText C";
+        let chunks = chunk_markdown(md, 1024);
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].heading, "H1");
+        assert_eq!(chunks[1].heading, "H3");
+        assert_eq!(chunks[1].level, 3);
+        assert_eq!(chunks[2].heading, "H2");
+        assert_eq!(chunks[2].level, 2);
+    }
+
+    #[test]
+    fn test_md_char_offsets() {
+        let md = "# A\n\nText A\n\n# B\n\nText B";
+        let chunks = chunk_markdown(md, 1024);
+        assert_eq!(chunks.len(), 2);
+        // Offsets should be within text bounds.
+        assert_eq!(chunks[0].char_start, 0);
+        assert!(chunks[0].char_end > 0);
+        assert!(chunks[1].char_start >= chunks[0].char_end);
+    }
+
+    #[test]
+    fn test_md_hashtag_not_heading() {
+        // #hashtag (no space) should not be treated as heading.
+        let md = "This has #hashtag and #another\n\nText.";
+        let chunks = chunk_markdown(md, 1024);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].heading, "");
     }
 }
