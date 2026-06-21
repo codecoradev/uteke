@@ -813,7 +813,10 @@ class MyApp extends StatelessWidget {
         let long_text = "A".repeat(2000);
         let chunks = chunk_markdown_embed_aware(&long_text, &embedder);
         // Should split into chunks of ~1024 chars.
-        assert!(chunks.len() > 1, "expected multiple chunks for 2000 chars with 1024 limit");
+        assert!(
+            chunks.len() > 1,
+            "expected multiple chunks for 2000 chars with 1024 limit"
+        );
         assert!(chunks[0].content.len() <= 1024);
     }
 }
