@@ -357,6 +357,55 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         limit: usize,
     },
+    /// Document operations — wiki/knowledge base (#406, #411)
+    Doc {
+        #[command(subcommand)]
+        command: DocCommands,
+    },
+}
+
+/// Document subcommands (#411).
+#[derive(Subcommand)]
+pub enum DocCommands {
+    /// Create or update a document from a file or stdin
+    Create {
+        /// Document slug (URL-friendly identifier)
+        slug: String,
+        /// Document title
+        #[arg(long)]
+        title: Option<String>,
+        /// Read content from file (use - for stdin)
+        #[arg(long)]
+        file: Option<String>,
+        /// Inline content (alternative to --file)
+        #[arg(long)]
+        content: Option<String>,
+        /// Tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+    },
+    /// Get a document by slug or ID
+    Get {
+        /// Document slug or ID
+        id_or_slug: String,
+    },
+    /// List documents
+    List {
+        /// Maximum results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Delete a document by ID
+    Delete {
+        /// Document ID
+        id: String,
+    },
+    /// Export all documents as JSON
+    Export {
+        /// Output file (default: stdout)
+        #[arg(long)]
+        output: Option<String>,
+    },
 }
 
 /// Subcommands for knowledge graph operations.
