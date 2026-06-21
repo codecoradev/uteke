@@ -35,6 +35,25 @@ pub struct TextChunk {
     pub char_end: usize,
 }
 
+/// Chunk markdown using embedder's max_seq_len (#407).
+///
+/// Derives max_chars from the embedder's token limit using the
+/// heuristic: ~4 chars per token. This ensures chunks fit within
+/// the embedding model's sequence window.
+///
+/// For ONNX (256 tokens): max_chars = 256 * 4 = 1024
+/// For OpenAI (8191 tokens): max_chars = 8191 * 4 = 32764
+pub fn chunk_markdown_embed_aware<E: crate::embed::Embedder>(
+    text: &str,
+    embedder: &E,
+) -> Vec<TextChunk> {
+    const CHARS_PER_TOKEN: usize = 4;
+    let max_chars = embedder.max_seq_len().saturating_mul(CHARS_PER_TOKEN);
+    // Guard against zero or implausibly small seq_len.
+    let max_chars = if max_chars < 100 { 1024 } else { max_chars };
+    chunk_markdown(text, max_chars)
+}
+
 /// Chunk markdown or prose text by headings (#405).
 ///
 /// Splits by `#`, `##`, ... headings. When a section exceeds `max_chars`,
@@ -766,5 +785,35 @@ class MyApp extends StatelessWidget {
         let chunks = chunk_markdown(md, 1024);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].heading, "");
+    }
+
+    #[test]
+    fn test_embed_aware_chunking() {
+        // Mock embedder with small seq len for testing.
+        struct MockEmbedder {
+            seq_len: usize,
+        }
+        impl crate::embed::Embedder for MockEmbedder {
+            fn embed(&self, _text: &str) -> Result<Vec<f32>, crate::Error> {
+                Ok(vec![0.0; 8])
+            }
+            fn dims(&self) -> usize {
+                8
+            }
+            fn max_seq_len(&self) -> usize {
+                self.seq_len
+            }
+            fn name(&self) -> &str {
+                "mock"
+            }
+        }
+
+        // 256 tokens * 4 chars/token = 1024 chars.
+        let embedder = MockEmbedder { seq_len: 256 };
+        let long_text = "A".repeat(2000);
+        let chunks = chunk_markdown_embed_aware(&long_text, &embedder);
+        // Should split into chunks of ~1024 chars.
+        assert!(chunks.len() > 1, "expected multiple chunks for 2000 chars with 1024 limit");
+        assert!(chunks[0].content.len() <= 1024);
     }
 }
