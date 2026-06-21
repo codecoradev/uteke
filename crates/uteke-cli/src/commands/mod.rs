@@ -2,6 +2,7 @@
 
 mod aging;
 pub(crate) mod bench;
+mod doc;
 mod dream;
 mod edges;
 mod forget;
@@ -264,5 +265,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         Commands::Orphans { threshold, limit } => orphans::run(cli, uteke, ns, *threshold, *limit),
 
         Commands::Timeline { id, limit } => timeline::run(cli, uteke, id, *limit),
+
+        Commands::Doc { command } => crate::commands::doc::run(cli, uteke, command, config),
     }
 }
