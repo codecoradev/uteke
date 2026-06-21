@@ -146,7 +146,7 @@ pub struct StoreStats {
     pub total_memories: usize,
     /// Number of unique tags.
     pub unique_tags: usize,
-    /// Database file size in bytes.
+    /// Database file size in bytes (global, shared across all namespaces).
     pub db_size_bytes: u64,
     /// Number of hot memories (accessed within 7 days).
     pub hot: usize,

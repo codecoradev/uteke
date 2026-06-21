@@ -78,7 +78,15 @@ fn main() {
     }
 
     // Fallback: open local store
-    tracing::debug!("No server detected, using local store");
+    // This branch is reached when:
+    //   1. No server detected (server_available == false)
+    //   2. Server detected but command not supported via HTTP (aging, doctor, etc.)
+    // Log appropriately to avoid contradictory messages (#403).
+    if server_available {
+        tracing::debug!("Opening local store for server-unsupported command");
+    } else {
+        tracing::debug!("No server detected, using local store");
+    }
 
     let store_path = cli
         .store
