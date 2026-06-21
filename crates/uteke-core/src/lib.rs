@@ -28,7 +28,9 @@ pub mod salience_recency;
 mod timeline;
 mod types;
 
-pub use chunker::{chunk_code, detect_language, extract_imports, CodeChunk};
+pub use chunker::{
+    chunk_code, chunk_markdown, detect_language, extract_imports, CodeChunk, TextChunk,
+};
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
     backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REPLIES_TO,
