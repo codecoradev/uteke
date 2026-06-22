@@ -411,15 +411,16 @@ impl super::Store {
         };
         let path_prefix = format!("{}/", doc.path);
 
-        let rows = if let Some(max) = max_depth {
+        if let Some(max) = max_depth {
             let mut stmt = self.conn.prepare(
                 "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE path LIKE ?1 AND depth <= ?2 \
                  ORDER BY path, sort_order LIMIT ?3",
             ).map_err(|e| Error::db("prepare list descendants", e))?;
-            stmt.query_map(params![path_prefix, max, limit], row_to_summary)
-                .map_err(|e| Error::db("list descendants query", e))?
+            let rows = stmt.query_map(params![path_prefix, max, limit], row_to_summary)
+                .map_err(|e| Error::db("list descendants query", e))?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
         } else {
             let mut stmt = self.conn.prepare(
                 "SELECT id, slug, title, namespace, version, updated_at, \
@@ -427,11 +428,10 @@ impl super::Store {
                  FROM documents WHERE path LIKE ?1 \
                  ORDER BY path, sort_order LIMIT ?2",
             ).map_err(|e| Error::db("prepare list descendants", e))?;
-            stmt.query_map(params![path_prefix, limit], row_to_summary)
-                .map_err(|e| Error::db("list descendants query", e))?
-        };
-
-        Ok(rows.filter_map(|r| r.ok()).collect())
+            let rows = stmt.query_map(params![path_prefix, limit], row_to_summary)
+                .map_err(|e| Error::db("list descendants query", e))?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        }
     }
 
     /// Get breadcrumbs from root to a document.
