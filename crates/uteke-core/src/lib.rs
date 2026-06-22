@@ -756,7 +756,7 @@ impl Uteke {
             None => (uuid::Uuid::new_v4().to_string(), 1),
         };
 
-        let path = if let Some(ref pid) = parent_id {
+        let path = if let Some(ref _pid) = parent_id {
             format!("{}{}/", parent_path, id)
         } else {
             format!("/{}/", id)
@@ -784,7 +784,9 @@ impl Uteke {
         let doc_id = self.store.upsert_document(&doc)?;
 
         // Delete old chunks on update (re-chunking).
-        let old_chunk_ids = self.store.delete_chunks_for_documents(&[doc_id.clone()])?;
+        let old_chunk_ids = self
+            .store
+            .delete_chunks_for_documents(std::slice::from_ref(&doc_id))?;
 
         // Chunk and embed the content.
         self.ensure_embedder()?;
@@ -839,10 +841,7 @@ impl Uteke {
         }
 
         if let Err(e) = index.save() {
-            tracing::warn!(
-                "Failed to persist vector index after doc chunking: {}",
-                e
-            );
+            tracing::warn!("Failed to persist vector index after doc chunking: {}", e);
         }
 
         tracing::info!(
@@ -1031,7 +1030,7 @@ impl Uteke {
     fn doc_search_semantic(
         &self,
         query: &str,
-        ns: &str,
+        _ns: &str,
         limit: usize,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
@@ -1066,16 +1065,21 @@ impl Uteke {
         }
 
         // Extract chunk IDs (strip "chunk:" prefix).
-        let chunk_ids: Vec<String> = chunk_hits.iter().map(|(id, _)| id[6..].to_string()).collect();
+        let chunk_ids: Vec<String> = chunk_hits
+            .iter()
+            .map(|(id, _)| id[6..].to_string())
+            .collect();
 
         // Get chunk data from SQLite.
         let chunks = self.store.get_chunks_by_ids(&chunk_ids)?;
 
         // Build results: group by document, take best score per doc.
-        let mut doc_scores: std::collections::HashMap<String, (DocumentSummary, String, String, f32)> =
-            std::collections::HashMap::new();
+        let mut doc_scores: std::collections::HashMap<
+            String,
+            (DocumentSummary, String, String, f32),
+        > = std::collections::HashMap::new();
 
-        for ((chunk_key, distance), (chunk_id, doc_id, heading, content)) in
+        for ((_chunk_key, distance), (_chunk_id, doc_id, heading, content)) in
             chunk_hits.iter().zip(chunks.iter())
         {
             let score = crate::memory::vector::cosine_distance_to_similarity(*distance);
@@ -1111,20 +1115,26 @@ impl Uteke {
 
         let mut results: Vec<DocumentSearchResult> = doc_scores
             .into_values()
-            .map(|(document, chunk_heading, chunk_snippet, score)| DocumentSearchResult {
-                document,
-                chunk_heading,
-                chunk_snippet: if chunk_snippet.len() > 200 {
-                    format!("{}...", &chunk_snippet[..200])
-                } else {
-                    chunk_snippet
+            .map(
+                |(document, chunk_heading, chunk_snippet, score)| DocumentSearchResult {
+                    document,
+                    chunk_heading,
+                    chunk_snippet: if chunk_snippet.len() > 200 {
+                        format!("{}...", &chunk_snippet[..200])
+                    } else {
+                        chunk_snippet
+                    },
+                    score,
+                    mode: "semantic".to_string(),
                 },
-                score,
-                mode: "semantic".to_string(),
-            })
+            )
             .collect();
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
 
         Ok(results)
@@ -1164,8 +1174,12 @@ impl Uteke {
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
-        let semantic_results = self.doc_search_semantic(query, ns, limit * 2).unwrap_or_default();
-        let fts_results = self.doc_search_fts(query, ns, limit * 2).unwrap_or_default();
+        let semantic_results = self
+            .doc_search_semantic(query, ns, limit * 2)
+            .unwrap_or_default();
+        let fts_results = self
+            .doc_search_fts(query, ns, limit * 2)
+            .unwrap_or_default();
 
         // Reciprocal Rank Fusion (RRF): score = sum(1 / (k + rank))
         let rrf_k: f32 = 60.0;
@@ -1208,7 +1222,11 @@ impl Uteke {
         }
 
         let mut results: Vec<DocumentSearchResult> = fused.into_values().collect();
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
 
         Ok(results)
