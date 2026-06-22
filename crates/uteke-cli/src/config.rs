@@ -129,9 +129,14 @@ impl Default for LoggingConfig {
 pub struct AgingConfig {
     /// Enable automatic aging of old memories.
     pub enabled: bool,
-    /// Maximum age in days before pruning.
+    /// Maximum age in days before pruning (default: 365).
     pub max_age_days: u32,
-    /// Maximum number of cold memories to keep.
+    /// Maximum access count for a memory to be considered "cold" (default: 10).
+    /// Only memories accessed fewer than this many times AND older than
+    /// max_age_days are candidates for cleanup.
+    pub max_access_count: u32,
+    /// Maximum number of cold memories to keep before triggering cleanup
+    /// (default: 1000).
     pub max_cold_count: usize,
 }
 
@@ -139,8 +144,9 @@ impl Default for AgingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            max_age_days: 180,
-            max_cold_count: 10000,
+            max_age_days: 365,
+            max_access_count: 10,
+            max_cold_count: 1000,
         }
     }
 }
@@ -215,6 +221,32 @@ impl Default for ServerConfig {
     }
 }
 
+/// Maintenance daemon configuration (#442).
+/// Controls auto-aging and auto-dream background tasks in the server.
+#[derive(serde::Deserialize, Clone)]
+#[serde(default)]
+pub struct MaintenanceConfig {
+    /// Enable auto-aging: periodically clean up cold, stale memories.
+    pub auto_aging_enabled: bool,
+    /// Auto-aging interval in hours (default: 6).
+    pub auto_aging_interval_hours: u64,
+    /// Enable auto-dream: periodically run dream cycle (lint → dedup → orphans).
+    pub auto_dream_enabled: bool,
+    /// Auto-dream interval in days (default: 3).
+    pub auto_dream_interval_days: u64,
+}
+
+impl Default for MaintenanceConfig {
+    fn default() -> Self {
+        Self {
+            auto_aging_enabled: true,
+            auto_aging_interval_hours: 6,
+            auto_dream_enabled: true,
+            auto_dream_interval_days: 3,
+        }
+    }
+}
+
 /// Full uteke configuration, loaded from `uteke.toml`.
 #[derive(serde::Deserialize, Default, Clone)]
 #[serde(default)]
@@ -227,6 +259,7 @@ pub struct Config {
     pub recall: RecallConfig,
     pub server: ServerConfig,
     pub limits: LimitsConfig,
+    pub maintenance: MaintenanceConfig,
 }
 
 /// Configurable limits (#404).
@@ -605,9 +638,17 @@ impl Config {
 # file = ""
 
 [aging]
+# Aging controls which old, rarely-accessed memories get cleaned up.
+# A memory is a cleanup candidate ONLY if ALL conditions are met:
+#   - older than max_age_days
+#   - access_count < max_access_count
+#   - not pinned
+#   - not deprecated
+#   - not accessed since max_age_days ago
 # enabled = false
-# max_age_days = 180
-# max_cold_count = 10000
+# max_age_days = 365
+# max_access_count = 10
+# max_cold_count = 1000
 
 [recall]
 # min_score = 0.3
@@ -630,6 +671,13 @@ impl Config {
 # max_tag_length = 50
 # max_payload_size = 10485760  # 10MB
 # default_recall_limit = 5
+
+[maintenance]
+# Auto-maintenance daemon (runs in server background)
+# auto_aging_enabled = true       # Clean up stale memories
+# auto_aging_interval_hours = 6   # Every 6 hours
+# auto_dream_enabled = true       # Run dream cycle (lint → dedup → orphans)
+# auto_dream_interval_days = 3    # Every 3 days
 "#;
         std::fs::write(&config_path, default).ok();
     }
@@ -827,8 +875,9 @@ mod tests {
         assert_eq!(cfg.logging.level, "warn");
         assert!(cfg.logging.file.is_empty());
         assert!(!cfg.aging.enabled);
-        assert_eq!(cfg.aging.max_age_days, 180);
-        assert_eq!(cfg.aging.max_cold_count, 10000);
+        assert_eq!(cfg.aging.max_age_days, 365);
+        assert_eq!(cfg.aging.max_access_count, 10);
+        assert_eq!(cfg.aging.max_cold_count, 1000);
     }
 
     #[test]

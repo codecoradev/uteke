@@ -11,7 +11,7 @@
 
 pub mod chunker;
 mod consolidate;
-mod dream;
+pub mod dream;
 mod edges;
 mod embed;
 mod error;
@@ -696,6 +696,59 @@ impl Uteke {
             edges,
             stats,
         })
+    }
+
+    /// Build a smart project context summary for AI agents.
+    ///
+    /// Returns a human-readable summary: memory counts by type, top tags,
+    /// recent activity, key decisions/procedures. Ready to inject into prompts.
+    pub fn build_context(&self, namespace: Option<&str>) -> Result<String, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let stats = self.stats(Some(ns))?;
+        let recent = self.list(None, 5, 0, Some(ns))?;
+        let type_counts = self.store.memory_type_counts(ns).unwrap_or_default();
+        let top_tags = self.store.unique_tags(Some(ns)).unwrap_or_default();
+        let tag_names: Vec<String> = top_tags.iter().take(8).cloned().collect();
+
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "Project memory: {} memories in namespace '{}'",
+            stats.total_memories, ns
+        ));
+        if stats.hot > 0 || stats.warm > 0 {
+            lines.push(format!(
+                "Tiers: {} hot, {} warm, {} cold",
+                stats.hot, stats.warm, stats.cold
+            ));
+        }
+        if !type_counts.is_empty() {
+            let type_str: Vec<String> = type_counts
+                .iter()
+                .map(|(t, c)| format!("{} {}", c, t))
+                .collect();
+            lines.push(format!("Types: {}", type_str.join(", ")));
+        }
+        if !tag_names.is_empty() {
+            lines.push(format!("Tags: {}", tag_names.join(", ")));
+        }
+        if !recent.is_empty() {
+            lines.push("".to_string());
+            lines.push("Recent memories:".to_string());
+            for m in &recent {
+                let preview = if m.content.len() > 80 {
+                    format!("{}...", &m.content[..77])
+                } else {
+                    m.content.clone()
+                };
+                let type_tag = if m.memory_type != "fact" {
+                    format!(" [{}]", m.memory_type)
+                } else {
+                    String::new()
+                };
+                lines.push(format!("  - {preview}{type_tag}"));
+            }
+        }
+        Ok(lines.join("\n"))
     }
 
     // ── Document engine (#406, #438) ────────────────────────────────────────
@@ -1625,5 +1678,49 @@ mod tests {
         assert_eq!(merged.base_url, "https://from-toml.example.com");
         assert_eq!(merged.model, "from-toml-model");
         assert_eq!(merged.dims, 2048);
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use crate::Uteke;
+    use serial_test::serial;
+
+    #[test]
+    #[serial]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_build_context_empty_namespace() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let ctx = uteke.build_context(Some("empty-ns")).unwrap();
+        assert!(ctx.contains("0 memories"));
+    }
+
+    #[test]
+    #[serial]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_build_context_with_data() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        uteke
+            .remember(
+                "Use parameterized SQL queries",
+                &["tech"],
+                None,
+                Some("ctx-test"),
+            )
+            .unwrap();
+        uteke
+            .remember(
+                "We chose Tauri 2 over Electron",
+                &["tech"],
+                None,
+                Some("ctx-test"),
+            )
+            .unwrap();
+
+        let ctx = uteke.build_context(Some("ctx-test")).unwrap();
+        assert!(ctx.contains("2 memories"), "should show count: {ctx}");
+        assert!(ctx.contains("procedure"), "should list types");
+        assert!(ctx.contains("decision"), "should list types");
+        assert!(ctx.contains("Recent memories"), "should show recent");
     }
 }

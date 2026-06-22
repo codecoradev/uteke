@@ -1144,6 +1144,43 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
                 }
             }
         }
+        // ── Context Summary (#442) ───────────────────────────────────────
+        (Method::Post, "/context") => match read_body::<serde_json::Value>(req.as_reader()) {
+            Ok(body) => {
+                let ns = body.get("namespace").and_then(|v| v.as_str());
+                match uteke.build_context(ns) {
+                    Ok(context) => {
+                        let resp = serde_json::json!({ "context": context });
+                        ctx.ok_response_for(req, &resp)
+                    }
+                    Err(e) => {
+                        error!("Context error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(_) => ctx.error_response_for(req, 400, "Invalid JSON body"),
+        },
+
+        // ── Dream Cycle (#442) ─────────────────────────────────────────────
+        (Method::Post, "/dream") => match read_body::<serde_json::Value>(req.as_reader()) {
+            Ok(body) => {
+                let ns = body.get("namespace").and_then(|v| v.as_str());
+                let dry_run = body
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                match uteke.dream(ns, dry_run, &[]) {
+                    Ok(report) => ctx.ok_response_for(req, &report),
+                    Err(e) => {
+                        error!("Dream error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(_) => ctx.error_response_for(req, 400, "Invalid JSON body"),
+        },
+
         (Method::Post, "/mcp") => {
             // Enforce a body size limit to prevent memory exhaustion
             // (CodeCora #397). 1 MiB is generous for JSON-RPC.
@@ -1583,6 +1620,109 @@ fn main() {
         info!("CORS: allowing origins: {:?}", cors_origins);
     }
 
+    // Auto-aging background thread (#442 enhancement).
+    // Runs aging cleanup periodically to remove cold, low-importance memories.
+    let aging_enabled = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_aging_enabled)
+        .unwrap_or(true);
+    let aging_hours = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_aging_interval_hours)
+        .unwrap_or(6)
+        .max(1); // Minimum 1 hour to prevent busy loop
+    let aging_uteke = Arc::clone(&uteke);
+    if aging_enabled {
+        info!("Auto-aging: enabled (every {aging_hours}h)");
+        std::thread::spawn(move || {
+            let interval = std::time::Duration::from_secs(aging_hours * 60 * 60);
+            loop {
+                std::thread::sleep(interval);
+                if SHUTDOWN.load(Ordering::SeqCst) {
+                    break;
+                }
+                match aging_uteke.lock() {
+                    Ok(u) => {
+                        let age_days = config
+                            .aging
+                            .as_ref()
+                            .and_then(|a| a.max_age_days)
+                            .unwrap_or(365);
+                        let max_access = config
+                            .aging
+                            .as_ref()
+                            .and_then(|a| a.max_access_count)
+                            .unwrap_or(10);
+                        match u.aging_cleanup(age_days, max_access, None) {
+                            Ok(result) => {
+                                if result.deleted > 0 {
+                                    info!("Auto-aging: cleaned up {} stale memories (age>{age_days}d, access<{max_access})", result.deleted);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Auto-aging failed: {e}");
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        tracing::debug!("Auto-aging: lock busy, skipping cycle");
+                    }
+                }
+            }
+        });
+    } else {
+        info!("Auto-aging: disabled");
+    }
+
+    // Auto-dream background thread (#442 enhancement).
+    // Runs dream cycle periodically to maintain graph health.
+    let dream_enabled = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_dream_enabled)
+        .unwrap_or(true);
+    let dream_days = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_dream_interval_days)
+        .unwrap_or(3)
+        .max(1); // Minimum 1 day to prevent busy loop
+    let dream_uteke = Arc::clone(&uteke);
+    if dream_enabled {
+        info!("Auto-dream: enabled (every {dream_days}d)");
+        std::thread::spawn(move || {
+            let interval = std::time::Duration::from_secs(dream_days * 24 * 60 * 60);
+            loop {
+                std::thread::sleep(interval);
+                if SHUTDOWN.load(Ordering::SeqCst) {
+                    break;
+                }
+                match dream_uteke.lock() {
+                    Ok(u) => match u.dream(None, false, &[]) {
+                        Ok(report) => {
+                            if report.total_changes > 0 {
+                                info!(
+                                    "Auto-dream: {} changes, {} warnings ({}ms)",
+                                    report.total_changes, report.total_warnings, report.duration_ms
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Auto-dream failed: {e}");
+                        }
+                    },
+                    Err(_) => {
+                        tracing::debug!("Auto-dream: lock busy, skipping cycle");
+                    }
+                }
+            }
+        });
+    } else {
+        info!("Auto-dream: disabled");
+    }
+
     // SIGINT handler
     ctrlc::set_handler(|| {
         if SHUTDOWN.load(Ordering::SeqCst) {
@@ -1633,6 +1773,22 @@ fn main() {
 struct ServerFileConfig {
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
+    maintenance: Option<MaintenanceFileSection>,
+    aging: Option<AgingFileSection>,
+}
+
+#[derive(serde::Deserialize, Default, Clone)]
+struct AgingFileSection {
+    max_age_days: Option<u32>,
+    max_access_count: Option<u32>,
+}
+
+#[derive(serde::Deserialize, Default, Clone)]
+struct MaintenanceFileSection {
+    auto_aging_enabled: Option<bool>,
+    auto_aging_interval_hours: Option<u64>,
+    auto_dream_enabled: Option<bool>,
+    auto_dream_interval_days: Option<u64>,
 }
 
 #[derive(serde::Deserialize, Default, Clone)]

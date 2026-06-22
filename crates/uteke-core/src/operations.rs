@@ -137,6 +137,14 @@ impl crate::Uteke {
             .as_ref()
             .expect("embedder ensured above")
             .embed(&embed_text)?;
+
+        // Dedup check: if an existing memory has cosine >= 0.95, return it
+        // instead of creating a duplicate (#442 enhancement).
+        if let Some(existing_id) = self.check_duplicate(&embedding, namespace)? {
+            tracing::info!("Dedup: memory {existing_id} is nearly identical, skipping insert");
+            return Ok(existing_id);
+        }
+
         self.remember_precomputed(
             content,
             tags,
@@ -152,6 +160,65 @@ impl crate::Uteke {
     ///
     /// Use when the embedding has already been computed (e.g., contradiction check).
     /// Returns the UUID of the created memory.
+    #[allow(clippy::too_many_arguments)]
+    /// Check if a near-duplicate memory already exists (#442 enhancement).
+    ///
+    /// Searches the vector index for cosine >= 0.95. If found, returns
+    /// the existing memory ID so caller can skip the insert.
+    /// Only checks within the same namespace.
+    fn check_duplicate(
+        &self,
+        embedding: &[f32],
+        namespace: Option<&str>,
+    ) -> Result<Option<String>, Error> {
+        const DEDUP_THRESHOLD: f32 = 0.95;
+
+        let index = match self.index.try_read() {
+            Ok(i) => i,
+            Err(_) => return Ok(None), // Don't block if locked
+        };
+
+        if index.is_empty() {
+            return Ok(None);
+        }
+
+        let results = index.search(embedding, 5, 50);
+        drop(index);
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        // Filter by namespace if specified.
+        let ns_set: Option<std::collections::HashSet<String>> = if let Some(ns) = namespace {
+            match self.store.memories_in_namespace(ns) {
+                Ok(ids) => Some(ids.into_iter().collect()),
+                Err(_) => return Ok(None),
+            }
+        } else {
+            None
+        };
+
+        for (id, dist) in &results {
+            // Skip chunk: prefixed entries (document chunks).
+            if id.starts_with("chunk:") {
+                continue;
+            }
+            // Namespace filter.
+            if let Some(ref set) = ns_set {
+                if !set.contains(id) {
+                    continue;
+                }
+            }
+            let sim = (1.0 - dist).clamp(0.0, 1.0);
+            if sim >= DEDUP_THRESHOLD {
+                return Ok(Some(id.clone()));
+            }
+        }
+
+        Ok(None)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn remember_precomputed(
         &self,
@@ -252,8 +319,6 @@ impl crate::Uteke {
         namespace: Option<&str>,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
         // Lazy-load embedder on first use.
@@ -295,9 +360,11 @@ impl crate::Uteke {
                     None => continue,
                 };
 
-                // Apply namespace filter
-                if memory.namespace != ns {
-                    continue;
+                // Apply namespace filter (None = search ALL namespaces, #448)
+                if let Some(ns) = namespace {
+                    if memory.namespace != ns {
+                        continue;
+                    }
                 }
 
                 // Apply tag filter
@@ -371,15 +438,15 @@ impl crate::Uteke {
         strategy: RecallStrategy,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
         // Check recall cache first — avoids redundant embedding (~50ms).
         // min_score is NOT in the cache key: cached results store the full set
         // and the caller re-applies threshold, ensuring correctness regardless
         // of what threshold a previous caller used.
+        let cache_ns = namespace.unwrap_or("all");
+
         if let Some(cached) = self
             .recall_cache
-            .get(query, ns, limit, tags_filter, strategy)
+            .get(query, cache_ns, limit, tags_filter, strategy)
         {
             let mut results = cached;
             if min_score > 0.0 {
@@ -421,8 +488,14 @@ impl crate::Uteke {
 
         // Cache results for future queries (without min_score filtering,
         // so cached results are reusable for any threshold)
-        self.recall_cache
-            .put(query, ns, limit, tags_filter, strategy, results.clone());
+        self.recall_cache.put(
+            query,
+            cache_ns,
+            limit,
+            tags_filter,
+            strategy,
+            results.clone(),
+        );
 
         // Apply salience/recency boosts AFTER caching so cached entries
         // store the raw scores (time-independent). Boosts are recomputed
@@ -519,8 +592,6 @@ impl crate::Uteke {
         namespace: Option<&str>,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
         // Try phrase search first, fall back to token search
         let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
             Ok(r) if !r.is_empty() => r,
@@ -534,9 +605,11 @@ impl crate::Uteke {
         let results: Vec<SearchResult> = fts_results
             .into_iter()
             .filter(|(memory, _)| {
-                // Namespace filter (FTS5 may return cross-namespace if not filtered)
-                if memory.namespace != ns {
-                    return false;
+                // Namespace filter (None = ALL, #448)
+                if let Some(ns) = namespace {
+                    if memory.namespace != ns {
+                        return false;
+                    }
                 }
                 // Tag filter
                 if let Some(filter_tags) = tags_filter {
@@ -624,11 +697,12 @@ impl crate::Uteke {
         }
 
         // Score FTS5 results by rank
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         for (rank, (memory, _rank_val)) in fts_results.iter().enumerate() {
-            // Apply namespace + tag filter
-            if memory.namespace != ns {
-                continue;
+            // Apply namespace + tag filter (None = ALL, #448)
+            if let Some(ns) = namespace {
+                if memory.namespace != ns {
+                    continue;
+                }
             }
             if let Some(filter_tags) = tags_filter {
                 let has_tag = filter_tags
@@ -974,5 +1048,51 @@ impl crate::Uteke {
     ) -> Result<Vec<Memory>, Error> {
         self.store
             .list_at_time(tag, namespace, limit, offset, point_in_time)
+    }
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use crate::Uteke;
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_blocks_exact_duplicate() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let id1 = uteke
+            .remember("The sky is blue today", &[], None, Some("dedup"))
+            .unwrap();
+        // Same content again — should return the SAME id, not a new one.
+        let id2 = uteke
+            .remember("The sky is blue today", &[], None, Some("dedup"))
+            .unwrap();
+        assert_eq!(id1, id2, "exact duplicate should return existing ID");
+    }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_allows_different_content() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let id1 = uteke
+            .remember("The sky is blue", &[], None, Some("dedup2"))
+            .unwrap();
+        let id2 = uteke
+            .remember("Rust is a programming language", &[], None, Some("dedup2"))
+            .unwrap();
+        assert_ne!(id1, id2, "different content should create new memory");
+    }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_namespace_scoped() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let id1 = uteke
+            .remember("Same content different namespace", &[], None, Some("ns1"))
+            .unwrap();
+        // Same content in DIFFERENT namespace — should NOT be blocked.
+        let id2 = uteke
+            .remember("Same content different namespace", &[], None, Some("ns2"))
+            .unwrap();
+        assert_ne!(id1, id2, "different namespace should not dedup");
     }
 }
