@@ -573,22 +573,23 @@ impl super::Store {
             .map_err(|e| Error::db("begin move transaction", e))?;
 
         // Fetch current state BEFORE any mutation.
-        let current: Option<(String, String, i64)> = tx
+        let current: Option<(String, String, i64, Option<String>)> = tx
             .query_row(
-                "SELECT id, path, depth FROM documents WHERE id = ?1",
+                "SELECT id, path, depth, parent_id FROM documents WHERE id = ?1",
                 params![doc_id],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
                     ))
                 },
             )
             .optional()
             .map_err(|e| Error::db("fetch current document for move", e))?;
 
-        let (cur_id, old_path, old_depth) = match current {
+        let (cur_id, old_path, old_depth, old_parent_id) = match current {
             Some(v) => v,
             None => return Ok(0),
         };
@@ -681,13 +682,7 @@ impl super::Store {
             .execute(
                 "UPDATE documents SET path = REPLACE(path, ?1, ?2), depth = depth + ?3 \
                  WHERE path LIKE ?4 AND id != ?5",
-                params![
-                    old_path_exact,
-                    new_path,
-                    depth_diff,
-                    format!("{}/%", cur_id),
-                    doc_id,
-                ],
+                params![old_path_exact, new_path, depth_diff, old_prefix, doc_id,],
             )
             .map_err(|e| Error::db("update descendant paths", e))?;
 
@@ -700,6 +695,25 @@ impl super::Store {
             .map_err(|e| Error::db("update new parent has_children", e))?;
         }
 
+        // Recompute old parent's has_children flag (may have lost last child).
+        if let Some(ref old_parent) = old_parent_id {
+            // Only recompute if moving away from old parent (not moving to root).
+            if new_parent_id != old_parent.as_deref() {
+                let has_any: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM documents WHERE parent_id = ?1 LIMIT 1)",
+                        params![old_parent],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                tx.execute(
+                    "UPDATE documents SET has_children = ?2 WHERE id = ?1",
+                    params![old_parent, has_any as i64],
+                )
+                .map_err(|e| Error::db("update old parent has_children", e))?;
+            }
+        }
+
         tx.commit().map_err(|e| Error::db("commit move", e))?;
 
         Ok((n + 1) as usize)
@@ -710,11 +724,27 @@ impl super::Store {
     /// Returns (deleted, subtree_size).
     pub fn delete_document(&self, id: &str) -> Result<(bool, usize), Error> {
         let subtree_size = self.count_descendants(id)?;
+        // Fetch the document's path for cascade delete.
+        let path: String = self
+            .conn
+            .query_row(
+                "SELECT path FROM documents WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        let cascade_prefix = if path.is_empty() {
+            format!("/{}/%", id) // fallback: try UUID-based prefix
+        } else if path.ends_with('/') {
+            format!("{}%", path)
+        } else {
+            format!("{}/%", path)
+        };
         let n = self
             .conn
             .execute(
                 "DELETE FROM documents WHERE id = ?1 OR path LIKE ?2",
-                params![id, format!("/{}/%", id)],
+                params![id, cascade_prefix],
             )
             .map_err(|e| Error::db("delete document", e))?;
         Ok((n > 0, subtree_size))
@@ -818,6 +848,22 @@ impl super::Store {
             .map_err(|e| Error::db("get chunks by ids query", e))?;
 
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get chunks by IDs, preserving the order of the input `chunk_ids` list.
+    ///
+    /// Used by doc_search to align with usearch result ordering.
+    pub fn get_chunks_by_ids_ordered(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<Vec<(String, String, String, String)>, Error> {
+        let all = self.get_chunks_by_ids(chunk_ids)?;
+        let map: std::collections::HashMap<String, (String, String, String, String)> =
+            all.into_iter().map(|c| (c.0.clone(), c)).collect();
+        Ok(chunk_ids
+            .iter()
+            .filter_map(|id| map.get(id).cloned())
+            .collect())
     }
 
     /// Delete chunks belonging to a set of document IDs.

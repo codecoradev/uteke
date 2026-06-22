@@ -955,9 +955,9 @@ impl Uteke {
     ///
     /// Cascades to children and chunks. Returns (deleted, subtree_size).
     /// Also removes chunk embeddings from usearch index.
-    pub fn doc_delete(&self, id: &str) -> Result<(bool, usize), Error> {
+    pub fn doc_delete(&self, id: &str, namespace: Option<&str>) -> Result<(bool, usize), Error> {
         // Collect all document IDs in the subtree before deletion.
-        let ns = DEFAULT_NAMESPACE;
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let subtree = self
             .store
             .list_descendants(id, ns, None, 10000)
@@ -1071,7 +1071,7 @@ impl Uteke {
             .collect();
 
         // Get chunk data from SQLite.
-        let chunks = self.store.get_chunks_by_ids(&chunk_ids)?;
+        let chunks = self.store.get_chunks_by_ids_ordered(&chunk_ids)?;
 
         // Build results: group by document, take best score per doc.
         let mut doc_scores: std::collections::HashMap<

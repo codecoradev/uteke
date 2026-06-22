@@ -308,7 +308,7 @@ pub(crate) fn run(
 
         DocCommands::Delete { id } => {
             let (deleted, subtree_size) = uteke
-                .doc_delete(id)
+                .doc_delete(id, ns)
                 .map_err(|e| format!("Failed to delete document: {e}"))?;
             if deleted {
                 if cli.json {
