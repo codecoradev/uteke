@@ -211,7 +211,14 @@ impl crate::Uteke {
         let aged = self
             .store
             .find_aged(older_than_days, max_access_count, namespace)?;
-        let ids: Vec<String> = aged.into_iter().map(|m| m.id).collect();
+        // Safety limit: never delete more than 100 memories per cycle.
+        // This prevents mass deletion if thresholds are misconfigured.
+        const MAX_DELETE_PER_CYCLE: usize = 100;
+        let ids: Vec<String> = aged
+            .into_iter()
+            .take(MAX_DELETE_PER_CYCLE)
+            .map(|m| m.id)
+            .collect();
 
         if ids.is_empty() {
             return Ok(CleanupResult { deleted: 0 });
