@@ -311,17 +311,21 @@ impl super::Store {
         let limit = limit.min(1000) as i64;
 
         let mut stmt = if namespace.is_some() {
-            self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at, \
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE namespace = ?1 ORDER BY updated_at DESC LIMIT ?2",
-            ).map_err(|e| Error::db("prepare list documents", e))?
+                )
+                .map_err(|e| Error::db("prepare list documents", e))?
         } else {
-            self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at, \
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents ORDER BY updated_at DESC LIMIT ?1",
-            ).map_err(|e| Error::db("prepare list documents", e))?
+                )
+                .map_err(|e| Error::db("prepare list documents", e))?
         };
 
         let rows = match namespace {
@@ -346,19 +350,23 @@ impl super::Store {
         let limit = limit.min(1000) as i64;
 
         let mut stmt = if namespace.is_some() {
-            self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at, \
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE namespace = ?1 AND parent_id IS NULL \
                  ORDER BY sort_order, updated_at DESC LIMIT ?2",
-            ).map_err(|e| Error::db("prepare list root documents", e))?
+                )
+                .map_err(|e| Error::db("prepare list root documents", e))?
         } else {
-            self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at, \
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE parent_id IS NULL \
                  ORDER BY sort_order, updated_at DESC LIMIT ?1",
-            ).map_err(|e| Error::db("prepare list root documents", e))?
+                )
+                .map_err(|e| Error::db("prepare list root documents", e))?
         };
 
         let rows = match namespace {
@@ -381,12 +389,15 @@ impl super::Store {
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
         let limit = limit.min(1000) as i64;
-        let mut stmt = self.conn.prepare(
-            "SELECT id, slug, title, namespace, version, updated_at, \
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, slug, title, namespace, version, updated_at, \
              parent_id, depth, has_children, sort_order \
              FROM documents WHERE parent_id = ?1 \
              ORDER BY sort_order, updated_at DESC LIMIT ?2",
-        ).map_err(|e| Error::db("prepare list children", e))?;
+            )
+            .map_err(|e| Error::db("prepare list children", e))?;
 
         let rows = stmt
             .query_map(params![parent_id, limit], row_to_summary)
@@ -412,23 +423,31 @@ impl super::Store {
         let path_prefix = format!("{}/", doc.path);
 
         if let Some(max) = max_depth {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at, \
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE path LIKE ?1 AND depth <= ?2 \
                  ORDER BY path, sort_order LIMIT ?3",
-            ).map_err(|e| Error::db("prepare list descendants", e))?;
-            let rows = stmt.query_map(params![path_prefix, max, limit], row_to_summary)
+                )
+                .map_err(|e| Error::db("prepare list descendants", e))?;
+            let rows = stmt
+                .query_map(params![path_prefix, max, limit], row_to_summary)
                 .map_err(|e| Error::db("list descendants query", e))?;
             Ok(rows.filter_map(|r| r.ok()).collect())
         } else {
-            let mut stmt = self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at, \
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE path LIKE ?1 \
                  ORDER BY path, sort_order LIMIT ?2",
-            ).map_err(|e| Error::db("prepare list descendants", e))?;
-            let rows = stmt.query_map(params![path_prefix, limit], row_to_summary)
+                )
+                .map_err(|e| Error::db("prepare list descendants", e))?;
+            let rows = stmt
+                .query_map(params![path_prefix, limit], row_to_summary)
                 .map_err(|e| Error::db("list descendants query", e))?;
             Ok(rows.filter_map(|r| r.ok()).collect())
         }
@@ -476,8 +495,10 @@ impl super::Store {
             .conn
             .prepare(&query)
             .map_err(|e| Error::db("prepare breadcrumbs", e))?;
-        let params: Vec<&dyn rusqlite::types::ToSql> =
-            uuids.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let params: Vec<&dyn rusqlite::types::ToSql> = uuids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
         let rows = stmt
             .query_map(params.as_slice(), row_to_summary)
             .map_err(|e| Error::db("breadcrumbs query", e))?;
@@ -531,7 +552,13 @@ impl super::Store {
             .query_row(
                 "SELECT id, path, depth FROM documents WHERE id = ?1",
                 params![doc_id],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
             )
             .optional()
             .map_err(|e| Error::db("fetch current document for move", e))?;
@@ -579,9 +606,7 @@ impl super::Store {
                 .unwrap_or(old_depth);
             let depth_diff = new_depth - old_depth;
             if max_child_depth + depth_diff > MAX_DEPTH {
-                return Err(Error::validation(
-                    "move would exceed maximum depth of 10",
-                ));
+                return Err(Error::validation("move would exceed maximum depth of 10"));
             }
         }
 
@@ -646,8 +671,7 @@ impl super::Store {
             .map_err(|e| Error::db("update new parent has_children", e))?;
         }
 
-        tx.commit()
-            .map_err(|e| Error::db("commit move", e))?;
+        tx.commit().map_err(|e| Error::db("commit move", e))?;
 
         Ok((n + 1) as usize)
     }
@@ -718,7 +742,13 @@ mod tests {
         }
     }
 
-    fn make_child_doc(id: &str, slug: &str, title: &str, parent_id: &str, parent_path: &str) -> Document {
+    fn make_child_doc(
+        id: &str,
+        slug: &str,
+        title: &str,
+        parent_id: &str,
+        parent_path: &str,
+    ) -> Document {
         let mut doc = make_doc(id, slug, title);
         doc.parent_id = Some(parent_id.to_string());
         doc.path = format!("{}{}/", parent_path, id);
@@ -768,10 +798,17 @@ mod tests {
 
         store.upsert_document(&doc).unwrap();
 
-        let doc2 = Document { title: "V2".to_string(), content: "Content 2".to_string(), ..doc.clone() };
+        let doc2 = Document {
+            title: "V2".to_string(),
+            content: "Content 2".to_string(),
+            ..doc.clone()
+        };
         store.upsert_document(&doc2).unwrap();
 
-        let got = store.get_document_by_slug("test", "default").unwrap().unwrap();
+        let got = store
+            .get_document_by_slug("test", "default")
+            .unwrap()
+            .unwrap();
         assert_eq!(got.title, "V2");
         assert_eq!(got.version, 2);
     }
@@ -781,15 +818,28 @@ mod tests {
         let store = open_test_store();
 
         let doc1 = make_doc("d1", "guide", "NS1 Guide");
-        let doc1 = Document { namespace: "ns1".to_string(), ..doc1 };
+        let doc1 = Document {
+            namespace: "ns1".to_string(),
+            ..doc1
+        };
         let doc2 = make_doc("d2", "guide", "NS2 Guide");
-        let doc2 = Document { id: "d2".to_string(), namespace: "ns2".to_string(), ..doc2 };
+        let doc2 = Document {
+            id: "d2".to_string(),
+            namespace: "ns2".to_string(),
+            ..doc2
+        };
 
         store.upsert_document(&doc1).unwrap();
         store.upsert_document(&doc2).unwrap();
 
-        assert!(store.get_document_by_slug("guide", "ns1").unwrap().is_some());
-        assert!(store.get_document_by_slug("guide", "ns2").unwrap().is_some());
+        assert!(store
+            .get_document_by_slug("guide", "ns1")
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get_document_by_slug("guide", "ns2")
+            .unwrap()
+            .is_some());
     }
 
     #[test]
@@ -818,7 +868,9 @@ mod tests {
         assert_eq!(children[0].slug, "engineering");
 
         // List descendants.
-        let descendants = store.list_descendants("company", "default", None, 100).unwrap();
+        let descendants = store
+            .list_descendants("company", "default", None, 100)
+            .unwrap();
         assert_eq!(descendants.len(), 2); // eng + backend
 
         // Breadcrumbs.

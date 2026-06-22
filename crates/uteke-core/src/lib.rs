@@ -736,20 +736,15 @@ impl Uteke {
         // Resolve parent if specified.
         let (parent_id, parent_path, parent_depth) = match parent_slug {
             Some(ps) => {
-                let parent = self
-                    .store
-                    .get_document_by_slug(ps, ns)?
-                    .ok_or_else(|| Error::validation(format!("parent document '{ps}' not found")))?;
+                let parent = self.store.get_document_by_slug(ps, ns)?.ok_or_else(|| {
+                    Error::validation(format!("parent document '{ps}' not found"))
+                })?;
                 if parent.depth >= 9 {
                     return Err(Error::Validation(
                         "maximum document depth of 10 would be exceeded".into(),
                     ));
                 }
-                (
-                    Some(parent.id.clone()),
-                    parent.path,
-                    parent.depth + 1,
-                )
+                (Some(parent.id.clone()), parent.path, parent.depth + 1)
             }
             None => (None, String::new(), 0),
         };
@@ -883,7 +878,8 @@ impl Uteke {
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        self.store.list_descendants(id_or_slug, ns, max_depth, limit)
+        self.store
+            .list_descendants(id_or_slug, ns, max_depth, limit)
     }
 
     /// Get breadcrumbs from root to a document (#438).
@@ -912,10 +908,9 @@ impl Uteke {
 
         let new_parent_id = match new_parent_slug {
             Some(ps) => {
-                let parent = self
-                    .store
-                    .get_document_by_slug(ps, ns)?
-                    .ok_or_else(|| Error::validation(&format!("parent document '{ps}' not found")))?;
+                let parent = self.store.get_document_by_slug(ps, ns)?.ok_or_else(|| {
+                    Error::validation(&format!("parent document '{ps}' not found"))
+                })?;
                 Some(parent.id)
             }
             None => None,

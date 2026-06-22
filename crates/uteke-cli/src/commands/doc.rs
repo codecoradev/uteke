@@ -120,17 +120,19 @@ pub(crate) fn run(
                 if *tree {
                     // Print tree structure.
                     let indent = "  ";
-                    let mut stack: Vec<(String, usize)> = docs
-                        .iter()
-                        .map(|d| (d.id.clone(), 0))
-                        .collect();
+                    let mut stack: Vec<(String, usize)> =
+                        docs.iter().map(|d| (d.id.clone(), 0)).collect();
                     while let Some((current_id, current_depth)) = stack.pop() {
                         let children = uteke
                             .doc_list_children(&current_id, ns, 1000)
                             .unwrap_or_default();
                         let prefix: String = indent.repeat(current_depth);
                         if let Some(parent) = docs.iter().find(|d| d.id == current_id) {
-                            let tree_char = if children.is_empty() { "├─" } else { "┬─" };
+                            let tree_char = if children.is_empty() {
+                                "├─"
+                            } else {
+                                "┬─"
+                            };
                             println!(
                                 "{prefix}{tree_char} {:<20} {:<30} v{}",
                                 &parent.slug[..parent.slug.len().min(20)],
@@ -144,9 +146,7 @@ pub(crate) fn run(
                     }
                 } else {
                     println!("Documents");
-                    println!(
-                        "─────────────────────────────────────────────────────"
-                    );
+                    println!("─────────────────────────────────────────────────────");
                     for d in &docs {
                         let depth_indicator = if d.depth > 0 {
                             format!("  {}", "›".repeat(d.depth as usize))
@@ -168,10 +168,7 @@ pub(crate) fn run(
             }
         }
 
-        DocCommands::Children {
-            parent,
-            limit,
-        } => {
+        DocCommands::Children { parent, limit } => {
             let docs = uteke
                 .doc_list_children(parent, ns, *limit)
                 .map_err(|e| format!("Failed to list children: {e}"))?;
@@ -181,9 +178,7 @@ pub(crate) fn run(
                 println!("No children for '{parent}'.");
             } else {
                 println!("Children of '{parent}'");
-                println!(
-                    "─────────────────────────────────────────────────────"
-                );
+                println!("─────────────────────────────────────────────────────");
                 for d in &docs {
                     println!(
                         "  {:<20} {:<30} v{}  {}",
@@ -198,10 +193,7 @@ pub(crate) fn run(
             }
         }
 
-        DocCommands::Move {
-            id_or_slug,
-            parent,
-        } => {
+        DocCommands::Move { id_or_slug, parent } => {
             let new_parent = parent.as_deref();
             let affected = uteke
                 .doc_move(id_or_slug, new_parent, ns)
@@ -228,9 +220,7 @@ pub(crate) fn run(
                 println!("No breadcrumbs found (root document).");
             } else {
                 println!("Path to '{id_or_slug}'");
-                println!(
-                    "─────────────────────────────────────────────────────"
-                );
+                println!("─────────────────────────────────────────────────────");
                 for (i, d) in crumbs.iter().enumerate() {
                     let connector = if i == crumbs.len() - 1 {
                         "└─"
@@ -261,9 +251,7 @@ pub(crate) fn run(
                 println!("No descendants for '{id_or_slug}'.");
             } else {
                 println!("Descendants of '{id_or_slug}'");
-                println!(
-                    "─────────────────────────────────────────────────────"
-                );
+                println!("─────────────────────────────────────────────────────");
                 for d in &docs {
                     let indent = "  ".repeat(d.depth as usize);
                     println!(
@@ -284,15 +272,11 @@ pub(crate) fn run(
                 .map_err(|e| format!("Failed to delete document: {e}"))?;
             if deleted {
                 if cli.json {
-                    println!(
-                        r#"{{"deleted": "{id}", "subtree_size": {subtree_size}}}"#
-                    );
+                    println!(r#"{{"deleted": "{id}", "subtree_size": {subtree_size}}}"#);
                 } else {
                     println!("✓ Document deleted: {id}");
                     if subtree_size > 1 {
-                        println!(
-                            "  {subtree_size} document(s) removed (cascade)"
-                        );
+                        println!("  {subtree_size} document(s) removed (cascade)");
                     }
                 }
             } else {

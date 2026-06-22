@@ -589,22 +589,34 @@ impl super::Store {
         }
         if !self.column_exists_in("documents", "path") {
             self.conn
-                .execute("ALTER TABLE documents ADD COLUMN path TEXT NOT NULL DEFAULT ''", [])
+                .execute(
+                    "ALTER TABLE documents ADD COLUMN path TEXT NOT NULL DEFAULT ''",
+                    [],
+                )
                 .map_err(|e| Error::db("migration v12: add path", e))?;
         }
         if !self.column_exists_in("documents", "depth") {
             self.conn
-                .execute("ALTER TABLE documents ADD COLUMN depth INTEGER NOT NULL DEFAULT 0", [])
+                .execute(
+                    "ALTER TABLE documents ADD COLUMN depth INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )
                 .map_err(|e| Error::db("migration v12: add depth", e))?;
         }
         if !self.column_exists_in("documents", "sort_order") {
             self.conn
-                .execute("ALTER TABLE documents ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0", [])
+                .execute(
+                    "ALTER TABLE documents ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )
                 .map_err(|e| Error::db("migration v12: add sort_order", e))?;
         }
         if !self.column_exists_in("documents", "has_children") {
             self.conn
-                .execute("ALTER TABLE documents ADD COLUMN has_children INTEGER NOT NULL DEFAULT 0", [])
+                .execute(
+                    "ALTER TABLE documents ADD COLUMN has_children INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )
                 .map_err(|e| Error::db("migration v12: add has_children", e))?;
         }
 
