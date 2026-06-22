@@ -34,7 +34,7 @@
 - **move_document** now recomputes `has_children` on old parent after
   moving last child away.
 
-## [0.3.3] — 2026-06-22
+## [0.4.0] — 2026-06-22
 
 ### Fixed
 
