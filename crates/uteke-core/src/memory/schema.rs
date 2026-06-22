@@ -401,13 +401,14 @@ impl super::Store {
             )
             .map_err(|e| Error::db("schema migration v7 to v8", e))?;
 
-        // Best-effort: slug index may fail if slug column somehow missing
-        // (shouldn't happen after the ALTER TABLE above, but be defensive).
-        if let Err(e) = self.conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;"
-        ) {
-            tracing::debug!("migrate_v7_to_v8: slug index (best-effort): {e}");
-        }
+        // Slug index — hard failure since slug column was just added above.
+        // If this somehow fails, the migration must not proceed (slug lookups
+        // would break without the index on a non-trivial dataset).
+        self.conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;",
+            )
+            .map_err(|e| Error::db("schema migration v7 to v8 (slug index)", e))?;
 
         // Backfill edges from legacy metadata.relationships JSON.
         // Shape: { "relationships": [{ "type": "supersedes", "target": "<uuid>" }, ...] }
