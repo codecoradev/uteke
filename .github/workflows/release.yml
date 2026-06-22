@@ -192,11 +192,11 @@ jobs:
           echo "" >> release-notes.md
           printf '### 📦 Binaries\n\nEach archive contains **two binaries**:\n- `uteke` — CLI tool\n- `uteke-serve` — HTTP server daemon\n\n' >> release-notes.md
           printf '| Platform | File |\n|----------|------|\n' >> release-notes.md
-          printf '| Linux (x86_64) | `uteke-%s-x86_64-unknown-linux-gnu.tar.gz` |\n' "${VER}" >> release-notes.md
-          printf '| Linux (ARM64) | `uteke-%s-aarch64-unknown-linux-gnu.tar.gz` |\n' "${VER}" >> release-notes.md
-          printf '| macOS (Apple Silicon) | `uteke-%s-aarch64-apple-darwin.tar.gz` |\n' "${VER}" >> release-notes.md
-          printf '| Windows (x86_64) | `uteke-%s-x86_64-pc-windows-msvc.zip` |\n\n' "${VER}" >> release-notes.md
-          printf '### 🚀 Quick Start\n\n```bash\n# Quick install (Linux / macOS)\ncurl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh\n\n# Pin a specific version\nUTEKE_VERSION=v%s curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh\n\n# Store a memory\nuteke remember "Important context" --tags project\n\n# Recall by meaning\nuteke recall "what was that context?"\n\n# Start server for fast AI agent access\nuteke-serve --port 8767\n```\n\n' >> release-notes.md
+          printf '| Linux (x86_64) | `uteke-x86_64-unknown-linux-gnu-%s.tar.gz` |\n' "${VER}" >> release-notes.md
+          printf '| Linux (ARM64) | `uteke-aarch64-unknown-linux-gnu-%s.tar.gz` |\n' "${VER}" >> release-notes.md
+          printf '| macOS (Apple Silicon) | `uteke-aarch64-apple-darwin-%s.tar.gz` |\n' "${VER}" >> release-notes.md
+          printf '| Windows (x86_64) | `uteke-x86_64-pc-windows-msvc-%s.zip` |\n\n' "${VER}" >> release-notes.md
+          printf '### 🚀 Quick Start\n\n```bash\n# Quick install (Linux / macOS)\ncurl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh\n\n# Pin a specific version\nUTEKE_VERSION=%s curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh\n\n# Store a memory\nuteke remember "Important context" --tags project\n\n# Recall by meaning\nuteke recall "what was that context?"\n\n# Start server for fast AI agent access\nuteke-serve --port 8767\n```\n\n' >> release-notes.md
           printf '**Full changelog:** https://github.com/codecoradev/uteke/blob/main/CHANGELOG.md\n' >> release-notes.md
 
       - name: Create GitHub Release
