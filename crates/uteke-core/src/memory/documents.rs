@@ -716,7 +716,7 @@ impl super::Store {
 
         tx.commit().map_err(|e| Error::db("commit move", e))?;
 
-        Ok((n + 1) as usize)
+        Ok(n + 1)
     }
 
     /// Delete a document by ID (cascades to children and chunks).
