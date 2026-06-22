@@ -117,6 +117,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_list(),
                 tool_forget(),
                 tool_stats(),
+                tool_context(),
+                tool_dream(),
                 tool_doc_create(),
                 tool_doc_get(),
                 tool_doc_list(),
@@ -142,6 +144,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_list" => exec_list(uteke, &arguments)?,
                 "uteke_forget" => exec_forget(uteke, &arguments)?,
                 "uteke_stats" => exec_stats(uteke, &arguments)?,
+                "uteke_context" => exec_context(uteke, &arguments)?,
+                "uteke_dream" => exec_dream(uteke, &arguments)?,
                 "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
                 "uteke_doc_get" => exec_doc_get(uteke, &arguments)?,
                 "uteke_doc_list" => exec_doc_list(uteke, &arguments)?,
@@ -347,6 +351,34 @@ fn tool_graph() -> Value {
             "type": "object",
             "properties": {
                 "namespace": { "type": "string", "description": "Filter by namespace (optional)" }
+            }
+        }
+    })
+}
+
+fn tool_context() -> Value {
+    serde_json::json!({
+        "name": "uteke_context",
+        "description": "Get a smart project context summary. Returns memory counts by type, top tags, and recent activity — ready to inject into agent prompts. Not raw recall, but a structured overview of what the agent knows.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": { "type": "string", "description": "Namespace to summarize (default: 'default')" }
+            }
+        }
+    })
+}
+
+fn tool_dream() -> Value {
+    serde_json::json!({
+        "name": "uteke_dream",
+        "description": "Run the dream cycle maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify. Cleans up and optimizes the memory store. Safe to run periodically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": { "type": "string", "description": "Namespace to process (default: all)" },
+                "dry_run": { "type": "boolean", "description": "Preview changes without applying (default: false)" },
+                "phases": { "type": "array", "items": { "type": "string" }, "description": "Specific phases: lint, backlinks, dedup, orphans, compact, verify (default: all)" }
             }
         }
     })
@@ -713,6 +745,74 @@ fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_context(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let namespace = args["namespace"].as_str();
+
+    let context = uteke
+        .build_context(namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: context,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_dream(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let namespace = args["namespace"].as_str();
+    let dry_run = args["dry_run"].as_bool().unwrap_or(false);
+
+    // Parse phases if specified.
+    let phases: Vec<uteke_core::DreamPhase> = args["phases"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|s| match s {
+                    "lint" => Some(uteke_core::DreamPhase::Lint),
+                    "backlinks" => Some(uteke_core::DreamPhase::Backlinks),
+                    "dedup" => Some(uteke_core::DreamPhase::Dedup),
+                    "orphans" => Some(uteke_core::DreamPhase::Orphans),
+                    "compact" => Some(uteke_core::DreamPhase::Compact),
+                    "verify" => Some(uteke_core::DreamPhase::Verify),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let report = uteke
+        .dream(namespace, dry_run, &phases)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let mut lines = vec![format!(
+        "Dream cycle complete: {} changes, {} warnings, {} errors ({}ms{})",
+        report.total_changes,
+        report.total_warnings,
+        report.total_errors,
+        report.duration_ms,
+        if dry_run { " [DRY RUN]" } else { "" }
+    )];
+
+    for phase in &report.phases {
+        lines.push(format!(
+            "  {}: {} changes, {} warnings",
+            phase.phase, phase.changes, phase.warnings
+        ));
+    }
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
         }],
         is_error: false,
     })

@@ -362,6 +362,28 @@ impl super::Store {
         Ok(ids)
     }
 
+    /// Count memories grouped by memory_type in a namespace.
+    pub fn memory_type_counts(&self, namespace: &str) -> Result<Vec<(String, usize)>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT memory_type, COUNT(*) as cnt FROM memories
+                 WHERE namespace = ?1 AND deprecated = 0
+                 GROUP BY memory_type ORDER BY cnt DESC",
+            )
+            .map_err(|e| Error::db("prepare memory_type_counts", e))?;
+        let rows = stmt
+            .query_map(params![namespace], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+            })
+            .map_err(|e| Error::db("query memory_type_counts", e))?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|e| Error::db("memory_type_counts row", e))?);
+        }
+        Ok(result)
+    }
+
     /// List memories that existed at a specific point in time.
     ///
     /// A memory existed at `point_in_time` if:
