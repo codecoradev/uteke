@@ -34,7 +34,24 @@
 - **move_document** now recomputes `has_children` on old parent after
   moving last child away.
 
+## [0.3.3] — 2026-06-22
+
+### Fixed
+
+- **Critical: server deadlock on POST /remember** (#442)
+  - RwLock deadlock in `remember_precomputed()`: the write lock on the
+    vector index was held when `auto_link_cosine()` tried to acquire a
+    read lock on the same RwLock. After 2-3 inserts, the server became
+    completely unresponsive.
+  - Fix: `drop(index)` before calling `auto_link_cosine()`.
+
+- **Cosine auto-linking never created edges** (#442)
+  - `auto_link_cosine()` deadlocked before reaching search/edge code.
+  - With the deadlock fixed, `similar_to` and `possible_duplicate`
+    edges are now created correctly on every `remember()`.
+
 ## [0.3.2] — 2026-06-22
+ — 2026-06-22
 
 ### Fixed
 
