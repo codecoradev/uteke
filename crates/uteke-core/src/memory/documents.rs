@@ -420,7 +420,11 @@ impl super::Store {
                 .get_document(id_or_slug)?
                 .ok_or_else(|| Error::validation("document not found for descendants query"))?,
         };
-        let path_prefix = format!("{}/", doc.path);
+        let path_prefix = if doc.path.ends_with('/') {
+            doc.path.clone()
+        } else {
+            format!("{}/", doc.path)
+        };
 
         if let Some(max) = max_depth {
             let mut stmt = self
@@ -520,7 +524,11 @@ impl super::Store {
         if path.is_empty() {
             return Ok(0);
         }
-        let prefix = format!("{}/", path);
+        let prefix = if path.ends_with('/') {
+            path.to_string()
+        } else {
+            format!("{}/", path)
+        };
         let count: i64 = self
             .conn
             .query_row(
@@ -568,7 +576,11 @@ impl super::Store {
             None => return Ok(0),
         };
 
-        let old_prefix = format!("{}/", old_path);
+        let old_prefix = if old_path.ends_with('/') {
+            old_path.to_string()
+        } else {
+            format!("{}/", old_path)
+        };
 
         // Safety checks.
         if let Some(parent) = new_parent_id {

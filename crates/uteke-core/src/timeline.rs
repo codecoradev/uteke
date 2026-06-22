@@ -296,7 +296,7 @@ mod tests {
     fn migration_dispatcher_reaches_v9() {
         let store = Store::open(":memory:").unwrap();
         let v = store.schema_version().unwrap();
-        assert_eq!(v, 11, "fresh store must reach CURRENT_SCHEMA_VERSION=11");
+        assert_eq!(v, 12, "fresh store must reach CURRENT_SCHEMA_VERSION=12");
         // timeline_events table must exist.
         let m = mem();
         store.insert(&m).unwrap();
