@@ -1144,6 +1144,43 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
                 }
             }
         }
+        // ── Context Summary (#442) ───────────────────────────────────────
+        (Method::Post, "/context") => match read_body::<serde_json::Value>(req.as_reader()) {
+            Ok(body) => {
+                let ns = body.get("namespace").and_then(|v| v.as_str());
+                match uteke.build_context(ns) {
+                    Ok(context) => {
+                        let resp = serde_json::json!({ "context": context });
+                        ctx.ok_response_for(req, &resp)
+                    }
+                    Err(e) => {
+                        error!("Context error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(_) => ctx.error_response_for(req, 400, "Invalid JSON body"),
+        },
+
+        // ── Dream Cycle (#442) ─────────────────────────────────────────────
+        (Method::Post, "/dream") => match read_body::<serde_json::Value>(req.as_reader()) {
+            Ok(body) => {
+                let ns = body.get("namespace").and_then(|v| v.as_str());
+                let dry_run = body
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                match uteke.dream(ns, dry_run, &[]) {
+                    Ok(report) => ctx.ok_response_for(req, &report),
+                    Err(e) => {
+                        error!("Dream error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(_) => ctx.error_response_for(req, 400, "Invalid JSON body"),
+        },
+
         (Method::Post, "/mcp") => {
             // Enforce a body size limit to prevent memory exhaustion
             // (CodeCora #397). 1 MiB is generous for JSON-RPC.
@@ -1607,6 +1644,37 @@ fn main() {
                 Err(_) => {
                     // Lock contention — skip this cycle.
                     tracing::debug!("Auto-aging: lock busy, skipping cycle");
+                }
+            }
+        }
+    });
+
+    // Auto-dream background thread (#442 enhancement).
+    // Runs dream cycle every 3 days to maintain graph health.
+    let dream_uteke = Arc::clone(&uteke);
+    std::thread::spawn(move || {
+        let interval = std::time::Duration::from_secs(3 * 24 * 60 * 60); // 3 days
+        loop {
+            std::thread::sleep(interval);
+            if SHUTDOWN.load(Ordering::SeqCst) {
+                break;
+            }
+            match dream_uteke.lock() {
+                Ok(u) => match u.dream(None, false, &[]) {
+                    Ok(report) => {
+                        if report.total_changes > 0 {
+                            info!(
+                                "Auto-dream: {} changes, {} warnings ({}ms)",
+                                report.total_changes, report.total_warnings, report.duration_ms
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Auto-dream failed: {e}");
+                    }
+                },
+                Err(_) => {
+                    tracing::debug!("Auto-dream: lock busy, skipping cycle");
                 }
             }
         }
