@@ -64,6 +64,11 @@ impl Error {
         Error::Lock { context }
     }
 
+    /// Validation error — user input or business rule violation.
+    pub fn validation(msg: impl Into<String>) -> Self {
+        Error::Validation(msg.into())
+    }
+
     /// Generic error with a message.
     pub fn generic(msg: impl Into<String>) -> Self {
         Error::Generic(msg.into())

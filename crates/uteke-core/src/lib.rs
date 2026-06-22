@@ -698,12 +698,13 @@ impl Uteke {
         })
     }
 
-    // ── Document engine (#406) ───────────────────────────────────────────
+    // ── Document engine (#406, #438) ────────────────────────────────────────
 
-    /// Create or update a document (#406).
+    /// Create or update a document (#406, #438).
     ///
     /// If the slug exists in the namespace, updates content and re-chunks.
     /// Chunks are created via the markdown chunker (#405) and embedded.
+    /// Optional parent slug for hierarchical documents.
     pub fn doc_upsert(
         &self,
         slug: &str,
@@ -712,14 +713,58 @@ impl Uteke {
         tags: &[&str],
         namespace: Option<&str>,
     ) -> Result<String, Error> {
+        self.doc_upsert_with_parent(slug, title, content, tags, namespace, None)
+    }
+
+    /// Create or update a document with optional parent (#438).
+    ///
+    /// If `parent_slug` is Some, the document is created as a child of that
+    /// parent document. Depth and path are computed automatically.
+    /// Max depth is 10 — returns error if exceeded.
+    pub fn doc_upsert_with_parent(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        namespace: Option<&str>,
+        parent_slug: Option<&str>,
+    ) -> Result<String, Error> {
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let now = chrono::Utc::now().to_rfc3339();
+
+        // Resolve parent if specified.
+        let (parent_id, parent_path, parent_depth) = match parent_slug {
+            Some(ps) => {
+                let parent = self
+                    .store
+                    .get_document_by_slug(ps, ns)?
+                    .ok_or_else(|| Error::validation(format!("parent document '{ps}' not found")))?;
+                if parent.depth >= 9 {
+                    return Err(Error::Validation(
+                        "maximum document depth of 10 would be exceeded".into(),
+                    ));
+                }
+                (
+                    Some(parent.id.clone()),
+                    parent.path,
+                    parent.depth + 1,
+                )
+            }
+            None => (None, String::new(), 0),
+        };
 
         // Check if document exists to get current version.
         let existing = self.store.get_document_by_slug(slug, ns)?;
         let (id, version) = match &existing {
             Some(doc) => (doc.id.clone(), doc.version),
             None => (uuid::Uuid::new_v4().to_string(), 1),
+        };
+
+        let path = if let Some(ref pid) = parent_id {
+            format!("{}{}/", parent_path, id)
+        } else {
+            format!("/{}/", id)
         };
 
         let doc = Document {
@@ -734,6 +779,11 @@ impl Uteke {
             content_type: "markdown".to_string(),
             created_at: now.clone(),
             updated_at: now,
+            parent_id,
+            path,
+            depth: parent_depth,
+            sort_order: 0,
+            has_children: false,
         };
 
         let doc_id = self.store.upsert_document(&doc)?;
@@ -799,8 +849,86 @@ impl Uteke {
         self.store.list_documents(namespace, limit)
     }
 
-    /// Delete a document by ID.
-    pub fn doc_delete(&self, id: &str) -> Result<bool, Error> {
+    /// List root documents (no parent) in a namespace (#438).
+    pub fn doc_list_roots(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_root_documents(namespace, limit)
+    }
+
+    /// List children of a document (#438).
+    pub fn doc_list_children(
+        &self,
+        parent_id_or_slug: &str,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Resolve slug to ID first.
+        let parent_id = match self.store.get_document_by_slug(parent_id_or_slug, ns)? {
+            Some(doc) => doc.id,
+            None => parent_id_or_slug.to_string(),
+        };
+        self.store.list_document_children(&parent_id, limit)
+    }
+
+    /// List all descendants of a document (#438).
+    pub fn doc_list_descendants(
+        &self,
+        id_or_slug: &str,
+        namespace: Option<&str>,
+        max_depth: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        self.store.list_descendants(id_or_slug, ns, max_depth, limit)
+    }
+
+    /// Get breadcrumbs from root to a document (#438).
+    pub fn doc_breadcrumbs(
+        &self,
+        id_or_slug: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        self.store.get_breadcrumbs(id_or_slug, ns)
+    }
+
+    /// Move a document to a new parent or root (#438).
+    pub fn doc_move(
+        &self,
+        id_or_slug: &str,
+        new_parent_slug: Option<&str>,
+        namespace: Option<&str>,
+    ) -> Result<usize, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let doc = self
+            .store
+            .get_document_by_slug(id_or_slug, ns)?
+            .or_else(|| self.store.get_document(id_or_slug).unwrap_or(None))
+            .ok_or_else(|| Error::validation("document not found for move"))?;
+
+        let new_parent_id = match new_parent_slug {
+            Some(ps) => {
+                let parent = self
+                    .store
+                    .get_document_by_slug(ps, ns)?
+                    .ok_or_else(|| Error::validation(&format!("parent document '{ps}' not found")))?;
+                Some(parent.id)
+            }
+            None => None,
+        };
+
+        let parent_id_ref = new_parent_id.as_deref();
+        self.store.move_document(&doc.id, parent_id_ref, None)
+    }
+
+    /// Delete a document by ID or slug (#438).
+    ///
+    /// Cascades to children and chunks. Returns (deleted, subtree_size).
+    pub fn doc_delete(&self, id: &str) -> Result<(bool, usize), Error> {
         self.store.delete_document(id)
     }
 }

@@ -86,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
 
--- v11: Document engine (#406).
+-- v11: Document engine (#406, #438).
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     slug TEXT NOT NULL COLLATE NOCASE,
@@ -99,11 +99,20 @@ CREATE TABLE IF NOT EXISTS documents (
     content_type TEXT NOT NULL DEFAULT 'markdown',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
+    parent_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+    path TEXT NOT NULL DEFAULT '',
+    depth INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    has_children INTEGER NOT NULL DEFAULT 0,
     UNIQUE(namespace, slug)
 );
 CREATE INDEX IF NOT EXISTS idx_documents_namespace ON documents(namespace);
 CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
 CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
+CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path);
+CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_id);
+CREATE INDEX IF NOT EXISTS idx_documents_depth ON documents(depth);
+CREATE INDEX IF NOT EXISTS idx_documents_sort ON documents(parent_id, sort_order);
 
 CREATE TABLE IF NOT EXISTS document_chunks (
     id TEXT PRIMARY KEY,
@@ -132,7 +141,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 11;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 12;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

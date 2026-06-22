@@ -169,6 +169,8 @@ impl super::Store {
                 10 => self.migrate_v9_to_v10()?,
                 // v11: Document engine tables (#406)
                 11 => self.migrate_v10_to_v11()?,
+                // v12: Hierarchical documents (#438)
+                12 => self.migrate_v11_to_v12()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -330,6 +332,14 @@ impl super::Store {
     pub(super) fn column_exists(&self, column: &str) -> bool {
         self.conn
             .prepare("SELECT * FROM memories LIMIT 0")
+            .map(|stmt| stmt.column_names().iter().any(|n| n == &column))
+            .unwrap_or(false)
+    }
+
+    /// Check if a column exists in a specific table.
+    pub(super) fn column_exists_in(&self, table: &str, column: &str) -> bool {
+        self.conn
+            .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
             .map(|stmt| stmt.column_names().iter().any(|n| n == &column))
             .unwrap_or(false)
     }
@@ -561,6 +571,54 @@ impl super::Store {
                 "#,
             )
             .map_err(|e| Error::db("schema migration v10 to v11", e))?;
+        Ok(())
+    }
+
+    /// v12: Hierarchical documents (#438).
+    ///
+    /// Adds parent_id, path (materialized), depth, sort_order, has_children
+    /// columns to the documents table for tree support with depth 10.
+    fn migrate_v11_to_v12(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v11 to v12: hierarchical documents");
+
+        // Add hierarchy columns with column_exists guards for idempotency.
+        if !self.column_exists_in("documents", "parent_id") {
+            self.conn
+                .execute("ALTER TABLE documents ADD COLUMN parent_id TEXT REFERENCES documents(id) ON DELETE CASCADE", [])
+                .map_err(|e| Error::db("migration v12: add parent_id", e))?;
+        }
+        if !self.column_exists_in("documents", "path") {
+            self.conn
+                .execute("ALTER TABLE documents ADD COLUMN path TEXT NOT NULL DEFAULT ''", [])
+                .map_err(|e| Error::db("migration v12: add path", e))?;
+        }
+        if !self.column_exists_in("documents", "depth") {
+            self.conn
+                .execute("ALTER TABLE documents ADD COLUMN depth INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(|e| Error::db("migration v12: add depth", e))?;
+        }
+        if !self.column_exists_in("documents", "sort_order") {
+            self.conn
+                .execute("ALTER TABLE documents ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(|e| Error::db("migration v12: add sort_order", e))?;
+        }
+        if !self.column_exists_in("documents", "has_children") {
+            self.conn
+                .execute("ALTER TABLE documents ADD COLUMN has_children INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(|e| Error::db("migration v12: add has_children", e))?;
+        }
+
+        // Create indexes (best-effort — tolerate "already exists").
+        let indexes = [
+            "CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path)",
+            "CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_id)",
+            "CREATE INDEX IF NOT EXISTS idx_documents_depth ON documents(depth)",
+            "CREATE INDEX IF NOT EXISTS idx_documents_sort ON documents(parent_id, sort_order)",
+        ];
+        for idx in &indexes {
+            let _ = self.conn.execute(idx, []);
+        }
+
         Ok(())
     }
 }
