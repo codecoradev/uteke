@@ -698,7 +698,7 @@ impl super::Store {
         // Recompute old parent's has_children flag (may have lost last child).
         if let Some(ref old_parent) = old_parent_id {
             // Only recompute if moving away from old parent (not moving to root).
-            if new_parent_id.map(|s| s.as_str()) != Some(old_parent.as_str()) {
+            if new_parent_id.as_deref() != Some(old_parent.as_ref()) {
                 let has_any: bool = tx
                     .query_row(
                         "SELECT EXISTS(SELECT 1 FROM documents WHERE parent_id = ?1 LIMIT 1)",
