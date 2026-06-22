@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local at `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Version:** 0.2.0
+- **Version:** 0.3.2
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -89,7 +89,7 @@ crates/uteke-server/src/
 ### Schema Versioning
 
 - `schema_version` table with integer counter
-- Current: **v7** (knowledge graph tables)
+- Current: **v11** (document engine + knowledge graph + timeline + citations)
 - Auto-migration on upgrade, zero data loss
 
 ---
@@ -249,8 +249,15 @@ Principle: **Red CI = there's a problem. Investigate first, don't assume.**
 
 Before tagging:
 1. All PRs for the version must be merged to develop
-2. Docs updated (CHANGELOG, README, cli-reference, roadmap)
-3. Version bumped in Cargo.toml + inter-crate deps
+2. **Documentation MUST be updated first — no exceptions:**
+   - `README.md` + `README.id.md` — badge version, new features list
+   - `CHANGELOG.md` — new `[X.Y.Z]` section with all changes
+   - `docs/cli-reference.md` — new commands, flags, API endpoints
+   - `docs/configuration.md` — new config sections, env vars
+   - `docs/architecture.md` — new subsystems, schema changes
+   - `docs/roadmap.md` — milestone section with closed issues
+   - `docs/integrations/hermes.md` — plugin changes if applicable
+3. Version bumped in `Cargo.toml` + inter-crate deps + `plugin.yaml`
 4. develop → main merged via PR
 5. `cargo publish --dry-run` passes locally
 6. Get approval from project owner
@@ -414,7 +421,7 @@ docs: update CLI reference for metadata flags
 # Build
 cargo build --workspace
 
-# Test (108 unit tests)
+# Test (295 unit tests)
 cargo test --workspace
 
 # Format + Lint
