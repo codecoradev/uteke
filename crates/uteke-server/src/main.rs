@@ -1621,64 +1621,95 @@ fn main() {
     }
 
     // Auto-aging background thread (#442 enhancement).
-    // Runs aging cleanup every 6 hours to remove cold, low-importance memories.
+    // Runs aging cleanup periodically to remove cold, low-importance memories.
+    let aging_enabled = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_aging_enabled)
+        .unwrap_or(true);
+    let aging_hours = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_aging_interval_hours)
+        .unwrap_or(6)
+        .max(1); // Minimum 1 hour to prevent busy loop
     let aging_uteke = Arc::clone(&uteke);
-    std::thread::spawn(move || {
-        let interval = std::time::Duration::from_secs(6 * 60 * 60); // 6 hours
-        loop {
-            std::thread::sleep(interval);
-            if SHUTDOWN.load(Ordering::SeqCst) {
-                break;
-            }
-            match aging_uteke.lock() {
-                Ok(u) => match u.aging_cleanup(180, 10000, None) {
-                    Ok(result) => {
-                        if result.deleted > 0 {
-                            info!("Auto-aging: cleaned up {} stale memories", result.deleted);
+    if aging_enabled {
+        info!("Auto-aging: enabled (every {aging_hours}h)");
+        std::thread::spawn(move || {
+            let interval = std::time::Duration::from_secs(aging_hours * 60 * 60);
+            loop {
+                std::thread::sleep(interval);
+                if SHUTDOWN.load(Ordering::SeqCst) {
+                    break;
+                }
+                match aging_uteke.lock() {
+                    Ok(u) => match u.aging_cleanup(180, 10000, None) {
+                        Ok(result) => {
+                            if result.deleted > 0 {
+                                info!("Auto-aging: cleaned up {} stale memories", result.deleted);
+                            }
                         }
+                        Err(e) => {
+                            warn!("Auto-aging failed: {e}");
+                        }
+                    },
+                    Err(_) => {
+                        tracing::debug!("Auto-aging: lock busy, skipping cycle");
                     }
-                    Err(e) => {
-                        warn!("Auto-aging failed: {e}");
-                    }
-                },
-                Err(_) => {
-                    // Lock contention — skip this cycle.
-                    tracing::debug!("Auto-aging: lock busy, skipping cycle");
                 }
             }
-        }
-    });
+        });
+    } else {
+        info!("Auto-aging: disabled");
+    }
 
     // Auto-dream background thread (#442 enhancement).
-    // Runs dream cycle every 3 days to maintain graph health.
+    // Runs dream cycle periodically to maintain graph health.
+    let dream_enabled = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_dream_enabled)
+        .unwrap_or(true);
+    let dream_days = config
+        .maintenance
+        .as_ref()
+        .and_then(|m| m.auto_dream_interval_days)
+        .unwrap_or(3)
+        .max(1); // Minimum 1 day to prevent busy loop
     let dream_uteke = Arc::clone(&uteke);
-    std::thread::spawn(move || {
-        let interval = std::time::Duration::from_secs(3 * 24 * 60 * 60); // 3 days
-        loop {
-            std::thread::sleep(interval);
-            if SHUTDOWN.load(Ordering::SeqCst) {
-                break;
-            }
-            match dream_uteke.lock() {
-                Ok(u) => match u.dream(None, false, &[]) {
-                    Ok(report) => {
-                        if report.total_changes > 0 {
-                            info!(
-                                "Auto-dream: {} changes, {} warnings ({}ms)",
-                                report.total_changes, report.total_warnings, report.duration_ms
-                            );
+    if dream_enabled {
+        info!("Auto-dream: enabled (every {dream_days}d)");
+        std::thread::spawn(move || {
+            let interval = std::time::Duration::from_secs(dream_days * 24 * 60 * 60);
+            loop {
+                std::thread::sleep(interval);
+                if SHUTDOWN.load(Ordering::SeqCst) {
+                    break;
+                }
+                match dream_uteke.lock() {
+                    Ok(u) => match u.dream(None, false, &[]) {
+                        Ok(report) => {
+                            if report.total_changes > 0 {
+                                info!(
+                                    "Auto-dream: {} changes, {} warnings ({}ms)",
+                                    report.total_changes, report.total_warnings, report.duration_ms
+                                );
+                            }
                         }
+                        Err(e) => {
+                            warn!("Auto-dream failed: {e}");
+                        }
+                    },
+                    Err(_) => {
+                        tracing::debug!("Auto-dream: lock busy, skipping cycle");
                     }
-                    Err(e) => {
-                        warn!("Auto-dream failed: {e}");
-                    }
-                },
-                Err(_) => {
-                    tracing::debug!("Auto-dream: lock busy, skipping cycle");
                 }
             }
-        }
-    });
+        });
+    } else {
+        info!("Auto-dream: disabled");
+    }
 
     // SIGINT handler
     ctrlc::set_handler(|| {
@@ -1730,6 +1761,15 @@ fn main() {
 struct ServerFileConfig {
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
+    maintenance: Option<MaintenanceFileSection>,
+}
+
+#[derive(serde::Deserialize, Default, Clone)]
+struct MaintenanceFileSection {
+    auto_aging_enabled: Option<bool>,
+    auto_aging_interval_hours: Option<u64>,
+    auto_dream_enabled: Option<bool>,
+    auto_dream_interval_days: Option<u64>,
 }
 
 #[derive(serde::Deserialize, Default, Clone)]
