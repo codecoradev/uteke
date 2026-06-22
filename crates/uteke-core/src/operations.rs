@@ -319,8 +319,6 @@ impl crate::Uteke {
         namespace: Option<&str>,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
         // Lazy-load embedder on first use.
@@ -362,9 +360,11 @@ impl crate::Uteke {
                     None => continue,
                 };
 
-                // Apply namespace filter
-                if memory.namespace != ns {
-                    continue;
+                // Apply namespace filter (None = search ALL namespaces, #448)
+                if let Some(ns) = namespace {
+                    if memory.namespace != ns {
+                        continue;
+                    }
                 }
 
                 // Apply tag filter
@@ -438,15 +438,15 @@ impl crate::Uteke {
         strategy: RecallStrategy,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
         // Check recall cache first — avoids redundant embedding (~50ms).
         // min_score is NOT in the cache key: cached results store the full set
         // and the caller re-applies threshold, ensuring correctness regardless
         // of what threshold a previous caller used.
+        let cache_ns = namespace.unwrap_or("all");
+
         if let Some(cached) = self
             .recall_cache
-            .get(query, ns, limit, tags_filter, strategy)
+            .get(query, cache_ns, limit, tags_filter, strategy)
         {
             let mut results = cached;
             if min_score > 0.0 {
@@ -488,8 +488,14 @@ impl crate::Uteke {
 
         // Cache results for future queries (without min_score filtering,
         // so cached results are reusable for any threshold)
-        self.recall_cache
-            .put(query, ns, limit, tags_filter, strategy, results.clone());
+        self.recall_cache.put(
+            query,
+            cache_ns,
+            limit,
+            tags_filter,
+            strategy,
+            results.clone(),
+        );
 
         // Apply salience/recency boosts AFTER caching so cached entries
         // store the raw scores (time-independent). Boosts are recomputed
@@ -586,8 +592,6 @@ impl crate::Uteke {
         namespace: Option<&str>,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
         // Try phrase search first, fall back to token search
         let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
             Ok(r) if !r.is_empty() => r,
@@ -601,9 +605,11 @@ impl crate::Uteke {
         let results: Vec<SearchResult> = fts_results
             .into_iter()
             .filter(|(memory, _)| {
-                // Namespace filter (FTS5 may return cross-namespace if not filtered)
-                if memory.namespace != ns {
-                    return false;
+                // Namespace filter (None = ALL, #448)
+                if let Some(ns) = namespace {
+                    if memory.namespace != ns {
+                        return false;
+                    }
                 }
                 // Tag filter
                 if let Some(filter_tags) = tags_filter {
@@ -691,11 +697,12 @@ impl crate::Uteke {
         }
 
         // Score FTS5 results by rank
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         for (rank, (memory, _rank_val)) in fts_results.iter().enumerate() {
-            // Apply namespace + tag filter
-            if memory.namespace != ns {
-                continue;
+            // Apply namespace + tag filter (None = ALL, #448)
+            if let Some(ns) = namespace {
+                if memory.namespace != ns {
+                    continue;
+                }
             }
             if let Some(filter_tags) = tags_filter {
                 let has_tag = filter_tags
