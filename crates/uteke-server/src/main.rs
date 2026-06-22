@@ -1583,6 +1583,35 @@ fn main() {
         info!("CORS: allowing origins: {:?}", cors_origins);
     }
 
+    // Auto-aging background thread (#442 enhancement).
+    // Runs aging cleanup every 6 hours to remove cold, low-importance memories.
+    let aging_uteke = Arc::clone(&uteke);
+    std::thread::spawn(move || {
+        let interval = std::time::Duration::from_secs(6 * 60 * 60); // 6 hours
+        loop {
+            std::thread::sleep(interval);
+            if SHUTDOWN.load(Ordering::SeqCst) {
+                break;
+            }
+            match aging_uteke.lock() {
+                Ok(u) => match u.aging_cleanup(180, 10000, None) {
+                    Ok(result) => {
+                        if result.deleted > 0 {
+                            info!("Auto-aging: cleaned up {} stale memories", result.deleted);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Auto-aging failed: {e}");
+                    }
+                },
+                Err(_) => {
+                    // Lock contention — skip this cycle.
+                    tracing::debug!("Auto-aging: lock busy, skipping cycle");
+                }
+            }
+        }
+    });
+
     // SIGINT handler
     ctrlc::set_handler(|| {
         if SHUTDOWN.load(Ordering::SeqCst) {

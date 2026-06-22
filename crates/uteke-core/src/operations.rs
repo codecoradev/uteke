@@ -137,6 +137,14 @@ impl crate::Uteke {
             .as_ref()
             .expect("embedder ensured above")
             .embed(&embed_text)?;
+
+        // Dedup check: if an existing memory has cosine >= 0.95, return it
+        // instead of creating a duplicate (#442 enhancement).
+        if let Some(existing_id) = self.check_duplicate(&embedding, namespace)? {
+            tracing::info!("Dedup: memory {existing_id} is nearly identical, skipping insert");
+            return Ok(existing_id);
+        }
+
         self.remember_precomputed(
             content,
             tags,
@@ -152,6 +160,65 @@ impl crate::Uteke {
     ///
     /// Use when the embedding has already been computed (e.g., contradiction check).
     /// Returns the UUID of the created memory.
+    #[allow(clippy::too_many_arguments)]
+    /// Check if a near-duplicate memory already exists (#442 enhancement).
+    ///
+    /// Searches the vector index for cosine >= 0.95. If found, returns
+    /// the existing memory ID so caller can skip the insert.
+    /// Only checks within the same namespace.
+    fn check_duplicate(
+        &self,
+        embedding: &[f32],
+        namespace: Option<&str>,
+    ) -> Result<Option<String>, Error> {
+        const DEDUP_THRESHOLD: f32 = 0.95;
+
+        let index = match self.index.try_read() {
+            Ok(i) => i,
+            Err(_) => return Ok(None), // Don't block if locked
+        };
+
+        if index.is_empty() {
+            return Ok(None);
+        }
+
+        let results = index.search(embedding, 5, 50);
+        drop(index);
+
+        if results.is_empty() {
+            return Ok(None);
+        }
+
+        // Filter by namespace if specified.
+        let ns_set: Option<std::collections::HashSet<String>> = if let Some(ns) = namespace {
+            match self.store.memories_in_namespace(ns) {
+                Ok(ids) => Some(ids.into_iter().collect()),
+                Err(_) => return Ok(None),
+            }
+        } else {
+            None
+        };
+
+        for (id, dist) in &results {
+            // Skip chunk: prefixed entries (document chunks).
+            if id.starts_with("chunk:") {
+                continue;
+            }
+            // Namespace filter.
+            if let Some(ref set) = ns_set {
+                if !set.contains(id) {
+                    continue;
+                }
+            }
+            let sim = (1.0 - dist).clamp(0.0, 1.0);
+            if sim >= DEDUP_THRESHOLD {
+                return Ok(Some(id.clone()));
+            }
+        }
+
+        Ok(None)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn remember_precomputed(
         &self,
@@ -974,5 +1041,51 @@ impl crate::Uteke {
     ) -> Result<Vec<Memory>, Error> {
         self.store
             .list_at_time(tag, namespace, limit, offset, point_in_time)
+    }
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use crate::Uteke;
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_blocks_exact_duplicate() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let id1 = uteke
+            .remember("The sky is blue today", &[], None, Some("dedup"))
+            .unwrap();
+        // Same content again — should return the SAME id, not a new one.
+        let id2 = uteke
+            .remember("The sky is blue today", &[], None, Some("dedup"))
+            .unwrap();
+        assert_eq!(id1, id2, "exact duplicate should return existing ID");
+    }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_allows_different_content() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let id1 = uteke
+            .remember("The sky is blue", &[], None, Some("dedup2"))
+            .unwrap();
+        let id2 = uteke
+            .remember("Rust is a programming language", &[], None, Some("dedup2"))
+            .unwrap();
+        assert_ne!(id1, id2, "different content should create new memory");
+    }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_namespace_scoped() {
+        let uteke = Uteke::open(":memory:").unwrap();
+        let id1 = uteke
+            .remember("Same content different namespace", &[], None, Some("ns1"))
+            .unwrap();
+        // Same content in DIFFERENT namespace — should NOT be blocked.
+        let id2 = uteke
+            .remember("Same content different namespace", &[], None, Some("ns2"))
+            .unwrap();
+        assert_ne!(id1, id2, "different namespace should not dedup");
     }
 }

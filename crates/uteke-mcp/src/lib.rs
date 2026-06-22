@@ -113,9 +113,17 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
             "tools": [
                 tool_remember(),
                 tool_recall(),
+                tool_search(),
                 tool_list(),
                 tool_forget(),
                 tool_stats(),
+                tool_doc_create(),
+                tool_doc_get(),
+                tool_doc_list(),
+                tool_doc_search(),
+                tool_doc_delete(),
+                tool_graph(),
+                tool_room_recall(),
             ]
         })),
 
@@ -130,9 +138,17 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
             let result = match tool_name {
                 "uteke_remember" => exec_remember(uteke, &arguments)?,
                 "uteke_recall" => exec_recall(uteke, &arguments)?,
+                "uteke_search" => exec_search(uteke, &arguments)?,
                 "uteke_list" => exec_list(uteke, &arguments)?,
                 "uteke_forget" => exec_forget(uteke, &arguments)?,
                 "uteke_stats" => exec_stats(uteke, &arguments)?,
+                "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
+                "uteke_doc_get" => exec_doc_get(uteke, &arguments)?,
+                "uteke_doc_list" => exec_doc_list(uteke, &arguments)?,
+                "uteke_doc_search" => exec_doc_search(uteke, &arguments)?,
+                "uteke_doc_delete" => exec_doc_delete(uteke, &arguments)?,
+                "uteke_graph" => exec_graph(uteke, &arguments)?,
+                "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -223,6 +239,131 @@ fn tool_stats() -> Value {
             "properties": {
                 "namespace": { "type": "string", "description": "Namespace (optional)" }
             }
+        }
+    })
+}
+
+fn tool_search() -> Value {
+    serde_json::json!({
+        "name": "uteke_search",
+        "description": "Keyword (FTS5) text search over stored memories. Faster than semantic recall for exact matches.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Keywords to search for" },
+                "limit": { "type": "integer", "description": "Max results (default 10)", "default": 10 },
+                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn tool_doc_create() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_create",
+        "description": "Create or update a document in the wiki/knowledge base. Markdown content is auto-chunked and embedded for section-level semantic search.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slug": { "type": "string", "description": "URL-friendly identifier (unique per namespace)" },
+                "title": { "type": "string", "description": "Document title (auto-derived from first heading if omitted)" },
+                "content": { "type": "string", "description": "Full markdown content" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags (optional)" },
+                "namespace": { "type": "string", "description": "Namespace (default: 'default')" },
+                "parent": { "type": "string", "description": "Parent document slug for hierarchy (optional)" }
+            },
+            "required": ["slug", "content"]
+        }
+    })
+}
+
+fn tool_doc_get() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_get",
+        "description": "Get a document by slug or ID. Returns full markdown content.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id_or_slug": { "type": "string", "description": "Document slug or UUID" },
+                "namespace": { "type": "string", "description": "Namespace (default: 'default')" }
+            },
+            "required": ["id_or_slug"]
+        }
+    })
+}
+
+fn tool_doc_list() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_list",
+        "description": "List documents in the wiki/knowledge base.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
+                "namespace": { "type": "string", "description": "Namespace (optional)" }
+            }
+        }
+    })
+}
+
+fn tool_doc_search() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_search",
+        "description": "Search documents by meaning or keywords. Supports semantic, FTS5, and hybrid (default) search modes.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query" },
+                "mode": { "type": "string", "description": "Search mode: semantic, fts, or hybrid (default: hybrid)" },
+                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
+                "namespace": { "type": "string", "description": "Namespace (optional)" }
+            },
+            "required": ["query"]
+        }
+    })
+}
+
+fn tool_doc_delete() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_delete",
+        "description": "Delete a document by its UUID. Cascades to all chunks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Document UUID" }
+            },
+            "required": ["id"]
+        }
+    })
+}
+
+fn tool_graph() -> Value {
+    serde_json::json!({
+        "name": "uteke_graph",
+        "description": "Get knowledge graph data (nodes + edges + stats) for visualization.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": { "type": "string", "description": "Filter by namespace (optional)" }
+            }
+        }
+    })
+}
+
+fn tool_room_recall() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_recall",
+        "description": "Semantic recall within a room context. Searches across all namespaces in the room using hybrid RRF ranking.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier" },
+                "query": { "type": "string", "description": "Search query" },
+                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 }
+            },
+            "required": ["room_id", "query"]
         }
     })
 }
@@ -370,6 +511,241 @@ fn exec_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 "Total: {} | Tags: {} | DB: {} bytes",
                 stats.total_memories, stats.unique_tags, stats.db_size_bytes
             ),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let query = args["query"].as_str().ok_or("Missing 'query'")?;
+    let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+    let namespace = args["namespace"].as_str();
+
+    let tags_filter: Option<Vec<&str>> = args["tags"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>());
+    let tags_ref = tags_filter.as_deref();
+
+    let results = uteke
+        .search(query, limit, tags_ref, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if results.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No memories found.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = results
+        .iter()
+        .map(|sr| format!("[{:.2}] {}", sr.score, sr.memory.content))
+        .collect();
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_doc_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let slug = args["slug"].as_str().ok_or("Missing 'slug'")?;
+    let content = args["content"].as_str().ok_or("Missing 'content'")?;
+    let title = args["title"].as_str().unwrap_or("");
+    let namespace = args["namespace"].as_str();
+    let tags: Vec<&str> = args["tags"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+
+    let id = uteke
+        .doc_upsert(slug, title, content, &tags, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("✓ Document '{slug}' stored (id: {id})"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id_or_slug = args["id_or_slug"].as_str().ok_or("Missing 'id_or_slug'")?;
+    let namespace = args["namespace"].as_str();
+
+    let doc = uteke
+        .doc_get(id_or_slug, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    match doc {
+        Some(d) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("# {}\n\n{}", d.title, d.content),
+            }],
+            is_error: false,
+        }),
+        None => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Document '{id_or_slug}' not found"),
+            }],
+            is_error: false,
+        }),
+    }
+}
+
+fn exec_doc_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+    let namespace = args["namespace"].as_str();
+
+    let docs = uteke
+        .doc_list(namespace, limit)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if docs.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No documents found.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = docs
+        .iter()
+        .map(|d| format!("{} — {} (v{})", d.slug, d.title, d.version))
+        .collect();
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_doc_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let query = args["query"].as_str().ok_or("Missing 'query'")?;
+    let mode = args["mode"].as_str().unwrap_or("hybrid");
+    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+    let namespace = args["namespace"].as_str();
+
+    let results = uteke
+        .doc_search(query, namespace, limit, mode)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if results.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No documents found.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = results
+        .iter()
+        .map(|d| format!("{} — {}", d.document.slug, d.document.title))
+        .collect();
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_doc_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id = args["id"].as_str().ok_or("Missing 'id'")?;
+
+    let (deleted, chunks) = uteke
+        .doc_delete(id, None)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if deleted {
+        Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("✓ Deleted document: {id} ({chunks} chunks removed)"),
+            }],
+            is_error: false,
+        })
+    } else {
+        Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Document not found: {id}"),
+            }],
+            is_error: false,
+        })
+    }
+}
+
+fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let namespace = args["namespace"].as_str();
+
+    let data = uteke
+        .graph_data(namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let text = format!(
+        "Graph: {} nodes, {} edges, {} relation types",
+        data.nodes.len(),
+        data.edges.len(),
+        data.stats.relation_types.len()
+    );
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+    let query = args["query"].as_str().ok_or("Missing 'query'")?;
+    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+
+    let results = uteke
+        .recall_room_semantic(room_id, query, limit, None, 0.0)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if results.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No memories found in room.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = results
+        .iter()
+        .map(|sr| format!("[{:.2}] {}", sr.score, sr.memory.content))
+        .collect();
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
         }],
         is_error: false,
     })
