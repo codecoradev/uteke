@@ -1,3 +1,20 @@
+## [0.3.2] — 2026-06-22
+
+### Fixed
+
+- **Harden schema migrations for partially-migrated databases** (#435)
+  - `migrate_v9_to_v10` now uses `column_exists()` guard before `ALTER TABLE
+    ADD COLUMN` for `source` and `source_type`. Prevents "duplicate column
+    name" crash on databases that were partially migrated by a buggy binary
+    (e.g. v0.3.0 which ran SCHEMA_INDEXES before migrations).
+  - `migrate_v7_to_v8` now creates `idx_memories_slug` index as a separate
+    statement instead of inside `execute_batch`, producing clearer error
+    messages on failure.
+
+### Docs
+
+- Added detailed documentation checklist to AGENT.md release process (#434).
+
 ## [0.3.1] — 2026-06-21
 
 ### Fixed
