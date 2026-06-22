@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS memories (
     content_type TEXT NOT NULL DEFAULT 'text',
     slug TEXT,
     source TEXT,
-    source_type TEXT NOT NULL DEFAULT 'user'
+    source_type TEXT NOT NULL DEFAULT 'unknown'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);

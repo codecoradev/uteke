@@ -397,10 +397,17 @@ impl super::Store {
                 CREATE INDEX IF NOT EXISTS idx_memory_edges_source ON memory_edges(source_id);
                 CREATE INDEX IF NOT EXISTS idx_memory_edges_target ON memory_edges(target_id);
                 CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
-                CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;
                 "#,
             )
             .map_err(|e| Error::db("schema migration v7 to v8", e))?;
+
+        // Best-effort: slug index may fail if slug column somehow missing
+        // (shouldn't happen after the ALTER TABLE above, but be defensive).
+        if let Err(e) = self.conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;"
+        ) {
+            tracing::debug!("migrate_v7_to_v8: slug index (best-effort): {e}");
+        }
 
         // Backfill edges from legacy metadata.relationships JSON.
         // Shape: { "relationships": [{ "type": "supersedes", "target": "<uuid>" }, ...] }
@@ -487,14 +494,20 @@ impl super::Store {
     /// `source_type = 'unknown'` (legacy data without source info).
     fn migrate_v9_to_v10(&self) -> Result<(), Error> {
         tracing::info!("Applying schema migration v9 to v10: source columns");
-        self.conn
-            .execute_batch(
-                r#"
-                ALTER TABLE memories ADD COLUMN source TEXT;
-                ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL DEFAULT 'unknown';
-                "#,
-            )
-            .map_err(|e| Error::db("schema migration v9 to v10", e))?;
+        // Guard with column_exists to handle partially-migrated databases
+        // (e.g. fresh v0.3.0 DBs that already have these columns via SCHEMA).
+        if !self.column_exists("source") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN source TEXT;")
+                .map_err(|e| Error::db("schema migration v9 to v10", e))?;
+        }
+        if !self.column_exists("source_type") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL DEFAULT 'unknown';",
+                )
+                .map_err(|e| Error::db("schema migration v9 to v10", e))?;
+        }
         Ok(())
     }
 
