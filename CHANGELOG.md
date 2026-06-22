@@ -1,3 +1,20 @@
+## [0.4.1] — 2026-06-22
+
+### Added
+- **uteke_context MCP tool** — smart project summary for agent prompts
+- **uteke_dream MCP tool** — trigger dream cycle from any agent
+- **POST /context** and **POST /dream** API endpoints
+- **Auto-dream** — server background thread runs dream every 3 days
+- **Configurable maintenance daemon** — [maintenance] config section
+- **Safe aging defaults** — pinned protection, max 100/cycle, configurable thresholds
+- **Dedup on insert** — cosine >= 0.95 returns existing memory ID
+
+### Fixed
+- **#442: server deadlock** — RwLock deadlock in remember_precomputed
+- **#448: recall without namespace** — now searches ALL namespaces (was: only "default")
+- **Pinned memories could be deleted** by aging cleanup — added pinned=0 guard
+- **Schema migration v7→v11** — indexes now created after migrations complete
+
 ## [0.4.0] — 2026-06-22
 
 ### Added
