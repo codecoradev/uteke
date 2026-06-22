@@ -257,11 +257,15 @@ Before tagging:
    - `docs/architecture.md` — new subsystems, schema changes
    - `docs/roadmap.md` — milestone section with closed issues
    - `docs/integrations/hermes.md` — plugin changes if applicable
-3. Version bumped in `Cargo.toml` + inter-crate deps + `plugin.yaml`
-4. develop → main merged via PR
-5. `cargo publish --dry-run` passes locally
-6. Get approval from project owner
-7. Tag from main commit, push
+3. **MCP tools MUST be in sync with API server endpoints** — no exceptions:
+   - Every API endpoint must have a corresponding MCP tool
+   - `crates/uteke-mcp/src/lib.rs` tool list must match server routes
+   - Run `cargo test --workspace` to verify both compile and pass
+4. Version bumped in `Cargo.toml` + inter-crate deps + `plugin.yaml`
+5. develop → main merged via PR
+6. `cargo publish --dry-run` passes locally
+7. Get approval from project owner
+8. Tag from main commit, push
 
 ### 13. Always Run Cora Pre-Commit Hook
 
