@@ -940,7 +940,7 @@ impl Uteke {
         let new_parent_id = match new_parent_slug {
             Some(ps) => {
                 let parent = self.store.get_document_by_slug(ps, ns)?.ok_or_else(|| {
-                    Error::validation(&format!("parent document '{ps}' not found"))
+                    Error::validation(format!("parent document '{ps}' not found"))
                 })?;
                 Some(parent.id)
             }

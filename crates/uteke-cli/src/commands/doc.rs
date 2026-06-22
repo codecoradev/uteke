@@ -266,11 +266,7 @@ pub(crate) fn run(
             }
         }
 
-        DocCommands::Search {
-            query,
-            limit,
-            mode,
-        } => {
+        DocCommands::Search { query, limit, mode } => {
             let results = uteke
                 .doc_search(query, ns, *limit, mode)
                 .map_err(|e| format!("Failed to search documents: {e}"))?;
