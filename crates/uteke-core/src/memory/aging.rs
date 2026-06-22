@@ -40,6 +40,7 @@ impl super::Store {
                  FROM memories
             WHERE namespace = ?1
               AND deprecated = 0
+              AND pinned = 0
               AND created_at < ?2
               AND access_count <= ?3
               AND (last_accessed IS NULL OR last_accessed < ?4)

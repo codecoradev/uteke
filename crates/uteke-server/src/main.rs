@@ -1644,16 +1644,28 @@ fn main() {
                     break;
                 }
                 match aging_uteke.lock() {
-                    Ok(u) => match u.aging_cleanup(180, 10000, None) {
-                        Ok(result) => {
-                            if result.deleted > 0 {
-                                info!("Auto-aging: cleaned up {} stale memories", result.deleted);
+                    Ok(u) => {
+                        let age_days = config
+                            .aging
+                            .as_ref()
+                            .and_then(|a| a.max_age_days)
+                            .unwrap_or(365);
+                        let max_access = config
+                            .aging
+                            .as_ref()
+                            .and_then(|a| a.max_access_count)
+                            .unwrap_or(10);
+                        match u.aging_cleanup(age_days, max_access, None) {
+                            Ok(result) => {
+                                if result.deleted > 0 {
+                                    info!("Auto-aging: cleaned up {} stale memories (age>{age_days}d, access<{max_access})", result.deleted);
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Auto-aging failed: {e}");
                             }
                         }
-                        Err(e) => {
-                            warn!("Auto-aging failed: {e}");
-                        }
-                    },
+                    }
                     Err(_) => {
                         tracing::debug!("Auto-aging: lock busy, skipping cycle");
                     }
@@ -1762,6 +1774,13 @@ struct ServerFileConfig {
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
     maintenance: Option<MaintenanceFileSection>,
+    aging: Option<AgingFileSection>,
+}
+
+#[derive(serde::Deserialize, Default, Clone)]
+struct AgingFileSection {
+    max_age_days: Option<u32>,
+    max_access_count: Option<u32>,
 }
 
 #[derive(serde::Deserialize, Default, Clone)]

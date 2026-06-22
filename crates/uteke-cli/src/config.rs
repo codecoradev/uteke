@@ -129,9 +129,14 @@ impl Default for LoggingConfig {
 pub struct AgingConfig {
     /// Enable automatic aging of old memories.
     pub enabled: bool,
-    /// Maximum age in days before pruning.
+    /// Maximum age in days before pruning (default: 365).
     pub max_age_days: u32,
-    /// Maximum number of cold memories to keep.
+    /// Maximum access count for a memory to be considered "cold" (default: 10).
+    /// Only memories accessed fewer than this many times AND older than
+    /// max_age_days are candidates for cleanup.
+    pub max_access_count: u32,
+    /// Maximum number of cold memories to keep before triggering cleanup
+    /// (default: 1000).
     pub max_cold_count: usize,
 }
 
@@ -139,8 +144,9 @@ impl Default for AgingConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            max_age_days: 180,
-            max_cold_count: 10000,
+            max_age_days: 365,
+            max_access_count: 10,
+            max_cold_count: 1000,
         }
     }
 }
@@ -632,9 +638,17 @@ impl Config {
 # file = ""
 
 [aging]
+# Aging controls which old, rarely-accessed memories get cleaned up.
+# A memory is a cleanup candidate ONLY if ALL conditions are met:
+#   - older than max_age_days
+#   - access_count < max_access_count
+#   - not pinned
+#   - not deprecated
+#   - not accessed since max_age_days ago
 # enabled = false
-# max_age_days = 180
-# max_cold_count = 10000
+# max_age_days = 365
+# max_access_count = 10
+# max_cold_count = 1000
 
 [recall]
 # min_score = 0.3
@@ -861,8 +875,9 @@ mod tests {
         assert_eq!(cfg.logging.level, "warn");
         assert!(cfg.logging.file.is_empty());
         assert!(!cfg.aging.enabled);
-        assert_eq!(cfg.aging.max_age_days, 180);
-        assert_eq!(cfg.aging.max_cold_count, 10000);
+        assert_eq!(cfg.aging.max_age_days, 365);
+        assert_eq!(cfg.aging.max_access_count, 10);
+        assert_eq!(cfg.aging.max_cold_count, 1000);
     }
 
     #[test]
