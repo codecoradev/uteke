@@ -15,6 +15,92 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use tracing::{error, info, warn};
 use uteke_core::Uteke;
 
+// ── Document Types ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct DocCreateRequest {
+    slug: String,
+    title: Option<String>,
+    content: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DocGetRequest {
+    id: Option<String>,
+    slug: Option<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DocListParams {
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    roots_only: bool,
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DocSearchRequest {
+    query: String,
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    namespace: Option<String>,
+    #[serde(default = "default_search_mode")]
+    mode: String,
+}
+
+#[derive(Deserialize)]
+struct DocMoveRequest {
+    id: Option<String>,
+    slug: Option<String>,
+    #[serde(default)]
+    new_parent: Option<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DocDeleteParams {
+    id: Option<String>,
+    slug: Option<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+}
+
+fn default_search_mode() -> String {
+    "hybrid".to_string()
+}
+
+// ── Document endpoint helpers ─────────────────────────────────────────
+
+fn resolve_doc_id(req: &DocGetRequest) -> Result<&str, &'static str> {
+    match (&req.id, &req.slug) {
+        (Some(id), _) => Ok(id),
+        (_, Some(slug)) => Ok(slug),
+        _ => Err("provide either 'id' or 'slug'"),
+    }
+}
+
+fn resolve_doc_id_move(req: &DocMoveRequest) -> Result<&str, &'static str> {
+    match (&req.id, &req.slug) {
+        (Some(id), _) => Ok(id),
+        (_, Some(slug)) => Ok(slug),
+        _ => Err("provide either 'id' or 'slug'"),
+    }
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -1096,6 +1182,165 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
                 )
         }
 
+        // ── Document: Create / Upsert ────────────────────────────────────
+        (Method::Post, "/doc/create") => match read_body::<DocCreateRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
+                let parent = req_data.parent.as_deref();
+                match uteke.doc_upsert_with_parent(
+                    &req_data.slug,
+                    req_data.title.as_deref().unwrap_or(""),
+                    &req_data.content,
+                    &tag_refs,
+                    ns(&req_data.namespace),
+                    parent,
+                ) {
+                    Ok(id) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({"id": id, "slug": req_data.slug}),
+                    ),
+                    Err(e) => {
+                        if e.to_string().contains("already exists") {
+                            ctx.error_response_for(
+                                req,
+                                409,
+                                format!("document slug '{}' already exists", req_data.slug),
+                            )
+                        } else if e.to_string().contains("maximum")
+                            || e.to_string().contains("parent")
+                        {
+                            ctx.error_response_for(req, 400, e.to_string())
+                        } else {
+                            error!("doc create error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Document: Get ───────────────────────────────────────────────
+        (Method::Post, "/doc/get") => match read_body::<DocGetRequest>(req.as_reader()) {
+            Ok(req_data) => match resolve_doc_id(&req_data) {
+                Ok(id_or_slug) => match uteke.doc_get(id_or_slug, ns(&req_data.namespace)) {
+                    Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
+                    Ok(None) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("document not found: {id_or_slug}"),
+                    ),
+                    Err(e) => {
+                        error!("doc get error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            },
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Document: List ─────────────────────────────────────────────
+        (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
+            Ok(params) => {
+                let result = if params.roots_only {
+                    uteke.doc_list_roots(ns(&params.namespace), params.limit)
+                } else if let Some(ref parent) = params.parent {
+                    uteke.doc_list_children(parent, ns(&params.namespace), params.limit)
+                } else {
+                    uteke.doc_list(ns(&params.namespace), params.limit)
+                };
+                match result {
+                    Ok(docs) => ctx.ok_response_for(req, &docs),
+                    Err(e) => {
+                        error!("doc list error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Document: Search ────────────────────────────────────────────
+        (Method::Post, "/doc/search") => match read_body::<DocSearchRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                match uteke.doc_search(
+                    &req_data.query,
+                    ns(&req_data.namespace),
+                    req_data.limit,
+                    &req_data.mode,
+                ) {
+                    Ok(results) => ctx.ok_response_for(req, &results),
+                    Err(e) => {
+                        if e.to_string().contains("embed") {
+                            ctx.error_response_for(
+                                req,
+                                503,
+                                "embedding model not available for semantic search",
+                            )
+                        } else {
+                            error!("doc search error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Document: Move ───────────────────────────────────────────────
+        (Method::Post, "/doc/move") => match read_body::<DocMoveRequest>(req.as_reader()) {
+            Ok(req_data) => match resolve_doc_id_move(&req_data) {
+                Ok(id_or_slug) => {
+                    let new_parent = req_data.new_parent.as_deref();
+                    match uteke.doc_move(id_or_slug, new_parent, ns(&req_data.namespace)) {
+                        Ok(moved) => ctx.ok_response_for(req, &serde_json::json!({"moved": moved})),
+                        Err(e) => {
+                            if e.to_string().contains("not found") {
+                                ctx.error_response_for(req, 404, e.to_string())
+                            } else {
+                                error!("doc move error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            },
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Document: Delete ─────────────────────────────────────────────
+        (Method::Delete, p) if p == "/doc/delete" || p.starts_with("/doc/delete?") => {
+            let url = req.url().to_string();
+            let ns_param = parse_query(&url, "namespace");
+            let id = parse_query(&url, "id");
+            let slug = parse_query(&url, "slug");
+
+            let id_or_slug = match (&id, &slug) {
+                (Some(id), _) => id.as_str(),
+                (_, Some(slug)) => slug.as_str(),
+                _ => {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "provide either 'id' or 'slug' query parameter",
+                    );
+                }
+            };
+
+            match uteke.doc_delete(id_or_slug, ns_param.as_deref()) {
+                Ok((deleted, subtree)) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({"deleted": deleted, "subtree_size": subtree}),
+                ),
+                Err(e) => {
+                    error!("doc delete error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
         // ── 404 ─────────────────────────────────────────────────────────
         _ => ctx.error_response_for(req, 404, "Not found"),
     }
@@ -1221,6 +1466,16 @@ fn main() {
                 println!("  POST /room/document        → {{ room_id }} → {{ document }}");
                 println!("  POST /room/stats           → {{ room_id }} → room stats");
                 println!("  DEL  /room/delete          → {{ room_id }} → {{ deleted }}");
+                println!();
+                println!("  Document endpoints:");
+                println!("  POST /doc/create          → {{ slug, content, title?, tags?, parent? }} → {{ id, slug }}");
+                println!("  POST /doc/get              → {{ id | slug }} → {{ document }}");
+                println!("  POST /doc/list             → {{ namespace?, limit?, roots_only?, parent? }} → [documents]");
+                println!("  POST /doc/search            → {{ query, mode?, namespace?, limit? }} → [results]");
+                println!(
+                    "  POST /doc/move              → {{ id | slug, new_parent? }} → {{ moved }}"
+                );
+                println!("  DEL  /doc/delete?id=UUID    → {{ deleted, subtree_size }}");
                 std::process::exit(0);
             }
             _ => {
