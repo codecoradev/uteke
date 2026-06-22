@@ -71,14 +71,6 @@ struct DocMoveRequest {
     namespace: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct DocDeleteParams {
-    id: Option<String>,
-    slug: Option<String>,
-    #[serde(default)]
-    namespace: Option<String>,
-}
-
 fn default_search_mode() -> String {
     "hybrid".to_string()
 }
