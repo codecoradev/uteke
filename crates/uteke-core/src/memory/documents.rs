@@ -421,9 +421,9 @@ impl super::Store {
                 .ok_or_else(|| Error::validation("document not found for descendants query"))?,
         };
         let path_prefix = if doc.path.ends_with('/') {
-            doc.path.clone()
+            format!("{}%", doc.path)
         } else {
-            format!("{}/", doc.path)
+            format!("{}/%", doc.path)
         };
 
         if let Some(max) = max_depth {
@@ -432,12 +432,12 @@ impl super::Store {
                 .prepare(
                     "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents WHERE path LIKE ?1 AND depth <= ?2 \
+                 FROM documents WHERE path LIKE ?1 AND id != ?4 AND depth <= ?2 \
                  ORDER BY path, sort_order LIMIT ?3",
                 )
                 .map_err(|e| Error::db("prepare list descendants", e))?;
             let rows = stmt
-                .query_map(params![path_prefix, max, limit], row_to_summary)
+                .query_map(params![path_prefix, max, limit, doc.id], row_to_summary)
                 .map_err(|e| Error::db("list descendants query", e))?;
             Ok(rows.filter_map(|r| r.ok()).collect())
         } else {
@@ -446,12 +446,12 @@ impl super::Store {
                 .prepare(
                     "SELECT id, slug, title, namespace, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents WHERE path LIKE ?1 \
+                 FROM documents WHERE path LIKE ?1 AND id != ?3 \
                  ORDER BY path, sort_order LIMIT ?2",
                 )
                 .map_err(|e| Error::db("prepare list descendants", e))?;
             let rows = stmt
-                .query_map(params![path_prefix, limit], row_to_summary)
+                .query_map(params![path_prefix, limit, doc.id], row_to_summary)
                 .map_err(|e| Error::db("list descendants query", e))?;
             Ok(rows.filter_map(|r| r.ok()).collect())
         }
@@ -525,15 +525,15 @@ impl super::Store {
             return Ok(0);
         }
         let prefix = if path.ends_with('/') {
-            path.to_string()
+            format!("{}%", path)
         } else {
-            format!("{}/", path)
+            format!("{}/%", path)
         };
         let count: i64 = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM documents WHERE path LIKE ?1",
-                params![prefix],
+                "SELECT COUNT(*) FROM documents WHERE path LIKE ?1 AND id != ?2",
+                params![prefix, doc_id],
                 |row| row.get(0),
             )
             .map_err(|e| Error::db("count descendants", e))?;
@@ -577,9 +577,9 @@ impl super::Store {
         };
 
         let old_prefix = if old_path.ends_with('/') {
-            old_path.to_string()
+            format!("{}%", old_path)
         } else {
-            format!("{}/", old_path)
+            format!("{}/%", old_path)
         };
 
         // Safety checks.
