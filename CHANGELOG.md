@@ -1,3 +1,10 @@
+## [0.4.2] — 2026-06-22
+
+### Fixed
+- **#458: Release workflow** — filename mismatch, double v in UTEKE_VERSION,
+  duplicate CHANGELOG entries. Binary download table now matches actual
+  filenames. Quick start command no longer produces \.
+
 ## [0.4.1] — 2026-06-22
 
 ### Added
