@@ -225,6 +225,10 @@ impl crate::Uteke {
                  Index entry can be rebuilt via `uteke repair`."
             );
         }
+        // Drop the write lock BEFORE auto_link_cosine to prevent deadlock.
+        // auto_link_cosine needs a read lock on the same index — holding
+        // the write lock here would deadlock (#442).
+        drop(index);
 
         // Cosine-similarity auto-linking (#401).
         // Must run AFTER index.insert() so the new memory is searchable.
