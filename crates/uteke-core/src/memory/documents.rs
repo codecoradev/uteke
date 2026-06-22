@@ -576,10 +576,10 @@ impl super::Store {
             None => return Ok(0),
         };
 
-        let old_prefix = if old_path.ends_with('/') {
-            format!("{}%", old_path)
+        let (old_path_exact, old_prefix) = if old_path.ends_with('/') {
+            (old_path.clone(), format!("{}%", old_path))
         } else {
-            format!("{}/%", old_path)
+            (old_path.to_string(), format!("{}/%", old_path))
         };
 
         // Safety checks.
@@ -665,7 +665,7 @@ impl super::Store {
                 "UPDATE documents SET path = REPLACE(path, ?1, ?2), depth = depth + ?3 \
                  WHERE path LIKE ?4 AND id != ?5",
                 params![
-                    old_prefix,
+                    old_path_exact,
                     new_path,
                     depth_diff,
                     format!("{}/%", cur_id),
