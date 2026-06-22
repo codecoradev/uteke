@@ -503,6 +503,9 @@ impl super::Store {
                 .map_err(|e| Error::db("schema migration v9 to v10", e))?;
         }
         if !self.column_exists("source_type") {
+            // NOTE: DEFAULT 'unknown' for migrated rows — these are legacy
+            // memories without source info. Fresh rows (via SCHEMA) use
+            // DEFAULT 'user' since the code always sets source_type explicitly.
             self.conn
                 .execute_batch(
                     "ALTER TABLE memories ADD COLUMN source_type TEXT NOT NULL DEFAULT 'unknown';",
