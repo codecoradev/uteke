@@ -1313,9 +1313,9 @@ fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Curs
         // ── Document: Delete ─────────────────────────────────────────────
         (Method::Delete, p) if p == "/doc/delete" || p.starts_with("/doc/delete?") => {
             let url = req.url().to_string();
-            let ns_param = parse_query(&url, "namespace");
-            let id = parse_query(&url, "id");
-            let slug = parse_query(&url, "slug");
+            let ns_param = parse_query_param(&url, "namespace");
+            let id = parse_query_param(&url, "id");
+            let slug = parse_query_param(&url, "slug");
 
             let id_or_slug = match (&id, &slug) {
                 (Some(id), _) => id.as_str(),
