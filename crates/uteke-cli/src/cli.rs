@@ -364,7 +364,7 @@ pub enum Commands {
     },
 }
 
-/// Document subcommands (#411).
+/// Document subcommands (#411, #438).
 #[derive(Subcommand)]
 pub enum DocCommands {
     /// Create or update a document from a file or stdin
@@ -383,6 +383,9 @@ pub enum DocCommands {
         /// Tags (comma-separated)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
+        /// Parent document slug (for hierarchical documents, #438)
+        #[arg(long)]
+        parent: Option<String>,
     },
     /// Get a document by slug or ID
     Get {
@@ -394,8 +397,54 @@ pub enum DocCommands {
         /// Maximum results
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Show as tree hierarchy (#438)
+        #[arg(long)]
+        tree: bool,
     },
-    /// Delete a document by ID
+    /// List children of a document (#438)
+    Children {
+        /// Parent document slug or ID
+        parent: String,
+        /// Maximum results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+    /// Move a document to a new parent or root (#438)
+    Move {
+        /// Document slug or ID to move
+        id_or_slug: String,
+        /// New parent document slug (omit to move to root)
+        #[arg(long)]
+        parent: Option<String>,
+    },
+    /// Show breadcrumb path from root to a document (#438)
+    Breadcrumbs {
+        /// Document slug or ID
+        id_or_slug: String,
+    },
+    /// List all descendants of a document (#438)
+    Descendants {
+        /// Document slug or ID
+        id_or_slug: String,
+        /// Maximum depth (0 = unlimited)
+        #[arg(long, default_value = "0")]
+        max_depth: u32,
+        /// Maximum results
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Search documents by query (semantic + FTS5)
+    Search {
+        /// Search query
+        query: String,
+        /// Maximum results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Search mode: semantic, fts, or hybrid (default)
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
+    },
+    /// Delete a document by ID (cascades to children, #438)
     Delete {
         /// Document ID
         id: String,

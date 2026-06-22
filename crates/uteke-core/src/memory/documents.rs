@@ -3,10 +3,16 @@
 //! Full markdown content lives in the `documents` table. Content is chunked
 //! via the markdown chunker (#405) and each chunk gets its own embedding for
 //! semantic search at the section level.
+//!
+//! #438: Hierarchical documents with depth-10 support.
+//! Uses hybrid adjacency list + materialized path for O(1) subtree queries.
 
 use crate::Error;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
+
+/// Maximum depth for document hierarchy.
+pub const MAX_DEPTH: i64 = 10;
 
 /// A document in the knowledge base.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,6 +41,21 @@ pub struct Document {
     pub created_at: String,
     /// Last update timestamp (RFC3339).
     pub updated_at: String,
+    /// Parent document ID (NULL = root).
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Materialized path for O(1) subtree queries (e.g. "/uuid/uuid/").
+    #[serde(default)]
+    pub path: String,
+    /// Depth in tree (0 = root).
+    #[serde(default)]
+    pub depth: i64,
+    /// Manual ordering within siblings.
+    #[serde(default)]
+    pub sort_order: i64,
+    /// Whether this document has children (denormalized).
+    #[serde(default)]
+    pub has_children: bool,
 }
 
 /// A chunk of a document — used for semantic search.
@@ -59,8 +80,88 @@ pub struct DocumentChunk {
     pub tags: Vec<String>,
 }
 
+/// Summary of a document (for list views).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSummary {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    pub namespace: String,
+    pub version: i64,
+    pub updated_at: String,
+    /// Parent document ID (NULL = root).
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Depth in tree (0 = root).
+    #[serde(default)]
+    pub depth: i64,
+    /// Whether this document has children.
+    #[serde(default)]
+    pub has_children: bool,
+    /// Manual ordering within siblings.
+    #[serde(default)]
+    pub sort_order: i64,
+}
+
+/// Result from document search (semantic or FTS5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSearchResult {
+    /// Matched document summary.
+    pub document: DocumentSummary,
+    /// Matched chunk heading (empty if FTS match).
+    #[serde(default)]
+    pub chunk_heading: String,
+    /// Matched chunk text snippet (empty if FTS match).
+    #[serde(default)]
+    pub chunk_snippet: String,
+    /// Relevance score (cosine similarity for semantic, rank-based for FTS).
+    pub score: f32,
+    /// Search mode that produced this result.
+    pub mode: String,
+}
+
+/// Row mapper for Document (full document queries).
+fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
+    let tags_str: String = row.get(5)?;
+    let meta_str: String = row.get(6)?;
+    Ok(Document {
+        id: row.get(0)?,
+        slug: row.get(1)?,
+        title: row.get(2)?,
+        content: row.get(3)?,
+        namespace: row.get(4)?,
+        tags: serde_json::from_str(&tags_str).unwrap_or_default(),
+        metadata: serde_json::from_str(&meta_str).unwrap_or(serde_json::Value::Null),
+        version: row.get(7)?,
+        content_type: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        parent_id: row.get(11)?,
+        path: row.get(12)?,
+        depth: row.get(13)?,
+        sort_order: row.get(14)?,
+        has_children: row.get::<_, i64>(15).map(|v| v != 0).unwrap_or(false),
+    })
+}
+
+/// Row mapper for DocumentSummary (list/tree queries).
+fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSummary> {
+    Ok(DocumentSummary {
+        id: row.get(0)?,
+        slug: row.get(1)?,
+        title: row.get(2)?,
+        namespace: row.get(3)?,
+        version: row.get(4)?,
+        updated_at: row.get(5)?,
+        parent_id: row.get(6)?,
+        depth: row.get(7)?,
+        has_children: row.get::<_, i64>(8).map(|v| v != 0).unwrap_or(false),
+        sort_order: row.get(9)?,
+    })
+}
+
 impl super::Store {
-    /// Create or replace a document (#406).
+    /// Create or replace a document (#406, #438).
     ///
     /// If a document with the same slug+namespace exists, it is updated
     /// (version incremented, content replaced, chunks rebuilt).
@@ -86,7 +187,8 @@ impl super::Store {
             let version = doc.version + 1;
             tx.execute(
                 "UPDATE documents SET title = ?1, content = ?2, tags = ?3, metadata = ?4, \
-                 version = ?5, updated_at = ?6 WHERE id = ?7",
+                 version = ?5, updated_at = ?6, parent_id = ?7, path = ?8, depth = ?9, \
+                 sort_order = ?10 WHERE id = ?11",
                 params![
                     doc.title,
                     doc.content,
@@ -94,6 +196,10 @@ impl super::Store {
                     doc.metadata.to_string(),
                     version,
                     doc.updated_at,
+                    doc.parent_id,
+                    doc.path,
+                    doc.depth,
+                    doc.sort_order,
                     id
                 ],
             )
@@ -109,8 +215,8 @@ impl super::Store {
             // Insert new document.
             tx.execute(
                 "INSERT INTO documents (id, slug, title, content, namespace, tags, metadata, \
-                 version, content_type, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 version, content_type, created_at, updated_at, parent_id, path, depth, sort_order) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     doc.id,
                     doc.slug,
@@ -123,9 +229,21 @@ impl super::Store {
                     doc.content_type,
                     doc.created_at,
                     doc.updated_at,
+                    doc.parent_id,
+                    doc.path,
+                    doc.depth,
+                    doc.sort_order,
                 ],
             )
             .map_err(|e| Error::db("insert document", e))?;
+            // Update parent's has_children flag.
+            if let Some(ref pid) = doc.parent_id {
+                tx.execute(
+                    "UPDATE documents SET has_children = 1 WHERE id = ?1",
+                    params![pid],
+                )
+                .map_err(|e| Error::db("update parent has_children", e))?;
+            }
             doc.id.clone()
         };
 
@@ -170,26 +288,10 @@ impl super::Store {
             .conn
             .query_row(
                 "SELECT id, slug, title, content, namespace, tags, metadata, version, \
-                 content_type, created_at, updated_at FROM documents WHERE id = ?1",
+                 content_type, created_at, updated_at, parent_id, path, depth, \
+                 sort_order, has_children FROM documents WHERE id = ?1",
                 params![id],
-                |row| {
-                    let tags_str: String = row.get(5)?;
-                    let meta_str: String = row.get(6)?;
-                    Ok(Document {
-                        id: row.get(0)?,
-                        slug: row.get(1)?,
-                        title: row.get(2)?,
-                        content: row.get(3)?,
-                        namespace: row.get(4)?,
-                        tags: serde_json::from_str(&tags_str).unwrap_or_default(),
-                        metadata: serde_json::from_str(&meta_str)
-                            .unwrap_or(serde_json::Value::Null),
-                        version: row.get(7)?,
-                        content_type: row.get(8)?,
-                        created_at: row.get(9)?,
-                        updated_at: row.get(10)?,
-                    })
-                },
+                row_to_document,
             )
             .optional()
             .map_err(|e| Error::db("get document", e))?;
@@ -206,27 +308,11 @@ impl super::Store {
             .conn
             .query_row(
                 "SELECT id, slug, title, content, namespace, tags, metadata, version, \
-                 content_type, created_at, updated_at FROM documents \
+                 content_type, created_at, updated_at, parent_id, path, depth, \
+                 sort_order, has_children FROM documents \
                  WHERE slug = ?1 AND namespace = ?2",
                 params![slug, namespace],
-                |row| {
-                    let tags_str: String = row.get(5)?;
-                    let meta_str: String = row.get(6)?;
-                    Ok(Document {
-                        id: row.get(0)?,
-                        slug: row.get(1)?,
-                        title: row.get(2)?,
-                        content: row.get(3)?,
-                        namespace: row.get(4)?,
-                        tags: serde_json::from_str(&tags_str).unwrap_or_default(),
-                        metadata: serde_json::from_str(&meta_str)
-                            .unwrap_or(serde_json::Value::Null),
-                        version: row.get(7)?,
-                        content_type: row.get(8)?,
-                        created_at: row.get(9)?,
-                        updated_at: row.get(10)?,
-                    })
-                },
+                row_to_document,
             )
             .optional()
             .map_err(|e| Error::db("get document by slug", e))?;
@@ -242,13 +328,21 @@ impl super::Store {
         let limit = limit.min(1000) as i64;
 
         let mut stmt = if namespace.is_some() {
-            self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at FROM documents WHERE namespace = ?1 ORDER BY updated_at DESC LIMIT ?2"
-            ).map_err(|e| Error::db("prepare list documents", e))?
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE namespace = ?1 ORDER BY updated_at DESC LIMIT ?2",
+                )
+                .map_err(|e| Error::db("prepare list documents", e))?
         } else {
-            self.conn.prepare(
-                "SELECT id, slug, title, namespace, version, updated_at FROM documents ORDER BY updated_at DESC LIMIT ?1"
-            ).map_err(|e| Error::db("prepare list documents", e))?
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents ORDER BY updated_at DESC LIMIT ?1",
+                )
+                .map_err(|e| Error::db("prepare list documents", e))?
         };
 
         let rows = match namespace {
@@ -264,13 +358,396 @@ impl super::Store {
         Ok(docs)
     }
 
-    /// Delete a document by ID (cascades to chunks).
-    pub fn delete_document(&self, id: &str) -> Result<bool, Error> {
+    /// List root documents (parent_id IS NULL) in a namespace.
+    pub fn list_root_documents(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.min(1000) as i64;
+
+        let mut stmt = if namespace.is_some() {
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE namespace = ?1 AND parent_id IS NULL \
+                 ORDER BY sort_order, updated_at DESC LIMIT ?2",
+                )
+                .map_err(|e| Error::db("prepare list root documents", e))?
+        } else {
+            self.conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE parent_id IS NULL \
+                 ORDER BY sort_order, updated_at DESC LIMIT ?1",
+                )
+                .map_err(|e| Error::db("prepare list root documents", e))?
+        };
+
+        let rows = match namespace {
+            Some(ns) => stmt
+                .query_map(params![ns, limit], row_to_summary)
+                .map_err(|e| Error::db("list root documents query", e))?,
+            None => stmt
+                .query_map(params![limit], row_to_summary)
+                .map_err(|e| Error::db("list root documents query", e))?,
+        };
+
+        let docs: Vec<DocumentSummary> = rows.filter_map(|r| r.ok()).collect();
+        Ok(docs)
+    }
+
+    /// List direct children of a document.
+    pub fn list_document_children(
+        &self,
+        parent_id: &str,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.min(1000) as i64;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, slug, title, namespace, version, updated_at, \
+             parent_id, depth, has_children, sort_order \
+             FROM documents WHERE parent_id = ?1 \
+             ORDER BY sort_order, updated_at DESC LIMIT ?2",
+            )
+            .map_err(|e| Error::db("prepare list children", e))?;
+
+        let rows = stmt
+            .query_map(params![parent_id, limit], row_to_summary)
+            .map_err(|e| Error::db("list children query", e))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get all descendants of a document (subtree) via path prefix scan.
+    pub fn list_descendants(
+        &self,
+        id_or_slug: &str,
+        namespace: &str,
+        max_depth: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.min(1000) as i64;
+        let doc = match self.get_document_by_slug(id_or_slug, namespace)? {
+            Some(d) => d,
+            None => self
+                .get_document(id_or_slug)?
+                .ok_or_else(|| Error::validation("document not found for descendants query"))?,
+        };
+        let path_prefix = if doc.path.ends_with('/') {
+            format!("{}%", doc.path)
+        } else {
+            format!("{}/%", doc.path)
+        };
+
+        if let Some(max) = max_depth {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE path LIKE ?1 AND id != ?4 AND depth <= ?2 \
+                 ORDER BY path, sort_order LIMIT ?3",
+                )
+                .map_err(|e| Error::db("prepare list descendants", e))?;
+            let rows = stmt
+                .query_map(params![path_prefix, max, limit, doc.id], row_to_summary)
+                .map_err(|e| Error::db("list descendants query", e))?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        } else {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, slug, title, namespace, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE path LIKE ?1 AND id != ?3 \
+                 ORDER BY path, sort_order LIMIT ?2",
+                )
+                .map_err(|e| Error::db("prepare list descendants", e))?;
+            let rows = stmt
+                .query_map(params![path_prefix, limit, doc.id], row_to_summary)
+                .map_err(|e| Error::db("list descendants query", e))?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        }
+    }
+
+    /// Get breadcrumbs from root to a document.
+    pub fn get_breadcrumbs(
+        &self,
+        id_or_slug: &str,
+        namespace: &str,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let doc = match self.get_document_by_slug(id_or_slug, namespace)? {
+            Some(d) => d,
+            None => self
+                .get_document(id_or_slug)?
+                .ok_or_else(|| Error::validation("document not found for breadcrumbs query"))?,
+        };
+
+        // Extract UUIDs from path: "/uuid1/uuid2/uuid3/"
+        let uuids: Vec<&str> = doc.path.split('/').filter(|s| !s.is_empty()).collect();
+
+        if uuids.is_empty() {
+            return Ok(vec![DocumentSummary {
+                id: doc.id,
+                slug: doc.slug,
+                title: doc.title,
+                namespace: doc.namespace,
+                version: doc.version,
+                updated_at: doc.updated_at,
+                parent_id: None,
+                depth: 0,
+                has_children: doc.has_children,
+                sort_order: doc.sort_order,
+            }]);
+        }
+
+        let placeholders: String = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "SELECT id, slug, title, namespace, version, updated_at, \
+             parent_id, depth, has_children, sort_order \
+             FROM documents WHERE id IN ({}) ORDER BY depth",
+            placeholders
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&query)
+            .map_err(|e| Error::db("prepare breadcrumbs", e))?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = uuids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt
+            .query_map(params.as_slice(), row_to_summary)
+            .map_err(|e| Error::db("breadcrumbs query", e))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Count subtree size (number of descendants) for a document.
+    pub fn count_descendants(&self, doc_id: &str) -> Result<usize, Error> {
+        let path: String = self
+            .conn
+            .query_row(
+                "SELECT path FROM documents WHERE id = ?1",
+                params![doc_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("get path for count", e))?
+            .unwrap_or_default();
+        if path.is_empty() {
+            return Ok(0);
+        }
+        let prefix = if path.ends_with('/') {
+            format!("{}%", path)
+        } else {
+            format!("{}/%", path)
+        };
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM documents WHERE path LIKE ?1 AND id != ?2",
+                params![prefix, doc_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("count descendants", e))?;
+        Ok(count as usize)
+    }
+
+    /// Move a document to a new parent (re-parent subtree).
+    ///
+    /// Updates path, depth, and sort_order for the moved node and all descendants.
+    /// Returns the number of documents affected.
+    pub fn move_document(
+        &self,
+        doc_id: &str,
+        new_parent_id: Option<&str>,
+        new_sort_order: Option<i64>,
+    ) -> Result<usize, Error> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin move transaction", e))?;
+
+        // Fetch current state BEFORE any mutation.
+        let current: Option<(String, String, i64, Option<String>)> = tx
+            .query_row(
+                "SELECT id, path, depth, parent_id FROM documents WHERE id = ?1",
+                params![doc_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| Error::db("fetch current document for move", e))?;
+
+        let (cur_id, old_path, old_depth, old_parent_id) = match current {
+            Some(v) => v,
+            None => return Ok(0),
+        };
+
+        let (old_path_exact, old_prefix) = if old_path.ends_with('/') {
+            (old_path.clone(), format!("{}%", old_path))
+        } else {
+            (old_path.to_string(), format!("{}/%", old_path))
+        };
+
+        // Safety checks.
+        if let Some(parent) = new_parent_id {
+            if parent == doc_id {
+                return Err(Error::validation("cannot move document into itself"));
+            }
+            let parent_path: String = tx
+                .query_row(
+                    "SELECT path FROM documents WHERE id = ?1",
+                    params![parent],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
+            if !old_path.is_empty() && parent_path.starts_with(&old_path) {
+                return Err(Error::validation(
+                    "cannot move document into its own descendant",
+                ));
+            }
+            // Depth guard: max 10.
+            let parent_depth: i64 = tx
+                .query_row(
+                    "SELECT depth FROM documents WHERE id = ?1",
+                    params![parent],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let new_depth = parent_depth + 1;
+            let max_child_depth: i64 = tx
+                .query_row(
+                    "SELECT MAX(depth) FROM documents WHERE path LIKE ?1",
+                    params![old_prefix],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
+                .unwrap_or(None)
+                .unwrap_or(old_depth);
+            let depth_diff = new_depth - old_depth;
+            if max_child_depth + depth_diff > MAX_DEPTH {
+                return Err(Error::validation("move would exceed maximum depth of 10"));
+            }
+        }
+
+        // Compute new path and depth.
+        let (new_path, new_depth) = if let Some(parent) = new_parent_id {
+            let parent_path: String = tx
+                .query_row(
+                    "SELECT path FROM documents WHERE id = ?1",
+                    params![parent],
+                    |row| row.get(0),
+                )
+                .unwrap_or_default();
+            let parent_depth: i64 = tx
+                .query_row(
+                    "SELECT depth FROM documents WHERE id = ?1",
+                    params![parent],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let path = if parent_path.is_empty() {
+                format!("/{}/", cur_id)
+            } else {
+                format!("{}{}/", parent_path, cur_id)
+            };
+            (path, parent_depth + 1)
+        } else {
+            (format!("/{}/", cur_id), 0)
+        };
+
+        let sort = new_sort_order.unwrap_or(0);
+        let depth_diff = new_depth - old_depth;
+
+        // Update the moving document.
+        tx.execute(
+            "UPDATE documents SET parent_id = ?1, path = ?2, depth = ?3, sort_order = ?4 \
+             WHERE id = ?5",
+            params![new_parent_id, new_path, new_depth, sort, doc_id],
+        )
+        .map_err(|e| Error::db("update moved document", e))?;
+
+        // Update all descendants: replace old prefix with new prefix, adjust depth.
+        let n = tx
+            .execute(
+                "UPDATE documents SET path = REPLACE(path, ?1, ?2), depth = depth + ?3 \
+                 WHERE path LIKE ?4 AND id != ?5",
+                params![old_path_exact, new_path, depth_diff, old_prefix, doc_id,],
+            )
+            .map_err(|e| Error::db("update descendant paths", e))?;
+
+        // Update new parent's has_children flag.
+        if let Some(parent) = new_parent_id {
+            tx.execute(
+                "UPDATE documents SET has_children = 1 WHERE id = ?1",
+                params![parent],
+            )
+            .map_err(|e| Error::db("update new parent has_children", e))?;
+        }
+
+        // Recompute old parent's has_children flag (may have lost last child).
+        if let Some(ref old_parent) = old_parent_id {
+            // Only recompute if moving away from old parent (not moving to root).
+            if new_parent_id != Some(old_parent.as_ref()) {
+                let has_any: bool = tx
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM documents WHERE parent_id = ?1 LIMIT 1)",
+                        params![old_parent],
+                        |row| row.get(0),
+                    )
+                    .unwrap_or(false);
+                tx.execute(
+                    "UPDATE documents SET has_children = ?2 WHERE id = ?1",
+                    params![old_parent, has_any as i64],
+                )
+                .map_err(|e| Error::db("update old parent has_children", e))?;
+            }
+        }
+
+        tx.commit().map_err(|e| Error::db("commit move", e))?;
+
+        Ok(n + 1)
+    }
+
+    /// Delete a document by ID (cascades to children and chunks).
+    ///
+    /// Returns (deleted, subtree_size).
+    pub fn delete_document(&self, id: &str) -> Result<(bool, usize), Error> {
+        let subtree_size = self.count_descendants(id)?;
+        // Fetch the document's path for cascade delete.
+        let path: String = self
+            .conn
+            .query_row(
+                "SELECT path FROM documents WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap_or_default();
+        let cascade_prefix = if path.is_empty() {
+            format!("/{}/%", id) // fallback: try UUID-based prefix
+        } else if path.ends_with('/') {
+            format!("{}%", path)
+        } else {
+            format!("{}/%", path)
+        };
         let n = self
             .conn
-            .execute("DELETE FROM documents WHERE id = ?1", params![id])
+            .execute(
+                "DELETE FROM documents WHERE id = ?1 OR path LIKE ?2",
+                params![id, cascade_prefix],
+            )
             .map_err(|e| Error::db("delete document", e))?;
-        Ok(n > 0)
+        Ok((n > 0, subtree_size))
     }
 
     /// Count documents in a namespace.
@@ -291,29 +768,151 @@ impl super::Store {
         };
         Ok(count as usize)
     }
-}
 
-/// Summary of a document (for list views).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DocumentSummary {
-    pub id: String,
-    pub slug: String,
-    pub title: String,
-    pub namespace: String,
-    pub version: i64,
-    pub updated_at: String,
-}
+    /// FTS5 search on documents (title + slug).
+    ///
+    /// Returns matching document summaries ordered by FTS5 rank.
+    /// Best-effort: returns empty if FTS table doesn't exist.
+    pub fn search_documents_fts(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.min(100) as i64;
+        let sql = if namespace.is_some() {
+            "SELECT d.id, d.slug, d.title, d.namespace, d.version, d.updated_at, \
+             d.parent_id, d.depth, d.has_children, d.sort_order \
+             FROM documents d JOIN documents_fts fts ON d.rowid = fts.rowid \
+             WHERE documents_fts MATCH ?1 AND d.namespace = ?2 \
+             ORDER BY rank LIMIT ?3"
+        } else {
+            "SELECT d.id, d.slug, d.title, d.namespace, d.version, d.updated_at, \
+             d.parent_id, d.depth, d.has_children, d.sort_order \
+             FROM documents d JOIN documents_fts fts ON d.rowid = fts.rowid \
+             WHERE documents_fts MATCH ?1 \
+             ORDER BY rank LIMIT ?2"
+        };
 
-/// Row mapper for DocumentSummary (used by list_documents).
-fn row_to_summary(row: &rusqlite::Row) -> rusqlite::Result<DocumentSummary> {
-    Ok(DocumentSummary {
-        id: row.get(0)?,
-        slug: row.get(1)?,
-        title: row.get(2)?,
-        namespace: row.get(3)?,
-        version: row.get(4)?,
-        updated_at: row.get(5)?,
-    })
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::db("prepare FTS search", e))?;
+
+        let rows = match namespace {
+            Some(ns) => stmt
+                .query_map(params![query, ns, limit], row_to_summary)
+                .map_err(|e| Error::db("FTS search query", e))?,
+            None => stmt
+                .query_map(params![query, limit], row_to_summary)
+                .map_err(|e| Error::db("FTS search query", e))?,
+        };
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get document chunks by their IDs (for semantic search result enrichment).
+    ///
+    /// Returns chunk data needed for search result display.
+    pub fn get_chunks_by_ids(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<Vec<(String, String, String, String)>, Error> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = chunk_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, document_id, heading, content FROM document_chunks WHERE id IN ({})",
+            placeholders
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| Error::db("prepare get chunks by ids", e))?;
+
+        let params: Vec<&dyn rusqlite::types::ToSql> = chunk_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| Error::db("get chunks by ids query", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get chunks by IDs, preserving the order of the input `chunk_ids` list.
+    ///
+    /// Used by doc_search to align with usearch result ordering.
+    pub fn get_chunks_by_ids_ordered(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<Vec<(String, String, String, String)>, Error> {
+        let all = self.get_chunks_by_ids(chunk_ids)?;
+        let map: std::collections::HashMap<String, (String, String, String, String)> =
+            all.into_iter().map(|c| (c.0.clone(), c)).collect();
+        Ok(chunk_ids
+            .iter()
+            .filter_map(|id| map.get(id).cloned())
+            .collect())
+    }
+
+    /// Delete chunks belonging to a set of document IDs.
+    ///
+    /// Used during document update to clear old chunks before re-chunking.
+    /// Returns the IDs of deleted chunks (for usearch cleanup).
+    pub fn delete_chunks_for_documents(&self, doc_ids: &[String]) -> Result<Vec<String>, Error> {
+        if doc_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = doc_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let select_sql = format!(
+            "SELECT id FROM document_chunks WHERE document_id IN ({})",
+            placeholders
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&select_sql)
+            .map_err(|e| Error::db("prepare select chunk ids", e))?;
+
+        let params: Vec<&dyn rusqlite::types::ToSql> = doc_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+
+        let ids: Vec<String> = stmt
+            .query_map(params.as_slice(), |row| row.get::<_, String>(0))
+            .map_err(|e| Error::db("select chunk ids", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let delete_sql = format!(
+            "DELETE FROM document_chunks WHERE document_id IN ({})",
+            placeholders
+        );
+        let params2: Vec<&dyn rusqlite::types::ToSql> = doc_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let mut del_stmt = self
+            .conn
+            .prepare(&delete_sql)
+            .map_err(|e| Error::db("prepare delete chunks", e))?;
+        del_stmt
+            .execute(params2.as_slice())
+            .map_err(|e| Error::db("delete chunks", e))?;
+
+        Ok(ids)
+    }
 }
 
 #[cfg(test)]
@@ -325,23 +924,47 @@ mod tests {
         Store::open(":memory:").unwrap()
     }
 
-    #[test]
-    fn test_document_crud() {
-        let store = open_test_store();
+    fn make_doc(id: &str, slug: &str, title: &str) -> Document {
         let now = chrono::Utc::now().to_rfc3339();
-        let doc = Document {
-            id: "doc-1".to_string(),
-            slug: "getting-started".to_string(),
-            title: "Getting Started".to_string(),
+        Document {
+            id: id.to_string(),
+            slug: slug.to_string(),
+            title: title.to_string(),
             content: "# Hello\n\nWorld".to_string(),
             namespace: "default".to_string(),
-            tags: vec!["guide".to_string()],
+            tags: vec![],
             metadata: serde_json::Value::Null,
             version: 1,
             content_type: "markdown".to_string(),
             created_at: now.clone(),
             updated_at: now,
-        };
+            parent_id: None,
+            path: format!("/{}/", id),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        }
+    }
+
+    fn make_child_doc(
+        id: &str,
+        slug: &str,
+        title: &str,
+        parent_id: &str,
+        parent_path: &str,
+    ) -> Document {
+        let mut doc = make_doc(id, slug, title);
+        doc.parent_id = Some(parent_id.to_string());
+        doc.path = format!("{}{}/", parent_path, id);
+        doc.depth = parent_path.split('/').filter(|s| !s.is_empty()).count() as i64;
+        doc.sort_order = 0;
+        doc
+    }
+
+    #[test]
+    fn test_document_crud() {
+        let store = open_test_store();
+        let doc = make_doc("doc-1", "getting-started", "Getting Started");
 
         // Create.
         let id = store.upsert_document(&doc).unwrap();
@@ -350,7 +973,8 @@ mod tests {
         // Get by ID.
         let got = store.get_document("doc-1").unwrap().unwrap();
         assert_eq!(got.title, "Getting Started");
-        assert_eq!(got.content, "# Hello\n\nWorld");
+        assert_eq!(got.depth, 0);
+        assert!(got.parent_id.is_none());
 
         // Get by slug.
         let got2 = store
@@ -365,36 +989,23 @@ mod tests {
         assert_eq!(list[0].slug, "getting-started");
 
         // Delete.
-        assert!(store.delete_document("doc-1").unwrap());
+        let (deleted, subtree) = store.delete_document("doc-1").unwrap();
+        assert!(deleted);
+        assert_eq!(subtree, 0);
         assert!(store.get_document("doc-1").unwrap().is_none());
     }
 
     #[test]
     fn test_document_upsert_increments_version() {
         let store = open_test_store();
-        let now = chrono::Utc::now().to_rfc3339();
-        let doc = Document {
-            id: "doc-1".to_string(),
-            slug: "test".to_string(),
-            title: "V1".to_string(),
-            content: "Content 1".to_string(),
-            namespace: "default".to_string(),
-            tags: vec![],
-            metadata: serde_json::Value::Null,
-            version: 1,
-            content_type: "markdown".to_string(),
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
+        let doc = make_doc("doc-1", "test", "V1");
 
         store.upsert_document(&doc).unwrap();
 
-        // Upsert with same slug but new title.
         let doc2 = Document {
             title: "V2".to_string(),
             content: "Content 2".to_string(),
-            updated_at: now.clone(),
-            ..doc
+            ..doc.clone()
         };
         store.upsert_document(&doc2).unwrap();
 
@@ -403,39 +1014,28 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(got.title, "V2");
-        assert_eq!(got.version, 2); // Incremented
+        assert_eq!(got.version, 2);
     }
 
     #[test]
     fn test_document_namespace_isolation() {
         let store = open_test_store();
-        let now = chrono::Utc::now().to_rfc3339();
 
+        let doc1 = make_doc("d1", "guide", "NS1 Guide");
         let doc1 = Document {
-            id: "d1".to_string(),
-            slug: "guide".to_string(),
-            title: "NS1 Guide".to_string(),
-            content: "ns1".to_string(),
             namespace: "ns1".to_string(),
-            tags: vec![],
-            metadata: serde_json::Value::Null,
-            version: 1,
-            content_type: "markdown".to_string(),
-            created_at: now.clone(),
-            updated_at: now.clone(),
+            ..doc1
         };
+        let doc2 = make_doc("d2", "guide", "NS2 Guide");
         let doc2 = Document {
             id: "d2".to_string(),
             namespace: "ns2".to_string(),
-            title: "NS2 Guide".to_string(),
-            content: "ns2".to_string(),
-            ..doc1.clone()
+            ..doc2
         };
 
         store.upsert_document(&doc1).unwrap();
         store.upsert_document(&doc2).unwrap();
 
-        // Same slug, different namespace → both exist.
         assert!(store
             .get_document_by_slug("guide", "ns1")
             .unwrap()
@@ -444,5 +1044,129 @@ mod tests {
             .get_document_by_slug("guide", "ns2")
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn test_hierarchy_tree() {
+        let store = open_test_store();
+
+        // Root.
+        let root = make_doc("root", "company", "Company");
+        store.upsert_document(&root).unwrap();
+
+        // Child L1.
+        let child1 = make_child_doc("eng", "engineering", "Engineering", "root", "/root/");
+        store.upsert_document(&child1).unwrap();
+
+        // Child L2.
+        let child2 = make_child_doc("backend", "backend", "Backend", "eng", "/root/eng/");
+        store.upsert_document(&child2).unwrap();
+
+        // Verify parent has_children.
+        let root_doc = store.get_document("root").unwrap().unwrap();
+        assert!(root_doc.has_children);
+
+        // List children.
+        let children = store.list_document_children("root", 10).unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].slug, "engineering");
+
+        // List descendants.
+        let descendants = store
+            .list_descendants("company", "default", None, 100)
+            .unwrap();
+        assert_eq!(descendants.len(), 2); // eng + backend
+
+        // Breadcrumbs.
+        let crumbs = store.get_breadcrumbs("backend", "default").unwrap();
+        assert_eq!(crumbs.len(), 3); // company -> engineering -> backend
+        assert_eq!(crumbs[0].slug, "company");
+        assert_eq!(crumbs[2].slug, "backend");
+
+        // Count descendants.
+        assert_eq!(store.count_descendants("root").unwrap(), 2);
+        assert_eq!(store.count_descendants("eng").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_hierarchy_delete_cascade() {
+        let store = open_test_store();
+
+        let root = make_doc("root", "root", "Root");
+        store.upsert_document(&root).unwrap();
+        let child = make_child_doc("child", "child", "Child", "root", "/root/");
+        store.upsert_document(&child).unwrap();
+        let grandchild = make_child_doc("gc", "grandchild", "GC", "child", "/root/child/");
+        store.upsert_document(&grandchild).unwrap();
+
+        // Delete root → cascades to child + grandchild.
+        let (deleted, subtree) = store.delete_document("root").unwrap();
+        assert!(deleted);
+        assert_eq!(subtree, 2);
+
+        assert!(store.get_document("child").unwrap().is_none());
+        assert!(store.get_document("gc").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_hierarchy_move() {
+        let store = open_test_store();
+
+        let root = make_doc("root", "root", "Root");
+        store.upsert_document(&root).unwrap();
+        let parent_a = make_child_doc("pa", "parent-a", "Parent A", "root", "/root/");
+        store.upsert_document(&parent_a).unwrap();
+        let parent_b = make_child_doc("pb", "parent-b", "Parent B", "root", "/root/");
+        store.upsert_document(&parent_b).unwrap();
+        let child = make_child_doc("child", "child", "Child", "pa", "/root/pa/");
+        store.upsert_document(&child).unwrap();
+
+        // Move child from pa to pb.
+        let affected = store.move_document("child", Some("pb"), None).unwrap();
+        assert_eq!(affected, 1);
+
+        // Verify new parent.
+        let child_doc = store.get_document("child").unwrap().unwrap();
+        assert_eq!(child_doc.parent_id.as_deref(), Some("pb"));
+        assert_eq!(child_doc.path, "/root/pb/child/");
+        assert_eq!(child_doc.depth, 2);
+
+        // Move to root.
+        let affected = store.move_document("child", None, Some(99)).unwrap();
+        assert_eq!(affected, 1);
+        let child_doc = store.get_document("child").unwrap().unwrap();
+        assert!(child_doc.parent_id.is_none());
+        assert_eq!(child_doc.depth, 0);
+        assert_eq!(child_doc.sort_order, 99);
+    }
+
+    #[test]
+    fn test_hierarchy_move_self_reference() {
+        let store = open_test_store();
+        let root = make_doc("root", "root", "Root");
+        store.upsert_document(&root).unwrap();
+
+        // Can't move into itself.
+        let result = store.move_document("root", Some("root"), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hierarchy_list_root_documents() {
+        let store = open_test_store();
+
+        let root1 = make_doc("r1", "root1", "Root 1");
+        let root2 = make_doc("r2", "root2", "Root 2");
+        store.upsert_document(&root1).unwrap();
+        store.upsert_document(&root2).unwrap();
+
+        let child = make_child_doc("c1", "child1", "Child", "r1", "/r1/");
+        store.upsert_document(&child).unwrap();
+
+        let roots = store.list_root_documents(Some("default"), 10).unwrap();
+        assert_eq!(roots.len(), 2);
+
+        let all = store.list_documents(Some("default"), 10).unwrap();
+        assert_eq!(all.len(), 3);
     }
 }
