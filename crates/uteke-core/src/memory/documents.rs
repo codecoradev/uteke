@@ -103,6 +103,23 @@ pub struct DocumentSummary {
     pub sort_order: i64,
 }
 
+/// Result from document search (semantic or FTS5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSearchResult {
+    /// Matched document summary.
+    pub document: DocumentSummary,
+    /// Matched chunk heading (empty if FTS match).
+    #[serde(default)]
+    pub chunk_heading: String,
+    /// Matched chunk text snippet (empty if FTS match).
+    #[serde(default)]
+    pub chunk_snippet: String,
+    /// Relevance score (cosine similarity for semantic, rank-based for FTS).
+    pub score: f32,
+    /// Search mode that produced this result.
+    pub mode: String,
+}
+
 /// Row mapper for Document (full document queries).
 fn row_to_document(row: &rusqlite::Row) -> rusqlite::Result<Document> {
     let tags_str: String = row.get(5)?;
@@ -720,6 +737,135 @@ impl super::Store {
                 .map_err(|e| Error::db("count documents", e))?,
         };
         Ok(count as usize)
+    }
+
+    /// FTS5 search on documents (title + slug).
+    ///
+    /// Returns matching document summaries ordered by FTS5 rank.
+    /// Best-effort: returns empty if FTS table doesn't exist.
+    pub fn search_documents_fts(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.min(100) as i64;
+        let sql = if namespace.is_some() {
+            "SELECT d.id, d.slug, d.title, d.namespace, d.version, d.updated_at, \
+             d.parent_id, d.depth, d.has_children, d.sort_order \
+             FROM documents d JOIN documents_fts fts ON d.rowid = fts.rowid \
+             WHERE documents_fts MATCH ?1 AND d.namespace = ?2 \
+             ORDER BY rank LIMIT ?3"
+        } else {
+            "SELECT d.id, d.slug, d.title, d.namespace, d.version, d.updated_at, \
+             d.parent_id, d.depth, d.has_children, d.sort_order \
+             FROM documents d JOIN documents_fts fts ON d.rowid = fts.rowid \
+             WHERE documents_fts MATCH ?1 \
+             ORDER BY rank LIMIT ?2"
+        };
+
+        let mut stmt = self
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::db("prepare FTS search", e))?;
+
+        let rows = match namespace {
+            Some(ns) => stmt
+                .query_map(params![query, ns, limit], row_to_summary)
+                .map_err(|e| Error::db("FTS search query", e))?,
+            None => stmt
+                .query_map(params![query, limit], row_to_summary)
+                .map_err(|e| Error::db("FTS search query", e))?,
+        };
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get document chunks by their IDs (for semantic search result enrichment).
+    ///
+    /// Returns chunk data needed for search result display.
+    pub fn get_chunks_by_ids(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<Vec<(String, String, String, String)>, Error> {
+        if chunk_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = chunk_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, document_id, heading, content FROM document_chunks WHERE id IN ({})",
+            placeholders
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| Error::db("prepare get chunks by ids", e))?;
+
+        let params: Vec<&dyn rusqlite::types::ToSql> = chunk_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+
+        let rows = stmt
+            .query_map(params.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(|e| Error::db("get chunks by ids query", e))?;
+
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Delete chunks belonging to a set of document IDs.
+    ///
+    /// Used during document update to clear old chunks before re-chunking.
+    /// Returns the IDs of deleted chunks (for usearch cleanup).
+    pub fn delete_chunks_for_documents(&self, doc_ids: &[String]) -> Result<Vec<String>, Error> {
+        if doc_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders: String = doc_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let select_sql = format!(
+            "SELECT id FROM document_chunks WHERE document_id IN ({})",
+            placeholders
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&select_sql)
+            .map_err(|e| Error::db("prepare select chunk ids", e))?;
+
+        let params: Vec<&dyn rusqlite::types::ToSql> = doc_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+
+        let ids: Vec<String> = stmt
+            .query_map(params.as_slice(), |row| row.get::<_, String>(0))
+            .map_err(|e| Error::db("select chunk ids", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let delete_sql = format!(
+            "DELETE FROM document_chunks WHERE document_id IN ({})",
+            placeholders
+        );
+        let params2: Vec<&dyn rusqlite::types::ToSql> = doc_ids
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let mut del_stmt = self
+            .conn
+            .prepare(&delete_sql)
+            .map_err(|e| Error::db("prepare delete chunks", e))?;
+        del_stmt
+            .execute(params2.as_slice())
+            .map_err(|e| Error::db("delete chunks", e))?;
+
+        Ok(ids)
     }
 }
 

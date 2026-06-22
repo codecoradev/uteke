@@ -783,16 +783,31 @@ impl Uteke {
 
         let doc_id = self.store.upsert_document(&doc)?;
 
+        // Delete old chunks on update (re-chunking).
+        let old_chunk_ids = self.store.delete_chunks_for_documents(&[doc_id.clone()])?;
+
         // Chunk and embed the content.
         self.ensure_embedder()?;
         let embedder = self
             .embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during document chunking"))?;
-        let embedder = embedder.as_ref().expect("embedder ensured");
+        let embedder = embedder.as_ref().expect("embedder ensured above");
 
         let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
         let chunks = crate::chunker::chunk_markdown(content, max_chars);
+
+        // Acquire usearch write lock for chunk index inserts.
+        let mut index = self
+            .index
+            .write()
+            .map_err(|_| Error::lock("index write lock during doc chunking"))?;
+
+        // Remove old chunk entries from usearch.
+        for old_id in &old_chunk_ids {
+            let key = format!("chunk:{}", old_id);
+            index.remove(&key);
+        }
 
         for (i, chunk) in chunks.iter().enumerate() {
             let chunk_id = uuid::Uuid::new_v4().to_string();
@@ -800,7 +815,7 @@ impl Uteke {
 
             self.store.insert_document_chunk(
                 &DocumentChunk {
-                    id: chunk_id,
+                    id: chunk_id.clone(),
                     document_id: doc_id.clone(),
                     chunk_index: i as i64,
                     heading: chunk.heading.clone(),
@@ -811,6 +826,23 @@ impl Uteke {
                 },
                 &embedding,
             )?;
+
+            // Insert chunk embedding into usearch with "chunk:" prefix.
+            let index_key = format!("chunk:{}", chunk_id);
+            if let Err(e) = index.insert(&index_key, &embedding) {
+                tracing::warn!(
+                    "Failed to insert chunk {} into vector index: {}",
+                    chunk_id,
+                    e
+                );
+            }
+        }
+
+        if let Err(e) = index.save() {
+            tracing::warn!(
+                "Failed to persist vector index after doc chunking: {}",
+                e
+            );
         }
 
         tracing::info!(
@@ -923,8 +955,263 @@ impl Uteke {
     /// Delete a document by ID or slug (#438).
     ///
     /// Cascades to children and chunks. Returns (deleted, subtree_size).
+    /// Also removes chunk embeddings from usearch index.
     pub fn doc_delete(&self, id: &str) -> Result<(bool, usize), Error> {
-        self.store.delete_document(id)
+        // Collect all document IDs in the subtree before deletion.
+        let ns = DEFAULT_NAMESPACE;
+        let subtree = self
+            .store
+            .list_descendants(id, ns, None, 10000)
+            .unwrap_or_default();
+
+        // Get the main document ID too.
+        let main_id = match self.store.get_document(id)? {
+            Some(d) => d.id,
+            None => self
+                .store
+                .get_document_by_slug(id, ns)?
+                .map(|d| d.id)
+                .unwrap_or_default(),
+        };
+
+        let all_ids: Vec<String> = subtree
+            .iter()
+            .map(|d| d.id.clone())
+            .chain(std::iter::once(main_id.clone()))
+            .collect();
+
+        // Get chunk IDs to remove from usearch.
+        let chunk_ids = self
+            .store
+            .delete_chunks_for_documents(&all_ids)
+            .unwrap_or_default();
+
+        let (deleted, subtree_size) = self.store.delete_document(id)?;
+
+        // Remove chunk entries from usearch index.
+        if !chunk_ids.is_empty() {
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write lock during doc delete"))?;
+            for chunk_id in &chunk_ids {
+                let key = format!("chunk:{}", chunk_id);
+                index.remove(&key);
+            }
+            let _ = index.save();
+        }
+
+        Ok((deleted, subtree_size))
+    }
+
+    /// Search documents using semantic (vector) and/or FTS5 (keyword) search.
+    ///
+    /// - **semantic**: embeds query, searches usearch index for chunk matches,
+    ///   then joins back to document metadata. Requires embedding model.
+    /// - **fts**: keyword search on title/slug via FTS5. Always available.
+    /// - **hybrid** (default): runs both, deduplicates by document ID, merges
+    ///   scores with reciprocal rank fusion (RRF).
+    pub fn doc_search(
+        &self,
+        query: &str,
+        namespace: Option<&str>,
+        limit: usize,
+        mode: &str,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        let limit = limit.min(50);
+
+        match mode {
+            "semantic" => self.doc_search_semantic(query, ns, limit),
+            "fts" => self.doc_search_fts(query, ns, limit),
+            _ => self.doc_search_hybrid(query, ns, limit),
+        }
+    }
+
+    fn doc_search_semantic(
+        &self,
+        query: &str,
+        ns: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        use crate::memory::documents::DocumentSearchResult;
+
+        self.ensure_embedder()?;
+        let query_embedding = self
+            .embedder
+            .lock()
+            .map_err(|_| Error::lock("embedder lock during doc search"))?
+            .as_ref()
+            .expect("embedder ensured above")
+            .embed(query)?;
+
+        let index = self
+            .index
+            .read()
+            .map_err(|_| Error::lock("index read lock during doc search"))?;
+
+        // Search usearch — request more candidates, filter chunk: prefixed results.
+        let k = (limit * 10).min(index.len()).max(1);
+        let candidates = index.search(&query_embedding, k, k * 4);
+
+        // Filter for chunk: prefixed IDs only.
+        let chunk_hits: Vec<(String, f32)> = candidates
+            .into_iter()
+            .filter(|(id, _)| id.starts_with("chunk:"))
+            .take(limit * 3)
+            .collect();
+
+        if chunk_hits.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Extract chunk IDs (strip "chunk:" prefix).
+        let chunk_ids: Vec<String> = chunk_hits.iter().map(|(id, _)| id[6..].to_string()).collect();
+
+        // Get chunk data from SQLite.
+        let chunks = self.store.get_chunks_by_ids(&chunk_ids)?;
+
+        // Build results: group by document, take best score per doc.
+        let mut doc_scores: std::collections::HashMap<String, (DocumentSummary, String, String, f32)> =
+            std::collections::HashMap::new();
+
+        for ((chunk_key, distance), (chunk_id, doc_id, heading, content)) in
+            chunk_hits.iter().zip(chunks.iter())
+        {
+            let score = crate::memory::vector::cosine_distance_to_similarity(*distance);
+
+            // Get document summary from store.
+            if let Ok(Some(doc)) = self.store.get_document(doc_id) {
+                let summary = crate::memory::documents::DocumentSummary {
+                    id: doc.id.clone(),
+                    slug: doc.slug.clone(),
+                    title: doc.title.clone(),
+                    namespace: doc.namespace.clone(),
+                    version: doc.version,
+                    updated_at: doc.updated_at.clone(),
+                    parent_id: doc.parent_id.clone(),
+                    depth: doc.depth,
+                    has_children: doc.has_children,
+                    sort_order: doc.sort_order,
+                };
+
+                // Keep best score per document.
+                let entry = doc_scores.entry(doc_id.clone());
+                entry
+                    .and_modify(|(_, h, s, old_score)| {
+                        if score > *old_score {
+                            *old_score = score;
+                            *h = heading.clone();
+                            *s = content.clone();
+                        }
+                    })
+                    .or_insert((summary, heading.clone(), content.clone(), score));
+            }
+        }
+
+        let mut results: Vec<DocumentSearchResult> = doc_scores
+            .into_values()
+            .map(|(document, chunk_heading, chunk_snippet, score)| DocumentSearchResult {
+                document,
+                chunk_heading,
+                chunk_snippet: if chunk_snippet.len() > 200 {
+                    format!("{}...", &chunk_snippet[..200])
+                } else {
+                    chunk_snippet
+                },
+                score,
+                mode: "semantic".to_string(),
+            })
+            .collect();
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    fn doc_search_fts(
+        &self,
+        query: &str,
+        ns: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        use crate::memory::documents::DocumentSearchResult;
+
+        let docs = self
+            .store
+            .search_documents_fts(query, Some(ns), limit)
+            .unwrap_or_default();
+
+        Ok(docs
+            .into_iter()
+            .enumerate()
+            .map(|(i, document)| DocumentSearchResult {
+                document,
+                chunk_heading: String::new(),
+                chunk_snippet: String::new(),
+                score: 1.0 / (i as f32 + 1.0), // Rank-based score
+                mode: "fts".to_string(),
+            })
+            .collect())
+    }
+
+    fn doc_search_hybrid(
+        &self,
+        query: &str,
+        ns: &str,
+        limit: usize,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        use crate::memory::documents::DocumentSearchResult;
+
+        let semantic_results = self.doc_search_semantic(query, ns, limit * 2).unwrap_or_default();
+        let fts_results = self.doc_search_fts(query, ns, limit * 2).unwrap_or_default();
+
+        // Reciprocal Rank Fusion (RRF): score = sum(1 / (k + rank))
+        let rrf_k: f32 = 60.0;
+        let mut fused: std::collections::HashMap<String, DocumentSearchResult> =
+            std::collections::HashMap::new();
+
+        for (rank, result) in semantic_results.iter().enumerate() {
+            let rrf_score = 1.0 / (rrf_k + (rank as f32 + 1.0));
+            let entry = fused.entry(result.document.id.clone());
+            entry
+                .and_modify(|e| {
+                    e.score += rrf_score;
+                    // Prefer semantic chunk info when available.
+                    if !result.chunk_heading.is_empty() && e.chunk_heading.is_empty() {
+                        e.chunk_heading = result.chunk_heading.clone();
+                        e.chunk_snippet = result.chunk_snippet.clone();
+                    }
+                })
+                .or_insert_with(|| DocumentSearchResult {
+                    document: result.document.clone(),
+                    chunk_heading: result.chunk_heading.clone(),
+                    chunk_snippet: result.chunk_snippet.clone(),
+                    score: rrf_score,
+                    mode: "hybrid".to_string(),
+                });
+        }
+
+        for (rank, result) in fts_results.iter().enumerate() {
+            let rrf_score = 1.0 / (rrf_k + (rank as f32 + 1.0));
+            let entry = fused.entry(result.document.id.clone());
+            entry
+                .and_modify(|e| e.score += rrf_score)
+                .or_insert_with(|| DocumentSearchResult {
+                    document: result.document.clone(),
+                    chunk_heading: result.chunk_heading.clone(),
+                    chunk_snippet: result.chunk_snippet.clone(),
+                    score: rrf_score,
+                    mode: "hybrid".to_string(),
+                });
+        }
+
+        let mut results: Vec<DocumentSearchResult> = fused.into_values().collect();
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(limit);
+
+        Ok(results)
     }
 }
 

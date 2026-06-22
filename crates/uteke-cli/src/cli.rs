@@ -433,6 +433,17 @@ pub enum DocCommands {
         #[arg(long, default_value = "50")]
         limit: usize,
     },
+    /// Search documents by query (semantic + FTS5)
+    Search {
+        /// Search query
+        query: String,
+        /// Maximum results
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Search mode: semantic, fts, or hybrid (default)
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
+    },
     /// Delete a document by ID (cascades to children, #438)
     Delete {
         /// Document ID

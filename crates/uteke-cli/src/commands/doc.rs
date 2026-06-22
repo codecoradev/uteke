@@ -266,6 +266,50 @@ pub(crate) fn run(
             }
         }
 
+        DocCommands::Search {
+            query,
+            limit,
+            mode,
+        } => {
+            let results = uteke
+                .doc_search(query, ns, *limit, mode)
+                .map_err(|e| format!("Failed to search documents: {e}"))?;
+            if cli.json {
+                output::print_json(&results);
+            } else if results.is_empty() {
+                println!("No documents found for '{query}'.");
+            } else {
+                println!("Search results for '{query}' (mode: {mode})");
+                println!("─────────────────────────────────────────────────────");
+                for r in &results {
+                    let depth_indicator = if r.document.depth > 0 {
+                        format!("  {}", "›".repeat(r.document.depth as usize))
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "  {:<20} {:<30} {:.3} {}",
+                        &r.document.slug[..r.document.slug.len().min(20)],
+                        &r.document.title[..r.document.title.len().min(30)],
+                        r.score,
+                        depth_indicator
+                    );
+                    if !r.chunk_heading.is_empty() {
+                        println!(
+                            "    ↳ {}",
+                            &r.chunk_heading[..r.chunk_heading.len().min(60)]
+                        );
+                    }
+                    if !r.chunk_snippet.is_empty() {
+                        let snippet = &r.chunk_snippet[..r.chunk_snippet.len().min(80)];
+                        println!("    \"{}\"", snippet);
+                    }
+                }
+                println!();
+                println!("{} result(s)", results.len());
+            }
+        }
+
         DocCommands::Delete { id } => {
             let (deleted, subtree_size) = uteke
                 .doc_delete(id)

@@ -631,6 +631,19 @@ impl super::Store {
             let _ = self.conn.execute(idx, []);
         }
 
+        // FTS5 virtual table for documents (title + slug search).
+        // Best-effort: skip if FTS5 is not available (e.g., custom SQLite builds).
+        let fts = [
+            "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(title, slug, content='documents', content_rowid='rowid')",
+            // Triggers to keep FTS in sync with documents table.
+            "CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN INSERT INTO documents_fts(rowid, title, slug) VALUES (new.rowid, new.title, new.slug); END",
+            "CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug WHERE rowid = new.rowid; END",
+            "CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END",
+        ];
+        for sql in &fts {
+            let _ = self.conn.execute(sql, []);
+        }
+
         Ok(())
     }
 }
