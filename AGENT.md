@@ -309,6 +309,26 @@ When adding new parameters to the CLI, **don't forget to update server mode too.
 4. API docs
 5. CLI reference docs
 
+### Function ↔ API ↔ CLI Parity (v0.4.0)
+
+Every public function in `lib.rs` MUST have a corresponding CLI command AND HTTP endpoint. No orphan features.
+
+| lib.rs function | CLI command | HTTP endpoint | Status |
+|-----------------|-------------|---------------|--------|
+| `doc_upsert` / `doc_upsert_with_parent` | `uteke doc create [--parent]` | `POST /doc/create` | ✅ |
+| `doc_get` | `uteke doc get` | `POST /doc/get` | ✅ |
+| `doc_list` / `doc_list_roots` / `doc_list_children` | `uteke doc list [--tree] [--roots-only]` | `POST /doc/list` | ✅ |
+| `doc_search` (semantic/fts/hybrid) | `uteke doc search [--mode]` | `POST /doc/search` | ✅ |
+| `doc_move` | `uteke doc move [--parent]` | `POST /doc/move` | ✅ |
+| `doc_delete` | `uteke doc delete` | `DELETE /doc/delete` | ✅ |
+| `doc_breadcrumbs` | *(via --tree display)* | *(not exposed)* | ⚠️ CLI-only |
+| `doc_list_descendants` | *(via --tree display)* | *(not exposed)* | ⚠️ CLI-only |
+| `doc_export` | `uteke doc export` | *(not exposed)* | ⚠️ CLI-only |
+
+Notes:
+- `doc_breadcrumbs` and `doc_list_descendants` are used internally by CLI `--tree` but don't need standalone API endpoints yet.
+- `doc_export` is CLI-only (bulk export, not needed for real-time API).
+
 ### Metadata in JSON Blob — Post-Filter, Not SQL Filter
 
 Entity, category, and meta are stored as JSON in the `metadata` column. This means:

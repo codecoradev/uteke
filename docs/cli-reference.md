@@ -595,6 +595,12 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/room/document` | Generate document from room |
 | POST | `/room/stats` | Room statistics |
 | DELETE | `/room/delete` | Delete a room |
+| POST | `/doc/create` | Create/upsert document (#438) |
+| POST | `/doc/get` | Get document by id or slug |
+| POST | `/doc/list` | List documents (roots_only, parent filter) |
+| POST | `/doc/search` | Hybrid/semantic/FTS document search (#440) |
+| POST | `/doc/move` | Move document to new parent (#438) |
+| DELETE | `/doc/delete?id=` | Delete document with cascade |
 | POST | `/mcp` | MCP JSON-RPC endpoint (#381) |
 
 ### MCP Server
@@ -614,9 +620,9 @@ curl -X POST http://127.0.0.1:8767/mcp \
 
 Protocol version: `2025-06-18` (Streamable HTTP spec).
 
-## Document Commands (#406, #411)
+## Document Commands (#406, #411, #438, #440)
 
-Wiki/knowledge base engine — full markdown documents with auto-chunking and semantic search.
+Wiki/knowledge base engine — hierarchical documents with auto-chunking, tree operations, and hybrid search.
 
 ### `uteke doc create`
 
@@ -631,6 +637,9 @@ uteke doc create notes --content "# Notes\n\nQuick notes" --title "My Notes"
 
 # From stdin
 cat README.md | uteke doc create readme --file -
+
+# As child of another document
+uteke doc create chapter1 --parent book --file ch1.md
 ```
 
 | Flag | Description |
@@ -639,6 +648,7 @@ cat README.md | uteke doc create readme --file -
 | `--file <path>` | Read content from file (`-` for stdin) |
 | `--content <text>` | Inline content (alternative to `--file`) |
 | `--tags <tags>` | Comma-separated tags |
+| `--parent <slug>` | Parent document slug (creates as child, #438) |
 
 ### `uteke doc get`
 
@@ -655,13 +665,46 @@ List documents in the current namespace.
 
 ```bash
 uteke doc list --limit 20
+uteke doc list --tree          # Indented tree view
+uteke doc list --roots-only   # Root documents only
+```
+
+| Flag | Description |
+|------|-------------|
+| `--limit <n>` | Max results (default: 20) |
+| `--tree` | Show as indented tree (recursive children) |
+| `--roots-only` | Show only root documents (no parent) |
+
+### `uteke doc search`
+
+Search documents using hybrid, semantic, or FTS5 search (#440).
+
+```bash
+uteke doc search "authentication flow"
+uteke doc search "database" --mode semantic
+uteke doc search "API reference" --mode fts --limit 5
+```
+
+| Flag | Description |
+|------|-------------|
+| `--mode <mode>` | `hybrid` (default), `semantic`, or `fts` |
+| `--limit <n>` | Max results (default: 5) |
+
+### `uteke doc move`
+
+Move a document to a new parent or root (#438).
+
+```bash
+uteke doc move chapter1 --parent new-book
+uteke doc move orphan-doc               # Move to root
 ```
 
 ### `uteke doc delete`
 
-Delete a document by ID (cascades to chunks).
+Delete a document by ID or slug (cascades to children and chunks).
 
 ```bash
+uteke doc delete architecture
 uteke doc delete <id>
 ```
 
