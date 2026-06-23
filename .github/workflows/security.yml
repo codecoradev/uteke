@@ -25,7 +25,9 @@ jobs:
       - name: Run cargo audit
         # Ignored advisories (with justification):
         #   RUSTSEC-2024-0436: paste unmaintained — informational, no vulnerability
-        run: cargo audit --ignore RUSTSEC-2024-0436
+        #   RUSTSEC-2026-0185: quinn-proto — comes transitively via reqwest/hyper,
+        #     not used in server-facing code paths. Update when reqwest bumps quinn.
+        run: cargo audit --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0185
 
   trivy:
     name: Trivy FS Scan

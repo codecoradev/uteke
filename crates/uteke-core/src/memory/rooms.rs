@@ -201,14 +201,14 @@ impl super::Store {
             None => return Ok(None),
         };
 
-        let memory_count: usize = self
-            .conn
-            .query_row(
-                "SELECT COUNT(DISTINCT memory_id) FROM room_memories WHERE room_id = ?1",
-                params![room_id],
-                |row| row.get(0),
-            )
-            .map_err(|e| Error::db("room memory count", e))?;
+        let memory_count: usize =
+            self.conn
+                .query_row(
+                    "SELECT COUNT(DISTINCT memory_id) FROM room_memories WHERE room_id = ?1",
+                    params![room_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|e| Error::db("room memory count", e))? as usize;
 
         // Get distinct authors as participants
         let mut stmt = self
@@ -311,12 +311,12 @@ impl super::Store {
 
         let memories = match author {
             Some(a) => stmt
-                .query_map(params![room_id, a, limit], row_to_memory)
+                .query_map(params![room_id, a, limit as i64], row_to_memory)
                 .map_err(|e| Error::db("recall room", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("recall room", e))?,
             None => stmt
-                .query_map(params![room_id, limit], row_to_memory)
+                .query_map(params![room_id, limit as i64], row_to_memory)
                 .map_err(|e| Error::db("recall room", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("recall room", e))?,
