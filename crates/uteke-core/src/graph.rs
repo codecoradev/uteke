@@ -472,13 +472,17 @@ impl<'a> GraphStore<'a> {
     pub fn stats(&self) -> Result<GraphStats, Error> {
         let node_count: usize = self
             .conn
-            .query_row("SELECT COUNT(*) FROM graph_nodes", [], |row| row.get(0))
-            .map_err(|e| Error::db("count nodes", e))?;
+            .query_row("SELECT COUNT(*) FROM graph_nodes", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|e| Error::db("count nodes", e))? as usize;
 
         let edge_count: usize = self
             .conn
-            .query_row("SELECT COUNT(*) FROM graph_edges", [], |row| row.get(0))
-            .map_err(|e| Error::db("count edges", e))?;
+            .query_row("SELECT COUNT(*) FROM graph_edges", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|e| Error::db("count edges", e))? as usize;
 
         let mut stmt = self
             .conn

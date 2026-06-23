@@ -64,7 +64,7 @@ impl super::Store {
                     .query_map(params![ns], |row| {
                         Ok(TagInfo {
                             name: row.get(0)?,
-                            count: row.get(1)?,
+                            count: row.get::<_, i64>(1)? as usize,
                         })
                     })
                     .map_err(|e| Error::db("database operation", e))?;
@@ -85,7 +85,7 @@ impl super::Store {
                     .query_map([], |row| {
                         Ok(TagInfo {
                             name: row.get(0)?,
-                            count: row.get(1)?,
+                            count: row.get::<_, i64>(1)? as usize,
                         })
                     })
                     .map_err(|e| Error::db("database operation", e))?;
@@ -313,7 +313,7 @@ impl super::Store {
 
     /// Count memories by tag in a namespace.
     pub fn count_by_tag(&self, tag: &str, namespace: Option<&str>) -> Result<usize, Error> {
-        match namespace {
+        let count: i64 = match namespace {
             Some(ns) => self
                 .conn
                 .query_row(
@@ -322,18 +322,19 @@ impl super::Store {
                      INNER JOIN memories m ON mt.memory_id = m.id \
                      WHERE mt.tag = ?1 AND m.namespace = ?2",
                     params![tag, ns],
-                    |row| row.get::<_, usize>(0),
+                    |row| row.get::<_, i64>(0),
                 )
-                .map_err(|e| Error::db("database operation", e)),
+                .map_err(|e| Error::db("database operation", e))?,
             None => self
                 .conn
                 .query_row(
                     "SELECT COUNT(DISTINCT memory_id) FROM memory_tags WHERE tag = ?1",
                     params![tag],
-                    |row| row.get::<_, usize>(0),
+                    |row| row.get::<_, i64>(0),
                 )
-                .map_err(|e| Error::db("database operation", e)),
-        }
+                .map_err(|e| Error::db("database operation", e))?,
+        };
+        Ok(count as usize)
     }
 
     /// List all distinct namespaces.
