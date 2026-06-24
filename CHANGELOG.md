@@ -1,3 +1,12 @@
+## [0.4.3] — 2026-06-22
+
+### Fixed
+- **#463: Binary version mismatch** — Cargo.toml on main was 0.3.2
+  despite develop being 0.4.2. Merge conflicts resolved to wrong side.
+  Now all crates report correct version.
+- **#458: Release workflow** — filename order, double v, CHANGELOG dupes.
+- **#467: Bump actions/checkout v6 to v7.**
+
 ## [0.4.2] — 2026-06-22
 
 ### Fixed
