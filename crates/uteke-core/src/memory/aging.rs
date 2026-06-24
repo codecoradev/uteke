@@ -101,9 +101,9 @@ impl super::Store {
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND last_accessed IS NULL",
                 params![ns],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
-            .map_err(|e| Error::db("database operation", e))?;
+            .map_err(|e| Error::db("database operation", e))? as usize;
         Ok(count)
     }
 
@@ -124,27 +124,27 @@ impl super::Store {
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND last_accessed >= ?2",
                 params![ns, hot_cutoff],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
-            .map_err(|e| Error::db("database operation", e))?;
+            .map_err(|e| Error::db("database operation", e))? as usize;
 
         let warm: usize = self
             .conn
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND last_accessed >= ?2 AND last_accessed < ?3",
                 params![ns, warm_cutoff, hot_cutoff],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
-            .map_err(|e| Error::db("database operation", e))?;
+            .map_err(|e| Error::db("database operation", e))? as usize;
 
         let cold: usize = self
             .conn
             .query_row(
                 "SELECT COUNT(*) FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL)",
                 params![ns, warm_cutoff],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0),
             )
-            .map_err(|e| Error::db("database operation", e))?;
+            .map_err(|e| Error::db("database operation", e))? as usize;
 
         Ok((hot, warm, cold))
     }

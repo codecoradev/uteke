@@ -18,20 +18,22 @@ jobs:
     name: Cargo Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run cargo audit
         # Ignored advisories (with justification):
         #   RUSTSEC-2024-0436: paste unmaintained — informational, no vulnerability
-        run: cargo audit --ignore RUSTSEC-2024-0436
+        #   RUSTSEC-2026-0185: quinn-proto — comes transitively via reqwest/hyper,
+        #     not used in server-facing code paths. Update when reqwest bumps quinn.
+        run: cargo audit --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0185
 
   trivy:
     name: Trivy FS Scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
         with:

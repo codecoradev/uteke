@@ -109,7 +109,7 @@ impl super::Store {
             )
             .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
-            .query_map(params![namespace, limit], row_to_memory)
+            .query_map(params![namespace, limit as i64], row_to_memory)
             .map_err(|e| Error::db("database operation", e))?;
         let mut memories = Vec::new();
         for row in rows {

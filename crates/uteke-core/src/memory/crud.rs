@@ -229,7 +229,7 @@ impl super::Store {
                     .prepare(sql)
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![ns, t, limit, offset], row_to_memory)
+                    .query_map(params![ns, t, limit as i64, offset as i64], row_to_memory)
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::db("database operation", e))?;
@@ -242,7 +242,7 @@ impl super::Store {
                     .prepare(sql)
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![ns, limit, offset], row_to_memory)
+                    .query_map(params![ns, limit as i64, offset as i64], row_to_memory)
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::db("database operation", e))?;
@@ -278,7 +278,7 @@ impl super::Store {
             .map_err(|e| Error::db("database operation", e))?;
 
         let rows = stmt
-            .query_map(params![ns, pattern, limit], row_to_memory)
+            .query_map(params![ns, pattern, limit as i64], row_to_memory)
             .map_err(|e| Error::db("database operation", e))?;
 
         let mut memories = Vec::new();
@@ -336,13 +336,15 @@ impl super::Store {
                 .query_row(
                     "SELECT COUNT(*) FROM memories WHERE namespace = ?1",
                     params![ns],
-                    |row| row.get(0),
+                    |row| row.get::<_, i64>(0),
                 )
-                .map_err(|e| Error::db("database operation", e))?,
+                .map_err(|e| Error::db("database operation", e))? as usize,
             None => self
                 .conn
-                .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
-                .map_err(|e| Error::db("database operation", e))?,
+                .query_row("SELECT COUNT(*) FROM memories", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(|e| Error::db("database operation", e))? as usize,
         };
         Ok(count)
     }
@@ -374,7 +376,7 @@ impl super::Store {
             .map_err(|e| Error::db("prepare memory_type_counts", e))?;
         let rows = stmt
             .query_map(params![namespace], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, usize>(1)?))
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
             })
             .map_err(|e| Error::db("query memory_type_counts", e))?;
         let mut result = Vec::new();
@@ -441,7 +443,10 @@ impl super::Store {
                     .prepare(sql)
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![ns, pit, t, limit, offset], row_to_memory)
+                    .query_map(
+                        params![ns, pit, t, limit as i64, offset as i64],
+                        row_to_memory,
+                    )
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::db("database operation", e))?;
@@ -454,7 +459,7 @@ impl super::Store {
                     .prepare(sql)
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![ns, pit, limit, offset], row_to_memory)
+                    .query_map(params![ns, pit, limit as i64, offset as i64], row_to_memory)
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     let m = row.map_err(|e| Error::db("database operation", e))?;

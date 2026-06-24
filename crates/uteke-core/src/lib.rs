@@ -664,6 +664,11 @@ impl Uteke {
         &self.store.conn
     }
 
+    /// Borrow the underlying store for room/tag/document operations.
+    pub fn store(&self) -> &crate::memory::store::Store {
+        &self.store
+    }
+
     /// Get graph nodes + edges for visualization (#408).
     ///
     /// Returns all nodes and edges in the knowledge graph, optionally
