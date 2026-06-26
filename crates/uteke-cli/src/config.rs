@@ -44,6 +44,10 @@ pub struct EmbeddingConfig {
     /// - Ollama: http://localhost:11434
     /// - Azure OpenAI: your endpoint base
     pub base_url: String,
+    /// Embedding endpoint path appended to base_url. Empty string = "/embeddings" (OpenAI standard).
+    /// Override for non-standard OpenAI-compatible APIs, e.g. CodeCora Embed uses "/embed" (#473).
+    /// Can also be supplied via UTEKE_EMBEDDING_ENDPOINT_PATH.
+    pub endpoint_path: String,
     /// Embedding dimensions. 0 = use backend/model default.
     /// Override only when you know your model's output dim.
     pub dims: usize,
@@ -57,6 +61,7 @@ impl Default for EmbeddingConfig {
             max_seq_length: 256,
             api_key: String::new(),
             base_url: String::new(),
+            endpoint_path: String::new(),
             dims: 0,
         }
     }
@@ -388,6 +393,9 @@ impl Config {
             if emb.contains_key("base_url") {
                 self.embedding.base_url = overlay.embedding.base_url.clone();
             }
+            if emb.contains_key("endpoint_path") {
+                self.embedding.endpoint_path = overlay.embedding.endpoint_path.clone();
+            }
             if emb.contains_key("dims") {
                 self.embedding.dims = overlay.embedding.dims;
             }
@@ -585,6 +593,11 @@ impl Config {
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BASE_URL") {
             if !v.is_empty() {
                 self.embedding.base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_ENDPOINT_PATH") {
+            if !v.is_empty() {
+                self.embedding.endpoint_path = v;
             }
         }
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
