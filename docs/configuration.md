@@ -80,9 +80,10 @@ Configure the embedding backend. Three backends are supported:
 [embedding]
 backend = "onnx"              # onnx | openai | ollama
 model = "embeddinggemma-q4"   # backend-specific
-max_seq_length = 256
+max_seq_length = 2048
 api_key = ""                  # OpenAI only (or use UTEKE_EMBEDDING_API_KEY)
 base_url = ""                 # custom endpoint (Azure OpenAI, Ollama URL, proxy)
+endpoint_path = ""            # custom API path (default: /embeddings for OpenAI)
 dims = 0                     # 0 = use model default (override only if you know)
 ```
 
@@ -90,9 +91,10 @@ dims = 0                     # 0 = use model default (override only if you know)
 |---------|---------|-------------|
 | `backend` | `onnx` | `onnx`, `openai`, or `ollama` |
 | `model` | `embeddinggemma-q4` | Backend-specific model name |
-| `max_seq_length` | `256` | Max tokens per input |
+| `max_seq_length` | `2048` | Max tokens per input |
 | `api_key` | `""` | OpenAI API key (ONNX/Ollama ignore) |
 | `base_url` | `""` | Custom endpoint. Empty = backend default |
+| `endpoint_path` | `""` | Custom API path appended to base_url. Empty = `/embeddings` (OpenAI) |
 | `dims` | `0` | Force dims. 0 = backend/model default |
 
 ### Backend-specific defaults
@@ -208,7 +210,9 @@ Resolution order (highest priority first):
 | `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
 | `UTEKE_EMBEDDING_API_KEY` | `[embedding] api_key` | — | API key (OpenAI). Fallback: `OPENAI_API_KEY` |
 | `UTEKE_EMBEDDING_BASE_URL` | `[embedding] base_url` | backend-specific | Custom endpoint URL |
+| `UTEKE_EMBEDDING_ENDPOINT_PATH` | `[embedding] endpoint_path` | — | Custom API path (default: `/embeddings`) |
 | `UTEKE_EMBEDDING_DIMS` | `[embedding] dims` | `0` (auto) | Force embedding dimensionality |
+| `UTEKE_MAX_SEQ_LENGTH` | `[embedding] max_seq_length` | `2048` | Max tokens per embedding input |
 
 ### Docker Example
 
