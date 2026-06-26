@@ -23,6 +23,11 @@ pub const DEFAULT_MODEL: &str = "text-embedding-3-small";
 /// Default dimensions for [`DEFAULT_MODEL`].
 pub const DEFAULT_DIMS: usize = 1536;
 
+/// Default endpoint path (OpenAI standard). Override via `endpoint_path`
+/// config or `UTEKE_EMBEDDING_ENDPOINT_PATH` env var for non-standard
+/// OpenAI-compatible APIs (#473).
+pub const DEFAULT_ENDPOINT_PATH: &str = "/embeddings";
+
 /// OpenAI max sequence length in tokens (clamped by the API).
 pub const MAX_SEQ_LEN: usize = 8191;
 
@@ -32,6 +37,7 @@ pub struct OpenAiEmbedder {
     client: reqwest::blocking::Client,
     api_key: String,
     base_url: String,
+    endpoint_path: String,
     model: String,
     dims: usize,
 }
@@ -41,7 +47,16 @@ impl OpenAiEmbedder {
     ///
     /// `api_key` is required; resolution from env/config is the caller's job
     /// (see `lib.rs::ensure_embedder`).
-    pub fn new(api_key: &str, model: &str, base_url: &str, dims: usize) -> Result<Self, Error> {
+    ///
+    /// `endpoint_path` is the API path appended to `base_url` (e.g. `/embeddings`
+    /// or `/embed`). Pass empty string to use [`DEFAULT_ENDPOINT_PATH`].
+    pub fn new(
+        api_key: &str,
+        model: &str,
+        base_url: &str,
+        endpoint_path: &str,
+        dims: usize,
+    ) -> Result<Self, Error> {
         if api_key.is_empty() {
             return Err(Error::Validation(
                 "OpenAI embedder requires an API key (set UTEKE_EMBEDDING_API_KEY or OPENAI_API_KEY)".into(),
@@ -52,10 +67,23 @@ impl OpenAiEmbedder {
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| Error::generic(format!("Failed to build HTTP client: {e}")))?;
+        let endpoint = if endpoint_path.is_empty() {
+            DEFAULT_ENDPOINT_PATH.to_string()
+        } else {
+            // Normalize: ensure leading slash so base_url + path always
+            // produces a valid URL (CodeCora review #473).
+            let path = endpoint_path;
+            if path.starts_with('/') {
+                path.to_string()
+            } else {
+                format!("/{path}")
+            }
+        };
         Ok(Self {
             client,
             api_key: api_key.to_string(),
             base_url: base_url.to_string(),
+            endpoint_path: endpoint,
             model: model.to_string(),
             dims,
         })
@@ -63,7 +91,7 @@ impl OpenAiEmbedder {
 
     fn endpoint(&self) -> String {
         let base = self.base_url.trim_end_matches('/');
-        format!("{base}/embeddings")
+        format!("{base}{}", self.endpoint_path)
     }
 }
 
@@ -147,8 +175,14 @@ mod tests {
 
     #[test]
     fn rejects_empty_api_key() {
-        let err =
-            OpenAiEmbedder::new("", DEFAULT_MODEL, DEFAULT_BASE_URL, DEFAULT_DIMS).unwrap_err();
+        let err = OpenAiEmbedder::new(
+            "",
+            DEFAULT_MODEL,
+            DEFAULT_BASE_URL,
+            DEFAULT_ENDPOINT_PATH,
+            DEFAULT_DIMS,
+        )
+        .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("API key"), "got: {msg}");
     }
@@ -159,6 +193,7 @@ mod tests {
             "k",
             DEFAULT_MODEL,
             "https://api.openai.com/v1/",
+            DEFAULT_ENDPOINT_PATH,
             DEFAULT_DIMS,
         )
         .unwrap();
@@ -170,12 +205,20 @@ mod tests {
         assert_eq!(DEFAULT_MODEL, "text-embedding-3-small");
         assert_eq!(DEFAULT_DIMS, 1536);
         assert_eq!(DEFAULT_BASE_URL, "https://api.openai.com/v1");
+        assert_eq!(DEFAULT_ENDPOINT_PATH, "/embeddings");
         assert_eq!(MAX_SEQ_LEN, 8191);
     }
 
     #[test]
     fn embedder_name_and_dims() {
-        let e = OpenAiEmbedder::new("k", DEFAULT_MODEL, DEFAULT_BASE_URL, 3072).unwrap();
+        let e = OpenAiEmbedder::new(
+            "k",
+            DEFAULT_MODEL,
+            DEFAULT_BASE_URL,
+            DEFAULT_ENDPOINT_PATH,
+            3072,
+        )
+        .unwrap();
         assert_eq!(e.name(), "openai");
         assert_eq!(e.dims(), 3072);
         assert_eq!(e.max_seq_len(), MAX_SEQ_LEN);
@@ -199,22 +242,75 @@ mod tests {
     #[test]
     fn rejects_invalid_base_url() {
         // Schemeless URL — CodeCora #155.
-        let err =
-            OpenAiEmbedder::new("k", DEFAULT_MODEL, "api.openai.com/v1", DEFAULT_DIMS).unwrap_err();
+        let err = OpenAiEmbedder::new(
+            "k",
+            DEFAULT_MODEL,
+            "api.openai.com/v1",
+            DEFAULT_ENDPOINT_PATH,
+            DEFAULT_DIMS,
+        )
+        .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("http"), "got: {msg}");
 
         // Empty string.
-        let err = OpenAiEmbedder::new("k", DEFAULT_MODEL, "", DEFAULT_DIMS).unwrap_err();
+        let err = OpenAiEmbedder::new(
+            "k",
+            DEFAULT_MODEL,
+            "",
+            DEFAULT_ENDPOINT_PATH,
+            DEFAULT_DIMS,
+        )
+        .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("empty") || msg.contains("http"), "got: {msg}");
 
         // Unparseable.
-        let err = OpenAiEmbedder::new("k", DEFAULT_MODEL, "https://", DEFAULT_DIMS).unwrap_err();
+        let err = OpenAiEmbedder::new(
+            "k",
+            DEFAULT_MODEL,
+            "https://",
+            DEFAULT_ENDPOINT_PATH,
+            DEFAULT_DIMS,
+        )
+        .unwrap_err();
         let msg = format!("{err}");
         assert!(
             msg.contains("valid URL") || msg.contains("http"),
             "got: {msg}"
         );
+    }
+
+    #[test]
+    fn empty_endpoint_path_uses_default() {
+        let e = OpenAiEmbedder::new("k", DEFAULT_MODEL, DEFAULT_BASE_URL, "", DEFAULT_DIMS).unwrap();
+        assert_eq!(e.endpoint(), "https://api.openai.com/v1/embeddings");
+    }
+
+    #[test]
+    fn custom_endpoint_path() {
+        let e = OpenAiEmbedder::new(
+            "k",
+            DEFAULT_MODEL,
+            "https://codecora-embed.example.com/v1",
+            "/embed",
+            DEFAULT_DIMS,
+        )
+        .unwrap();
+        assert_eq!(e.endpoint(), "https://codecora-embed.example.com/v1/embed");
+    }
+
+    #[test]
+    fn endpoint_path_without_leading_slash_normalized() {
+        let e = OpenAiEmbedder::new(
+            "k",
+            DEFAULT_MODEL,
+            "https://codecora-embed.example.com/v1",
+            "embed",
+            DEFAULT_DIMS,
+        )
+        .unwrap();
+        // Should auto-prepend "/"
+        assert_eq!(e.endpoint(), "https://codecora-embed.example.com/v1/embed");
     }
 }

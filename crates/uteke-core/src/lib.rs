@@ -206,6 +206,9 @@ pub struct EmbeddingSettings {
     pub api_key: String,
     /// Custom endpoint. Empty = backend default.
     pub base_url: String,
+    /// Endpoint path appended to base_url. Empty = "/embeddings" (OpenAI standard).
+    /// Override for non-standard OpenAI-compatible APIs (#473).
+    pub endpoint_path: String,
     /// Model name. Empty = backend default.
     pub model: String,
     /// Force dims. 0 = backend/model default.
@@ -227,6 +230,8 @@ impl EmbeddingSettings {
             .or_else(|| env_or("OPENAI_API_KEY"))
             .unwrap_or_else(|| input.api_key.clone());
         let base_url = env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|| input.base_url.clone());
+        let endpoint_path = env_or("UTEKE_EMBEDDING_ENDPOINT_PATH")
+            .unwrap_or_else(|| input.endpoint_path.clone());
         let model = env_or("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|| input.model.clone());
         let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
             .ok()
@@ -236,6 +241,7 @@ impl EmbeddingSettings {
         Self {
             api_key,
             base_url,
+            endpoint_path,
             model,
             dims,
         }
@@ -580,6 +586,7 @@ impl Uteke {
                         &cfg.api_key,
                         &model,
                         &base_url,
+                        &cfg.endpoint_path,
                         dims,
                     )?)
                 }
