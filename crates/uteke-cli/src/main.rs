@@ -102,6 +102,7 @@ fn main() {
         uteke_core::EmbeddingSettings {
             api_key: config.embedding.api_key.clone(),
             base_url: config.embedding.base_url.clone(),
+            endpoint_path: config.embedding.endpoint_path.clone(),
             model: config.embedding.model.clone(),
             dims: config.embedding.dims,
         },

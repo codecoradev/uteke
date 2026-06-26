@@ -230,8 +230,8 @@ impl EmbeddingSettings {
             .or_else(|| env_or("OPENAI_API_KEY"))
             .unwrap_or_else(|| input.api_key.clone());
         let base_url = env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|| input.base_url.clone());
-        let endpoint_path = env_or("UTEKE_EMBEDDING_ENDPOINT_PATH")
-            .unwrap_or_else(|| input.endpoint_path.clone());
+        let endpoint_path =
+            env_or("UTEKE_EMBEDDING_ENDPOINT_PATH").unwrap_or_else(|| input.endpoint_path.clone());
         let model = env_or("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|| input.model.clone());
         let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
             .ok()
@@ -1631,6 +1631,7 @@ mod tests {
         let input = EmbeddingSettings {
             api_key: "sk-config".to_string(),
             base_url: "https://config.example.com".to_string(),
+            endpoint_path: String::new(),
             model: "config-model".to_string(),
             dims: 1024,
         };
@@ -1653,8 +1654,9 @@ mod tests {
         std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
         std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
         let input = EmbeddingSettings {
-            api_key: "sk-from-config".to_string(),
+            api_key: "***".to_string(),
             base_url: "https://config.example.com".to_string(),
+            endpoint_path: String::new(),
             model: "config-model".to_string(),
             dims: 1536,
         };
@@ -1680,8 +1682,9 @@ mod tests {
         std::env::remove_var("UTEKE_EMBEDDING_MODEL");
         std::env::remove_var("UTEKE_EMBEDDING_DIMS");
         let input = EmbeddingSettings {
-            api_key: "sk-config-only".to_string(),
+            api_key: "***".to_string(),
             base_url: "https://from-toml.example.com".to_string(),
+            endpoint_path: String::new(),
             model: "from-toml-model".to_string(),
             dims: 2048,
         };

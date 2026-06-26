@@ -254,14 +254,8 @@ mod tests {
         assert!(msg.contains("http"), "got: {msg}");
 
         // Empty string.
-        let err = OpenAiEmbedder::new(
-            "k",
-            DEFAULT_MODEL,
-            "",
-            DEFAULT_ENDPOINT_PATH,
-            DEFAULT_DIMS,
-        )
-        .unwrap_err();
+        let err = OpenAiEmbedder::new("k", DEFAULT_MODEL, "", DEFAULT_ENDPOINT_PATH, DEFAULT_DIMS)
+            .unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("empty") || msg.contains("http"), "got: {msg}");
 
@@ -283,7 +277,8 @@ mod tests {
 
     #[test]
     fn empty_endpoint_path_uses_default() {
-        let e = OpenAiEmbedder::new("k", DEFAULT_MODEL, DEFAULT_BASE_URL, "", DEFAULT_DIMS).unwrap();
+        let e =
+            OpenAiEmbedder::new("k", DEFAULT_MODEL, DEFAULT_BASE_URL, "", DEFAULT_DIMS).unwrap();
         assert_eq!(e.endpoint(), "https://api.openai.com/v1/embeddings");
     }
 
