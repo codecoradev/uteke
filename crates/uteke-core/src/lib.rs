@@ -1654,7 +1654,7 @@ mod tests {
         std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
         std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
         let input = EmbeddingSettings {
-            api_key: "***".to_string(),
+            api_key: "sk-from-config".to_string(),
             base_url: "https://config.example.com".to_string(),
             endpoint_path: String::new(),
             model: "config-model".to_string(),
@@ -1682,7 +1682,7 @@ mod tests {
         std::env::remove_var("UTEKE_EMBEDDING_MODEL");
         std::env::remove_var("UTEKE_EMBEDDING_DIMS");
         let input = EmbeddingSettings {
-            api_key: "***".to_string(),
+            api_key: "sk-config-only".to_string(),
             base_url: "https://from-toml.example.com".to_string(),
             endpoint_path: String::new(),
             model: "from-toml-model".to_string(),
