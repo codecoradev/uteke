@@ -58,7 +58,7 @@ impl Default for EmbeddingConfig {
         Self {
             backend: "onnx".to_string(),
             model: "embeddinggemma-q4".to_string(),
-            max_seq_length: 256,
+            max_seq_length: 2048,
             api_key: String::new(),
             base_url: String::new(),
             endpoint_path: String::new(),
@@ -608,6 +608,14 @@ impl Config {
                 ),
             }
         }
+        if let Ok(v) = std::env::var("UTEKE_MAX_SEQ_LENGTH") {
+            match v.parse::<usize>() {
+                Ok(len) if len > 0 => self.embedding.max_seq_length = len,
+                Ok(_) | Err(_) => tracing::warn!(
+                    "Invalid UTEKE_MAX_SEQ_LENGTH='{v}', ignoring (expected positive integer)"
+                ),
+            }
+        }
 
         self
     }
@@ -639,7 +647,7 @@ impl Config {
 [embedding]
 # backend = "onnx"  # future: "openai", "ollama"
 # model = "embeddinggemma-q4"
-# max_seq_length = 256
+# max_seq_length = 2048
 
 [tier]
 # hot_days = 7
@@ -881,7 +889,7 @@ mod tests {
         assert_eq!(cfg.store.namespace, "default");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
         assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 256);
+        assert_eq!(cfg.embedding.max_seq_length, 2048);
         assert_eq!(cfg.tier.hot_days, 7);
         assert_eq!(cfg.tier.warm_days, 30);
         assert!((cfg.tier.hot_boost - 0.1).abs() < f64::EPSILON);
@@ -952,7 +960,7 @@ level = "info"
         assert_eq!(cfg.store.path, "~/.uteke");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
         assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 256);
+        assert_eq!(cfg.embedding.max_seq_length, 2048);
         assert_eq!(cfg.tier.hot_days, 7);
         assert!(!cfg.aging.enabled);
     }
@@ -977,7 +985,7 @@ model = "other-model"
         assert_eq!(merged.store.namespace, "prod");
         assert_eq!(merged.embedding.model, "other-model");
         // Unchanged defaults
-        assert_eq!(merged.embedding.max_seq_length, 256);
+        assert_eq!(merged.embedding.max_seq_length, 2048);
         assert_eq!(merged.tier.hot_days, 7);
     }
 
@@ -1170,7 +1178,7 @@ backend = "ollama"
         assert_eq!(merged.embedding.backend, "ollama");
         // Other embedding fields stay default
         assert_eq!(merged.embedding.model, "embeddinggemma-q4");
-        assert_eq!(merged.embedding.max_seq_length, 256);
+        assert_eq!(merged.embedding.max_seq_length, 2048);
     }
 
     #[test]
