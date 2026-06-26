@@ -1,3 +1,13 @@
+## [Unreleased]
+
+### Added
+- **#473: Configurable embedding endpoint path** — `endpoint_path` in `[embedding]`
+  config or `UTEKE_EMBEDDING_ENDPOINT_PATH` env var. Auto-normalizes leading
+  slash for non-standard API paths (e.g. Azure, custom proxies).
+- **#472: Default max_seq_length increased to 2048** — ONNX embedding backend
+  now defaults to 2048 tokens (was 256). Configurable via `max_seq_length` in
+  config or `UTEKE_MAX_SEQ_LENGTH` env var.
+
 ## [0.4.3] — 2026-06-22
 
 ### Fixed
