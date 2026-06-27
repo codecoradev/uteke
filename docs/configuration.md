@@ -80,9 +80,10 @@ Configure the embedding backend. Three backends are supported:
 [embedding]
 backend = "onnx"              # onnx | openai | ollama
 model = "embeddinggemma-q4"   # backend-specific
-max_seq_length = 256
+max_seq_length = 2048
 api_key = ""                  # OpenAI only (or use UTEKE_EMBEDDING_API_KEY)
 base_url = ""                 # custom endpoint (Azure OpenAI, Ollama URL, proxy)
+endpoint_path = ""            # custom API path (default: /embeddings for OpenAI)
 dims = 0                     # 0 = use model default (override only if you know)
 ```
 
@@ -90,9 +91,10 @@ dims = 0                     # 0 = use model default (override only if you know)
 |---------|---------|-------------|
 | `backend` | `onnx` | `onnx`, `openai`, or `ollama` |
 | `model` | `embeddinggemma-q4` | Backend-specific model name |
-| `max_seq_length` | `256` | Max tokens per input |
+| `max_seq_length` | `2048` | Max tokens per input |
 | `api_key` | `""` | OpenAI API key (ONNX/Ollama ignore) |
 | `base_url` | `""` | Custom endpoint. Empty = backend default |
+| `endpoint_path` | `""` | Custom API path appended to base_url. Empty = `/embeddings` (OpenAI) |
 | `dims` | `0` | Force dims. 0 = backend/model default |
 
 ### Backend-specific defaults
@@ -123,6 +125,35 @@ To migrate, run `uteke repair` after switching backends — it rebuilds the vect
 ```bash
 UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair
 ```
+
+## Fact Extraction
+
+Configure LLM-backed fact extraction for `uteke import --extract`. This is
+**opt-in**: the section is inert unless you pass `--extract`. When you do, uteke
+sends source text to an OpenAI-compatible chat-completions endpoint and stores
+the distilled atomic facts. This is the only feature that makes outbound LLM
+calls; everything else stays offline.
+
+```toml
+[extraction]
+model = "gpt-4o-mini"        # chat model (or UTEKE_EXTRACTION_MODEL)
+api_key = ""                 # or UTEKE_EXTRACTION_API_KEY; falls back to the
+                             # embedding / OPENAI_API_KEY credential
+base_url = ""                # OpenAI-compatible base URL. Empty = OpenAI default
+endpoint_path = ""           # custom API path. Empty = /chat/completions
+max_facts = 0                # cap facts per document. 0 = built-in default
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `model` | `""` | Chat model used to distill facts |
+| `api_key` | `""` | API key (falls back to embedding/`OPENAI_API_KEY`) |
+| `base_url` | `""` | OpenAI-compatible base URL. Empty = OpenAI default |
+| `endpoint_path` | `""` | API path appended to base_url. Empty = `/chat/completions` |
+| `max_facts` | `0` | Cap facts kept per document. 0 = built-in default |
+
+Resolution order per field: CLI flag (`--extract-*`) > `UTEKE_EXTRACTION_*` env
+var > `[extraction]` config > built-in default.
 
 ## Recall Threshold
 
@@ -208,7 +239,14 @@ Resolution order (highest priority first):
 | `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
 | `UTEKE_EMBEDDING_API_KEY` | `[embedding] api_key` | — | API key (OpenAI). Fallback: `OPENAI_API_KEY` |
 | `UTEKE_EMBEDDING_BASE_URL` | `[embedding] base_url` | backend-specific | Custom endpoint URL |
+| `UTEKE_EMBEDDING_ENDPOINT_PATH` | `[embedding] endpoint_path` | — | Custom API path (default: `/embeddings`) |
 | `UTEKE_EMBEDDING_DIMS` | `[embedding] dims` | `0` (auto) | Force embedding dimensionality |
+| `UTEKE_MAX_SEQ_LENGTH` | `[embedding] max_seq_length` | `2048` | Max tokens per embedding input |
+| `UTEKE_EXTRACTION_MODEL` | `[extraction] model` | — | Chat model for `import --extract` |
+| `UTEKE_EXTRACTION_API_KEY` | `[extraction] api_key` | — | API key. Fallback: embedding key / `OPENAI_API_KEY` |
+| `UTEKE_EXTRACTION_BASE_URL` | `[extraction] base_url` | OpenAI default | OpenAI-compatible endpoint base URL |
+| `UTEKE_EXTRACTION_ENDPOINT_PATH` | `[extraction] endpoint_path` | — | Custom API path (default: `/chat/completions`) |
+| `UTEKE_EXTRACTION_MAX_FACTS` | `[extraction] max_facts` | `0` (default) | Cap facts kept per document |
 
 ### Docker Example
 

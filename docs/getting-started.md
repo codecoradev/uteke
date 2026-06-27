@@ -195,7 +195,13 @@ uteke export > memories.jsonl
 
 # Import on another machine
 uteke import memories.jsonl
+
+# Import with LLM fact extraction (distills raw text into atomic facts)
+uteke import notes.txt --extract
 ```
+
+> 💡 **Hermes users?** Install uteke as an automatic memory provider:
+> `uteke init --agent hermes --memory-provider`. See [Hermes integration](integrations/hermes.md).
 
 ## Troubleshooting
 

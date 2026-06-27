@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/uteke-banner.png" alt="Uteke — Give your AI a memory" width="640" />
+</p>
+
 <h1 align="center">Uteke</h1>
 <p align="center"><strong>Give your AI a memory that never leaves your machine.</strong></p>
 <p align="center">
@@ -7,7 +11,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.4.3-green.svg" alt="v0.4.3" />
+  <img src="https://img.shields.io/badge/status-v0.5.0-green.svg" alt="v0.5.0" />
 </p>
 
 <p align="center">
@@ -20,7 +24,7 @@
 
 ```bash
 # Install (macOS, Linux, Windows)
-curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+curl -sSL codecora.dev/install | sh
 
 # Store a memory with metadata
 uteke remember "Deploy v2.1 to staging" --tags deploy,staging \
@@ -69,6 +73,10 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | **Privacy** | ✅ Data never leaves machine | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM |
 | **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
+<p align="center">
+  <img src="docs/assets/uteke-comparison.png" alt="Uteke vs cloud alternatives" width="640" />
+</p>
+
 ---
 
 ## Key Features
@@ -106,11 +114,28 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 
 ---
 
+## Architecture
+
+<p align="center">
+  <img src="docs/assets/uteke-architecture.png" alt="Uteke architecture" width="640" />
+</p>
+
+**Hybrid search pipeline:**
+
+- **HNSW** (usearch) — vector similarity, finds by meaning
+- **FTS5** (SQLite) — full-text keyword search, finds by exact terms
+- **Reciprocal Rank Fusion** (k=60) — merges both ranked lists → best of both worlds
+- **Local ONNX** (EmbeddingGemma Q4, 768d) — embeddings computed on-device, no API calls
+
+Everything runs in-process. No network. No cloud. No server required (unless you want server mode).
+
+---
+
 ## Development
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (295 unit tests)
+cargo test --workspace         # Test (327 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```

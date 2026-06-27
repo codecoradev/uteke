@@ -6,6 +6,26 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
+## v0.5.0 — LLM Extraction & Hermes Integration `:soon:`
+
+- [#46 LLM fact extraction on import](https://github.com/codecoradev/uteke/issues/46) `✓ Done`
+  - `uteke import --extract` distills noisy text into atomic facts
+- Hermes memory-provider plugin `✓ Done`
+  - Automatic recall + extraction, no daemon required
+- Configurable embedding endpoint path `✓ Done`
+- Default max_seq_length 256 → 2048 `✓ Done`
+- Public `store()` accessor for downstream crates `✓ Done`
+- rusqlite 0.31 → 0.40 upgrade `✓ Done`
+
+## v0.4.x — Polish & Stability `✓ Released 2026-06-22–24`
+
+- Hierarchical documents — depth-10 tree engine `✓ Done`
+- Hybrid document search (semantic + FTS5 + RRF) `✓ Done`
+- MCP tools: `uteke_context`, `uteke_dream` `✓ Done`
+- Auto-dream (3-day cycle) + configurable maintenance daemon `✓ Done`
+- Dedup on insert (cosine ≥ 0.95) + pinned memory protection `✓ Done`
+- Binary version mismatch fix, release workflow fixes `✓ Done`
+
 ## v0.3.0 — Graph RAG `✓ Released 2026-06-21`
 
 - [#401 Cosine auto-linking + dedup](https://github.com/codecoradev/uteke/issues/401) `✓ Done`

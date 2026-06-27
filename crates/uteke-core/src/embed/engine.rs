@@ -14,7 +14,7 @@ const MODEL_FILE: &str = "model_q4.onnx";
 const MODEL_DATA_FILE: &str = "model_q4.onnx_data";
 const TOKENIZER_FILE: &str = "tokenizer.json";
 const MODEL_DIMS: usize = 768;
-const MAX_SEQ_LEN: usize = 256;
+const MAX_SEQ_LEN: usize = 2048;
 
 const HF_REPO: &str = "onnx-community/embeddinggemma-300m-ONNX";
 

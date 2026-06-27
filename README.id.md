@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.4.3-green.svg" alt="v0.4.3" />
+  <img src="https://img.shields.io/badge/status-v0.5.0-green.svg" alt="v0.5.0" />
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
 
 ```bash
 # Install (macOS, Linux, Windows)
-curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+curl -sSL codecora.dev/install | sh
 
 # Simpan memori dengan metadata
 uteke remember "Deploy v2.1 ke staging" --tags deploy,staging \
@@ -103,7 +103,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (283 unit tests)
+cargo test --workspace         # Test (327 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```

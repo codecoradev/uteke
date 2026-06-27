@@ -1,3 +1,42 @@
+## [Unreleased]
+
+## [0.5.0] — 2026-06-27
+
+### Added
+- **Hermes memory-provider plugin** — `uteke init --agent hermes --memory-provider`
+  installs a `MemoryProvider` plugin to `~/.hermes/plugins/uteke/` that makes
+  uteke Hermes's default long-term memory: automatic recall injected into the
+  prompt each turn, plus opt-in LLM fact extraction on session end / pre-compress.
+  Talks to the `uteke` binary directly (no `uteke-serve` daemon) and has a
+  circuit breaker so a bad endpoint never blocks the agent. Templates live in
+  `extensions/hermes-memory-provider/` and are embedded via `include_str!`.
+  Docs: `docs/integrations/hermes.md` (Mode B). Complements the existing
+  `uteke-tool` plugin (Mode A) rather than replacing it.
+- **#46: LLM-backed fact extraction on import** — `uteke import --extract`
+  distills noisy source text (chat transcripts, long notes, exported dumps)
+  into atomic facts via an OpenAI-compatible chat-completions endpoint, storing
+  one memory per fact instead of importing raw text verbatim. Opt-in and
+  offline-first: without `--extract` the importer makes no network calls and
+  behaves exactly as before. Configurable via the `[extraction]` config section
+  or `UTEKE_EXTRACTION_*` env vars (`MODEL`, `API_KEY`, `BASE_URL`,
+  `ENDPOINT_PATH`, `MAX_FACTS`), plus per-run flags `--extract-model`,
+  `--extract-api-key`, `--extract-base-url`, and `--extract-max-facts`. The
+  extraction API key falls back to the embedding/`OPENAI_API_KEY` credential so
+  an existing OpenAI-compatible setup needs no duplication.
+- **#473: Configurable embedding endpoint path** — `endpoint_path` in `[embedding]`
+  config or `UTEKE_EMBEDDING_ENDPOINT_PATH` env var. Auto-normalizes leading
+  slash for non-standard API paths (e.g. Azure, custom proxies).
+- **#472: Default max_seq_length increased to 2048** — ONNX embedding backend
+  now defaults to 2048 tokens (was 256). Configurable via `max_seq_length` in
+  config or `UTEKE_MAX_SEQ_LENGTH` env var.
+- **#466: Public `store()` accessor** — `Uteke::store()` exposes the internal
+  `Store` handle for downstream crates that need direct room/tag operations.
+
+### Changed
+- **rusqlite 0.31 → 0.40** — upgraded to match CorIn's dependency. All
+  `COUNT(*)` results and `LIMIT`/`OFFSET` bindings migrated from `usize` to `i64`
+  (rusqlite ≥0.32 breaking change).
+
 ## [0.4.3] — 2026-06-22
 
 ### Fixed

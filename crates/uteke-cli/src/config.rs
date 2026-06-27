@@ -44,6 +44,10 @@ pub struct EmbeddingConfig {
     /// - Ollama: http://localhost:11434
     /// - Azure OpenAI: your endpoint base
     pub base_url: String,
+    /// Embedding endpoint path appended to base_url. Empty string = "/embeddings" (OpenAI standard).
+    /// Override for non-standard OpenAI-compatible APIs, e.g. CodeCora Embed uses "/embed" (#473).
+    /// Can also be supplied via UTEKE_EMBEDDING_ENDPOINT_PATH.
+    pub endpoint_path: String,
     /// Embedding dimensions. 0 = use backend/model default.
     /// Override only when you know your model's output dim.
     pub dims: usize,
@@ -54,9 +58,10 @@ impl Default for EmbeddingConfig {
         Self {
             backend: "onnx".to_string(),
             model: "embeddinggemma-q4".to_string(),
-            max_seq_length: 256,
+            max_seq_length: 2048,
             api_key: String::new(),
             base_url: String::new(),
+            endpoint_path: String::new(),
             dims: 0,
         }
     }
@@ -80,6 +85,26 @@ impl EmbeddingConfig {
             ))
         }
     }
+}
+
+/// LLM fact-extraction configuration for `import --extract` (opt-in).
+///
+/// All fields are inert unless the user passes `--extract`. This keeps uteke
+/// offline-first by default; extraction only ever runs on explicit request.
+#[derive(serde::Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct ExtractionConfig {
+    /// Chat-completions model used to distill facts (e.g. "gpt-4o-mini").
+    pub model: String,
+    /// API key. May also be supplied via UTEKE_EXTRACTION_API_KEY,
+    /// or falls back to the embedding/OPENAI key at call time.
+    pub api_key: String,
+    /// Base URL of the OpenAI-compatible endpoint. Empty = OpenAI default.
+    pub base_url: String,
+    /// Endpoint path appended to base_url. Empty = "/chat/completions".
+    pub endpoint_path: String,
+    /// Maximum facts to keep per document. 0 = built-in default.
+    pub max_facts: usize,
 }
 
 /// Tier configuration for hot/warm/cold memory tiers.
@@ -253,6 +278,7 @@ impl Default for MaintenanceConfig {
 pub struct Config {
     pub store: StoreConfig,
     pub embedding: EmbeddingConfig,
+    pub extraction: ExtractionConfig,
     pub tier: TierConfig,
     pub logging: LoggingConfig,
     pub aging: AgingConfig,
@@ -387,6 +413,9 @@ impl Config {
             }
             if emb.contains_key("base_url") {
                 self.embedding.base_url = overlay.embedding.base_url.clone();
+            }
+            if emb.contains_key("endpoint_path") {
+                self.embedding.endpoint_path = overlay.embedding.endpoint_path.clone();
             }
             if emb.contains_key("dims") {
                 self.embedding.dims = overlay.embedding.dims;
@@ -587,11 +616,54 @@ impl Config {
                 self.embedding.base_url = v;
             }
         }
+        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_ENDPOINT_PATH") {
+            if !v.is_empty() {
+                self.embedding.endpoint_path = v;
+            }
+        }
         if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
             match v.parse::<usize>() {
                 Ok(d) => self.embedding.dims = d,
                 Err(_) => tracing::warn!(
                     "Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)"
+                ),
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_MAX_SEQ_LENGTH") {
+            match v.parse::<usize>() {
+                Ok(len) if len > 0 => self.embedding.max_seq_length = len,
+                Ok(_) | Err(_) => tracing::warn!(
+                    "Invalid UTEKE_MAX_SEQ_LENGTH='{v}', ignoring (expected positive integer)"
+                ),
+            }
+        }
+
+        // Extraction (import --extract). All optional; inert unless --extract.
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MODEL") {
+            if !v.is_empty() {
+                self.extraction.model = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_API_KEY") {
+            if !v.is_empty() {
+                self.extraction.api_key = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_BASE_URL") {
+            if !v.is_empty() {
+                self.extraction.base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_ENDPOINT_PATH") {
+            if !v.is_empty() {
+                self.extraction.endpoint_path = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MAX_FACTS") {
+            match v.parse::<usize>() {
+                Ok(n) => self.extraction.max_facts = n,
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_EXTRACTION_MAX_FACTS='{v}', ignoring (expected integer)"
                 ),
             }
         }
@@ -626,7 +698,7 @@ impl Config {
 [embedding]
 # backend = "onnx"  # future: "openai", "ollama"
 # model = "embeddinggemma-q4"
-# max_seq_length = 256
+# max_seq_length = 2048
 
 [tier]
 # hot_days = 7
@@ -868,7 +940,7 @@ mod tests {
         assert_eq!(cfg.store.namespace, "default");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
         assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 256);
+        assert_eq!(cfg.embedding.max_seq_length, 2048);
         assert_eq!(cfg.tier.hot_days, 7);
         assert_eq!(cfg.tier.warm_days, 30);
         assert!((cfg.tier.hot_boost - 0.1).abs() < f64::EPSILON);
@@ -939,7 +1011,7 @@ level = "info"
         assert_eq!(cfg.store.path, "~/.uteke");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
         assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 256);
+        assert_eq!(cfg.embedding.max_seq_length, 2048);
         assert_eq!(cfg.tier.hot_days, 7);
         assert!(!cfg.aging.enabled);
     }
@@ -964,7 +1036,7 @@ model = "other-model"
         assert_eq!(merged.store.namespace, "prod");
         assert_eq!(merged.embedding.model, "other-model");
         // Unchanged defaults
-        assert_eq!(merged.embedding.max_seq_length, 256);
+        assert_eq!(merged.embedding.max_seq_length, 2048);
         assert_eq!(merged.tier.hot_days, 7);
     }
 
@@ -1157,7 +1229,7 @@ backend = "ollama"
         assert_eq!(merged.embedding.backend, "ollama");
         // Other embedding fields stay default
         assert_eq!(merged.embedding.model, "embeddinggemma-q4");
-        assert_eq!(merged.embedding.max_seq_length, 256);
+        assert_eq!(merged.embedding.max_seq_length, 2048);
     }
 
     #[test]
