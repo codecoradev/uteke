@@ -554,7 +554,8 @@ uteke timeline <memory-id> --json
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
 | `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
-| `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, copilot, codex) |
+| `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, hermes) |
+| `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md) |
 | `uteke completions <shell>` | Generate shell completions |
 
 ## uteke-serve (Server Mode)

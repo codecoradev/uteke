@@ -1,6 +1,15 @@
 ## [Unreleased]
 
 ### Added
+- **Hermes memory-provider plugin** — `uteke init --agent hermes --memory-provider`
+  installs a `MemoryProvider` plugin to `~/.hermes/plugins/uteke/` that makes
+  uteke Hermes's default long-term memory: automatic recall injected into the
+  prompt each turn, plus opt-in LLM fact extraction on session end / pre-compress.
+  Talks to the `uteke` binary directly (no `uteke-serve` daemon) and has a
+  circuit breaker so a bad endpoint never blocks the agent. Templates live in
+  `extensions/hermes-memory-provider/` and are embedded via `include_str!`.
+  Docs: `docs/integrations/hermes.md` (Mode B). Complements the existing
+  `uteke-tool` plugin (Mode A) rather than replacing it.
 - **#473: Configurable embedding endpoint path** — `endpoint_path` in `[embedding]`
   config or `UTEKE_EMBEDDING_ENDPOINT_PATH` env var. Auto-normalizes leading
   slash for non-standard API paths (e.g. Azure, custom proxies).

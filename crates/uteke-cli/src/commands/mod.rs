@@ -175,7 +175,10 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             Ok(())
         }
 
-        Commands::Init { agent } => crate::init::run_init(agent, cli.json),
+        Commands::Init {
+            agent,
+            memory_provider,
+        } => crate::init::run_init(agent, *memory_provider, cli.json),
 
         Commands::Namespace { command } => namespace::run(cli, uteke, command),
 

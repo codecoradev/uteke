@@ -235,6 +235,11 @@ pub enum Commands {
         /// Agent type: pi, claude, cursor, hermes
         #[arg(long, default_value = "pi")]
         agent: String,
+        /// For --agent hermes: install the memory-provider plugin (automatic
+        /// recall + extraction as Hermes's default memory) instead of the
+        /// uteke-tool plugin (manual HTTP-backed actions).
+        #[arg(long, default_value_t = false)]
+        memory_provider: bool,
     },
     /// Memory aging: status, preview cleanup, cleanup
     Aging {
