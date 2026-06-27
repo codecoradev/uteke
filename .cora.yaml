@@ -25,9 +25,8 @@ ignore:
     - "yarn.lock"
     - "vendor/"
     - "node_modules/"
-  rules: []
-#   rules:
-#     - "style"  # ignore style issues
+  rules:
+    - "Hardcoded password or secret"
 
 # Hook settings
 hook:
