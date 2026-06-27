@@ -27,6 +27,13 @@
 - **#472: Default max_seq_length increased to 2048** — ONNX embedding backend
   now defaults to 2048 tokens (was 256). Configurable via `max_seq_length` in
   config or `UTEKE_MAX_SEQ_LENGTH` env var.
+- **#466: Public `store()` accessor** — `Uteke::store()` exposes the internal
+  `Store` handle for downstream crates that need direct room/tag operations.
+
+### Changed
+- **rusqlite 0.31 → 0.40** — upgraded to match CorIn's dependency. All
+  `COUNT(*)` results and `LIMIT`/`OFFSET` bindings migrated from `usize` to `i64`
+  (rusqlite ≥0.32 breaking change).
 
 ## [0.4.3] — 2026-06-22
 
