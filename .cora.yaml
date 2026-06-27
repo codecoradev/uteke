@@ -16,6 +16,7 @@ focus:
 # Custom rules / additional instructions for the reviewer
 rules:
   - "All SQL queries use parameterized/bound statements via rusqlite. CLI args are struct fields passed to uteke-core which uses param() bindings, never string interpolation. Do not flag SQL injection on CLI struct definitions."
+  - "Fields, struct members, and CLI flags named `api_key` / `extract_api_key` (e.g. in cli.rs Import args, ExtractOpts, Extractor, ExtractionConfig) are identifiers and runtime-populated values resolved from env vars, config files, or CLI input. They are never hardcoded secrets. Do not flag 'hardcoded password or secret' on these declarations or assignments; this mirrors the existing `embed/openai.rs` api_key field."
 
 # Ignore patterns
 ignore:
