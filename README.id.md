@@ -20,7 +20,7 @@
 
 ```bash
 # Install (macOS, Linux, Windows)
-curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+curl -sSL codecora.dev/install | sh
 
 # Simpan memori dengan metadata
 uteke remember "Deploy v2.1 ke staging" --tags deploy,staging \
@@ -103,7 +103,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (283 unit tests)
+cargo test --workspace         # Test (327 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
