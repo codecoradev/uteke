@@ -359,6 +359,59 @@ uteke aging cleanup --older-than-days 180 --yes
 | `preview` | `--older-than-days N` (default 180), `--max-access-count N` (default 1) | Dry-run preview of cleanup candidates |
 | `cleanup` | `--older-than-days N` (default 180), `--max-access-count N` (default 1), `--yes` | Delete aged memories (`--yes` skips confirmation) |
 
+## uteke import
+
+Import memories from a file (or stdin with `-`). Format is auto-detected from
+the extension and content; override with `--format`.
+
+```bash
+# Import JSONL exported by `uteke export`
+uteke import memories.jsonl
+
+# Import markdown/plain text (split into chunks)
+uteke import notes.md --tags imported,notes
+```
+
+### LLM fact extraction (`--extract`)
+
+Raw source material (chat transcripts, long notes, exported dumps) is noisy:
+greetings, filler, boilerplate. Importing it verbatim pollutes recall. With
+`--extract`, uteke first sends the text to an OpenAI-compatible chat-completions
+endpoint, asks the model to distill it into atomic facts, and stores one memory
+per fact.
+
+This is opt-in. Without `--extract`, import makes no network calls and stays
+fully offline.
+
+```bash
+# Distill a transcript into atomic facts before storing
+uteke import session.txt --extract \
+  --extract-model gpt-4o-mini \
+  --extract-base-url https://api.openai.com/v1 \
+  --extract-api-key sk-...
+
+# Use a local Ollama model
+uteke import notes.md --extract \
+  --extract-model llama3.1 \
+  --extract-base-url http://localhost:11434/v1
+```
+
+Settings resolve in this order: CLI flag > `UTEKE_EXTRACTION_*` env var >
+`[extraction]` config section > built-in default. The API key falls back to the
+embedding / `OPENAI_API_KEY` credential, so an existing OpenAI-compatible setup
+needs no duplicate key.
+
+| Flag | Description |
+|------|-------------|
+| `--extract` | Enable LLM extraction (off by default) |
+| `--extract-model <M>` | Override the chat model |
+| `--extract-base-url <U>` | Override the endpoint base URL |
+| `--extract-api-key <K>` | Override the API key |
+| `--extract-max-facts <N>` | Cap facts kept per document (0 = default) |
+
+See [configuration](#extraction) for the `[extraction]` config block and
+`UTEKE_EXTRACTION_*` environment variables.
+
 ## uteke graph
 
 Knowledge graph operations (v0.2.0). Nodes and edges stored in SQLite (`graph_nodes`, `graph_edges` tables, schema v7).
@@ -545,7 +598,7 @@ uteke timeline <memory-id> --json
 | `uteke prune` | Remove deprecated/expired memories |
 | `uteke stats` | Show store statistics with tier breakdown |
 | `uteke export` | Export memories to JSONL (no embeddings) |
-| `uteke import <file>` | Import memories from JSONL/Markdown/text |
+| `uteke import <file>` | Import memories from JSONL/Markdown/text (`--extract` distills with an LLM) |
 | `uteke doctor` | Health check (DB, index, model, consistency) |
 | `uteke verify` | Verify DB and index consistency |
 | `uteke verify-checksums --binary <path>` | Verify binary integrity against SHA256 checksums |

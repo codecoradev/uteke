@@ -224,6 +224,22 @@ pub enum Commands {
         /// Import format: auto, jsonl, markdown, text (default: auto-detect)
         #[arg(long, default_value = "auto")]
         format: String,
+        /// Distill the input into atomic facts with an LLM before storing
+        /// (opt-in; requires an OpenAI-compatible endpoint + API key).
+        #[arg(long)]
+        extract: bool,
+        /// Override the extraction model (else [extraction] model / UTEKE_EXTRACTION_MODEL)
+        #[arg(long)]
+        extract_model: Option<String>,
+        /// Override the extraction API key (else config / UTEKE_EXTRACTION_API_KEY / OPENAI_API_KEY)
+        #[arg(long)]
+        extract_api_key: Option<String>,
+        /// Override the extraction base URL (e.g. http://localhost:11434/v1 for Ollama)
+        #[arg(long)]
+        extract_base_url: Option<String>,
+        /// Max facts to keep per document (0 = default)
+        #[arg(long)]
+        extract_max_facts: Option<usize>,
     },
     /// Generate shell completions
     Completions {

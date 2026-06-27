@@ -10,6 +10,17 @@
   `extensions/hermes-memory-provider/` and are embedded via `include_str!`.
   Docs: `docs/integrations/hermes.md` (Mode B). Complements the existing
   `uteke-tool` plugin (Mode A) rather than replacing it.
+- **#46: LLM-backed fact extraction on import** — `uteke import --extract`
+  distills noisy source text (chat transcripts, long notes, exported dumps)
+  into atomic facts via an OpenAI-compatible chat-completions endpoint, storing
+  one memory per fact instead of importing raw text verbatim. Opt-in and
+  offline-first: without `--extract` the importer makes no network calls and
+  behaves exactly as before. Configurable via the `[extraction]` config section
+  or `UTEKE_EXTRACTION_*` env vars (`MODEL`, `API_KEY`, `BASE_URL`,
+  `ENDPOINT_PATH`, `MAX_FACTS`), plus per-run flags `--extract-model`,
+  `--extract-api-key`, `--extract-base-url`, and `--extract-max-facts`. The
+  extraction API key falls back to the embedding/`OPENAI_API_KEY` credential so
+  an existing OpenAI-compatible setup needs no duplication.
 - **#473: Configurable embedding endpoint path** — `endpoint_path` in `[embedding]`
   config or `UTEKE_EMBEDDING_ENDPOINT_PATH` env var. Auto-normalizes leading
   slash for non-standard API paths (e.g. Azure, custom proxies).

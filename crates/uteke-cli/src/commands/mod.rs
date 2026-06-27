@@ -168,7 +168,22 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             input,
             tags,
             format,
-        } => maintenance::run_import(cli, uteke, ns, input, tags, format),
+            extract,
+            extract_model,
+            extract_api_key,
+            extract_base_url,
+            extract_max_facts,
+        } => {
+            let opts = maintenance::ExtractOpts {
+                enabled: *extract,
+                model: extract_model.clone(),
+                api_key: extract_api_key.clone(),
+                base_url: extract_base_url.clone(),
+                max_facts: *extract_max_facts,
+                cfg: &config.extraction,
+            };
+            maintenance::run_import(cli, uteke, ns, input, tags, format, opts)
+        }
 
         Commands::Completions { .. } => {
             // Already handled in main()
