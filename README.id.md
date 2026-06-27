@@ -103,7 +103,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (312 unit tests)
+cargo test --workspace         # Test (327 unit tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
