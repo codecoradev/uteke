@@ -87,6 +87,26 @@ impl EmbeddingConfig {
     }
 }
 
+/// LLM fact-extraction configuration for `import --extract` (opt-in).
+///
+/// All fields are inert unless the user passes `--extract`. This keeps uteke
+/// offline-first by default; extraction only ever runs on explicit request.
+#[derive(serde::Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct ExtractionConfig {
+    /// Chat-completions model used to distill facts (e.g. "gpt-4o-mini").
+    pub model: String,
+    /// API key. May also be supplied via UTEKE_EXTRACTION_API_KEY,
+    /// or falls back to the embedding/OPENAI key at call time.
+    pub api_key: String,
+    /// Base URL of the OpenAI-compatible endpoint. Empty = OpenAI default.
+    pub base_url: String,
+    /// Endpoint path appended to base_url. Empty = "/chat/completions".
+    pub endpoint_path: String,
+    /// Maximum facts to keep per document. 0 = built-in default.
+    pub max_facts: usize,
+}
+
 /// Tier configuration for hot/warm/cold memory tiers.
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
@@ -258,6 +278,7 @@ impl Default for MaintenanceConfig {
 pub struct Config {
     pub store: StoreConfig,
     pub embedding: EmbeddingConfig,
+    pub extraction: ExtractionConfig,
     pub tier: TierConfig,
     pub logging: LoggingConfig,
     pub aging: AgingConfig,
@@ -613,6 +634,36 @@ impl Config {
                 Ok(len) if len > 0 => self.embedding.max_seq_length = len,
                 Ok(_) | Err(_) => tracing::warn!(
                     "Invalid UTEKE_MAX_SEQ_LENGTH='{v}', ignoring (expected positive integer)"
+                ),
+            }
+        }
+
+        // Extraction (import --extract). All optional; inert unless --extract.
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MODEL") {
+            if !v.is_empty() {
+                self.extraction.model = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_API_KEY") {
+            if !v.is_empty() {
+                self.extraction.api_key = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_BASE_URL") {
+            if !v.is_empty() {
+                self.extraction.base_url = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_ENDPOINT_PATH") {
+            if !v.is_empty() {
+                self.extraction.endpoint_path = v;
+            }
+        }
+        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MAX_FACTS") {
+            match v.parse::<usize>() {
+                Ok(n) => self.extraction.max_facts = n,
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_EXTRACTION_MAX_FACTS='{v}', ignoring (expected integer)"
                 ),
             }
         }

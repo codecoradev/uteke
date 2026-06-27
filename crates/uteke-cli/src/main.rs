@@ -3,6 +3,7 @@
 mod cli;
 mod commands;
 mod config;
+mod extract;
 mod init;
 mod logging;
 mod output;
