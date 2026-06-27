@@ -5,19 +5,29 @@ use crate::cli::Commands;
 
 /// Handle the Init command from the CLI.
 pub(crate) fn run_init_command(cli: &Cli) -> Result<(), String> {
-    if let Commands::Init { agent } = &cli.command {
-        return run_init(agent, cli.json);
+    if let Commands::Init {
+        agent,
+        memory_provider,
+    } = &cli.command
+    {
+        return run_init(agent, *memory_provider, cli.json);
     }
     Ok(())
 }
 
 /// Dispatch init to the appropriate agent type.
-pub(crate) fn run_init(agent: &str, json: bool) -> Result<(), String> {
+pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
     match agent {
         "pi" => init_pi(json),
         "claude" => init_claude(json),
         "cursor" => init_cursor(json),
-        "hermes" => init_hermes(json),
+        "hermes" => {
+            if memory_provider {
+                init_hermes_memory_provider(json)
+            } else {
+                init_hermes(json)
+            }
+        }
         _ => Err(format!(
             "Unknown agent: {agent}. Supported: pi, claude, cursor, hermes"
         )),
@@ -260,4 +270,110 @@ fn init_hermes(json: bool) -> Result<(), String> {
         println!("  Or use MCP: hermes mcp add uteke --command uteke-mcp");
     }
     Ok(())
+}
+
+/// Initialize uteke as Hermes's memory provider (automatic recall + extraction).
+///
+/// Unlike [`init_hermes`] (the `uteke-tool` plugin: manual `uteke(action=...)`
+/// calls over the HTTP daemon), this installs a `MemoryProvider` plugin that
+/// makes uteke Hermes's default long-term memory:
+/// - recall is prefetched and injected into the prompt every turn,
+/// - the transcript is distilled into atomic facts on session end / pre-compress
+///   via the opt-in `import --extract` path,
+/// - it talks to the `uteke` binary directly (no `uteke-serve` daemon).
+///
+/// Templates live in `extensions/hermes-memory-provider/` and are embedded at
+/// build time so the generated plugin always matches the installed binary.
+fn init_hermes_memory_provider(json: bool) -> Result<(), String> {
+    // Install to ~/.hermes/plugins/uteke/ (memory providers are keyed by name).
+    let plugin_dir = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| {
+            let mut p = std::path::PathBuf::from(h);
+            p.push(".hermes");
+            p.push("plugins");
+            p.push("uteke");
+            p
+        })
+        .or_else(|| std::env::current_dir().ok().map(|d| d.join("uteke")))
+        .ok_or_else(|| "Cannot determine plugin install directory".to_string())?;
+
+    let installed_to_home = plugin_dir.components().any(|c| c.as_os_str() == ".hermes");
+
+    std::fs::create_dir_all(&plugin_dir)
+        .map_err(|e| format!("Failed to create plugin dir: {e}"))?;
+
+    // Templates embedded from extensions/hermes-memory-provider/ at build time.
+    let init_py = include_str!("../../../extensions/hermes-memory-provider/__init__.py.tmpl");
+    let plugin_yaml = include_str!("../../../extensions/hermes-memory-provider/plugin.yaml.tmpl");
+
+    std::fs::write(plugin_dir.join("__init__.py"), init_py)
+        .map_err(|e| format!("Failed to write __init__.py: {e}"))?;
+    std::fs::write(plugin_dir.join("plugin.yaml"), plugin_yaml)
+        .map_err(|e| format!("Failed to write plugin.yaml: {e}"))?;
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "hermes",
+            "plugin": "memory-provider",
+            "directory": plugin_dir.to_string_lossy(),
+            "files": ["__init__.py", "plugin.yaml"],
+            "status": "installed",
+            "auto_registered": installed_to_home
+        });
+        println!("{obj}");
+    } else {
+        println!(
+            "✓ Hermes memory-provider plugin installed: {}/",
+            plugin_dir.display()
+        );
+        if installed_to_home {
+            println!("  Location: ~/.hermes/plugins/uteke/");
+        } else {
+            println!("  Location: {}/", plugin_dir.display());
+            println!("  Copy to your Hermes plugins directory to activate.");
+        }
+        println!("\n  Activate it as the default memory provider in ~/.hermes/config.yaml:");
+        println!("\n    memory:");
+        println!("      provider: uteke");
+        println!("\n  Then start a new Hermes session. Recall is automatic; no tool call needed.");
+        println!("  Optional: enable LLM fact extraction by configuring extract_* in");
+        println!("  ~/.hermes/uteke.json (see docs/integrations/hermes.md).");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The Hermes memory-provider templates are embedded at build time. Guard
+    /// against them going missing or losing their entry points.
+    const INIT_PY: &str =
+        include_str!("../../../extensions/hermes-memory-provider/__init__.py.tmpl");
+    const PLUGIN_YAML: &str =
+        include_str!("../../../extensions/hermes-memory-provider/plugin.yaml.tmpl");
+
+    #[test]
+    fn memory_provider_template_has_register_entrypoint() {
+        assert!(
+            INIT_PY.contains("def register("),
+            "plugin __init__.py must expose a register() entry point"
+        );
+        assert!(
+            INIT_PY.contains("MemoryProvider"),
+            "plugin must implement the MemoryProvider interface"
+        );
+    }
+
+    #[test]
+    fn memory_provider_manifest_declares_hooks() {
+        assert!(PLUGIN_YAML.contains("name: uteke"));
+        assert!(
+            PLUGIN_YAML.contains("on_session_end"),
+            "manifest must declare the on_session_end hook for extraction"
+        );
+        assert!(
+            PLUGIN_YAML.contains("on_pre_compress"),
+            "manifest must declare the on_pre_compress hook"
+        );
+    }
 }

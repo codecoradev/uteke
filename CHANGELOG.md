@@ -1,6 +1,15 @@
 ## [Unreleased]
 
 ### Added
+- **Hermes memory-provider plugin** — `uteke init --agent hermes --memory-provider`
+  installs a `MemoryProvider` plugin to `~/.hermes/plugins/uteke/` that makes
+  uteke Hermes's default long-term memory: automatic recall injected into the
+  prompt each turn, plus opt-in LLM fact extraction on session end / pre-compress.
+  Talks to the `uteke` binary directly (no `uteke-serve` daemon) and has a
+  circuit breaker so a bad endpoint never blocks the agent. Templates live in
+  `extensions/hermes-memory-provider/` and are embedded via `include_str!`.
+  Docs: `docs/integrations/hermes.md` (Mode B). Complements the existing
+  `uteke-tool` plugin (Mode A) rather than replacing it.
 - **#46: LLM-backed fact extraction on import** — `uteke import --extract`
   distills noisy source text (chat transcripts, long notes, exported dumps)
   into atomic facts via an OpenAI-compatible chat-completions endpoint, storing
