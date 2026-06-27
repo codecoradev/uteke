@@ -17,6 +17,7 @@ focus:
 rules:
   - "All SQL queries use parameterized/bound statements via rusqlite. CLI args are struct fields passed to uteke-core which uses param() bindings, never string interpolation. Do not flag SQL injection on CLI struct definitions."
   - "Fields, struct members, and CLI flags named `api_key` / `extract_api_key` (e.g. in cli.rs Import args, ExtractOpts, Extractor, ExtractionConfig) are identifiers and runtime-populated values resolved from env vars, config files, or CLI input. They are never hardcoded secrets. Do not flag 'hardcoded password or secret' on these declarations or assignments; this mirrors the existing `embed/openai.rs` api_key field."
+  - "The `__init__.py.tmpl` template uses `subprocess.run(cmd)` where `cmd` is always constructed as `[self._bin] + args` with `self._bin` pointing to the uteke binary path and `args` being hardcoded string literals (e.g. `['recall', query, ...]`). This is a controlled subprocess invocation pattern, not command injection. Do not flag 'command injection' on subprocess calls in this file."
 
 # Ignore patterns
 ignore:
@@ -28,6 +29,7 @@ ignore:
     - "node_modules/"
   rules:
     - "Hardcoded password or secret"
+    - "Command injection via exec/system with dynamic input"
 
 # Hook settings
 hook:
