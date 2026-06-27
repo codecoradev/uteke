@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-27
+
 ### Added
 - **Hermes memory-provider plugin** — `uteke init --agent hermes --memory-provider`
   installs a `MemoryProvider` plugin to `~/.hermes/plugins/uteke/` that makes
