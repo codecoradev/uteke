@@ -246,6 +246,150 @@ session-end distillation.
 
 ## Troubleshooting & FAQ
 
+### Mode C — pre_llm_call shell hook (automatic recall, no plugin)
+
+This is the simplest integration: a lightweight Python script runs on every
+LLM call, recalls relevant uteke memories, and injects them into the prompt.
+No plugin, no daemon, no memory-provider config — just a shell hook.
+
+**Architecture:**
+
+```
+User message arrives
+  → Hermes fires pre_llm_call shell hook
+  → handler.py reads user_message from stdin (JSON wire protocol)
+  → handler.py runs: uteke recall --namespace {agent} --json "{query}"
+  → handler.py outputs: {"context": "Recalled memories (uteke):\n1. ..."}
+  → Hermes injects context into the user message before API call
+```
+
+#### Setup
+
+1. **Create the hook handler** at a shared path (e.g. `/opt/data/hooks/uteke-recall/handler.py`):
+
+```python
+"""uteke-recall shell hook — recalls relevant memories on pre_llm_call.
+
+Reads JSON context from stdin (Hermes shell hook wire protocol),
+runs uteke recall, and outputs {"context": "..."} to stdout.
+
+Hermes injects this context into the user message before each LLM call.
+Race-safe: no shared file writes, per-call invocation.
+"""
+
+import json, pathlib, subprocess, sys
+
+def _resolve_agent_name() -> str:
+    """Extract agent name from 'hermes -p {agent}' in /proc/self/cmdline."""
+    try:
+        with open("/proc/self/cmdline", "rb") as f:
+            parts = f.read().split(b"\x00")
+        for i, part in enumerate(parts):
+            if part == b"-p" and i + 1 < len(parts):
+                name = parts[i + 1].decode("utf-8", errors="ignore").strip()
+                if name:
+                    return name
+    except Exception:
+        pass
+    return "default"
+
+AGENT = _resolve_agent_name()
+UTEKE_BIN = pathlib.Path("/opt/data/.cargo/bin/uteke")
+
+def _recall_uteke(query: str, limit: int = 5) -> list:
+    """Run uteke recall and return list of {content, score}."""
+    if not UTEKE_BIN.exists():
+        return []
+    cmd = [str(UTEKE_BIN), "recall", "--namespace", AGENT,
+           "--limit", str(limit), "--json", query]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        if proc.returncode != 0:
+            return []
+        data = json.loads(proc.stdout)
+        if not isinstance(data, list):
+            return []
+        return [{"content": m.get("memory", {}).get("content", ""),
+                 "score": m.get("score", 0)} for m in data
+                if isinstance(m, dict) and "memory" in m]
+    except Exception:
+        return []
+
+def main():
+    try:
+        raw = json.loads(sys.stdin.read())
+    except Exception:
+        sys.exit(0)
+    if not isinstance(raw, dict):
+        sys.exit(0)
+
+    # Hermes wire protocol: user_message is in extra dict
+    extra = raw.get("extra", {})
+    if not isinstance(extra, dict):
+        extra = {}
+    message = extra.get("user_message") or raw.get("user_message", "")
+    if not isinstance(message, str) or not message.strip():
+        sys.exit(0)
+    message = message.strip()[:500]
+
+    if len(message) < 5:
+        sys.exit(0)
+
+    # Skip cron sessions
+    session_id = raw.get("session_id", "")
+    if isinstance(session_id, str) and session_id.startswith("cron_"):
+        sys.exit(0)
+
+    memories = _recall_uteke(message, limit=5)
+    if not memories:
+        sys.exit(0)
+
+    lines = []
+    for i, mem in enumerate(memories, 1):
+        content = mem["content"]
+        if len(content) > 200:
+            content = content[:197] + "..."
+        lines.append(f"{i}. [{mem['score']:.2f}] {content}")
+
+    json.dump({"context": "Recalled memories (uteke):\n" + "\n".join(lines)},
+              sys.stdout, ensure_ascii=False)
+
+if __name__ == "__main__":
+    main()
+```
+
+2. **Register the hook** in each agent's `config.yaml`:
+
+```yaml
+hooks:
+  pre_llm_call:
+    - command: "python3 /opt/data/hooks/uteke-recall/handler.py"
+      timeout: 20
+hooks_auto_accept: true
+```
+
+#### How it differs from Mode A and B
+
+| | Mode A (uteke-tool) | Mode B (memory-provider) | Mode C (shell hook) |
+|---|---|---|---|
+| Recall | Manual `uteke(action="recall")` | Automatic every turn | Automatic every LLM call |
+| Extraction | No | Yes (session end) | No |
+| Plugin needed | Yes | Yes | **No** |
+| Daemon needed | Yes (`uteke-serve`) | No | No |
+| Inject mechanism | Tool output in context | MemoryProvider prefetch | `pre_llm_call` stdout |
+| Config changes | Plugin + server URL | `memory.provider: uteke` | `hooks:` block only |
+
+Mode C is the lightest option — it adds recall to any agent with just two
+file edits (handler script + config.yaml hook block). Combine with Mode B
+for both automatic recall AND automatic extraction.
+
+#### Race safety
+
+Each LLM call invokes the handler as a separate subprocess. The result is
+returned via stdout (process boundary), not written to any shared file. This
+makes it safe for concurrent sessions on the same agent profile — unlike
+approaches that write to SOUL.md or shared files.
+
 ### Q: Memory provider not activating in gateway mode
 
 **Symptom:** `memory.provider: uteke` is set in config.yaml but the "Memory provider 'uteke' activated" log never appears.

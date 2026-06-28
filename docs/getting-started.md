@@ -200,8 +200,10 @@ uteke import memories.jsonl
 uteke import notes.txt --extract
 ```
 
-> 💡 **Hermes users?** Install uteke as an automatic memory provider:
-> `uteke init --agent hermes --memory-provider`. See [Hermes integration](integrations/hermes.md).
+> 💡 **Hermes users?** Three integration modes available:
+> - **Mode C (shell hook):** Lightest — automatic recall via `pre_llm_call` hook, no plugin/daemon needed. See [Hermes integration](integrations/hermes.md).
+> - **Mode B (memory-provider):** Full auto — `uteke init --agent hermes --memory-provider`. Automatic recall + LLM fact extraction.
+> - **Mode A (uteke-tool):** Manual — `uteke init --agent hermes`. Explicit `uteke(action="...")` calls with multi-agent room support.
 
 ## Troubleshooting
 
