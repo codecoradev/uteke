@@ -128,6 +128,16 @@ fn main() {
         }
     };
 
+    // Configure embed fallback if enabled (zero-config: only when fields are set)
+    if config.embed_fallback.is_configured() {
+        uteke.set_fallback_settings(uteke_core::FallbackSettings {
+            api_key: config.embed_fallback.api_key.clone(),
+            base_url: config.embed_fallback.base_url.clone(),
+            endpoint_path: config.embed_fallback.endpoint_path.clone(),
+            model: config.embed_fallback.model.clone(),
+        });
+    }
+
     ctrlc::set_handler(|| {
         SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
         eprintln!("\nInterrupt received, shutting down gracefully...");
