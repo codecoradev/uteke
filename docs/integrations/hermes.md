@@ -244,6 +244,126 @@ The memory-provider plugin (Mode B) skips the HTTP layer entirely and shells
 out to the `uteke` binary: `recall --json` for prefetch, `import --extract` for
 session-end distillation.
 
+## Troubleshooting & FAQ
+
+### Q: Memory provider not activating in gateway mode
+
+**Symptom:** `memory.provider: uteke` is set in config.yaml but the "Memory provider 'uteke' activated" log never appears.
+
+**Cause:** In Hermes gateway mode, the `memory.provider` initialization path (`agent_init.py`) may not execute — this is a known Hermes limitation. The provider works correctly in CLI mode (`hermes chat`).
+
+**Workaround — Gateway Hook approach:**
+
+Create a gateway hook that recalls uteke on every message and writes results to a context file:
+
+1. Create `HERMES_HOME/hooks/uteke-recall/HOOK.yaml`:
+   ```yaml
+   name: uteke-recall
+   description: "Auto-recall uteke memories on agent:start"
+   events:
+     - agent:start
+   ```
+
+2. Create `HERMES_HOME/hooks/uteke-recall/handler.py`:
+   ```python
+   import json, os, pathlib, subprocess
+
+   AGENT = os.environ.get("HERMES_HOME", "").split("/")[-1] or "default"
+   CONTEXT_FILE = pathlib.Path(f"/tmp/hermes/uteke-context/{AGENT}.md")
+   UTEKE_BIN = pathlib.Path("/opt/data/.cargo/bin/uteke")  # or shutil.which("uteke")
+
+   def handle(event_type, context):
+       if event_type != "agent:start":
+           return
+       message = context.get("message", "").strip()
+       if not message or len(message) < 5:
+           return
+       if context.get("session_id", "").startswith("cron_"):
+           return
+
+       result = subprocess.run(
+           [str(UTEKE_BIN), "recall", "--namespace", AGENT, "--limit", "5", "--json", message],
+           capture_output=True, text=True, timeout=15,
+       )
+       if result.returncode != 0:
+           return
+
+       memories = json.loads(result.stdout)
+       CONTEXT_FILE.parent.mkdir(parents=True, exist_ok=True)
+       lines = [f"# Uteke Recalled Memories - {AGENT}", ""]
+       if not memories:
+           lines.append("No relevant memories found.")
+       else:
+           for item in memories:
+               mem = item.get("memory", {})
+               lines.append(f"- ({item.get('score', 0):.3f}) {mem.get('content', '')}")
+       CONTEXT_FILE.write_text("\\n".join(lines))
+   ```
+
+3. Add instruction to the agent's SOUL.md to read the context file.
+
+4. Restart the gateway: `s6-svc -r /run/service/gateway-{agent}`
+
+**Note:** The gateway hook system uses `emit()` (fire-and-forget), so the hook output is NOT automatically injected into the prompt. The agent must read the context file as a fallback. For true prompt injection, Hermes upstream would need to change `emit()` to `emit_collect()` for `agent:start` events.
+
+### Q: Hook loaded but recall returns irrelevant results
+
+**Possible causes:**
+
+| Cause | Check | Fix |
+|-------|-------|-----|
+| Too few memories | `uteke stats --namespace {agent}` — < 100 total | Run more extractions |
+| Near-duplicates | Multiple memories saying the same thing | `uteke dream --namespace {agent} --phases dedup` |
+| Poor extraction | Facts too generic ("user is ajianaz" repeated) | Improve extraction prompts or manual curation |
+| Wrong namespace | `HERMES_HOME` resolves differently than expected | Verify agent name resolution in handler.py |
+
+### Q: Memory quality maintenance
+
+```bash
+# Weekly: dedup near-duplicates
+uteke dream --namespace {agent} --phases dedup
+
+# Monthly: full maintenance (lint + dedup + orphans + compact)
+uteke dream --namespace {agent}
+
+# One-time: system health check
+uteke doctor
+
+# Remove cold memories (>30 days, rarely accessed)
+uteke aging --namespace {agent} --preview
+uteke aging --namespace {agent} --cleanup
+```
+
+### Q: Hermes update safety
+
+All uteke setup files are stored in `HERMES_HOME` (typically `~/.hermes/` or per-profile), which is **outside** the Hermes source tree. They survive Hermes updates:
+
+- `~/.hermes/plugins/uteke/` — memory-provider plugin
+- `~/.hermes/plugins/uteke-tool/` — tool plugin
+- `~/.hermes/hooks/uteke-recall/` — gateway hook
+- `~/.hermes/uteke.json` — provider config
+- `~/.hermes/config.yaml` — `memory.provider` setting
+
+### Q: Multiple agents on a shared gateway
+
+When running multiple Hermes agents on a single gateway, each agent should use its own namespace. The hook handler resolves the agent name from `HERMES_HOME`:
+
+```python
+AGENT = os.environ.get("HERMES_HOME", "").split("/")[-1]
+```
+
+For per-profile gateways (`hermes -p {agent}`), `HERMES_HOME` is set to the profile directory, so this resolves correctly. For shared gateways, ensure each agent's SOUL.md specifies its namespace explicitly.
+
+### Q: `uteke list` shows fewer memories than `uteke stats`
+
+`uteke list` has a default output limit. Use `--json` and pipe to `jq` or Python to get the full count:
+
+```bash
+uteke list --namespace {agent} --json | python3 -c "import sys,json; print(len(json.load(sys.stdin)))"
+```
+
+`uteke stats` reports the true total from the database.
+
 ## Requirements
 
 - uteke v0.3.0+ (includes `uteke-mcp` binary)
