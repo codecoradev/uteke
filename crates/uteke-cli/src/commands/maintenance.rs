@@ -661,7 +661,7 @@ fn split_markdown(content: &str) -> Vec<String> {
 
 /// Import strategy for each file in a batch.
 #[derive(Debug, Clone, PartialEq)]
-enum ImportStrategy {
+pub(crate) enum ImportStrategy {
     /// Store full document content → auto-chunk → embed (no LLM).
     Document,
     /// Extract atomic facts via LLM → embed each fact.

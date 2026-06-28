@@ -240,6 +240,27 @@ pub enum Commands {
         /// Max facts to keep per document (0 = default)
         #[arg(long)]
         extract_max_facts: Option<usize>,
+        /// Batch import: directory path (imports all .md/.txt/.jsonl files)
+        #[arg(long, conflicts_with = "input")]
+        batch_dir: Option<String>,
+        /// Force document strategy (no LLM extraction) for all files
+        #[arg(long, requires = "batch_dir")]
+        as_doc: bool,
+        /// Force memory extraction strategy (LLM) for all files
+        #[arg(long, requires = "batch_dir")]
+        as_memory: bool,
+        /// Max concurrent extractions (1 = sequential, max 10)
+        #[arg(long, default_value = "1", requires = "batch_dir")]
+        extract_parallel: usize,
+        /// Dry run: show what would be imported without actually importing
+        #[arg(long)]
+        dry_run: bool,
+        /// Max file size in bytes (default: 1MB)
+        #[arg(long, default_value = "1048576")]
+        max_size: usize,
+        /// Recurse into subdirectories
+        #[arg(long, default_value_t = false)]
+        recursive: bool,
     },
     /// Generate shell completions
     Completions {
