@@ -94,6 +94,8 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 🖥️ **Server Mode** — Persistent daemon with ~42ms warm recall (75x faster than CLI)
 - 🔥 **Tiered Memory** — Hot/Warm/Cold tracking with auto-cleanup of stale memories
 - 🔒 **Fully Offline** — Local ONNX embeddings (768d), no telemetry, no cloud, no API calls
+- 🔄 **Embed Fallback** — Gracefully falls back to cloud API if local embedder fails; MockEmbedder for testing
+- 📂 **Batch Import** — Import entire directories (`--batch-dir`) with auto-strategy routing (document vs. memory extraction)
 - 📦 **Single Binary** — Zero dependencies. No Docker, no database server, no Python, no API keys
 - 📥 **Import/Export** — JSONL-based backup and restore
 - 🧩 **Memory Types** — Typed categories (fact, procedure, decision, etc.) with auto-inference

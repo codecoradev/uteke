@@ -126,6 +126,33 @@ To migrate, run `uteke repair` after switching backends — it rebuilds the vect
 UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair
 ```
 
+## Embed Fallback
+
+When the primary embedding backend fails (model not found, OOM, network error),
+uteke can transparently retry with a fallback endpoint. This is opt-in — if
+unconfigured, no cloud calls are made.
+
+```toml
+[embed_fallback]
+enabled = false               # opt-in: must be true to activate
+base_url = ""                 # e.g. "https://api.openai.com/v1"
+api_key = ""                  # or use UTEKE_EMBED_FALLBACK_API_KEY
+model = ""                    # e.g. "text-embedding-3-small"
+dims = 0                      # 0 = use fallback model default
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Must be explicitly enabled — no surprise cloud calls |
+| `base_url` | `""` | Fallback API endpoint (OpenAI-compatible) |
+| `api_key` | `""` | API key for the fallback endpoint |
+| `model` | `""` | Fallback embedding model |
+| `dims` | `0` | Fallback dimensions (0 = model default) |
+
+**Environment variables** take precedence: `UTEKE_EMBED_FALLBACK_ENABLED`, `UTEKE_EMBED_FALLBACK_BASE_URL`, `UTEKE_EMBED_FALLBACK_API_KEY`, `UTEKE_EMBED_FALLBACK_MODEL`, `UTEKE_EMBED_FALLBACK_DIMS`.
+
+**Dimension validation** — if the fallback produces different dimensions than the primary, uteke rejects it at startup with a clear error. Both backends must produce vectors of the same dimensionality.
+
 ## Fact Extraction
 
 Configure LLM-backed fact extraction for `uteke import --extract`. This is
