@@ -834,3 +834,140 @@ fn title_from_slug(slug: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_discover_files_finds_md_txt_jsonl() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create test files
+        std::fs::write(dir.path().join("readme.md"), "# Hello").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "Some notes").unwrap();
+        std::fs::write(dir.path().join("data.jsonl"), "{\"key\":\"val\"}\n").unwrap();
+        // Unsupported extension — should be skipped
+        std::fs::write(dir.path().join("image.png"), b"\x89PNG").unwrap();
+        // Hidden file — should be skipped
+        std::fs::write(dir.path().join(".hidden.md"), "hidden").unwrap();
+
+        let files = discover_files(dir.path(), 1_000_000, false).unwrap();
+        assert_eq!(files.len(), 3);
+
+        let names: Vec<_> = files.iter().map(|f| f.file_name().unwrap().to_str().unwrap()).collect();
+        assert!(names.contains(&"readme.md"));
+        assert!(names.contains(&"notes.txt"));
+        assert!(names.contains(&"data.jsonl"));
+    }
+
+    #[test]
+    fn test_discover_files_recursive() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("subdir");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.path().join("top.md"), "# Top").unwrap();
+        std::fs::write(sub.join("nested.md"), "# Nested").unwrap();
+
+        // Non-recursive: only top-level
+        let files = discover_files(dir.path(), 1_000_000, false).unwrap();
+        assert_eq!(files.len(), 1);
+
+        // Recursive: includes subdir
+        let files = discover_files(dir.path(), 1_000_000, true).unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_discover_files_max_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut big = std::fs::File::create(dir.path().join("big.md")).unwrap();
+        big.write_all(&vec![0u8; 2000]).unwrap();
+        std::fs::write(dir.path().join("small.md"), "# Small").unwrap();
+
+        let files = discover_files(dir.path(), 1000, false).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].file_name().unwrap().to_str().unwrap() == "small.md");
+    }
+
+    #[test]
+    fn test_discover_files_not_directory() {
+        let file = std::path::PathBuf::from("/tmp/nonexistent_dir_uteke_test");
+        let result = discover_files(&file, 1_000_000, false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_determine_strategy_default() {
+        // .md without extract → Document
+        let md = std::path::PathBuf::from("test.md");
+        assert_eq!(
+            determine_strategy(&md, None, false),
+            ImportStrategy::Document
+        );
+
+        // .txt → MemoryExtract (needs LLM)
+        let txt = std::path::PathBuf::from("test.txt");
+        assert_eq!(
+            determine_strategy(&txt, None, false),
+            ImportStrategy::MemoryExtract
+        );
+
+        // .jsonl → MemoryExtract
+        let jsonl = std::path::PathBuf::from("test.jsonl");
+        assert_eq!(
+            determine_strategy(&jsonl, None, false),
+            ImportStrategy::MemoryExtract
+        );
+    }
+
+    #[test]
+    fn test_determine_strategy_force() {
+        let md = std::path::PathBuf::from("test.md");
+        // Force as_doc
+        assert_eq!(
+            determine_strategy(&md, Some(ImportStrategy::Document), false),
+            ImportStrategy::Document
+        );
+        // Force as_memory
+        assert_eq!(
+            determine_strategy(&md, Some(ImportStrategy::MemoryExtract), false),
+            ImportStrategy::MemoryExtract
+        );
+    }
+
+    #[test]
+    fn test_determine_strategy_extract_flag() {
+        // .txt with extract enabled should still be MemoryExtract
+        let txt = std::path::PathBuf::from("test.txt");
+        assert_eq!(
+            determine_strategy(&txt, None, true),
+            ImportStrategy::MemoryExtract
+        );
+    }
+
+    #[test]
+    fn test_slug_from_path() {
+        let dir = std::path::Path::new("/data/docs");
+        let file = std::path::PathBuf::from("/data/docs/subfolder/my-file.md");
+        let slug = slug_from_path(dir, &file);
+        // slug_from_path replaces / with - for flat slug
+        assert_eq!(slug, "subfolder-my-file");
+    }
+
+    #[test]
+    fn test_slug_from_path_txt() {
+        let dir = std::path::Path::new("/data/docs");
+        let file = std::path::PathBuf::from("/data/docs/notes.txt");
+        let slug = slug_from_path(dir, &file);
+        assert_eq!(slug, "notes");
+    }
+
+    #[test]
+    fn test_title_from_slug() {
+        assert_eq!(title_from_slug("my-file"), "My File");
+        assert_eq!(title_from_slug("subfolder-my-file"), "Subfolder My File");
+        assert_eq!(title_from_slug("hello-world"), "Hello World");
+        assert_eq!(title_from_slug(""), "");
+    }
+}
