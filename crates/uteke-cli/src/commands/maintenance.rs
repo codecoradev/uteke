@@ -450,7 +450,8 @@ fn split_markdown(content: &str) -> Vec<String> {
     files: files.len(),
     total_facts: 0,
     imported: 0,
-    skipped: 0,
+    skipped_files: 0,
+    skipped_facts: 0,
     errors: 0,
     doc_files: doc_files.len(),
     memory_files: memory_files.len(),
@@ -494,7 +495,7 @@ fn split_markdown(content: &str) -> Vec<String> {
             "Run with --extract to process them, or use --as-doc to import as documents."
         );
     }
-    result.skipped = memory_files.len();
+    result.skipped_files = memory_files.len();
     } else if !memory_files.is_empty() {
     for (i, path) in memory_files.iter().enumerate() {
         // Bail after 5 consecutive errors with zero success
@@ -524,7 +525,7 @@ fn split_markdown(content: &str) -> Vec<String> {
             Ok(import_result) => {
                 result.total_facts += import_result.imported;
                 result.imported += 1;
-                result.skipped += import_result.skipped;
+                result.skipped_facts += import_result.skipped;
                 if !cli.json {
                     println!(
                         "  ✓ [memory]{} {} — {} facts ({} skipped)",
@@ -567,8 +568,9 @@ fn split_markdown(content: &str) -> Vec<String> {
     }
     println!("  Files processed: {}/{}", result.imported, result.files);
     println!("  Total facts: {}", result.total_facts);
-    if result.skipped > 0 {
-        println!("  Skipped: {}", result.skipped);
+    let total_skipped = result.skipped_files + result.skipped_facts;
+    if total_skipped > 0 {
+        println!("  Skipped: {} files, {} facts", result.skipped_files, result.skipped_facts);
     }
     if result.errors > 0 {
         println!("  Errors: {}", result.errors);
@@ -684,7 +686,8 @@ struct BatchResult {
     files: usize,
     total_facts: usize,
     imported: usize,
-    skipped: usize,
+    skipped_files: usize,
+    skipped_facts: usize,
     errors: usize,
     doc_files: usize,
     memory_files: usize,
