@@ -107,6 +107,47 @@ pub struct ExtractionConfig {
     pub max_facts: usize,
 }
 
+/// Embedding fallback configuration for cloud API when local ONNX fails.
+///
+/// Entirely optional — all fields default to empty. When all fields are empty,
+/// no fallback is configured and local ONNX errors propagate normally.
+/// Env vars (UTEKE_EMBED_FALLBACK_*) win over toml values.
+#[derive(serde::Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct EmbedFallbackConfig {
+    /// API key for the fallback embedding endpoint.
+    /// Env: UTEKE_EMBED_FALLBACK_API_KEY
+    pub api_key: String,
+    /// Base URL (e.g. "https://your-modal-app.modal.run").
+    /// Env: UTEKE_EMBED_FALLBACK_BASE_URL
+    pub base_url: String,
+    /// Endpoint path appended to base_url. Empty = "/embeddings".
+    /// Env: UTEKE_EMBED_FALLBACK_ENDPOINT_PATH
+    pub endpoint_path: String,
+    /// Model name for the fallback embedding endpoint.
+    /// Env: UTEKE_EMBED_FALLBACK_MODEL
+    pub model: String,
+}
+
+impl EmbedFallbackConfig {
+    /// Check if fallback is configured (any field non-empty).
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty()
+    }
+
+    /// Resolve with env var overrides. Env vars win over toml values.
+    fn resolve_with_env(self) -> Self {
+        let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        Self {
+            api_key: env_or("UTEKE_EMBED_FALLBACK_API_KEY").unwrap_or(self.api_key),
+            base_url: env_or("UTEKE_EMBED_FALLBACK_BASE_URL").unwrap_or(self.base_url),
+            endpoint_path: env_or("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH")
+                .unwrap_or(self.endpoint_path),
+            model: env_or("UTEKE_EMBED_FALLBACK_MODEL").unwrap_or(self.model),
+        }
+    }
+}
+
 /// Tier configuration for hot/warm/cold memory tiers.
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
@@ -279,6 +320,7 @@ pub struct Config {
     pub store: StoreConfig,
     pub embedding: EmbeddingConfig,
     pub extraction: ExtractionConfig,
+    pub embed_fallback: EmbedFallbackConfig,
     pub tier: TierConfig,
     pub logging: LoggingConfig,
     pub aging: AgingConfig,
@@ -667,6 +709,9 @@ impl Config {
                 ),
             }
         }
+
+        // Embed fallback (cloud API when local ONNX fails). All optional.
+        self.embed_fallback = self.embed_fallback.clone().resolve_with_env();
 
         self
     }

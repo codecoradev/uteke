@@ -1,5 +1,20 @@
 ## [Unreleased]
 
+### Added
+- **Batch import (`--batch-dir`)** — import all `.md`/`.txt`/`.jsonl` files from a
+  directory in one command. Two strategies: **Document** (`.md` → auto-chunk →
+  embed, no LLM) and **MemoryExtract** (`.txt`/`.jsonl` → LLM fact extraction).
+  Use `--as-doc` or `--as-memory` to override auto-detection. `--recursive` for
+  nested directories, `--dry-run` to preview, `--max-size` to skip large files.
+- **Embed fallback** — optional cloud embedding API fallback when local ONNX fails.
+  Configured via `[embed_fallback]` in `uteke.toml` or env vars
+  `UTEKE_EMBED_FALLBACK_*`. Validates dimension compatibility at startup.
+  Zero cost when unconfigured.
+
+### Changed
+- `ensure_embedder()` now wraps `OnnxEmbedder` in `FallbackEmbedder` when
+  fallback settings are present and dims match.
+
 ## [0.5.0] — 2026-06-27
 
 ### Added
