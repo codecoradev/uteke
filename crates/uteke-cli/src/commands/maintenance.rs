@@ -379,13 +379,14 @@ fn split_markdown(content: &str) -> Vec<String> {
 }
 
 /// Batch import command — processes all files in a directory.
-    ///
-    /// Two strategies:
-    /// - **Document** (.md): full content → auto-chunk → embed. No LLM.
-    /// - **MemoryExtract** (.txt/.jsonl, or .md with --extract): LLM extraction → atomic facts → embed.
-    ///
-    /// Default: sequential. Parallel extraction via --extract-parallel N.
-    pub(crate) fn run_import_batch(
+///
+/// Two strategies:
+/// - **Document** (.md): full content → auto-chunk → embed. No LLM.
+/// - **MemoryExtract** (.txt/.jsonl, or .md with --extract): LLM extraction → atomic facts → embed.
+///
+/// Default: sequential. Parallel extraction via --extract-parallel N.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_import_batch(
     cli: &Cli,
     uteke: &Uteke,
     dir: &str,
@@ -397,15 +398,15 @@ fn split_markdown(content: &str) -> Vec<String> {
     dry_run: bool,
     max_size: usize,
     extract_parallel: usize,
-    ) -> Result<(), String> {
+) -> Result<(), String> {
     let dir_path = std::path::Path::new(dir);
     let start = std::time::Instant::now();
 
     // Discover files
     let files = discover_files(dir_path, max_size, recursive)?;
     if files.is_empty() {
-    println!("No importable files found in '{}'.", dir);
-    return Ok(());
+        println!("No importable files found in '{}'.", dir);
+        return Ok(());
     }
 
     // Classify files by strategy
@@ -413,199 +414,204 @@ fn split_markdown(content: &str) -> Vec<String> {
     let mut memory_files = Vec::new();
 
     for path in &files {
-    let strategy = determine_strategy(path, force_strategy.clone(), extract_opts.enabled);
-    match strategy {
-        ImportStrategy::Document => doc_files.push(path.clone()),
-        ImportStrategy::MemoryExtract => memory_files.push(path.clone()),
-    }
+        let strategy = determine_strategy(path, force_strategy.clone(), extract_opts.enabled);
+        match strategy {
+            ImportStrategy::Document => doc_files.push(path.clone()),
+            ImportStrategy::MemoryExtract => memory_files.push(path.clone()),
+        }
     }
 
     if dry_run {
-    if cli.json {
-        output::print_json(&serde_json::json!({
-            "dir": dir,
-            "total_files": files.len(),
-            "doc_files": doc_files.len(),
-            "memory_files": memory_files.len(),
-            "files": files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
-            "strategies": files.iter().map(|f| {
+        if cli.json {
+            output::print_json(&serde_json::json!({
+                "dir": dir,
+                "total_files": files.len(),
+                "doc_files": doc_files.len(),
+                "memory_files": memory_files.len(),
+                "files": files.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
+                "strategies": files.iter().map(|f| {
+                    let s = determine_strategy(f, force_strategy.clone(), extract_opts.enabled);
+                    (f.display().to_string(), format!("{:?}", s))
+                }).collect::<std::collections::HashMap<_, _>>()
+            }));
+        } else {
+            println!(
+                "Dry run — would import {} files from '{}':",
+                files.len(),
+                dir
+            );
+            println!("  Documents (no LLM):  {}", doc_files.len());
+            println!("  Memory extract (LLM): {}", memory_files.len());
+            println!();
+            for f in &files {
                 let s = determine_strategy(f, force_strategy.clone(), extract_opts.enabled);
-                (f.display().to_string(), format!("{:?}", s))
-            }).collect::<std::collections::HashMap<_, _>>()
-        }));
-    } else {
-        println!("Dry run — would import {} files from '{}':", files.len(), dir);
-        println!("  Documents (no LLM):  {}", doc_files.len());
-        println!("  Memory extract (LLM): {}", memory_files.len());
-        println!();
-        for f in &files {
-            let s = determine_strategy(f, force_strategy.clone(), extract_opts.enabled);
-            println!("  [{:?}] {}", s, f.display());
+                println!("  [{:?}] {}", s, f.display());
+            }
         }
-    }
-    return Ok(());
+        return Ok(());
     }
 
     let mut result = BatchResult {
-    files: files.len(),
-    total_facts: 0,
-    imported: 0,
-    skipped_files: 0,
-    skipped_facts: 0,
-    errors: 0,
-    doc_files: doc_files.len(),
-    memory_files: memory_files.len(),
-    elapsed_ms: 0,
+        files: files.len(),
+        total_facts: 0,
+        imported: 0,
+        skipped_files: 0,
+        skipped_facts: 0,
+        errors: 0,
+        doc_files: doc_files.len(),
+        memory_files: memory_files.len(),
+        elapsed_ms: 0,
     };
 
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
 
     // ── Phase 1: Document imports (no LLM, sequential) ──
     for path in &doc_files {
-    let slug = slug_from_path(dir_path, path);
-    let title = title_from_slug(&slug);
-    match import_single_document(uteke, path, &slug, &title, &tag_refs, ns) {
-        Ok(count) => {
-            result.total_facts += count;
-            result.imported += 1;
-            tracing::info!("Imported document '{}' — {} chunks", slug, count);
-            if !cli.json {
-                println!("  ✓ [doc] {} — {} chunks", path.display(), count);
+        let slug = slug_from_path(dir_path, path);
+        let title = title_from_slug(&slug);
+        match import_single_document(uteke, path, &slug, &title, &tag_refs, ns) {
+            Ok(count) => {
+                result.total_facts += count;
+                result.imported += 1;
+                tracing::info!("Imported document '{}' — {} chunks", slug, count);
+                if !cli.json {
+                    println!("  ✓ [doc] {} — {} chunks", path.display(), count);
+                }
+            }
+            Err(e) => {
+                result.errors += 1;
+                tracing::error!("Failed to import document '{}': {}", path.display(), e);
+                if !cli.json {
+                    println!("  ✗ [doc] {} — {}", path.display(), e);
+                }
             }
         }
-        Err(e) => {
-            result.errors += 1;
-            tracing::error!("Failed to import document '{}': {}", path.display(), e);
-            if !cli.json {
-                println!("  ✗ [doc] {} — {}", path.display(), e);
-            }
-        }
-    }
     }
 
     // ── Phase 2: Memory extraction imports (sequential for now; parallel is task #8-9) ──
     if !memory_files.is_empty() && !extract_opts.enabled {
-    if !cli.json {
-        println!();
-        eprintln!(
-            "Warning: {} file(s) require --extract for LLM fact extraction.",
-            memory_files.len()
-        );
-        println!(
-            "Run with --extract to process them, or use --as-doc to import as documents."
-        );
-    }
-    result.skipped_files = memory_files.len();
+        if !cli.json {
+            println!();
+            eprintln!(
+                "Warning: {} file(s) require --extract for LLM fact extraction.",
+                memory_files.len()
+            );
+            println!("Run with --extract to process them, or use --as-doc to import as documents.");
+        }
+        result.skipped_files = memory_files.len();
     } else if !memory_files.is_empty() {
-    for (i, path) in memory_files.iter().enumerate() {
-        // Bail after 5 consecutive errors with zero success
-        if result.errors > 5 && result.imported == 0 {
-            eprintln!("\nStopping: too many consecutive errors. Check your extraction config.");
-            break;
-        }
-
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => {
-                result.errors += 1;
-                if !cli.json {
-                    println!("  ✗ [read] {} — {}", path.display(), e);
-                }
-                continue;
+        for (i, path) in memory_files.iter().enumerate() {
+            // Bail after 5 consecutive errors with zero success
+            if result.errors > 5 && result.imported == 0 {
+                eprintln!("\nStopping: too many consecutive errors. Check your extraction config.");
+                break;
             }
-        };
 
-        let progress_suffix = if memory_files.len() > 1 {
-            format!(" [{}/{}]", i + 1, memory_files.len())
-        } else {
-            String::new()
-        };
+            let content = match std::fs::read_to_string(path) {
+                Ok(c) => c,
+                Err(e) => {
+                    result.errors += 1;
+                    if !cli.json {
+                        println!("  ✗ [read] {} — {}", path.display(), e);
+                    }
+                    continue;
+                }
+            };
 
-        match import_with_extraction(uteke, &content, &tag_refs, ns, &extract_opts) {
-            Ok(import_result) => {
-                result.total_facts += import_result.imported;
-                result.imported += 1;
-                result.skipped_facts += import_result.skipped;
-                if !cli.json {
-                    println!(
-                        "  ✓ [memory]{} {} — {} facts ({} skipped)",
-                        progress_suffix,
-                        path.display(),
-                        import_result.imported,
-                        import_result.skipped
-                    );
+            let progress_suffix = if memory_files.len() > 1 {
+                format!(" [{}/{}]", i + 1, memory_files.len())
+            } else {
+                String::new()
+            };
+
+            match import_with_extraction(uteke, &content, &tag_refs, ns, &extract_opts) {
+                Ok(import_result) => {
+                    result.total_facts += import_result.imported;
+                    result.imported += 1;
+                    result.skipped_facts += import_result.skipped;
+                    if !cli.json {
+                        println!(
+                            "  ✓ [memory]{} {} — {} facts ({} skipped)",
+                            progress_suffix,
+                            path.display(),
+                            import_result.imported,
+                            import_result.skipped
+                        );
+                    }
+                }
+                Err(e) => {
+                    result.errors += 1;
+                    if !cli.json {
+                        println!("  ✗ [memory]{} {} — {}", progress_suffix, path.display(), e);
+                    }
                 }
             }
-            Err(e) => {
-                result.errors += 1;
-                if !cli.json {
-                    println!("  ✗ [memory]{} {} — {}", progress_suffix, path.display(), e);
-                }
+
+            // Rate limiting between files (sequential mode)
+            if extract_parallel <= 1 && i < memory_files.len() - 1 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
-
-        // Rate limiting between files (sequential mode)
-        if extract_parallel <= 1 && i < memory_files.len() - 1 {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-        }
-    }
     }
 
     result.elapsed_ms = start.elapsed().as_millis() as u64;
 
     // ── Summary ──
     if cli.json {
-    output::print_json(&result);
+        output::print_json(&result);
     } else {
-    println!();
-    if result.errors > 0 {
-        println!(
-            "⚠ Batch import complete with {} error(s) in {}ms",
-            result.errors, result.elapsed_ms
-        );
-    } else {
-        println!("✓ Batch import complete in {}ms", result.elapsed_ms);
-    }
-    println!("  Files processed: {}/{}", result.imported, result.files);
-    println!("  Total facts: {}", result.total_facts);
-    let total_skipped = result.skipped_files + result.skipped_facts;
-    if total_skipped > 0 {
-        println!("  Skipped: {} files, {} facts", result.skipped_files, result.skipped_facts);
-    }
-    if result.errors > 0 {
-        println!("  Errors: {}", result.errors);
-    }
+        println!();
+        if result.errors > 0 {
+            println!(
+                "⚠ Batch import complete with {} error(s) in {}ms",
+                result.errors, result.elapsed_ms
+            );
+        } else {
+            println!("✓ Batch import complete in {}ms", result.elapsed_ms);
+        }
+        println!("  Files processed: {}/{}", result.imported, result.files);
+        println!("  Total facts: {}", result.total_facts);
+        let total_skipped = result.skipped_files + result.skipped_facts;
+        if total_skipped > 0 {
+            println!(
+                "  Skipped: {} files, {} facts",
+                result.skipped_files, result.skipped_facts
+            );
+        }
+        if result.errors > 0 {
+            println!("  Errors: {}", result.errors);
+        }
     }
 
     Ok(())
+}
+
+/// Import a single file as a document (full content, auto-chunk, embed).
+fn import_single_document(
+    uteke: &Uteke,
+    path: &std::path::Path,
+    slug: &str,
+    title: &str,
+    tags: &[&str],
+    ns: Option<&str>,
+) -> Result<usize, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+
+    if content.trim().is_empty() {
+        return Ok(0);
     }
 
-    /// Import a single file as a document (full content, auto-chunk, embed).
-    fn import_single_document(
-        uteke: &Uteke,
-        path: &std::path::Path,
-        slug: &str,
-        title: &str,
-        tags: &[&str],
-        ns: Option<&str>,
-    ) -> Result<usize, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read '{}': {}", path.display(), e))?;
+    let _doc_id = uteke
+        .doc_upsert_with_parent(slug, title, &content, tags, ns, None)
+        .map_err(|e| format!("Document upsert failed: {e}"))?;
 
-        if content.trim().is_empty() {
-            return Ok(0);
-        }
+    // Count approximate chunks (content / ~1500 chars per chunk)
+    let chunk_count = (content.len() / 1500).max(1);
+    Ok(chunk_count)
+}
 
-        let _doc_id = uteke
-            .doc_upsert_with_parent(slug, title, &content, tags, ns, None)
-            .map_err(|e| format!("Document upsert failed: {e}"))?;
-
-        // Count approximate chunks (content / ~1500 chars per chunk)
-        let chunk_count = (content.len() / 1500).max(1);
-        Ok(chunk_count)
-    }
-
-    pub(crate) fn run_verify_checksums(
+pub(crate) fn run_verify_checksums(
     cli: &Cli,
     checksums_file: &str,
     binary: &str,
@@ -672,6 +678,7 @@ pub(crate) enum ImportStrategy {
 
 /// Per-file batch result.
 #[derive(serde::Serialize)]
+#[allow(dead_code)]
 struct BatchFileResult {
     path: String,
     strategy: String,
@@ -698,7 +705,11 @@ struct BatchResult {
 ///
 /// Skips hidden files/directories, binary files, and files > max_size.
 /// Returns sorted list for deterministic processing.
-fn discover_files(dir: &std::path::Path, max_size: usize, recursive: bool) -> Result<Vec<std::path::PathBuf>, String> {
+fn discover_files(
+    dir: &std::path::Path,
+    max_size: usize,
+    recursive: bool,
+) -> Result<Vec<std::path::PathBuf>, String> {
     if !dir.is_dir() {
         return Err(format!("'{}' is not a directory", dir.display()));
     }
@@ -716,9 +727,7 @@ fn discover_files(dir: &std::path::Path, max_size: usize, recursive: bool) -> Re
         let entries = std::fs::read_dir(path)
             .map_err(|e| format!("Cannot read directory '{}': {}", path.display(), e))?;
 
-        let mut entries: Vec<_> = entries
-            .filter_map(|e| e.ok())
-            .collect();
+        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
         entries.sort_by_key(|e| e.file_name());
 
         for entry in entries {
@@ -739,10 +748,7 @@ fn discover_files(dir: &std::path::Path, max_size: usize, recursive: bool) -> Re
             }
 
             // Check extension
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !supported_exts.contains(&ext) {
                 continue;
             }
@@ -787,10 +793,7 @@ fn determine_strategy(
         return s;
     }
 
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match ext {
         "md" | "markdown" => {
@@ -810,11 +813,9 @@ fn determine_strategy(
 /// "skills/system-audit/SKILL.md" → "skills-system-audit-skill"
 fn slug_from_path(base: &std::path::Path, file: &std::path::Path) -> String {
     let relative = file.strip_prefix(base).unwrap_or(file);
-    let slug = relative
-        .to_string_lossy()
-        .replace('/', "-")
-        .replace('\\', "-");
-    let slug = slug.trim_end_matches(".md")
+    let slug = relative.to_string_lossy().replace(['/', '\\'], "-");
+    let slug = slug
+        .trim_end_matches(".md")
         .trim_end_matches(".txt")
         .trim_end_matches(".jsonl")
         .trim_end_matches(".text")
@@ -858,7 +859,10 @@ mod tests {
         let files = discover_files(dir.path(), 1_000_000, false).unwrap();
         assert_eq!(files.len(), 3);
 
-        let names: Vec<_> = files.iter().map(|f| f.file_name().unwrap().to_str().unwrap()).collect();
+        let names: Vec<_> = files
+            .iter()
+            .map(|f| f.file_name().unwrap().to_str().unwrap())
+            .collect();
         assert!(names.contains(&"readme.md"));
         assert!(names.contains(&"notes.txt"));
         assert!(names.contains(&"data.jsonl"));

@@ -132,23 +132,18 @@ pub struct EmbedFallbackConfig {
 impl EmbedFallbackConfig {
     /// Check if fallback is configured (any field non-empty).
     pub fn is_configured(&self) -> bool {
-        !self.api_key.is_empty()
-            || !self.base_url.is_empty()
-            || !self.model.is_empty()
+        !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty()
     }
 
     /// Resolve with env var overrides. Env vars win over toml values.
     fn resolve_with_env(self) -> Self {
         let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
         Self {
-            api_key: env_or("UTEKE_EMBED_FALLBACK_API_KEY")
-                .unwrap_or(self.api_key),
-            base_url: env_or("UTEKE_EMBED_FALLBACK_BASE_URL")
-                .unwrap_or(self.base_url),
+            api_key: env_or("UTEKE_EMBED_FALLBACK_API_KEY").unwrap_or(self.api_key),
+            base_url: env_or("UTEKE_EMBED_FALLBACK_BASE_URL").unwrap_or(self.base_url),
             endpoint_path: env_or("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH")
                 .unwrap_or(self.endpoint_path),
-            model: env_or("UTEKE_EMBED_FALLBACK_MODEL")
-                .unwrap_or(self.model),
+            model: env_or("UTEKE_EMBED_FALLBACK_MODEL").unwrap_or(self.model),
         }
     }
 }

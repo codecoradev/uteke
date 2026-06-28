@@ -675,7 +675,9 @@ impl Uteke {
             // against the index before we potentially add a fallback.
             if self.fallback_settings.is_configured() {
                 let fb = &self.fallback_settings;
-                tracing::info!("Embedding fallback configured — wrapping primary with cloud backup");
+                tracing::info!(
+                    "Embedding fallback configured — wrapping primary with cloud backup"
+                );
                 let model = fb.model.clone();
                 let base_url = fb.base_url.clone();
                 let endpoint_path = fb.endpoint_path.clone();
