@@ -2,7 +2,7 @@
 FROM debian:bookworm-slim AS builder
 
 ARG TARGETARCH
-ARG VERSION=v0.0.10
+ARG VERSION=v0.6.0
 
 LABEL version=${VERSION}
 LABEL org.opencontainers.image.version=${VERSION}

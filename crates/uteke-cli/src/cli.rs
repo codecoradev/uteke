@@ -244,14 +244,11 @@ pub enum Commands {
         #[arg(long, conflicts_with = "input")]
         batch_dir: Option<String>,
         /// Force document strategy (no LLM extraction) for all files
-        #[arg(long, requires = "batch_dir")]
+        #[arg(long, requires = "batch_dir", conflicts_with = "as_memory")]
         as_doc: bool,
         /// Force memory extraction strategy (LLM) for all files
-        #[arg(long, requires = "batch_dir")]
+        #[arg(long, requires = "batch_dir", conflicts_with = "as_doc")]
         as_memory: bool,
-        /// Max concurrent extractions (1 = sequential, max 10)
-        #[arg(long, default_value = "1", requires = "batch_dir")]
-        extract_parallel: usize,
         /// Dry run: show what would be imported without actually importing
         #[arg(long)]
         dry_run: bool,
