@@ -1738,11 +1738,14 @@ mod tests {
             "idx_documents_sort",
         ];
         for idx in &indexes {
-            let count: i32 = store.conn.query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
-                rusqlite::params![idx],
-                |r| r.get(0),
-            ).unwrap();
+            let count: i32 = store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    rusqlite::params![idx],
+                    |r| r.get(0),
+                )
+                .unwrap();
             assert_eq!(count, 1, "index {idx} should exist after migration");
         }
     }
