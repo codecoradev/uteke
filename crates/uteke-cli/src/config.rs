@@ -133,8 +133,10 @@ impl EmbedFallbackConfig {
     /// Check if fallback is fully configured (api_key, base_url, AND model).
     /// Warns on partial config — partial config will be rejected by the core library.
     pub fn is_configured(&self) -> bool {
-        let has_any = !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty();
-        let has_all = !self.api_key.is_empty() && !self.base_url.is_empty() && !self.model.is_empty();
+        let has_any =
+            !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty();
+        let has_all =
+            !self.api_key.is_empty() && !self.base_url.is_empty() && !self.model.is_empty();
         if has_any && !has_all {
             tracing::warn!(
                 "Embedding fallback partially configured — requires api_key, base_url, AND model"

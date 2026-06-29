@@ -232,14 +232,27 @@ impl FallbackSettings {
     /// Check if fallback is configured (all required fields present).
     /// Requires api_key AND base_url AND model — partial config is an error.
     pub fn is_configured(&self) -> bool {
-        let has_any = !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty();
-        let has_all = !self.api_key.is_empty() && !self.base_url.is_empty() && !self.model.is_empty();
+        let has_any =
+            !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty();
+        let has_all =
+            !self.api_key.is_empty() && !self.base_url.is_empty() && !self.model.is_empty();
         if has_any && !has_all {
-            tracing::warn!(
-                "Embedding fallback partially configured — requires api_key, base_url, AND model. Missing: {}",
-                if self.api_key.is_empty() { "api_key " } else { "" },
-                if self.base_url.is_empty() { "base_url " } else { "" },
+            let missing = [
+                if self.api_key.is_empty() {
+                    "api_key "
+                } else {
+                    ""
+                },
+                if self.base_url.is_empty() {
+                    "base_url "
+                } else {
+                    ""
+                },
                 if self.model.is_empty() { "model" } else { "" },
+            ]
+            .join("");
+            tracing::warn!(
+                "Embedding fallback partially configured — requires api_key, base_url, AND model. Missing: {missing}"
             );
         }
         has_all
