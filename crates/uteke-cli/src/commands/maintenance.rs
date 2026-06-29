@@ -405,7 +405,7 @@ pub(crate) fn run_import_batch(
     let start = std::time::Instant::now();
 
     // Discover files
-    let files = discover_files(dir_path, max_size, recursive)?;
+    let files = discover_files(&dir_path, max_size, recursive)?;
     if files.is_empty() {
         println!("No importable files found in '{}'.", dir);
         return Ok(());
@@ -469,7 +469,7 @@ pub(crate) fn run_import_batch(
 
     // ── Phase 1: Document imports (no LLM, sequential) ──
     for path in &doc_files {
-        let slug = slug_from_path(dir_path, path);
+        let slug = slug_from_path(&dir_path, path);
         let title = title_from_slug(&slug);
         match import_single_document(uteke, path, &slug, &title, &tag_refs, ns) {
             Ok(count) => {
