@@ -14,7 +14,7 @@ name = "uteke"
 path = "src/main.rs"
 
 [dependencies]
-uteke-core = { path = "../uteke-core", version = "0.5.0" }
+uteke-core = { path = "../uteke-core", version = "0.6.0" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -31,3 +31,4 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 
 [dev-dependencies]
 serial_test = "3"
+tempfile = "3"

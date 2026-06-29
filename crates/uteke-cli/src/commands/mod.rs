@@ -173,6 +173,12 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             extract_api_key,
             extract_base_url,
             extract_max_facts,
+            batch_dir,
+            as_doc,
+            as_memory,
+            dry_run,
+            max_size,
+            recursive,
         } => {
             let opts = maintenance::ExtractOpts {
                 enabled: *extract,
@@ -182,6 +188,31 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 max_facts: *extract_max_facts,
                 cfg: &config.extraction,
             };
+
+            // Batch mode: import entire directory
+            if let Some(dir) = batch_dir {
+                let force_strategy = if *as_doc {
+                    Some(maintenance::ImportStrategy::Document)
+                } else if *as_memory {
+                    Some(maintenance::ImportStrategy::MemoryExtract)
+                } else {
+                    None
+                };
+                return maintenance::run_import_batch(
+                    cli,
+                    uteke,
+                    dir,
+                    ns,
+                    tags,
+                    opts,
+                    force_strategy,
+                    *recursive,
+                    *dry_run,
+                    *max_size,
+                );
+            }
+
+            // Single file mode (original)
             maintenance::run_import(cli, uteke, ns, input, tags, format, opts)
         }
 

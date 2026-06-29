@@ -6,7 +6,7 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
-## v0.5.0 — LLM Extraction & Hermes Integration `:soon:`
+## v0.5.0 — LLM Extraction & Hermes Integration `✓ Released 2026-06-27`
 
 - [#46 LLM fact extraction on import](https://github.com/codecoradev/uteke/issues/46) `✓ Done`
   - `uteke import --extract` distills noisy text into atomic facts
@@ -16,6 +16,18 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 - Default max_seq_length 256 → 2048 `✓ Done`
 - Public `store()` accessor for downstream crates `✓ Done`
 - rusqlite 0.31 → 0.40 upgrade `✓ Done`
+
+## v0.6.0 — Batch Import & Embed Fallback `:soon:`
+
+- Batch directory import (`--batch-dir`) `✓ Done`
+  - Auto-detection: `.md` → document, `.txt`/`.jsonl` → memory extraction
+  - `--as-doc`/`--as-memory` override, `--recursive`, `--dry-run`
+- Cloud embedding fallback `✓ Done`
+  - Optional `[embed_fallback]` config for cloud API failover
+  - Dimension validation at startup
+- Mode C (shell hook) docs `✓ Done`
+- Migration upgrade regression test `✓ Done`
+- Schema migration fix (#492) `✓ Done`
 
 ## v0.4.x — Polish & Stability `✓ Released 2026-06-22–24`
 

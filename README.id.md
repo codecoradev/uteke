@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.5.0-green.svg" alt="v0.5.0" />
+  <img src="https://img.shields.io/badge/status-v0.6.0-green.svg" alt="v0.6.0" />
 </p>
 
 <p align="center">
@@ -78,7 +78,9 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 - 🖥️ **Mode Server** — Daemon persisten dengan recall hangat ~42ms (75x lebih cepat dari CLI)
 - 🔥 **Memori Bertingkat** — Pelacakan Hot/Warm/Cold dengan pembersihan otomatis memori basi
 - 🔒 **Sepenuhnya Offline** — Embedding ONNX lokal (768d), tanpa telemetri, tanpa cloud, tanpa panggilan API
-- 📦 **Satu Binary** — Zero dependensi. Tanpa Docker, tanpa server database, tanpa Python, tanpa API key
+- 🔄 **Embed Fallback** — Otomatis fallback ke cloud API jika local embedder gagal; MockEmbedder untuk testing
+- 📂 **Batch Import** — Import seluruh direktori (`--batch-dir`) dengan routing strategi otomatis (dokumen vs. ekstraksi memori)
+- 📦 **Single Binary** — Tanpa dependensi. Tanpa Docker, tanpa database server, tanpa Python, tanpa API key
 - 📥 **Import/Export** — Backup dan restore berbasis JSONL
 - 🧩 **Tipe Memori** — Kategori bertipe (fact, procedure, decision, dll.) dengan auto-inferensi
 - 🔗 **Backlinks** — Edge memori dua arah — referensi otomatis timbal balik

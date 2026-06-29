@@ -11,7 +11,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.5.0-green.svg" alt="v0.5.0" />
+  <img src="https://img.shields.io/badge/status-v0.6.0-green.svg" alt="v0.6.0" />
 </p>
 
 <p align="center">
@@ -94,6 +94,8 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 🖥️ **Server Mode** — Persistent daemon with ~42ms warm recall (75x faster than CLI)
 - 🔥 **Tiered Memory** — Hot/Warm/Cold tracking with auto-cleanup of stale memories
 - 🔒 **Fully Offline** — Local ONNX embeddings (768d), no telemetry, no cloud, no API calls
+- 🔄 **Embed Fallback** — Gracefully falls back to cloud API if local embedder fails; MockEmbedder for testing
+- 📂 **Batch Import** — Import entire directories (`--batch-dir`) with auto-strategy routing (document vs. memory extraction)
 - 📦 **Single Binary** — Zero dependencies. No Docker, no database server, no Python, no API keys
 - 📥 **Import/Export** — JSONL-based backup and restore
 - 🧩 **Memory Types** — Typed categories (fact, procedure, decision, etc.) with auto-inference

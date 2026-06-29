@@ -48,6 +48,7 @@ export default defineConfig({
         text: 'Reference',
         items: [
           { text: 'Architecture', link: '/architecture' },
+          { text: 'Hermes Integration', link: '/integrations/hermes' },
           { text: 'Pi Extension', link: '/extensions' },
           { text: 'TLS & Reverse Proxy', link: '/tls' },
           { text: 'Roadmap', link: '/roadmap' },

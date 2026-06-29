@@ -1,5 +1,42 @@
 ## [Unreleased]
 
+### Added
+- **Batch import (`--batch-dir`)** — import all `.md`/`.markdown`/`.txt`/`.jsonl` files from a
+  directory in one command. Two strategies: **Document** (`.md` → auto-chunk →
+  embed, no LLM) and **MemoryExtract** (`.txt`/`.jsonl` → LLM fact extraction).
+  Use `--as-doc` or `--as-memory` to override auto-detection (mutually exclusive).
+  `--recursive` for nested directories, `--dry-run` to preview, `--max-size` to
+  skip large files. Path is canonicalized before traversal to prevent symlink
+  escapes (#492 review).
+- **Embed fallback** — optional cloud embedding API fallback when local ONNX fails.
+  Configured via `[embed_fallback]` in `uteke.toml` or env vars
+  `UTEKE_EMBED_FALLBACK_*`. Validates dimension compatibility at startup.
+  Requires all three fields (`api_key`, `base_url`, `model`) — partial config
+  produces a warning instead of a runtime crash.
+- **Mode C documentation** — `docs/integrations/hermes.md` now documents all three
+  Hermes integration modes (A: uteke-tool, B: memory-provider, C: shell hook).
+  Getting-started callout updated to reference all modes.
+- **Migration upgrade regression test** — simulates v0.4.x DB (schema_version=11)
+  and verifies migration v11→v12 completes with all hierarchy columns and indexes.
+
+### Changed
+- `ensure_embedder()` now wraps `OnnxEmbedder` in `FallbackEmbedder` when
+  fallback settings are present and dims match.
+
+### Fixed
+- **#492: Schema migration crash on upgrade from v0.4.x** — duplicate document
+  hierarchy indexes (`idx_documents_path/parent/depth/sort`) in the `SCHEMA`
+  constant caused `execute_batch()` to fail before versioned migrations ran.
+  Columns didn't exist yet in existing DBs. Moved indexes to
+  `migrate_v11_to_v12()` where they belong.
+- **Batch import path canonicalization** — `--batch-dir` now resolves symlinks
+  and `..` components before traversal.
+- **Batch import silent errors** — `read_dir` failures on entries now logged
+  instead of silently swallowed.
+- **Fallback embedder partial config** — `is_configured()` now requires all
+  three fields (`api_key`, `base_url`, `model`). Partial config produces a
+  clear warning instead of a confusing runtime crash on first embed call.
+
 ## [0.5.0] — 2026-06-27
 
 ### Added
