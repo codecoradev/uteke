@@ -4,7 +4,7 @@
 
 ## Architecture
 
-Uteke integrates with Hermes in two ways. Pick the one that matches how you
+Uteke integrates with Hermes in three ways. Pick the one that matches how you
 want memory to behave.
 
 ```
@@ -302,7 +302,7 @@ def _resolve_agent_name() -> str:
     return "default"
 
 AGENT = _resolve_agent_name()
-UTEKE_BIN = pathlib.Path("/opt/data/.cargo/bin/uteke")  # adjust to your path
+UTEKE_BIN = pathlib.Path(shutil.which("uteke") or "/opt/data/.cargo/bin/uteke")  # adjust to your path
 
 def _recall_uteke(query: str, limit: int = 5) -> list:
     if not UTEKE_BIN.exists():

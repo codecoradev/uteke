@@ -397,9 +397,11 @@ pub(crate) fn run_import_batch(
     recursive: bool,
     dry_run: bool,
     max_size: usize,
-    extract_parallel: usize,
 ) -> Result<(), String> {
-    let dir_path = std::path::Path::new(dir);
+    let dir_path = match std::path::Path::new(dir).canonicalize() {
+        Ok(p) => p,
+        Err(e) => return Err(format!("Cannot resolve path '{}': {}", dir, e)),
+    };
     let start = std::time::Instant::now();
 
     // Discover files
@@ -453,7 +455,7 @@ pub(crate) fn run_import_batch(
 
     let mut result = BatchResult {
         files: files.len(),
-        total_facts: 0,
+        total_items: 0,
         imported: 0,
         skipped_files: 0,
         skipped_facts: 0,
@@ -471,7 +473,7 @@ pub(crate) fn run_import_batch(
         let title = title_from_slug(&slug);
         match import_single_document(uteke, path, &slug, &title, &tag_refs, ns) {
             Ok(count) => {
-                result.total_facts += count;
+                result.total_items += count;
                 result.imported += 1;
                 tracing::info!("Imported document '{}' — {} chunks", slug, count);
                 if !cli.json {
@@ -526,7 +528,7 @@ pub(crate) fn run_import_batch(
 
             match import_with_extraction(uteke, &content, &tag_refs, ns, &extract_opts) {
                 Ok(import_result) => {
-                    result.total_facts += import_result.imported;
+                    result.total_items += import_result.imported;
                     result.imported += 1;
                     result.skipped_facts += import_result.skipped;
                     if !cli.json {
@@ -545,11 +547,6 @@ pub(crate) fn run_import_batch(
                         println!("  ✗ [memory]{} {} — {}", progress_suffix, path.display(), e);
                     }
                 }
-            }
-
-            // Rate limiting between files (sequential mode)
-            if extract_parallel <= 1 && i < memory_files.len() - 1 {
-                std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
     }
@@ -570,7 +567,7 @@ pub(crate) fn run_import_batch(
             println!("✓ Batch import complete in {}ms", result.elapsed_ms);
         }
         println!("  Files processed: {}/{}", result.imported, result.files);
-        println!("  Total facts: {}", result.total_facts);
+        println!("  Total items: {}", result.total_items);
         let total_skipped = result.skipped_files + result.skipped_facts;
         if total_skipped > 0 {
             println!(
@@ -676,22 +673,11 @@ pub(crate) enum ImportStrategy {
     MemoryExtract,
 }
 
-/// Per-file batch result.
-#[derive(serde::Serialize)]
-#[allow(dead_code)]
-struct BatchFileResult {
-    path: String,
-    strategy: String,
-    facts: usize,
-    imported: bool,
-    error: Option<String>,
-}
-
 /// Aggregate batch result.
 #[derive(serde::Serialize)]
 struct BatchResult {
     files: usize,
-    total_facts: usize,
+    total_items: usize,
     imported: usize,
     skipped_files: usize,
     skipped_facts: usize,
@@ -714,7 +700,7 @@ fn discover_files(
         return Err(format!("'{}' is not a directory", dir.display()));
     }
 
-    let supported_exts = ["md", "txt", "jsonl", "text"];
+    let supported_exts = ["md", "markdown", "txt", "jsonl"];
     let mut files = Vec::new();
 
     fn walk(
@@ -727,7 +713,15 @@ fn discover_files(
         let entries = std::fs::read_dir(path)
             .map_err(|e| format!("Cannot read directory '{}': {}", path.display(), e))?;
 
-        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        let mut entries: Vec<_> = entries
+            .filter_map(|e| match e {
+                Ok(entry) => Some(entry),
+                Err(err) => {
+                    tracing::warn!(dir = %path.display(), "Failed to read directory entry: {}", err);
+                    None
+                }
+            })
+            .collect();
         entries.sort_by_key(|e| e.file_name());
 
         for entry in entries {
@@ -781,7 +775,7 @@ fn discover_files(
 
 /// Determine import strategy for a file based on its extension and flags.
 ///
-/// - .md files → Document strategy (full content, auto-chunk)
+/// - .md/.markdown files → Document strategy (full content, auto-chunk)
 /// - .txt/.jsonl files → MemoryExtract strategy (LLM extraction)
 /// - Overridden by --as-doc / --as-memory flags
 fn determine_strategy(
@@ -816,9 +810,9 @@ fn slug_from_path(base: &std::path::Path, file: &std::path::Path) -> String {
     let slug = relative.to_string_lossy().replace(['/', '\\'], "-");
     let slug = slug
         .trim_end_matches(".md")
+        .trim_end_matches(".markdown")
         .trim_end_matches(".txt")
         .trim_end_matches(".jsonl")
-        .trim_end_matches(".text")
         .trim_end_matches('-')
         .to_lowercase();
     slug

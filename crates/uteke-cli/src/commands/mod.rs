@@ -176,7 +176,6 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             batch_dir,
             as_doc,
             as_memory,
-            extract_parallel,
             dry_run,
             max_size,
             recursive,
@@ -199,7 +198,6 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 } else {
                     None
                 };
-                let parallel = (*extract_parallel).clamp(1, 10);
                 return maintenance::run_import_batch(
                     cli,
                     uteke,
@@ -211,7 +209,6 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                     *recursive,
                     *dry_run,
                     *max_size,
-                    parallel,
                 );
             }
 
