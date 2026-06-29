@@ -106,13 +106,14 @@ CREATE TABLE IF NOT EXISTS documents (
     has_children INTEGER NOT NULL DEFAULT 0,
     UNIQUE(namespace, slug)
 );
+-- Base indexes on columns that always exist (present in CREATE TABLE above).
 CREATE INDEX IF NOT EXISTS idx_documents_namespace ON documents(namespace);
 CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
 CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
-CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path);
-CREATE INDEX IF NOT EXISTS idx_documents_parent ON documents(parent_id);
-CREATE INDEX IF NOT EXISTS idx_documents_depth ON documents(depth);
-CREATE INDEX IF NOT EXISTS idx_documents_sort ON documents(parent_id, sort_order);
+-- NOTE: idx_documents_path/parent/depth/sort are NOT here.
+-- They depend on columns added by migration v11→v12 (migrate_v11_to_v12),
+-- so they live exclusively in that migration function to avoid referencing
+-- columns that don't exist in DBs upgrading from v0.4.x (see #492).
 
 CREATE TABLE IF NOT EXISTS document_chunks (
     id TEXT PRIMARY KEY,
@@ -170,6 +171,16 @@ impl Store {
         store.init_schema()?;
         Ok(store)
     }
+
+    /// Wrap an existing connection as a Store and run init_schema.
+    /// Used in tests to set up a pre-seeded database before migration.
+    #[cfg(test)]
+    fn from_conn(conn: Connection) -> Result<Self, Error> {
+        let store = Self { conn };
+        store.init_schema()?;
+        Ok(store)
+    }
+
     /// Pin a memory (never decays).
     pub fn pin(&self, id: &str) -> Result<bool, Error> {
         let rows = self
@@ -1613,5 +1624,129 @@ mod tests {
             .unwrap();
         assert_eq!(source.as_deref(), Some("https://rust-lang.org"));
         assert_eq!(source_type, "url");
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Migration upgrade-path tests (regression guard for #492)
+    // ────────────────────────────────────────────────────────────
+
+    /// Simulate a v0.4.x database (schema_version=11) with a documents table
+    /// that lacks the hierarchical columns (parent_id, path, depth, sort_order,
+    /// has_children). Verify that Store::open succeeds — meaning init_schema +
+    /// migration v11→v12 complete without error.
+    #[test]
+    fn test_migration_v11_to_v12_from_v04x_db() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        // 1. Create the base memories table (present in all versions).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                embedding BLOB,
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                access_count INTEGER NOT NULL DEFAULT 0,
+                last_accessed TEXT,
+                deprecated INTEGER NOT NULL DEFAULT 0,
+                valid_from TEXT,
+                valid_until TEXT,
+                memory_type TEXT NOT NULL DEFAULT 'fact',
+                importance REAL NOT NULL DEFAULT 0.5,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT NOT NULL DEFAULT 'text',
+                slug TEXT,
+                source TEXT,
+                source_type TEXT NOT NULL DEFAULT 'user'
+            );",
+        )
+        .unwrap();
+
+        // 2. Create the documents table as it existed in v0.4.x — WITHOUT
+        //    hierarchy columns (parent_id, path, depth, sort_order, has_children).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS documents (
+                id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL COLLATE NOCASE,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 1,
+                content_type TEXT NOT NULL DEFAULT 'markdown',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(namespace, slug)
+            );",
+        )
+        .unwrap();
+
+        // 3. Set schema_version to 11 (v0.4.x state).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_version (version, applied_at) VALUES (11, '2026-06-27T00:00:00Z');",
+        )
+        .unwrap();
+
+        // Insert one memory so the DB isn't empty.
+        conn.execute(
+            "INSERT INTO memories (id, content, embedding, created_at, updated_at) VALUES (?1, ?2, X'', ?3, ?4)",
+            rusqlite::params!["mem-1", "hello", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z"],
+        )
+        .unwrap();
+
+        // 4. Verify the hierarchy columns do NOT exist yet.
+        let has_parent: bool = conn
+            .prepare("SELECT parent_id FROM documents LIMIT 0")
+            .is_ok();
+        assert!(!has_parent, "parent_id should not exist before migration");
+
+        // 5. Now open the Store — this triggers init_schema → ensure_schema_version → migrate_v11_to_v12.
+        let store = Store::from_conn(conn).unwrap();
+
+        // 6. Verify migration succeeded: schema_version should now be 12.
+        let version: i32 = store
+            .conn
+            .query_row(
+                "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 12, "schema_version should be 12 after migration");
+
+        // 7. Verify hierarchy columns now exist (in documents table).
+        let cols = ["parent_id", "path", "depth", "sort_order", "has_children"];
+        for col in &cols {
+            let exists = store.column_exists_in("documents", col);
+            assert!(exists, "column {col} should exist after migration");
+        }
+
+        // 8. Verify indexes were created.
+        let indexes = [
+            "idx_documents_path",
+            "idx_documents_parent",
+            "idx_documents_depth",
+            "idx_documents_sort",
+        ];
+        for idx in &indexes {
+            let count: i32 = store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    rusqlite::params![idx],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "index {idx} should exist after migration");
+        }
     }
 }
