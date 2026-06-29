@@ -1723,10 +1723,10 @@ mod tests {
             .unwrap();
         assert_eq!(version, 12, "schema_version should be 12 after migration");
 
-        // 7. Verify hierarchy columns now exist.
+        // 7. Verify hierarchy columns now exist (in documents table).
         let cols = ["parent_id", "path", "depth", "sort_order", "has_children"];
         for col in &cols {
-            let exists = store.column_exists(col);
+            let exists = store.column_exists_in("documents", col);
             assert!(exists, "column {col} should exist after migration");
         }
 
