@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-30
+
 ### Added
 - **Batch import (`--batch-dir`)** — import all `.md`/`.markdown`/`.txt`/`.jsonl` files from a
   directory in one command. Two strategies: **Document** (`.md` → auto-chunk →
