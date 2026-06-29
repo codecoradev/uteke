@@ -412,6 +412,47 @@ needs no duplicate key.
 See [configuration](#extraction) for the `[extraction]` config block and
 `UTEKE_EXTRACTION_*` environment variables.
 
+### Batch import (`--batch-dir`)
+
+Import all files from a directory in one command. Each file is processed
+according to its type:
+
+| Extension | Strategy | Description |
+|-----------|----------|-------------|
+| `.md` / `.markdown` | Document (default) | Full content → auto-chunk → embed. No LLM. |
+| `.md` + `--extract` | Memory extract | LLM fact extraction → atomic facts → embed. |
+| `.txt` / `.jsonl` | Memory extract | LLM fact extraction (requires `--extract`). |
+| `.txt` / `.jsonl` + `--as-doc` | Document override | Import as document, skip LLM. |
+
+```bash
+# Dry run — preview what would be imported
+uteke import --batch-dir ./knowledge --dry-run
+
+# Import all markdown as documents (no LLM, fully offline)
+uteke import --batch-dir ./docs --recursive --tags docs
+
+# Import with LLM fact extraction
+uteke import --batch-dir ./notes --extract \
+  --extract-model gpt-4o-mini \
+  --extract-base-url https://api.openai.com/v1 \
+  --tags imported
+
+# Force all files as documents (skip extraction)
+uteke import --batch-dir ./raw --as-doc --recursive
+
+# Limit file size (default: 1MB)
+uteke import --batch-dir ./large-docs --max-size 500000
+```
+
+| Flag | Description |
+|------|-------------|
+| `--batch-dir <PATH>` | Directory to import (enables batch mode) |
+| `--recursive` | Recurse into subdirectories |
+| `--as-doc` | Force all files as documents (skip LLM extraction) |
+| `--as-memory` | Force all files through LLM extraction |
+| `--max-size <BYTES>` | Skip files larger than N bytes (default: 1,000,000) |
+| `--dry-run` | Preview files and strategies without importing |
+
 ## uteke graph
 
 Knowledge graph operations (v0.2.0). Nodes and edges stored in SQLite (`graph_nodes`, `graph_edges` tables, schema v7).

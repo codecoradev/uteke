@@ -215,6 +215,26 @@ pub struct EmbeddingSettings {
     pub dims: usize,
 }
 
+/// Cloud embedding fallback settings.
+///
+/// When configured, the [`FallbackEmbedder`] wraps the primary backend (e.g.
+/// ONNX) and falls back to an OpenAI-compatible cloud API on failure.
+/// All fields default to empty — fallback is disabled until explicitly configured.
+#[derive(Clone, Default)]
+pub struct FallbackSettings {
+    pub api_key: String,
+    pub base_url: String,
+    pub endpoint_path: String,
+    pub model: String,
+}
+
+impl FallbackSettings {
+    /// Check if fallback is configured (any field non-empty).
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty()
+    }
+}
+
 impl EmbeddingSettings {
     /// Merge caller-provided settings with env-var overrides. Env vars
     /// (UTEKE_EMBEDDING_*) win over the caller-supplied values; the caller
@@ -265,6 +285,8 @@ pub struct Uteke {
     /// Caller-supplied embedding settings (from uteke.toml). Env vars still
     /// override these at resolve time.
     embedding_settings: EmbeddingSettings,
+    /// Cloud embedding fallback settings. Empty = fallback disabled.
+    fallback_settings: FallbackSettings,
     tier_config: TierConfig,
     #[allow(dead_code)] // Stored for future per-store default threshold enforcement
     recall_config: RecallConfig,
@@ -516,6 +538,7 @@ impl Uteke {
             embedder: Mutex::new(embedder),
             embedder_backend,
             embedding_settings,
+            fallback_settings: FallbackSettings::default(),
             tier_config,
             recall_config,
             graph_rerank_config: graph_rerank_config.sanitized(),
@@ -543,6 +566,15 @@ impl Uteke {
     /// `Uteke` instance aren't affected.
     pub fn reset_salience_recency_config(&mut self) {
         self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
+    }
+
+    /// Configure cloud embedding fallback.
+    ///
+    /// Must be called before the first embedding operation. When configured,
+    /// the embedder will try the local backend first and fall back to the
+    /// cloud API on failure. Dimensions must match between primary and fallback.
+    pub fn set_fallback_settings(&mut self, settings: FallbackSettings) {
+        self.fallback_settings = settings;
     }
 
     /// Lazy-load the ONNX embedding engine on first use.
@@ -637,6 +669,33 @@ impl Uteke {
             }
 
             *guard = Some(embedder);
+
+            // Wrap with fallback if configured.
+            // Must happen after dim mismatch check so primary dims are validated
+            // against the index before we potentially add a fallback.
+            if self.fallback_settings.is_configured() {
+                let fb = &self.fallback_settings;
+                tracing::info!(
+                    "Embedding fallback configured — wrapping primary with cloud backup"
+                );
+                let model = fb.model.clone();
+                let base_url = fb.base_url.clone();
+                let endpoint_path = fb.endpoint_path.clone();
+                let dims = backend_dims; // use validated primary dims
+                let cloud_embedder = crate::embed::OpenAiEmbedder::new(
+                    &fb.api_key,
+                    &model,
+                    &base_url,
+                    &endpoint_path,
+                    dims,
+                )?;
+                let fallback_embedder = crate::embed::FallbackEmbedder::new(
+                    // Take the primary out, wrap it, put back
+                    guard.take().unwrap(),
+                    Some(Box::new(cloud_embedder)),
+                )?;
+                *guard = Some(Box::new(fallback_embedder));
+            }
         }
         Ok(())
     }

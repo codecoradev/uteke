@@ -2,11 +2,13 @@
 
 pub mod embed_trait;
 pub mod engine;
+pub mod fallback;
 pub mod ollama;
 pub mod openai;
 
 pub use embed_trait::Embedder;
 pub use engine::OnnxEmbedder;
+pub use fallback::FallbackEmbedder;
 pub use ollama::OllamaEmbedder;
 pub use openai::OpenAiEmbedder;
 
