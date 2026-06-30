@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.6.1] — 2026-06-30
+
 ### Fixed
 - **#500: Schema migration v11→v12 missing has_children column** — Partially-migrated databases (schema_version=12 but missing `has_children`) now get the column repaired on next open. `uteke repair` also fixes schema inconsistencies.
 
