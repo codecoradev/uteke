@@ -79,13 +79,14 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} -p uteke-cli -p uteke-server
+        run: cargo build --release --target ${{ matrix.target }} -p uteke-cli -p uteke-server -p uteke-mcp
 
       - name: Strip binaries (Unix)
         if: runner.os != 'Windows'
         run: |
           strip target/${{ matrix.target }}/release/uteke || true
           strip target/${{ matrix.target }}/release/uteke-serve || true
+          strip target/${{ matrix.target }}/release/uteke-mcp || true
 
       - name: Extract version
         id: version
@@ -98,8 +99,9 @@ jobs:
           mkdir -p release
           cp target/${{ matrix.target }}/release/uteke release/uteke
           cp target/${{ matrix.target }}/release/uteke-serve release/uteke-serve
+          cp target/${{ matrix.target }}/release/uteke-mcp release/uteke-mcp
           cd release
-          tar czf "${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}" uteke uteke-serve
+          tar czf "${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}" uteke uteke-serve uteke-mcp
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -108,8 +110,9 @@ jobs:
           mkdir release
           cp target/${{ matrix.target }}/release/uteke.exe release/uteke.exe
           cp target/${{ matrix.target }}/release/uteke-serve.exe release/uteke-serve.exe
+          cp target/${{ matrix.target }}/release/uteke-mcp.exe release/uteke-mcp.exe
           cd release
-          7z a "${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}" uteke.exe uteke-serve.exe
+          7z a "${{ matrix.artifact }}-${{ steps.version.outputs.VERSION }}.${{ matrix.ext }}" uteke.exe uteke-serve.exe uteke-mcp.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -190,7 +193,7 @@ jobs:
           echo "" >> release-notes.md
           cat changelog-body.md >> release-notes.md
           echo "" >> release-notes.md
-          printf '### 📦 Binaries\n\nEach archive contains **two binaries**:\n- `uteke` — CLI tool\n- `uteke-serve` — HTTP server daemon\n\n' >> release-notes.md
+          printf '### 📦 Binaries\n\nEach archive contains **three binaries**:\n- `uteke` — CLI tool\n- `uteke-serve` — HTTP server daemon\n- `uteke-mcp` — MCP server (stdio + HTTP)\n\n' >> release-notes.md
           printf '| Platform | File |\n|----------|------|\n' >> release-notes.md
           printf '| Linux (x86_64) | `uteke-x86_64-unknown-linux-gnu-%s.tar.gz` |\n' "${VER}" >> release-notes.md
           printf '| Linux (ARM64) | `uteke-aarch64-unknown-linux-gnu-%s.tar.gz` |\n' "${VER}" >> release-notes.md
@@ -256,9 +259,11 @@ jobs:
           tar xzf "$AMD64" -C ../binaries
           mv ../binaries/uteke ../binaries/uteke-amd64
           mv ../binaries/uteke-serve ../binaries/uteke-serve-amd64
+          mv ../binaries/uteke-mcp ../binaries/uteke-mcp-amd64
           tar xzf "$ARM64" -C ../binaries
           mv ../binaries/uteke ../binaries/uteke-arm64
           mv ../binaries/uteke-serve ../binaries/uteke-serve-arm64
+          mv ../binaries/uteke-mcp ../binaries/uteke-mcp-arm64
           chmod +x ../binaries/*
           ls -lh ../binaries/
 

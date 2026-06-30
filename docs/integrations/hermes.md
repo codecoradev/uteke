@@ -126,6 +126,79 @@ The MCP server provides the same tools via JSON-RPC (protocol version `2025-06-1
 - `uteke_forget` — delete memory
 - `uteke_stats` — store statistics
 
+### MCP Client Configuration Examples
+
+#### Claude Desktop (stdio transport)
+
+Create or edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "uteke": {
+      "command": "uteke-mcp"
+    }
+  }
+}
+```
+
+#### Claude Desktop (HTTP transport)
+
+```json
+{
+  "mcpServers": {
+    "uteke": {
+      "url": "http://127.0.0.1:8767/mcp"
+    }
+  }
+}
+```
+
+#### Cursor
+
+Create or edit `.cursor/mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "uteke": {
+      "command": "uteke-mcp"
+    }
+  }
+}
+```
+
+Or with HTTP transport:
+
+```json
+{
+  "mcpServers": {
+    "uteke": {
+      "url": "http://127.0.0.1:8767/mcp"
+    }
+  }
+}
+```
+
+#### Hermes Native MCP Client (HTTP transport)
+
+```bash
+# Register with Hermes using HTTP transport (requires uteke-serve running)
+hermes mcp add uteke --url http://127.0.0.1:8767/mcp
+```
+
+Or with stdio transport:
+
+```bash
+# Register with Hermes using stdio transport
+hermes mcp add uteke --command uteke-mcp
+```
+
+> **Tip:** HTTP transport is recommended when `uteke-serve` is already running — it avoids
+> subprocess overhead and works across machines. Stdio transport is simpler for local,
+> single-agent setups where no daemon is desired.
+
 ## Available Actions
 
 | Action | Description |
@@ -144,7 +217,19 @@ The MCP server provides the same tools via JSON-RPC (protocol version `2025-06-1
 | `room_stats` | Room statistics |
 | `room_delete` | Delete a room |
 
-## Mode B — memory-provider (uteke as Hermes's default memory)
+## Mode B — memory-provider (uteke as Hermes default memory)
+
+> **DEPRECATED — Removed from production (2026-06-29)**
+>
+> The memory-provider plugin (Mode B) has been removed from production deployments.
+> The plugin files and `memory.provider: uteke` configuration are no longer supported.
+>
+> **Migrate to:** [Mode A (uteke-tool)](#mode-a--uteke-tool-manual-actions-multi-agent-rooms) for manual
+> tool-based memory, or [Mode C (shell hook)](#mode-c--pre_llm_call-shell-hook-automatic-recall-no-plugin)
+> for automatic recall. For MCP-based integration, use the [MCP Server](#mcp-server-alternative) with
+> [client configuration examples](#mcp-client-configuration-examples).
+>
+> The documentation below is kept for historical reference only.
 
 This mode makes uteke Hermes's long-term memory backend. There are no manual
 `uteke(...)` calls: relevant memories are recalled and injected into the prompt
