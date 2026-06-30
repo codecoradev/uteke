@@ -127,6 +127,44 @@ impl super::Store {
             }
         }
 
+        // Post-migration consistency checks: repair partially-migrated databases
+        // where a migration stamped the version but failed partway through (#500).
+        self.ensure_documents_has_children()?;
+
+        Ok(())
+    }
+
+    /// Ensure the `has_children` column exists on the `documents` table.
+    ///
+    /// Schema v12 migration (`migrate_v11_to_v12`) adds this column, but a
+    /// partially-migrated DB may have schema_version=12 without the column.
+    /// This check runs after every `ensure_schema_version()` call (including on
+    /// open) so the column is repaired on next access.
+    fn ensure_documents_has_children(&self) -> Result<(), Error> {
+        // Only relevant for schema v12+ databases.
+        let version = self.schema_version().unwrap_or(0);
+        if version < 12 {
+            return Ok(());
+        }
+        if !self.column_exists_in("documents", "has_children") {
+            tracing::warn!(
+                "documents.has_children column missing on schema v{version} DB — repairing (#500)"
+            );
+            self.conn
+                .execute(
+                    "ALTER TABLE documents ADD COLUMN has_children INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )
+                .map_err(|e| Error::db("repair has_children column (#500)", e))?;
+        }
+        Ok(())
+    }
+
+    /// Ensure all expected columns exist for the current schema version.
+    ///
+    /// Called by `uteke repair` to fix partially-migrated databases.
+    pub fn ensure_schema_consistency(&self) -> Result<(), Error> {
+        self.ensure_documents_has_children()?;
         Ok(())
     }
 

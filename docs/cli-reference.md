@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.3.2**.
+Complete reference for all uteke commands. Version **0.6.0**.
 
 ## Global Flags
 
