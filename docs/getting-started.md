@@ -204,6 +204,8 @@ uteke import notes.txt --extract
 > - **Mode C (shell hook):** Lightest — automatic recall via `pre_llm_call` hook, no plugin/daemon needed. See [Hermes integration](integrations/hermes.md).
 > - **Mode B (memory-provider):** Full auto — `uteke init --agent hermes --memory-provider`. Automatic recall + LLM fact extraction.
 > - **Mode A (uteke-tool):** Manual — `uteke init --agent hermes`. Explicit `uteke(action="...")` calls with multi-agent room support.
+>
+> The install script installs all three binaries (`uteke`, `uteke-serve`, `uteke-mcp`) so MCP integration is available immediately.
 
 ## Troubleshooting
 
