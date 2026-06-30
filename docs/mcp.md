@@ -104,6 +104,32 @@ hermes mcp add uteke --command uteke-mcp
 hermes mcp add uteke --url http://127.0.0.1:8767/mcp
 ```
 
+## MCP is Tool-Based (Not Automatic)
+
+The MCP server exposes uteke as **tools** — the agent decides when to call `uteke_recall`, `uteke_remember`, etc. This means:
+
+- ✅ **On-demand:** The agent calls memory tools only when needed (e.g., "recall project context before coding")
+- ✅ **Agent-controlled:** The agent decides what to store and when to query
+- ❌ **No auto recall:** Memories are NOT automatically injected every turn
+- ❌ **No auto extract:** Facts are NOT automatically extracted from conversations
+
+If you need **automatic recall** (memories injected every LLM call without the agent asking), use **Mode C (shell hook)** instead:
+
+```bash
+uteke init --agent hermes  # Installs pre_llm_call hook
+```
+
+### Which Integration Mode to Use?
+
+| Need | Use This | How |
+|------|----------|-----|
+| On-demand memory, coding agents | **MCP (this page)** | `uteke-mcp` or `POST /mcp` |
+| Automatic recall every turn | **Mode C (shell hook)** | `uteke init --agent hermes` |
+| Automatic recall + auto extract | ~~Mode B (memory-provider)~~ | ❌ Deprecated (removed 2026-06-29) |
+| Multi-agent shared rooms | **MCP + Mode C combo** | Mode C for auto recall, MCP for room operations |
+
+> **Tip:** MCP and Mode C work great together. Use Mode C for automatic recall on every LLM call, and MCP for explicit tool-based operations like `uteke_doc_create`, `uteke_graph`, or `uteke_room_recall`.
+
 ## Available Tools
 
 Both transports expose the same 15 tools (MCP protocol version `2025-06-18`):
