@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Fixed
+- **#500: Schema migration v11→v12 missing has_children column** — Partially-migrated databases (schema_version=12 but missing `has_children`) now get the column repaired on next open. `uteke repair` also fixes schema inconsistencies.
+
+### Changed
+- **#501: install.sh now installs uteke-mcp** — All three binaries (uteke, uteke-serve, uteke-mcp) are now installed via the quick-install script.
+
+### Docs
+- Updated version strings to 0.6.0 in cli-reference.md, roadmap.md, AGENT.md.
+
 ## [0.6.0] — 2026-06-30
 
 ### Added
