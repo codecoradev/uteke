@@ -7,13 +7,13 @@ mod types;
 mod context;
 mod handlers;
 
-use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use std::path::PathBuf;
 
 use sha2::{Digest, Sha256};
+use tiny_http::Server;
 use tracing::{error, info, warn};
 use uteke_core::Uteke;
 
@@ -235,7 +235,7 @@ fn main() {
 
     // Start server
     let addr = format!("{host}:{port}");
-    let server = tiny_http::Server::http(&addr).unwrap_or_else(|e| {
+    let server = Server::http(&addr).unwrap_or_else(|e| {
         error!("Failed to bind {addr}: {e}");
         std::process::exit(1);
     });
