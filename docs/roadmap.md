@@ -17,7 +17,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 - Public `store()` accessor for downstream crates `✓ Done`
 - rusqlite 0.31 → 0.40 upgrade `✓ Done`
 
-## v0.6.0 — Batch Import & Embed Fallback `:soon:`
+## v0.6.0 — Batch Import & Embed Fallback `✓ Released 2026-06-30`
 
 - Batch directory import (`--batch-dir`) `✓ Done`
   - Auto-detection: `.md` → document, `.txt`/`.jsonl` → memory extraction

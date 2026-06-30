@@ -7,6 +7,7 @@ set -e
 REPO="codecoradev/uteke"
 BINARY_NAME="uteke"
 SERVER_BINARY_NAME="uteke-serve"
+MCP_BINARY_NAME="uteke-mcp"
 INSTALL_DIR="${UTEKE_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Colors
@@ -140,10 +141,16 @@ install() {
     if [ -f "${TEMP_DIR}/${SERVER_BINARY_NAME}" ]; then
         mv "${TEMP_DIR}/${SERVER_BINARY_NAME}" "${INSTALL_DIR}/"
     fi
+    if [ -f "${TEMP_DIR}/${MCP_BINARY_NAME}" ]; then
+        mv "${TEMP_DIR}/${MCP_BINARY_NAME}" "${INSTALL_DIR}/"
+    fi
 
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     if [ -f "${INSTALL_DIR}/${SERVER_BINARY_NAME}" ]; then
         chmod +x "${INSTALL_DIR}/${SERVER_BINARY_NAME}"
+    fi
+    if [ -f "${INSTALL_DIR}/${MCP_BINARY_NAME}" ]; then
+        chmod +x "${INSTALL_DIR}/${MCP_BINARY_NAME}"
     fi
 
     # Cleanup
@@ -152,6 +159,9 @@ install() {
     info "Successfully installed ${BINARY_NAME} to ${INSTALL_DIR}/${BINARY_NAME}"
     if [ -f "${INSTALL_DIR}/${SERVER_BINARY_NAME}" ]; then
         info "Successfully installed ${SERVER_BINARY_NAME} to ${INSTALL_DIR}/${SERVER_BINARY_NAME}"
+    fi
+    if [ -f "${INSTALL_DIR}/${MCP_BINARY_NAME}" ]; then
+        info "Successfully installed ${MCP_BINARY_NAME} to ${INSTALL_DIR}/${MCP_BINARY_NAME}"
     fi
 }
 
