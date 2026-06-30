@@ -103,8 +103,11 @@ impl crate::Uteke {
         })
     }
 
-    /// Repair: rebuild usearch index from SQLite.
+    /// Repair: rebuild usearch index from SQLite + fix schema inconsistencies.
     pub fn repair(&self) -> Result<RepairReport, Error> {
+        // Fix partially-migrated schema (e.g. missing has_children column, #500).
+        self.store.ensure_schema_consistency()?;
+
         let before_db = self.store.count(None)?;
         let before_index = {
             let index = self

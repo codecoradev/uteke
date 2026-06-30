@@ -6,8 +6,8 @@
 
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
-- **Repo:** `codecoradev/uteke` (remote GitHub), local at `/Users/mis-puragroup/development/riset-ai/uteke`
-- **Version:** 0.3.2
+- **Repo:** `codecoradev/uteke` (remote GitHub), local clone
+- **Version:** 0.6.1
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -89,7 +89,7 @@ crates/uteke-server/src/
 ### Schema Versioning
 
 - `schema_version` table with integer counter
-- Current: **v11** (document engine + knowledge graph + timeline + citations)
+- Current: **v12** (document engine + knowledge graph + timeline + citations + hierarchy)
 - Auto-migration on upgrade, zero data loss
 
 ---
@@ -157,19 +157,29 @@ feature branch → PR → develop (default branch)
 
 ### 5. Release Process
 
-**Prerequisite:** All v0.X.0 milestone issues closed, docs updated.
+**Prerequisite:** All milestone issues closed, docs updated.
+
+#### Release Branch Checklist
+
+When creating a release branch (`release/vX.Y.Z`), these changes MUST be in the branch:
+
+1. **Version bump** — `Cargo.toml` `[workspace.package].version` → new version
+2. **CHANGELOG.md** — move entries from `[Unreleased]` to `[X.Y.Z] — YYYY-MM-DD`, add empty `[Unreleased]`
+3. **AGENT.md** — update version string + any stale references (schema version, etc.)
+4. **README.md / README.id.md** — version badge if applicable
+
+#### Release Flow
 
 ```bash
-# 1. Update docs (CHANGELOG, README, cli-reference, roadmap, etc.)
-# 2. Bump version in Cargo.toml + inter-crate deps
-# 3. PR to develop, merge
-# 4. PR develop → main, merge
-# 5. Tag from main commit:
+# 1. Create release branch from develop with version bump + CHANGELOG + AGENT.md
+# 2. PR release/vX.Y.Z → develop, merge
+# 3. PR develop → main, merge
+# 4. Tag from main commit:
 git checkout main
 git pull origin main
 git tag vX.Y.Z -m "vX.Y.Z — Description"
 git push origin vX.Y.Z
-# 6. Release workflow auto-builds: binaries, crates.io, Docker, GitHub Release
+# 5. Release workflow auto-builds: binaries, crates.io, Docker, GitHub Release
 ```
 
 **Never tag without merging develop → main first.**
