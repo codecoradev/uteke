@@ -107,10 +107,23 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 📎 **Citations** — Source attribution on every memory (URL, file, user, import)
 - 🔌 **MCP Server** — JSON-RPC over stdio + Streamable HTTP transport
 - 📝 **Document Engine** — Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking
+
 - 🤖 **Cosine Auto-Linking** — Automatically creates `similar_to` edges between related memories
 - 🌐 **Graph API** — `GET /graph` endpoint returns nodes + edges JSON for visualization
 - 🔑 **View-Only API Keys** — Read-only tokens for safe GET-only access to the server
 - 📄 **Markdown Chunker** — Splits documents by headings, respects code blocks and token limits
+
+<details>
+<summary>🔌 MCP Server — configure with Claude Code, Cursor, Hermes</summary>
+
+```jsonc
+// .mcp.json (Claude Code, Cursor)
+{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
+```
+
+See [MCP docs](/mcp) for Claude Desktop, Hermes, and HTTP transport.
+</details>
+
 
 📖 [Full documentation](docs/getting-started.md) · [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md)
 
