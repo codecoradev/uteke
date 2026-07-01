@@ -11,11 +11,17 @@ Uteke ships as a multi-arch Docker image with the embedding model pre-baked. No 
 > ⚠️ **Security**: The default config listens on `127.0.0.1` (localhost only). For network access, set `UTEKE_AUTH_TOKEN` (see [Authentication](#with-authentication)).
 
 ```bash
-# Pull and run
+# Pull and run (GHCR)
 docker run -d --name uteke \
   -p 127.0.0.1:8767:8767 \
   -v uteke-data:/data \
   ghcr.io/codecoradev/uteke:latest
+
+# Or pull from Docker Hub
+docker run -d --name uteke \
+  -p 127.0.0.1:8767:8767 \
+  -v uteke-data:/data \
+  codecoradev/uteke:latest
 
 # Verify it's running
 curl http://localhost:8767/health
@@ -107,13 +113,20 @@ Images are built for:
 
 Docker automatically pulls the correct architecture.
 
+## Image Registries
+
+| Registry | Image |
+|----------|-------|
+| **GitHub Container Registry** | `ghcr.io/codecoradev/uteke:latest` |
+| **Docker Hub** | `codecoradev/uteke:latest` |
+
 ## Image Tags
 
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `v0.2.0` | Specific version |
-| `0.2` | Minor version (latest patch) |
+| `v0.6.2` | Specific version |
+| `0.6` | Minor version (latest patch) |
 
 ## CLI in Docker
 

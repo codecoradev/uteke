@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.6.2] — 2026-07-01
+
 ### Fixed
 - **Docker image missing libgomp1** — `uteke-serve` failed with `libmvec.so.1` on Debian runtime. Added `libgomp1` to Dockerfile runtime dependencies.
 

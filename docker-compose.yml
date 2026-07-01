@@ -1,4 +1,5 @@
 # Uteke Docker Compose — default: localhost only, no auth
+# Images available: ghcr.io/codecoradev/uteke:latest (GHCR) or codecoradev/uteke:latest (Docker Hub)
 # For network access, uncomment UTEKE_AUTH_TOKEN below.
 services:
   uteke:
