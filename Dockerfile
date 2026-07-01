@@ -1,8 +1,8 @@
 # ── Stage 1: Builder ────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS builder
+FROM debian:trixie-slim AS builder
 
 ARG TARGETARCH
-ARG VERSION=v0.6.0
+ARG VERSION=v0.6.3
 
 LABEL version=${VERSION}
 LABEL org.opencontainers.image.version=${VERSION}
@@ -25,10 +25,10 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     chmod +x uteke uteke-serve uteke-mcp
 
 # ── Stage 2: Runtime ────────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 libgomp1 curl && \
+    ca-certificates libssl3t64 libstdc++6 curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
