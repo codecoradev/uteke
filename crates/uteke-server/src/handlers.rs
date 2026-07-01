@@ -487,7 +487,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     ctx.error_response_for(req, 500, "Internal server error")
                 }
             }
-        },
+        }
 
         // ── Graph Visualization (#408) ───────────────────────────────────
         (Method::Get, p) if p == "/graph" || p.starts_with("/graph?") => {
