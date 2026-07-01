@@ -2,7 +2,7 @@
 FROM debian:trixie-slim AS builder
 
 ARG TARGETARCH
-ARG VERSION=v0.6.0
+ARG VERSION=v0.6.3
 
 LABEL version=${VERSION}
 LABEL org.opencontainers.image.version=${VERSION}
