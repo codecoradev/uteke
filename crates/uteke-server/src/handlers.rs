@@ -44,9 +44,27 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         AuthResult::Disabled
     };
 
-    // Enforce read-only restriction (#409): ReadOnly tokens can only use GET.
+    // Enforce read-only restriction (#409, #524):
+    // ReadOnly tokens can use GET endpoints + read-only POST endpoints.
+    // Write operations (POST /remember, POST /forget, etc.) are blocked.
     if let AuthResult::Authenticated(ApiRole::ReadOnly) = auth_role {
-        if method != Method::Get {
+        // POST endpoints that are reads (semantic search, list, stats).
+        // Exact match to avoid prefix-based bypass (e.g. /recallfoo).
+        let read_only_post_paths = [
+            "/list",
+            "/recall",
+            "/search",
+            "/stats",
+            "/room/recall",
+            "/room/summary",
+            "/room/document",
+            "/room/stats",
+            "/doc/get",
+            "/doc/list",
+            "/doc/search",
+        ];
+        let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
+        if !is_read {
             return ctx.error_response_for(
                 req,
                 403,
