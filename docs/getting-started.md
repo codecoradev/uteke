@@ -200,6 +200,25 @@ uteke import memories.jsonl
 uteke import notes.txt --extract
 ```
 
+## MCP Integration
+
+Add uteke as an MCP server to your AI coding agent in seconds:
+
+**Claude Code** — add to `.mcp.json`:
+
+```json
+{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
+```
+
+**With HTTP** (requires `uteke-serve`):
+
+```json
+{ "mcpServers": { "uteke": { "url": "http://127.0.0.1:8767/mcp" } } }
+```
+
+See [MCP Server](/mcp) for all supported clients and tools.
+
+
 > 💡 **Hermes users?** Three integration modes available:
 > - **Mode C (shell hook):** Lightest — automatic recall via `pre_llm_call` hook, no plugin/daemon needed. See [Hermes integration](integrations/hermes.md).
 > - **Mode B (memory-provider):** Full auto — `uteke init --agent hermes --memory-provider`. Automatic recall + LLM fact extraction.

@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [0.6.2] — 2026-07-01
+
+### Fixed
+- **Docker image missing libgomp1** — `uteke-serve` failed with `libmvec.so.1` on Debian runtime. Added `libgomp1` to Dockerfile runtime dependencies.
+
+### Changed
+- **Docker Hub multi-push** — Release workflow now publishes to Docker Hub (`codecoradev/uteke`) in addition to GHCR, conditional on `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` org secrets. Falls back to GHCR-only when secrets are absent.
+
 ## [0.6.1] — 2026-06-30
 
 ### Fixed

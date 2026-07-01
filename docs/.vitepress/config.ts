@@ -42,6 +42,7 @@ export default defineConfig({
           { text: 'Smart Decay', link: '/getting-started#memory-importance-pinning' },
           { text: 'Relationship Graph', link: '/getting-started#relationship-graph' },
           { text: 'Benchmarks', link: '/getting-started#benchmarking' },
+          { text: 'MCP Server', link: '/mcp' },
         ],
       },
       {

@@ -334,117 +334,20 @@ impl Uteke {
     /// The ONNX embedding model is loaded lazily on first use, so commands
     /// that don't need embedding (list, get, stats, tags, etc.) start instantly.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        Self::open_with_backend(path, "onnx")
-    }
-
-    /// Open with a custom embedder (for testing).
-    pub fn open_with_embedder(
-        path: impl AsRef<Path>,
-        embedder: impl Embedder + 'static,
-    ) -> Result<Self, Error> {
-        let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(
-            store,
-            Some(Box::new(embedder)),
-            "custom".to_string(),
-            TierConfig::default(),
-            RecallConfig::default(),
-            EmbeddingSettings::default(),
-        )
-    }
-
-    /// Open with custom tier configuration.
-    ///
-    /// Allows overriding hot_days, warm_days, and hot_boost from the
-    /// default 7/30/0.1 values. See [`TierConfig`].
-    pub fn open_with_tier(path: impl AsRef<Path>, tier_config: TierConfig) -> Result<Self, Error> {
-        let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(
-            store,
-            None,
-            "onnx".to_string(),
-            tier_config,
-            RecallConfig::default(),
-            EmbeddingSettings::default(),
-        )
-    }
-
-    /// Open with custom tier configuration and embedding backend.
-    pub fn open_with_tier_and_backend(
-        path: impl AsRef<Path>,
-        tier_config: TierConfig,
-        backend: &str,
-    ) -> Result<Self, Error> {
-        let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(
-            store,
-            None,
-            backend.to_string(),
-            tier_config,
-            RecallConfig::default(),
-            EmbeddingSettings::default(),
-        )
-    }
-
-    /// Open with custom recall configuration.
-    pub fn open_with_recall(
-        path: impl AsRef<Path>,
-        recall_config: RecallConfig,
-    ) -> Result<Self, Error> {
         let (_db_str, store) = Self::open_store(path)?;
         Self::finish_open(
             store,
             None,
             "onnx".to_string(),
             TierConfig::default(),
-            recall_config,
-            EmbeddingSettings::default(),
-        )
-    }
-
-    /// Open with a specific embedding backend (e.g., "onnx").
-    ///
-    /// Future backends ("openai", "ollama") will be selectable here once implemented.
-    pub fn open_with_backend(path: impl AsRef<Path>, backend: &str) -> Result<Self, Error> {
-        let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open(
-            store,
-            None,
-            backend.to_string(),
-            TierConfig::default(),
             RecallConfig::default(),
             EmbeddingSettings::default(),
-        )
-    }
-
-    /// Open with caller-supplied embedding settings (CLI passes merged config).
-    ///
-    /// `backend` selects onnx/openai/ollama/custom. `settings` carries the
-    /// api_key/base_url/model/dims resolved from uteke.toml; env vars still
-    /// take precedence at first-embed resolve time.
-    pub fn open_with_embedding(
-        path: impl AsRef<Path>,
-        backend: &str,
-        settings: EmbeddingSettings,
-        tier_config: TierConfig,
-        recall_config: RecallConfig,
-    ) -> Result<Self, Error> {
-        let (_db_str, store) = Self::open_store(path)?;
-        Self::finish_open_full(
-            store,
-            None,
-            backend.to_string(),
-            tier_config,
-            recall_config,
-            settings,
-            graph_rerank::GraphRerankConfig::default(),
         )
     }
 
     /// Open with caller-supplied embedding settings **and** graph-reranking
     /// config. Used by the CLI to pass the merged `[recall]` graph weights
-    /// (#378). Equivalent to [`Self::open_with_embedding`] with default graph
-    /// reranking when graph reranking is not needed.
+    /// (#378).
     pub fn open_with_embedding_and_graph(
         path: impl AsRef<Path>,
         backend: &str,
@@ -752,11 +655,6 @@ impl Uteke {
     /// Get a reference to the raw connection for graph operations.
     pub fn graph_store(&self) -> &rusqlite::Connection {
         &self.store.conn
-    }
-
-    /// Borrow the underlying store for room/tag/document operations.
-    pub fn store(&self) -> &crate::memory::store::Store {
-        &self.store
     }
 
     /// Get graph nodes + edges for visualization (#408).
@@ -1681,9 +1579,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_recall_config_stored_but_override_per_call() {
-        // Open with recall config min_score=0.5
-        let config = RecallConfig { min_score: 0.5 };
-        let uteke = Uteke::open_with_recall(":memory:", config).unwrap();
+        // Open with default config; per-call min_score controls recall threshold
+        let uteke = Uteke::open(":memory:").unwrap();
 
         let _id = uteke
             .remember("test content about rust programming", &[], None, None)
