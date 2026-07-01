@@ -28,7 +28,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 libstdc++6 curl && \
+    ca-certificates libssl3t64 libstdc++6 curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
