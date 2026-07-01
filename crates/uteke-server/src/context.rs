@@ -246,7 +246,11 @@ impl ReqCtx {
     }
 
     /// Build an OK response with CORS headers specific to a request.
-    pub fn ok_response_for<T: serde::Serialize>(&self, req: &Request, body: &T) -> Response<Cursor<Vec<u8>>> {
+    pub fn ok_response_for<T: serde::Serialize>(
+        &self,
+        req: &Request,
+        body: &T,
+    ) -> Response<Cursor<Vec<u8>>> {
         let data = serde_json::to_string(body)
             .unwrap_or_else(|e| serde_json::json!({"error": e.to_string()}).to_string());
         let mut headers = self.cors_headers_for(req);

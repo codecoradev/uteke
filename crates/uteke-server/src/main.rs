@@ -3,9 +3,9 @@
 //! Keeps the embedding model loaded in RAM for <50ms recall.
 //! Usage: `uteke-serve [--port 8767] [--host 127.0.0.1] [--auth-token <TOKEN>]`
 
-mod types;
 mod context;
 mod handlers;
+mod types;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -348,7 +348,8 @@ fn main() {
                         Err(e) => {
                             warn!("Auto-dream failed: {e}");
                         }
-                    }, Err(_) => {
+                    },
+                    Err(_) => {
                         tracing::debug!("Auto-dream: lock busy, skipping cycle");
                     }
                 }

@@ -1,6 +1,6 @@
 //! Request/response structs, helpers, and constants for the uteke server.
 
-use std::io::{Cursor, Read as IoRead};
+use std::io::Read as IoRead;
 
 use serde::{Deserialize, Serialize};
 use tiny_http::Header;
