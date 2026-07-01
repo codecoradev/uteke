@@ -1,9 +1,14 @@
 ## [Unreleased]
 
+## [0.6.3] — 2026-07-01
+
+### Fixed
+- **Docker ARM64 libmvec.so.1 missing** — ARM64 binaries built on `ubuntu-24.04-arm` (glibc 2.39) require `libmvec.so.1` (ARM SVE math library), which doesn't exist in Debian Bookworm (glibc 2.36). Upgraded Dockerfile base image to `debian:trixie-slim` (glibc 2.41) and added `libstdc++6` runtime dependency. Also removes incorrect `libgomp1` from v0.6.2.
+
 ## [0.6.2] — 2026-07-01
 
 ### Fixed
-- **Docker image missing libgomp1** — `uteke-serve` failed with `libmvec.so.1` on Debian runtime. Added `libgomp1` to Dockerfile runtime dependencies.
+- **Docker image missing libgomp1** — `uteke-serve` failed with `libmvec.so.1` on Debian runtime. Added `libgomp1` to Dockerfile runtime dependencies. (Incorrect fix — see v0.6.3)
 
 ### Changed
 - **Docker Hub multi-push** — Release workflow now publishes to Docker Hub (`codecoradev/uteke`) in addition to GHCR, conditional on `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` org secrets. Falls back to GHCR-only when secrets are absent.
