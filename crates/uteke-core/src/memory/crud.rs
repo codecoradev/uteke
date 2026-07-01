@@ -207,6 +207,9 @@ impl super::Store {
     }
 
     /// List memories with optional tag filter, namespace filter, and pagination.
+    ///
+    /// When `namespace` is `None`, returns memories from ALL namespaces (#526).
+    /// When `tag` is provided, filters by tag across the specified (or all) namespaces.
     pub fn list(
         &self,
         tag: Option<&str>,
@@ -214,39 +217,55 @@ impl super::Store {
         limit: usize,
         offset: usize,
     ) -> Result<Vec<Memory>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
-        let sql = match tag {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-        };
-
         let mut memories = Vec::new();
-        match tag {
-            Some(t) => {
-                let mut stmt = self
-                    .conn
-                    .prepare(sql)
-                    .map_err(|e| Error::db("database operation", e))?;
+
+        match (namespace, tag) {
+            // Both namespace and tag specified
+            (Some(ns), Some(t)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 AND EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
+                ).map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, t, limit as i64, offset as i64], row_to_memory)
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::db("database operation", e))?;
-                    memories.push(m);
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
                 }
             }
-            None => {
-                let mut stmt = self
-                    .conn
-                    .prepare(sql)
-                    .map_err(|e| Error::db("database operation", e))?;
+            // Namespace specified, no tag
+            (Some(ns), None) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                ).map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, limit as i64, offset as i64], row_to_memory)
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::db("database operation", e))?;
-                    memories.push(m);
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
+                }
+            }
+            // Tag specified, no namespace (cross-namespace tag search)
+            (None, Some(t)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE EXISTS (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?1) ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                ).map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![t, limit as i64, offset as i64], row_to_memory)
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
+                }
+            }
+            // No namespace, no tag — all memories across all namespaces (#526)
+            (None, None) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
+                ).map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![limit as i64, offset as i64], row_to_memory)
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
                 }
             }
         }
@@ -401,47 +420,27 @@ impl super::Store {
         offset: usize,
         point_in_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<Memory>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let pit = point_in_time.to_rfc3339();
 
-        let sql = match tag {
-            Some(_) => {
-                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                 m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, \
-                 m.memory_type, m.importance, m.pinned \
-                 FROM memories m \
-                 INNER JOIN memory_tags mt ON mt.memory_id = m.id \
-                 WHERE m.namespace = ?1 \
-                   AND m.created_at <= ?2 \
-                   AND (m.valid_from IS NULL OR m.valid_from <= ?2) \
-                   AND (m.valid_until IS NULL OR m.valid_until > ?2) \
-                   AND m.deprecated = 0 \
-                   AND mt.tag = ?3 \
-                 ORDER BY m.created_at DESC LIMIT ?4 OFFSET ?5"
-            }
-            None => {
-                "SELECT id, content, embedding, tags, metadata, \
-                 created_at, updated_at, namespace, access_count, \
-                 last_accessed, deprecated, valid_from, valid_until, \
-                 memory_type, importance, pinned \
-                 FROM memories \
-                 WHERE namespace = ?1 \
-                   AND created_at <= ?2 \
-                   AND (valid_from IS NULL OR valid_from <= ?2) \
-                   AND (valid_until IS NULL OR valid_until > ?2) \
-                   AND deprecated = 0 \
-                 ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
-            }
-        };
-
         let mut memories = Vec::new();
-        match tag {
-            Some(t) => {
-                let mut stmt = self
-                    .conn
-                    .prepare(sql)
-                    .map_err(|e| Error::db("database operation", e))?;
+        match (namespace, tag) {
+            // Both namespace and tag specified
+            (Some(ns), Some(t)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
+                     m.created_at, m.updated_at, m.namespace, m.access_count, \
+                     m.last_accessed, m.deprecated, m.valid_from, m.valid_until, \
+                     m.memory_type, m.importance, m.pinned, m.content_type, m.slug \
+                     FROM memories m \
+                     INNER JOIN memory_tags mt ON mt.memory_id = m.id \
+                     WHERE m.namespace = ?1 \
+                       AND m.created_at <= ?2 \
+                       AND (m.valid_from IS NULL OR m.valid_from <= ?2) \
+                       AND (m.valid_until IS NULL OR m.valid_until > ?2) \
+                       AND m.deprecated = 0 \
+                       AND mt.tag = ?3 \
+                     ORDER BY m.created_at DESC LIMIT ?4 OFFSET ?5"
+                ).map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(
                         params![ns, pit, t, limit as i64, offset as i64],
@@ -449,21 +448,73 @@ impl super::Store {
                     )
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::db("database operation", e))?;
-                    memories.push(m);
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
                 }
             }
-            None => {
-                let mut stmt = self
-                    .conn
-                    .prepare(sql)
-                    .map_err(|e| Error::db("database operation", e))?;
+            // Namespace specified, no tag
+            (Some(ns), None) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, content, embedding, tags, metadata, \
+                     created_at, updated_at, namespace, access_count, \
+                     last_accessed, deprecated, valid_from, valid_until, \
+                     memory_type, importance, pinned, content_type, slug \
+                     FROM memories \
+                     WHERE namespace = ?1 \
+                       AND created_at <= ?2 \
+                       AND (valid_from IS NULL OR valid_from <= ?2) \
+                       AND (valid_until IS NULL OR valid_until > ?2) \
+                       AND deprecated = 0 \
+                     ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
+                ).map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, pit, limit as i64, offset as i64], row_to_memory)
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
-                    let m = row.map_err(|e| Error::db("database operation", e))?;
-                    memories.push(m);
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
+                }
+            }
+            // Tag specified, no namespace (cross-namespace tag search)
+            (None, Some(t)) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
+                     m.created_at, m.updated_at, m.namespace, m.access_count, \
+                     m.last_accessed, m.deprecated, m.valid_from, m.valid_until, \
+                     m.memory_type, m.importance, m.pinned, m.content_type, m.slug \
+                     FROM memories m \
+                     INNER JOIN memory_tags mt ON mt.memory_id = m.id \
+                     WHERE m.created_at <= ?1 \
+                       AND (m.valid_from IS NULL OR m.valid_from <= ?1) \
+                       AND (m.valid_until IS NULL OR m.valid_until > ?1) \
+                       AND m.deprecated = 0 \
+                       AND mt.tag = ?2 \
+                     ORDER BY m.created_at DESC LIMIT ?3 OFFSET ?4"
+                ).map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![pit, t, limit as i64, offset as i64], row_to_memory)
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
+                }
+            }
+            // No namespace, no tag — all namespaces at point in time (#526)
+            (None, None) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT id, content, embedding, tags, metadata, \
+                     created_at, updated_at, namespace, access_count, \
+                     last_accessed, deprecated, valid_from, valid_until, \
+                     memory_type, importance, pinned, content_type, slug \
+                     FROM memories \
+                     WHERE created_at <= ?1 \
+                       AND (valid_from IS NULL OR valid_from <= ?1) \
+                       AND (valid_until IS NULL OR valid_until > ?1) \
+                       AND deprecated = 0 \
+                     ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                ).map_err(|e| Error::db("database operation", e))?;
+                let rows = stmt
+                    .query_map(params![pit, limit as i64, offset as i64], row_to_memory)
+                    .map_err(|e| Error::db("database operation", e))?;
+                for row in rows {
+                    memories.push(row.map_err(|e| Error::db("database operation", e))?);
                 }
             }
         }
