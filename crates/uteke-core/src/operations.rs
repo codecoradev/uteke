@@ -927,6 +927,13 @@ impl crate::Uteke {
         self.store.list_namespaces()
     }
 
+    /// List all namespaces with memory counts (#527).
+    ///
+    /// Returns `[(namespace, count)]` — e.g. `[("default", 432), ("cto", 28)]`.
+    pub fn list_namespaces_with_counts(&self) -> Result<Vec<(String, usize)>, Error> {
+        self.store.list_namespaces_with_counts()
+    }
+
     /// List all tags with their usage counts.
     pub fn tags_with_counts(&self, namespace: Option<&str>) -> Result<Vec<TagInfo>, Error> {
         self.store.tags_with_counts(namespace)

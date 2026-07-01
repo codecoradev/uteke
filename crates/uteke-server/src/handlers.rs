@@ -438,11 +438,54 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── Namespaces ──────────────────────────────────────────────────
-        (Method::Get, "/namespaces") => match uteke.list_namespaces() {
-            Ok(namespaces) => ctx.ok_response_for(req, &namespaces),
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
+        (Method::Get, p) if p == "/namespaces" || p.starts_with("/namespaces?") => {
+            let with_counts = path.contains("with_counts=true");
+            if with_counts {
+                match uteke.list_namespaces_with_counts() {
+                    Ok(counts) => {
+                        #[derive(serde::Serialize)]
+                        struct NamespaceCount {
+                            name: String,
+                            count: usize,
+                        }
+                        let result: Vec<NamespaceCount> = counts
+                            .into_iter()
+                            .map(|(name, count)| NamespaceCount { name, count })
+                            .collect();
+                        ctx.ok_response_for(req, &result)
+                    }
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            } else {
+                match uteke.list_namespaces() {
+                    Ok(namespaces) => ctx.ok_response_for(req, &namespaces),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+        }
+
+        // ── Recent (#528) ──────────────────────────────────────────────
+        (Method::Get, p) if p == "/recent" || p.starts_with("/recent?") => {
+            let ns = parse_query_namespace(&path);
+            let query = path.split('?').nth(1).unwrap_or("");
+            let limit = parse_query_param(query, "limit")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(20);
+            let offset = parse_query_param(query, "offset")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(0);
+            match uteke.list(None, limit, offset, ns) {
+                Ok(memories) => ctx.ok_response_for(req, &memories),
+                Err(e) => {
+                    error!("Internal error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
             }
         },
 
