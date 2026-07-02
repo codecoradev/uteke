@@ -480,7 +480,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let offset = parse_query_param(query, "offset")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(0);
-            match uteke.list(None, limit, offset, ns) {
+            match uteke.list(None, limit, offset, ns.as_deref()) {
                 Ok(memories) => ctx.ok_response_for(req, &memories),
                 Err(e) => {
                     error!("Internal error: {e}");
