@@ -24,6 +24,7 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 thiserror = "2"
 dirs = "6"
 tracing = "0.1"
+fs2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 # ONNX-only dependencies (gated behind `onnx` feature)
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = true }

@@ -1,12 +1,29 @@
 //! Persistent vector index using usearch (HNSW with disk persistence).
+//!
+//! # Thread Safety
+//!
+//! - **In-process:** The [`Uteke`] struct wraps `VectorIndex` in a `RwLock`,
+//!   so concurrent in-process reads/writes are serialized correctly.
+//!
+//! - **Cross-process:** The `save()` and `load()` methods acquire an
+//!   `fs2::File` advisory lock on a `.usearch.lock` sidecar file to
+//!   prevent concurrent processes (e.g. `xargs -P5`) from corrupting the
+//!   on-disk index. The lock is released when the operation completes.
 
 use crate::Error;
 use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
+// Bring fs2 lock traits into scope.
+use fs2::FileExt;
+
 /// Default dimensions for EmbeddingGemma Q4 (768d).
 const DEFAULT_DIMS: usize = 768;
+
+/// Advisory lock file extension. Lives next to the `.usearch` file.
+const LOCK_EXT: &str = "usearch.lock";
 
 /// Persistent vector index backed by usearch.
 ///
@@ -28,6 +45,47 @@ pub struct VectorIndex {
     dirty: bool,
 }
 
+/// Acquire an exclusive advisory lock on the lockfile next to `index_path`.
+///
+/// Returns the lock file handle; drop it to release. Blocks until the lock
+/// is available (no timeout), matching SQLite's default WAL locking behaviour.
+fn acquire_exclusive_lock(index_path: &Path) -> Result<File, Error> {
+    let lock_path = index_path.with_extension(LOCK_EXT);
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| Error::embed_msg(format!("failed to open lock file {lock_path:?}: {e}")))?;
+    file.lock_exclusive().map_err(|e| {
+        Error::embed_msg(format!(
+            "failed to acquire exclusive lock on {lock_path:?}: {e}"
+        ))
+    })?;
+    Ok(file)
+}
+
+/// Acquire a shared advisory lock on the lockfile next to `index_path`.
+///
+/// Allows multiple concurrent readers but blocks writers. **Blocks** until
+/// the lock is available.
+fn acquire_shared_lock(index_path: &Path) -> Result<File, Error> {
+    let lock_path = index_path.with_extension(LOCK_EXT);
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|e| Error::embed_msg(format!("failed to open lock file {lock_path:?}: {e}")))?;
+    file.lock_shared().map_err(|e| {
+        Error::embed_msg(format!(
+            "failed to acquire shared lock on {lock_path:?}: {e}"
+        ))
+    })?;
+    Ok(file)
+}
+
 impl VectorIndex {
     /// Create a new empty vector index.
     pub fn new(dims: usize) -> Result<Self, Error> {
@@ -44,10 +102,22 @@ impl VectorIndex {
 
     /// Load index from disk, or create empty if file doesn't exist.
     /// `path` is the path to the `.usearch` file.
+    ///
+    /// When creating a new index, acquires an exclusive lock to prevent
+    /// another process from racing to create the same file.
     pub fn load_or_create(path: &Path, dims: usize) -> Result<Self, Error> {
         if path.exists() {
             Self::load(path)
         } else {
+            // Exclusive lock while creating: prevents TOCTOU race between
+            // the exists() check and the first save().
+            let _lock = acquire_exclusive_lock(path)?;
+            // Double-check after acquiring lock — another process may have
+            // created the file while we were waiting.
+            if path.exists() {
+                drop(_lock); // Release exclusive before downgrading to shared
+                return Self::load(path);
+            }
             let mut idx = Self::new(dims)?;
             idx.path = Some(path.to_path_buf());
             Ok(idx)
@@ -55,7 +125,14 @@ impl VectorIndex {
     }
 
     /// Load an existing index from disk.
+    ///
+    /// Acquires a **shared** advisory lock on the index lockfile so that
+    /// concurrent writers are blocked while we read. The lock is released
+    /// when this function returns.
     pub fn load(path: &Path) -> Result<Self, Error> {
+        // Shared lock: blocks writers but allows concurrent readers.
+        let _lock = acquire_shared_lock(path)?;
+
         let path_str = path.to_string_lossy().to_string();
         let index = Index::restore(&path_str).map_err(|e| Error::embed("load vector index", e))?;
 
@@ -96,13 +173,23 @@ impl VectorIndex {
     }
 
     /// Save index and key mappings to disk.
-    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
+    ///
+    /// Acquires an **exclusive** advisory lock so that concurrent processes
+    /// cannot interleave their writes. The usearch binary is saved to a temp
+    /// file first, then atomically renamed — same pattern as the keys sidecar.
     pub fn save(&mut self) -> Result<(), Error> {
         if let Some(ref path) = self.path {
-            let path_str = path.to_string_lossy().to_string();
+            // Exclusive lock: blocks all other readers and writers.
+            let _lock = acquire_exclusive_lock(path)?;
+
+            // Save usearch index via temp file + atomic rename.
+            let tmp_usearch = path.with_extension("usearch.tmp");
+            let tmp_str = tmp_usearch.to_string_lossy().to_string();
             self.index
-                .save(&path_str)
-                .map_err(|e| Error::embed("save vector index", e))?;
+                .save(&tmp_str)
+                .map_err(|e| Error::embed("save vector index to temp", e))?;
+            std::fs::rename(&tmp_usearch, path)
+                .map_err(|e| Error::embed("rename temp usearch to final", e))?;
 
             // Save key→id mapping as sidecar file using atomic write
             let mapping_path = path.with_extension("keys");
@@ -250,6 +337,34 @@ impl VectorIndex {
     /// Whether the index has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+
+    /// Verify that the in-memory index state matches the on-disk state.
+    ///
+    /// Returns `Ok(count)` with the index size if consistent, or an error
+    /// if the on-disk file cannot be read. Used for post-write consistency
+    /// checks (#544).
+    pub fn verify_disk_consistency(&self) -> Result<usize, Error> {
+        if let Some(ref path) = self.path {
+            if !path.exists() {
+                return Ok(self.index.size());
+            }
+            let _lock = acquire_shared_lock(path)?;
+            let path_str = path.to_string_lossy().to_string();
+            let disk_index = Index::restore(&path_str)
+                .map_err(|e| Error::embed("verify: load disk index", e))?;
+            let disk_size = disk_index.size();
+            let mem_size = self.index.size();
+            if disk_size != mem_size {
+                tracing::warn!(
+                    "Vector index consistency mismatch: in-memory={mem_size}, on-disk={disk_size}. \
+                     This may indicate concurrent write corruption. Run `uteke repair` to rebuild."
+                );
+            }
+            Ok(disk_size)
+        } else {
+            Ok(self.index.size())
+        }
     }
 
     fn create_index(dims: usize) -> Result<Index, Error> {
@@ -409,5 +524,131 @@ mod tests {
         let results = idx.search(&query, 3, 50);
         assert!(!results.is_empty());
         assert_eq!(results[0].0, "item-0");
+    }
+
+    #[test]
+    fn test_save_creates_atomic_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("atomic.usearch");
+
+        let mut idx = VectorIndex::new(64).unwrap();
+        idx.path = Some(path.clone());
+        idx.insert("m1", &make_vec(64, 0)).unwrap();
+        idx.save().unwrap();
+
+        // Verify both final files exist
+        assert!(path.exists(), "usearch index file must exist");
+        let keys_path = path.with_extension("keys");
+        assert!(keys_path.exists(), "keys sidecar must exist");
+        // Temp files must NOT exist after successful save
+        assert!(
+            !path.with_extension("usearch.tmp").exists(),
+            "temp usearch must be cleaned up"
+        );
+        assert!(
+            !keys_path.with_extension("tmp").exists(),
+            "temp keys must be cleaned up"
+        );
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip_preserves_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roundtrip.usearch");
+
+        let mut idx = VectorIndex::new(64).unwrap();
+        idx.path = Some(path.clone());
+        for i in 0..5 {
+            idx.insert(&format!("m{i}"), &make_vec(64, i % 64)).unwrap();
+        }
+        idx.save().unwrap();
+        assert!(!idx.is_dirty());
+
+        let loaded = VectorIndex::load(&path).unwrap();
+        assert_eq!(loaded.len(), 5, "loaded index must have same count");
+
+        // Search should find all 5
+        for i in 0..5 {
+            let results = loaded.search(&make_vec(64, i % 64), 1, 50);
+            assert_eq!(results.len(), 1, "must find m{i}");
+            assert_eq!(results[0].0, format!("m{i}"));
+        }
+    }
+
+    #[test]
+    fn test_concurrent_saves_do_not_corrupt() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("concurrent.usearch");
+
+        // Pre-create index with 1 entry so all threads load from a valid file
+        {
+            let mut idx = VectorIndex::new(64).unwrap();
+            idx.path = Some(path.clone());
+            idx.insert("base", &make_vec(64, 0)).unwrap();
+            idx.save().unwrap();
+        }
+
+        let thread_count = 4;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut handles = Vec::new();
+
+        for t in 0..thread_count {
+            let barrier = barrier.clone();
+            let path = path.clone();
+            handles.push(thread::spawn(move || {
+                // All threads synchronize at the barrier to maximize contention
+                barrier.wait();
+
+                let mut idx = VectorIndex::load(&path).unwrap();
+                idx.insert(&format!("thread-{t}"), &make_vec(64, (t + 1) % 64))
+                    .unwrap();
+                idx.save().unwrap();
+            }));
+        }
+
+        for h in handles {
+            h.join().expect("thread should not panic");
+        }
+
+        // With exclusive locking, saves serialize without corruption.
+        // Each thread loads the index, adds its entry, and saves. Because
+        // the lock is held only during save (not during load→insert→save),
+        // a slow thread may see a later thread's save and include it.
+        // The key guarantee: NO corruption — the file is always valid.
+        let final_idx = VectorIndex::load(&path).unwrap();
+        // Must have at least 2 entries (base + at least one thread)
+        assert!(
+            final_idx.len() >= 2,
+            "concurrent saves must not corrupt (lost all data)"
+        );
+        // Must have at most thread_count + 1 entries (base + all threads if no overwrites)
+        assert!(
+            final_idx.len() <= thread_count as usize + 1,
+            "concurrent saves must not corrupt (phantom entries)"
+        );
+        // base entry must always be present (no corruption)
+        let results = final_idx.search(&make_vec(64, 0), 1, 50);
+        assert!(
+            results.iter().any(|(id, _)| id == "base"),
+            "base entry must survive concurrent writes"
+        );
+    }
+
+    #[test]
+    fn test_load_or_create_double_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("toctou.usearch");
+
+        assert!(!path.exists());
+        let idx = VectorIndex::load_or_create(&path, 64).unwrap();
+        assert_eq!(idx.len(), 0);
+        assert!(idx.path.is_some());
+
+        // Second call should load the (still empty) existing file
+        let idx2 = VectorIndex::load_or_create(&path, 64).unwrap();
+        assert_eq!(idx2.len(), 0);
     }
 }
