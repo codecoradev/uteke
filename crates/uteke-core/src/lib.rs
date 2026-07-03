@@ -1304,7 +1304,7 @@ impl Uteke {
             SearchType::Memory => {
                 self.recall_unified_memories(query, limit, tags_filter, namespace, min_score)
             }
-            SearchType::Document => self.recall_unified_documents(query, limit, ns),
+            SearchType::Document => self.recall_unified_documents(query, limit, ns, min_score),
             SearchType::All => self.recall_unified_all(query, limit, tags_filter, ns, min_score),
         }
     }
@@ -1341,10 +1341,12 @@ impl Uteke {
         query: &str,
         limit: usize,
         ns: &str,
+        min_score: f32,
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
         let results = self.doc_search(query, Some(ns), limit, "hybrid")?;
         Ok(results
             .into_iter()
+            .filter(|dr| dr.score >= min_score)
             .map(|dr| UnifiedSearchResult {
                 result_type: SearchResultType::Document,
                 score: dr.score,
@@ -1386,14 +1388,22 @@ impl Uteke {
         const RRF_K: u32 = 60;
 
         // 1. Memory recall (vector + FTS5 hybrid)
-        let mem_results = self
-            .recall(query, limit * 2, tags_filter, Some(ns), 0.0)
-            .unwrap_or_default();
+        let mem_results = match self.recall(query, limit * 2, tags_filter, Some(ns), 0.0) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Unified search: memory recall failed, using partial results: {e}");
+                Vec::new()
+            }
+        };
 
         // 2. Document search (hybrid)
-        let doc_results = self
-            .doc_search(query, Some(ns), limit * 2, "hybrid")
-            .unwrap_or_default();
+        let doc_results = match self.doc_search(query, Some(ns), limit * 2, "hybrid") {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Unified search: doc search failed, using partial results: {e}");
+                Vec::new()
+            }
+        };
 
         // 3. RRF merge — score by rank across both result sets
         let mut rrf_scores: std::collections::HashMap<String, f64> =
