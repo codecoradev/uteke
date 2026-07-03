@@ -4,7 +4,7 @@
 use crate::cli::Cli;
 use crate::config::Config;
 use crate::output;
-use uteke_core::{RecallStrategy, Uteke};
+use uteke_core::{RecallStrategy, SearchType, Uteke};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_recall(
@@ -28,7 +28,40 @@ pub(crate) fn run_recall(
     where_filter: Option<&str>,
     salience: bool,
     recency: bool,
+    search_type: Option<&str>,
 ) -> Result<(), String> {
+    // Resolve search type: --type flag > default (All = unified)
+    let resolved_search_type = match search_type {
+        Some("memory") => SearchType::Memory,
+        Some("doc") => SearchType::Document,
+        Some("all") | None => SearchType::All,
+        Some(other) => {
+            return Err(format!(
+                "Invalid --type: '{other}'. Use 'all', 'memory', or 'doc'."
+            ))
+        }
+    };
+
+    // When --type is explicitly set (not default unified), route to recall_unified.
+    // When unified (default), use existing recall path for backward compat with
+    // --strategy, --at, --related, --salience, --recency, --entity, --category, --where flags
+    // which only apply to memory recall. If --type=all and no memory-only flags are used,
+    // use the unified path.
+    let use_unified = match resolved_search_type {
+        SearchType::All => {
+            // Use unified only when no memory-only flags are active.
+            // Memory-only flags: --at, --related, --salience, --recency, --entity, --category, --where
+            at.is_none()
+                && !related
+                && !salience
+                && !recency
+                && entity.is_none()
+                && category.is_none()
+                && where_filter.is_none()
+        }
+        SearchType::Memory | SearchType::Document => true,
+    };
+
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
         Some(m) => m,
@@ -36,7 +69,10 @@ pub(crate) fn run_recall(
         None => config.recall.min_score as f32,
     };
 
-    tracing::info!("Recalling: {query} (limit: {limit}, min_score: {min_score})");
+    tracing::info!(
+        "Recalling: {query} (limit: {limit}, min_score: {min_score}, type: {:?})",
+        resolved_search_type
+    );
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
     let tags_filter = if tag_refs.is_empty() {
         None
@@ -72,6 +108,42 @@ pub(crate) fn run_recall(
         },
     });
 
+    if use_unified {
+        // Unified search path (#531)
+        let unified_results = uteke
+            .recall_unified(
+                query,
+                limit,
+                tags_filter,
+                ns,
+                min_score,
+                resolved_search_type,
+            )
+            .map_err(|e| format!("Failed to recall: {e}"))?;
+
+        uteke.reset_salience_recency_config();
+
+        if unified_results.is_empty() {
+            if cli.json {
+                output::print_json(&unified_results);
+            } else if min_score > 0.0 {
+                println!("No matching results found.");
+                println!("(min_score threshold: {:.2})", min_score);
+            } else {
+                println!("No matching results found.");
+            }
+            return Ok(());
+        }
+
+        if cli.json {
+            output::print_json(&unified_results);
+        } else {
+            output::print_unified_human(&unified_results);
+        }
+        return Ok(());
+    }
+
+    // Existing memory-only recall path (backward compatible)
     // Wrap recall in a closure so reset always runs, even on error paths
     // (CodeCora #387: boost config must not leak on early return).
     let recall_result: Result<_, String> = (|| {

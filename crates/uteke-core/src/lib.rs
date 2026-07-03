@@ -43,10 +43,11 @@ pub use graph_rerank::{compute_graph_signals, rerank_with_graph, GraphRerankConf
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
-    SearchResult, SimilarPair, StoreStats, TagInfo, DEFAULT_NAMESPACE,
+    SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
+    UnifiedSearchResult, DEFAULT_NAMESPACE,
 };
 pub use memory::{
-    documents::{Document, DocumentChunk, DocumentSummary},
+    documents::{Document, DocumentChunk, DocumentSearchResult, DocumentSummary},
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
 };
@@ -1273,6 +1274,208 @@ impl Uteke {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+        results.truncate(limit);
+
+        Ok(results)
+    }
+
+    /// Unified search across memories and documents (#531).
+    ///
+    /// Merges results from `recall` (memories) and `doc_search` (documents)
+    /// via Reciprocal Rank Fusion, returning a single ranked list.
+    /// Each result is tagged with its source type (`memory` or `document`).
+    ///
+    /// - `search_type::All` (default): searches both memories and documents.
+    /// - `search_type::Memory`: memories only (equivalent to current recall).
+    /// - `search_type::Document`: documents only (equivalent to doc search).
+    pub fn recall_unified(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        min_score: f32,
+        search_type: SearchType,
+    ) -> Result<Vec<UnifiedSearchResult>, Error> {
+        let limit = limit.min(50);
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        match search_type {
+            SearchType::Memory => {
+                self.recall_unified_memories(query, limit, tags_filter, namespace, min_score)
+            }
+            SearchType::Document => self.recall_unified_documents(query, limit, ns),
+            SearchType::All => self.recall_unified_all(query, limit, tags_filter, ns, min_score),
+        }
+    }
+
+    /// Unified search — memories only (backward-compatible path).
+    fn recall_unified_memories(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        min_score: f32,
+    ) -> Result<Vec<UnifiedSearchResult>, Error> {
+        let results = self.recall(query, limit, tags_filter, namespace, min_score)?;
+        Ok(results
+            .into_iter()
+            .map(|sr| UnifiedSearchResult {
+                result_type: SearchResultType::Memory,
+                score: sr.score,
+                content: sr.memory.content,
+                memory_id: Some(sr.memory.id),
+                tags: sr.memory.tags,
+                doc_slug: None,
+                doc_title: None,
+                chunk_heading: None,
+                chunk_snippet: None,
+            })
+            .collect())
+    }
+
+    /// Unified search — documents only.
+    fn recall_unified_documents(
+        &self,
+        query: &str,
+        limit: usize,
+        ns: &str,
+    ) -> Result<Vec<UnifiedSearchResult>, Error> {
+        let results = self.doc_search(query, Some(ns), limit, "hybrid")?;
+        Ok(results
+            .into_iter()
+            .map(|dr| UnifiedSearchResult {
+                result_type: SearchResultType::Document,
+                score: dr.score,
+                content: if dr.chunk_snippet.is_empty() {
+                    dr.document.title.clone()
+                } else {
+                    dr.chunk_snippet.clone()
+                },
+                memory_id: None,
+                doc_slug: Some(dr.document.slug),
+                doc_title: Some(dr.document.title),
+                chunk_heading: if dr.chunk_heading.is_empty() {
+                    None
+                } else {
+                    Some(dr.chunk_heading)
+                },
+                chunk_snippet: if dr.chunk_snippet.is_empty() {
+                    None
+                } else {
+                    Some(dr.chunk_snippet)
+                },
+                tags: vec![],
+            })
+            .collect())
+    }
+
+    /// Unified search — both memories and documents, merged via RRF (#531).
+    ///
+    /// Runs memory recall and document search in parallel (conceptually),
+    /// then merges results using Reciprocal Rank Fusion with equal weights.
+    fn recall_unified_all(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        ns: &str,
+        min_score: f32,
+    ) -> Result<Vec<UnifiedSearchResult>, Error> {
+        const RRF_K: u32 = 60;
+
+        // 1. Memory recall (vector + FTS5 hybrid)
+        let mem_results = self
+            .recall(query, limit * 2, tags_filter, Some(ns), 0.0)
+            .unwrap_or_default();
+
+        // 2. Document search (hybrid)
+        let doc_results = self
+            .doc_search(query, Some(ns), limit * 2, "hybrid")
+            .unwrap_or_default();
+
+        // 3. RRF merge — score by rank across both result sets
+        let mut rrf_scores: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
+        let mut mem_map: std::collections::HashMap<String, SearchResult> =
+            std::collections::HashMap::new();
+        let mut doc_map: std::collections::HashMap<String, DocumentSearchResult> =
+            std::collections::HashMap::new();
+
+        for (rank, sr) in mem_results.iter().enumerate() {
+            let key = format!("mem:{}", sr.memory.id);
+            let rrf = 1.0 / (RRF_K as f64 + rank as f64 + 1.0);
+            *rrf_scores.entry(key.clone()).or_default() += rrf;
+            mem_map.insert(key, sr.clone());
+        }
+
+        for (rank, dr) in doc_results.iter().enumerate() {
+            let key = format!("doc:{}", dr.document.id);
+            let rrf = 1.0 / (RRF_K as f64 + rank as f64 + 1.0);
+            *rrf_scores.entry(key.clone()).or_default() += rrf;
+            doc_map.insert(key, dr.clone());
+        }
+
+        // 4. Sort by RRF score descending, take top `limit`
+        let mut scored: Vec<(String, f64)> = rrf_scores.into_iter().collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Max possible RRF: 1/(k+1) when rank=0 in a single source.
+        let max_rrf = 1.0 / (RRF_K as f64 + 1.0);
+
+        let results: Vec<UnifiedSearchResult> = scored
+            .into_iter()
+            .take(limit)
+            .map(|(key, score)| {
+                let normalized = (score / max_rrf).clamp(0.0, 1.0) as f32;
+                if let Some(sr) = mem_map.remove(&key) {
+                    UnifiedSearchResult {
+                        result_type: SearchResultType::Memory,
+                        score: normalized,
+                        content: sr.memory.content.clone(),
+                        memory_id: Some(sr.memory.id),
+                        tags: sr.memory.tags,
+                        doc_slug: None,
+                        doc_title: None,
+                        chunk_heading: None,
+                        chunk_snippet: None,
+                    }
+                } else if let Some(dr) = doc_map.remove(&key) {
+                    UnifiedSearchResult {
+                        result_type: SearchResultType::Document,
+                        score: normalized,
+                        content: if dr.chunk_snippet.is_empty() {
+                            dr.document.title.clone()
+                        } else {
+                            dr.chunk_snippet.clone()
+                        },
+                        memory_id: None,
+                        doc_slug: Some(dr.document.slug),
+                        doc_title: Some(dr.document.title),
+                        chunk_heading: if dr.chunk_heading.is_empty() {
+                            None
+                        } else {
+                            Some(dr.chunk_heading)
+                        },
+                        chunk_snippet: if dr.chunk_snippet.is_empty() {
+                            None
+                        } else {
+                            Some(dr.chunk_snippet)
+                        },
+                        tags: vec![],
+                    }
+                } else {
+                    unreachable!("RRF key must reference either mem_map or doc_map")
+                }
+            })
+            .collect();
+
+        // Apply min_score filter on normalized RRF scores.
+        let mut results: Vec<UnifiedSearchResult> = results
+            .into_iter()
+            .filter(|r| r.score >= min_score)
+            .collect();
         results.truncate(limit);
 
         Ok(results)

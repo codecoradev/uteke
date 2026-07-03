@@ -48,6 +48,53 @@ pub(crate) fn print_recall_human(results: &[uteke_core::SearchResult]) {
     }
 }
 
+/// Print unified search results with type labels (#531).
+///
+/// Memory results are prefixed with `[mem]`, document results with `[doc]`.
+pub(crate) fn print_unified_human(results: &[uteke_core::UnifiedSearchResult]) {
+    if results.is_empty() {
+        println!("No matching results found.");
+        return;
+    }
+    println!("Found {} result(s):\n", results.len());
+    for (i, r) in results.iter().enumerate() {
+        let type_label = match r.result_type {
+            uteke_core::SearchResultType::Memory => "mem",
+            uteke_core::SearchResultType::Document => "doc",
+        };
+        let tags = if r.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", r.tags.join(", "))
+        };
+        println!(
+            "  {}. [{type_label}] (score: {:.3}) {}{tags}",
+            i + 1,
+            r.score,
+            r.content,
+        );
+        // Show extra metadata based on type
+        match r.result_type {
+            uteke_core::SearchResultType::Memory => {
+                if let Some(id) = &r.memory_id {
+                    println!("     ID: {}", id);
+                }
+            }
+            uteke_core::SearchResultType::Document => {
+                if let Some(slug) = &r.doc_slug {
+                    println!("     Slug: {}", slug);
+                }
+                if let Some(title) = &r.doc_title {
+                    println!("     Title: {}", title);
+                }
+                if let Some(heading) = &r.chunk_heading {
+                    println!("     ↳ {}", heading);
+                }
+            }
+        }
+    }
+}
+
 /// Print keyword search results in human-readable format.
 pub(crate) fn print_search_human(results: &[uteke_core::SearchResult]) {
     if results.is_empty() {

@@ -126,6 +126,9 @@ pub struct RecallRequest {
     /// Time-travel: query memories that existed at this RFC3339 timestamp.
     #[serde(default)]
     pub at: Option<String>,
+    /// Search type filter: "all" (default, unified), "memory", or "doc" (#531).
+    #[serde(default)]
+    pub search_type: Option<String>,
 }
 
 #[derive(Deserialize)]

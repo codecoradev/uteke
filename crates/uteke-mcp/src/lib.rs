@@ -189,7 +189,7 @@ fn tool_remember() -> Value {
 fn tool_recall() -> Value {
     serde_json::json!({
         "name": "uteke_recall",
-        "description": "Semantic search over stored memories. Returns the most relevant memories ranked by embedding similarity.",
+        "description": "Unified semantic search over memories and documents. Returns the most relevant results ranked by embedding similarity. Use --type 'all' (default) to search both, 'memory' for memories only, or 'doc' for documents only.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -197,7 +197,8 @@ fn tool_recall() -> Value {
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
                 "namespace": { "type": "string", "description": "Namespace to search (default: 'default')" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
-                "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" }
+                "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
+                "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" }
             },
             "required": ["query"]
         }
@@ -451,24 +452,62 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tags_ref = tags_filter.as_deref();
     let min_score = args["min_score"].as_f64().unwrap_or(0.0) as f32;
 
+    // Parse optional search type (#531)
+    let search_type = match args["type"].as_str() {
+        Some("memory") => uteke_core::SearchType::Memory,
+        Some("doc") => uteke_core::SearchType::Document,
+        Some("all") | None => uteke_core::SearchType::All,
+        Some(other) => {
+            return Err(format!(
+                "Invalid search type: '{other}'. Use 'all', 'memory', or 'doc'."
+            ))
+        }
+    };
+
+    // Use unified search when type is specified or default (all).
+    // Fall back to legacy recall only for backward compat with existing MCP consumers.
     let results = uteke
-        .recall(query, limit, tags_ref, namespace, min_score)
+        .recall_unified(query, limit, tags_ref, namespace, min_score, search_type)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if results.is_empty() {
         return Ok(ToolResult {
             content: vec![McpContent::Text {
                 r#type: "text".to_string(),
-                text: "No memories found.".to_string(),
+                text: "No results found.".to_string(),
             }],
             is_error: false,
         });
     }
 
     let mut lines = Vec::new();
-    for (i, sr) in results.iter().enumerate() {
-        lines.push(format!("[{:.2}] {}", sr.score, sr.memory.content));
-        let _ = i;
+    for (i, r) in results.iter().enumerate() {
+        let type_label = match r.result_type {
+            uteke_core::SearchResultType::Memory => "[mem]",
+            uteke_core::SearchResultType::Document => "[doc]",
+        };
+        let detail = match &r.result_type {
+            uteke_core::SearchResultType::Memory => r
+                .memory_id
+                .as_ref()
+                .map(|id| format!(" (id: {})", &id[..id.len().min(8)]))
+                .unwrap_or_default(),
+            uteke_core::SearchResultType::Document => r
+                .doc_slug
+                .as_ref()
+                .map(|slug| format!(" (slug: {})", slug))
+                .unwrap_or_default(),
+        };
+        lines.push(format!(
+            "{}{}. [{:.2}] {}",
+            i + 1,
+            type_label,
+            r.score,
+            r.content
+        ));
+        if !detail.is_empty() {
+            lines.push(format!("       {}", detail));
+        }
     }
 
     Ok(ToolResult {

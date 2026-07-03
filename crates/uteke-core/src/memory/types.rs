@@ -103,6 +103,62 @@ pub struct SearchResult {
     pub score: f32,
 }
 
+/// Result type discriminator for unified search (#531).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchResultType {
+    /// A short-form memory from the `memories` table.
+    Memory,
+    /// A long-form document from the `documents` table.
+    Document,
+}
+
+/// A unified search result that can be either a memory or a document chunk match.
+///
+/// Used by `recall_unified` to merge results from both `memories` and
+/// `document_chunks` into a single ranked list. Each result carries its
+/// source type so consumers can distinguish between memories and documents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnifiedSearchResult {
+    /// Whether this result is a memory or a document.
+    pub result_type: SearchResultType,
+    /// Relevance score (0.0–1.0), normalized via RRF.
+    pub score: f32,
+    /// Memory content (always populated for type=memory, excerpt for type=document).
+    pub content: String,
+    /// Memory ID (populated for type=memory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<String>,
+    /// Document slug (populated for type=document).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_slug: Option<String>,
+    /// Document title (populated for type=document).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc_title: Option<String>,
+    /// Chunk heading (populated for type=document).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_heading: Option<String>,
+    /// Chunk excerpt (populated for type=document).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_snippet: Option<String>,
+    /// Tags from the memory or document.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Filter for unified search — which sources to query (#531).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchType {
+    /// Search both memories and documents (default).
+    #[default]
+    All,
+    /// Search memories only.
+    Memory,
+    /// Search documents only.
+    Document,
+}
+
 /// Memory tier based on access recency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MemoryTier {
@@ -831,10 +887,100 @@ mod tests {
     }
 
     #[test]
-    fn numbered_list_detection() {
+    fn test_numbered_list() {
         assert!(is_numbered_list("1. first step\n2. second step\n3. third"));
         assert!(is_numbered_list("1) one\n2) two\n"));
         assert!(!is_numbered_list("just plain text"));
         assert!(!is_numbered_list("1. alone")); // only one item
+    }
+
+    // ── Unified search types (#531) ──
+
+    #[test]
+    fn search_type_default_is_all() {
+        assert_eq!(SearchType::default(), SearchType::All);
+    }
+
+    #[test]
+    fn search_type_serde_roundtrip() {
+        for st in [SearchType::All, SearchType::Memory, SearchType::Document] {
+            let json = serde_json::to_string(&st).unwrap();
+            let parsed: SearchType = serde_json::from_str(&json).unwrap();
+            assert_eq!(st, parsed, "roundtrip for {:?}", st);
+        }
+    }
+
+    #[test]
+    fn search_result_type_serde_roundtrip() {
+        for rt in [SearchResultType::Memory, SearchResultType::Document] {
+            let json = serde_json::to_string(&rt).unwrap();
+            let parsed: SearchResultType = serde_json::from_str(&json).unwrap();
+            assert_eq!(rt, parsed, "roundtrip for {:?}", rt);
+        }
+    }
+
+    #[test]
+    fn unified_search_result_memory_serde() {
+        let result = UnifiedSearchResult {
+            result_type: SearchResultType::Memory,
+            score: 0.85,
+            content: "test memory".to_string(),
+            memory_id: Some("abc-123".to_string()),
+            tags: vec!["test".to_string()],
+            doc_slug: None,
+            doc_title: None,
+            chunk_heading: None,
+            chunk_snippet: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        // Verify result_type field is lowercase "memory"
+        assert!(json.contains("\"result_type\":\"memory\""), "got: {json}");
+        // Verify doc fields are omitted (skip_serializing_if = Option::is_none)
+        assert!(!json.contains("doc_slug"), "doc fields should be skipped");
+        assert!(
+            !json.contains("memory_id") || json.contains("\"memory_id\":\"abc-123\""),
+            "memory_id should be present when Some"
+        );
+        // Roundtrip
+        let parsed: UnifiedSearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.result_type, SearchResultType::Memory);
+        assert_eq!(parsed.score, 0.85);
+        assert_eq!(parsed.memory_id.as_deref(), Some("abc-123"));
+    }
+
+    #[test]
+    fn unified_search_result_document_serde() {
+        let result = UnifiedSearchResult {
+            result_type: SearchResultType::Document,
+            score: 0.92,
+            content: "chunk excerpt here".to_string(),
+            memory_id: None,
+            tags: vec![],
+            doc_slug: Some("my-doc".to_string()),
+            doc_title: Some("My Document".to_string()),
+            chunk_heading: Some("Section 2".to_string()),
+            chunk_snippet: Some("chunk excerpt here".to_string()),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"result_type\":\"document\""), "got: {json}");
+        // memory_id is None so it should be omitted
+        assert!(!json.contains("memory_id"), "memory_id should be skipped");
+        let parsed: UnifiedSearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.result_type, SearchResultType::Document);
+        assert_eq!(parsed.doc_slug.as_deref(), Some("my-doc"));
+        assert_eq!(parsed.chunk_heading.as_deref(), Some("Section 2"));
+    }
+
+    #[test]
+    fn search_type_from_str() {
+        assert_eq!(SearchType::All, serde_json::from_str("\"all\"").unwrap());
+        assert_eq!(
+            SearchType::Memory,
+            serde_json::from_str("\"memory\"").unwrap()
+        );
+        assert_eq!(
+            SearchType::Document,
+            serde_json::from_str("\"document\"").unwrap()
+        );
     }
 }

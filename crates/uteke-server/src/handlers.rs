@@ -232,62 +232,106 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     )
                 };
 
-                match recall_result {
-                    Ok(raw_results) => {
-                        // Post-filter by entity/category metadata
-                        let mut results: Vec<_> = raw_results
-                            .into_iter()
-                            .filter(|sr| {
-                                if let Some(ent) = &req_data.entity {
-                                    let matches = sr
-                                        .memory
-                                        .metadata
-                                        .get("entity")
-                                        .and_then(|v| v.as_str())
-                                        .is_some_and(|e| e == ent);
-                                    if !matches {
-                                        return false;
-                                    }
-                                }
-                                if let Some(cat) = &req_data.category {
-                                    let matches = sr
-                                        .memory
-                                        .metadata
-                                        .get("category")
-                                        .and_then(|v| v.as_str())
-                                        .is_some_and(|c| c == cat);
-                                    if !matches {
-                                        return false;
-                                    }
-                                }
-                                true
-                            })
-                            .collect::<Vec<_>>();
-                        // Apply min_score filter after metadata filtering
-                        // (deferred from recall call to avoid losing valid matches)
-                        if min_score > 0.0 {
-                            results.retain(|sr| sr.score >= min_score);
-                        }
-                        // Trim to requested limit after filtering
-                        results.truncate(req_data.limit);
-
-                        if results.is_empty() && min_score > 0.0 {
-                            ctx.ok_response_for(
+                // Unified search path (#531): when search_type is specified and
+                // no memory-only metadata filters (entity/category) are present,
+                // use recall_unified. Entity/category only apply to memories, so
+                // their presence forces the legacy memory-only recall path.
+                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
+                let unified_result = if req_data.search_type.is_some()
+                    && point_in_time.is_none()
+                    && !has_meta_filter
+                {
+                    let search_type = match req_data.search_type.as_deref() {
+                        Some("memory") => uteke_core::SearchType::Memory,
+                        Some("doc") => uteke_core::SearchType::Document,
+                        Some("all") | None => uteke_core::SearchType::All,
+                        Some(other) => {
+                            return ctx.error_response_for(
                                 req,
-                                &serde_json::json!({
-                                    "results": [],
-                                    "total": 0,
-                                    "threshold": min_score,
-                                    "message": "No memories above similarity threshold"
-                                }),
-                            )
-                        } else {
-                            ctx.ok_response_for(req, &results)
+                                400,
+                                format!("Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."),
+                            );
                         }
-                    }
-                    Err(e) => {
-                        error!("Internal error: {e}");
+                    };
+                    Some(uteke.recall_unified(
+                        &req_data.query,
+                        req_data.limit,
+                        tags_filter,
+                        ns(&req_data.namespace),
+                        min_score,
+                        search_type,
+                    ))
+                } else {
+                    None
+                };
+
+                // Prefer unified results when available (#531)
+                match unified_result {
+                    Some(Ok(results)) => ctx.ok_response_for(req, &results),
+                    Some(Err(e)) => {
+                        error!("Unified search error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                    None => {
+                        // Fall through to existing memory-only recall path
+                        match recall_result {
+                            Ok(raw_results) => {
+                                // Post-filter by entity/category metadata
+                                let mut results: Vec<_> = raw_results
+                                    .into_iter()
+                                    .filter(|sr| {
+                                        if let Some(ent) = &req_data.entity {
+                                            let matches = sr
+                                                .memory
+                                                .metadata
+                                                .get("entity")
+                                                .and_then(|v| v.as_str())
+                                                .is_some_and(|e| e == ent);
+                                            if !matches {
+                                                return false;
+                                            }
+                                        }
+                                        if let Some(cat) = &req_data.category {
+                                            let matches = sr
+                                                .memory
+                                                .metadata
+                                                .get("category")
+                                                .and_then(|v| v.as_str())
+                                                .is_some_and(|c| c == cat);
+                                            if !matches {
+                                                return false;
+                                            }
+                                        }
+                                        true
+                                    })
+                                    .collect::<Vec<_>>();
+                                // Apply min_score filter after metadata filtering
+                                // (deferred from recall call to avoid losing valid matches)
+                                if min_score > 0.0 {
+                                    results.retain(|sr| sr.score >= min_score);
+                                }
+                                // Trim to requested limit after filtering
+                                results.truncate(req_data.limit);
+
+                                if results.is_empty() && min_score > 0.0 {
+                                    ctx.ok_response_for(
+                                        req,
+                                        &serde_json::json!({
+                                            "results": [],
+                                            "total": 0,
+                                            "threshold": min_score,
+                                            "message": "No memories above similarity threshold"
+                                        }),
+                                    )
+                                } else {
+                                    ctx.ok_response_for(req, &results)
+                                }
+                            }
+                            Err(e) => {
+                                error!("Internal error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        }
                     }
                 }
             }
