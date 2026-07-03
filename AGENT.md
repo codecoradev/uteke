@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local clone
-- **Version:** 0.6.1
+- **Version:** 0.6.4
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -164,9 +164,10 @@ feature branch → PR → develop (default branch)
 When creating a release branch (`release/vX.Y.Z`), these changes MUST be in the branch:
 
 1. **Version bump** — `Cargo.toml` `[workspace.package].version` → new version
-2. **CHANGELOG.md** — move entries from `[Unreleased]` to `[X.Y.Z] — YYYY-MM-DD`, add empty `[Unreleased]`
-3. **AGENT.md** — update version string + any stale references (schema version, etc.)
-4. **README.md / README.id.md** — version badge if applicable
+2. **Inter-crate version pins** — every `crates/*/Cargo.toml` that references workspace crates must match the new version
+3. **CHANGELOG.md** — move entries from `[Unreleased]` to `[X.Y.Z] — YYYY-MM-DD`, add empty `[Unreleased]`
+4. **AGENT.md** — update version string + any stale references (schema version, etc.)
+5. **README.md / README.id.md** — version badge if applicable
 
 #### Release Flow
 
@@ -373,6 +374,17 @@ v0.0.14 release failed 3 times because:
 3. **Windows build failure blocked GitHub Release** — release job depended on both `build-release` AND `publish-crates`, so one platform failure blocked everything.
 
 **Fix:** Run `cargo publish --dry-run --allow-dirty` locally before tagging. Decouple publish from release.
+
+### Version Bump Is Mandatory Before Every Release
+
+v0.6.4 tag was pushed without bumping `workspace.package.version` from 0.6.3 → 0.6.4. `cargo publish` rejected it: "crate uteke-core@0.6.3 already exists on crates.io index". The release workflow reported success (misleading) but no crate was actually published.
+
+**Rule:** Before pushing any `v*` tag, verify ALL these are updated:
+1. `Cargo.toml` `[workspace.package].version` → new version
+2. Every inter-crate dependency version matches (e.g. `uteke-cli` depends on `uteke-core = "0.6.x"`)
+3. `CHANGELOG.md` date set to release date
+4. `AGENT.md` version string updated
+5. Run `cargo publish --dry-run --allow-dirty -p <crate>` to verify publish works
 
 ### Re-tagging Is Destructive and Confusing
 
