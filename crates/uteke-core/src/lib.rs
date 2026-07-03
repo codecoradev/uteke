@@ -57,7 +57,9 @@ pub use salience_recency::{
 };
 pub use timeline::{TimelineEvent, TimelineEventType};
 
-pub use embed::{Embedder, OnnxEmbedder};
+pub use embed::Embedder;
+#[cfg(feature = "onnx")]
+pub use embed::OnnxEmbedder;
 pub use error::{format_bytes, Error};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
@@ -415,6 +417,7 @@ impl Uteke {
         let dims = match embedder.as_ref() {
             Some(e) => e.dims(),
             None => match embedder_backend.as_str() {
+                #[cfg(feature = "onnx")]
                 "onnx" | "" | "custom" => crate::embed::OnnxEmbedder::dims(),
                 "openai" => {
                     // User-configurable via uteke.toml or UTEKE_EMBEDDING_DIMS.
@@ -519,6 +522,7 @@ impl Uteke {
             tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
             let backend = self.embedder_backend.as_str();
             let embedder: Box<dyn crate::embed::Embedder> = match backend {
+                #[cfg(feature = "onnx")]
                 "onnx" | "" => Box::new(crate::embed::OnnxEmbedder::new()?),
                 "custom" => {
                     return Err(Error::generic(
