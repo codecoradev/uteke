@@ -545,6 +545,95 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Graph Mutation: Add Edge (#542) ──────────────────────────────
+        (Method::Post, "/graph/edge") => match read_body::<GraphEdgeRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                // Reject self-loops
+                if req_data.source == req_data.target {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "Self-loop edges are not allowed (source == target)",
+                    );
+                }
+
+                // Validate both nodes exist as memories (issue #542 acceptance criteria)
+                match uteke.get_by_id(&req_data.source) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Source memory not found: {}", req_data.source),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        return ctx.error_response_for(req, 500, "Internal server error");
+                    }
+                }
+                match uteke.get_by_id(&req_data.target) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Target memory not found: {}", req_data.target),
+                        );
+                    }
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        return ctx.error_response_for(req, 500, "Internal server error");
+                    }
+                }
+
+                let conn = uteke.graph_store();
+                let gs = uteke_core::graph::GraphStore::new(conn);
+                let relation = req_data.edge_type.as_deref().unwrap_or("related");
+                let weight = req_data.weight.unwrap_or(1.0);
+
+                match gs.add_edge(&req_data.source, &req_data.target, relation, weight) {
+                    Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"ok": true})),
+                    Err(e) => {
+                        error!("Graph add_edge error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Graph Mutation: Remove Edge (#542) ────────────────────────────
+        (Method::Delete, p) if p == "/graph/edge" || p.starts_with("/graph/edge?") => {
+            let query = p.split('?').nth(1).unwrap_or("");
+            let source = parse_query_param(query, "source");
+            let target = parse_query_param(query, "target");
+
+            match (&source, &target) {
+                (Some(src), Some(tgt)) => {
+                    let conn = uteke.graph_store();
+                    let gs = uteke_core::graph::GraphStore::new(conn);
+                    match gs.remove_edge(src, tgt) {
+                        Ok(true) => ctx.ok_response_for(req, &serde_json::json!({"ok": true})),
+                        Ok(false) => ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Edge not found: {src} -> {tgt}"),
+                        ),
+                        Err(e) => {
+                            error!("Graph remove_edge error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    }
+                }
+                _ => ctx.error_response_for(
+                    req,
+                    400,
+                    "Provide both ?source=...&target=... query parameters",
+                ),
+            }
+        }
+
         // ── Room Summary ────────────────────────────────────────────────
         (Method::Post, "/room/summary") => {
             #[derive(Deserialize)]
