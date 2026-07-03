@@ -130,6 +130,7 @@ impl super::Store {
         // Post-migration consistency checks: repair partially-migrated databases
         // where a migration stamped the version but failed partway through (#500).
         self.ensure_documents_has_children()?;
+        self.ensure_documents_fts()?;
 
         Ok(())
     }
@@ -157,6 +158,61 @@ impl super::Store {
                 )
                 .map_err(|e| Error::db("repair has_children column (#500)", e))?;
         }
+        Ok(())
+    }
+
+    /// Ensure the `documents_fts` FTS5 virtual table exists and is populated (#549).
+    ///
+    /// Schema v12 migration creates this table with best-effort (`let _ = execute(...)`)
+    /// which means a silent failure leaves the table absent. Existing documents are never
+    /// backfilled. This check runs after every `ensure_schema_version()` call so the
+    /// table is created and populated on next access.
+    fn ensure_documents_fts(&self) -> Result<(), Error> {
+        // Only relevant for schema v12+ databases.
+        let version = self.schema_version().unwrap_or(0);
+        if version < 12 {
+            return Ok(());
+        }
+
+        // Check if the FTS table already exists.
+        let exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents_fts')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("check documents_fts exists (#549)", e))?;
+
+        if !exists {
+            tracing::warn!(
+                "documents_fts table missing on schema v{} DB — creating (#549)",
+                version
+            );
+            // Create FTS5 table.
+            self.conn
+                .execute_batch(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(title, slug, content='documents', content_rowid='rowid')",
+                )
+                .map_err(|e| Error::db("create documents_fts (#549)", e))?;
+
+            // Create sync triggers.
+            self.conn.execute_batch(
+                "CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN                  INSERT INTO documents_fts(rowid, title, slug) VALUES (new.rowid, new.title, new.slug); END;                  CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN                  UPDATE documents_fts SET title = new.title, slug = new.slug WHERE rowid = new.rowid; END;                  CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN                  DELETE FROM documents_fts WHERE rowid = old.rowid; END;",
+            ).map_err(|e| Error::db("create documents_fts triggers (#549)", e))?;
+
+            // Backfill existing documents into FTS index.
+            self.conn
+                .execute_batch(
+                    "INSERT INTO documents_fts(rowid, title, slug)                      SELECT rowid, title, slug FROM documents",
+                )
+                .map_err(|e| Error::db("backfill documents_fts (#549)", e))?;
+
+            tracing::info!(
+                "documents_fts table created and backfilled from existing documents (#549)"
+            );
+        }
+
         Ok(())
     }
 
