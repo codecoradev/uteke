@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.6.0**.
+Complete reference for all uteke commands. Version **0.6.4**.
 
 ## Global Flags
 
@@ -61,7 +61,7 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 
 ## uteke recall
 
-Hybrid search combining vector similarity with FTS5 full-text search, ranked by Reciprocal Rank Fusion (RRF). Hot memories (accessed within 7 days) get a score boost.
+Unified search combining vector similarity with FTS5 full-text search, ranked by Reciprocal Rank Fusion (RRF). Searches **both memories and documents** by default (unified mode). Hot memories (accessed within 7 days) get a score boost.
 
 ```bash
 uteke recall "What framework does the API use?"
@@ -69,10 +69,15 @@ uteke recall "deployment" --limit 10
 uteke recall "database config" --namespace hermes --json
 uteke recall "server" --entity staging-server --json
 uteke recall "config" --category infrastructure --limit 5
+# Search documents only
+uteke recall "API architecture" --type doc
+# Search memories only (backward compatible)
+uteke recall "deployment" --type memory
 ```
 
 | Flag | Description |
 |------|-------------|
+| `--type <type>` | Search scope: `all` (default — memories + documents, unified via RRF), `memory` (memories only), `doc` (documents only) |
 | `--limit <n>` | Max results (default: 5) |
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
@@ -830,7 +835,7 @@ Dual-role API token model:
 | Flag / Env | Role | Access |
 |------------|------|--------|
 | `--auth-token` / `UTEKE_AUTH_TOKEN` | Admin | All endpoints (GET, POST, DELETE) |
-| `--read-only-token` / `UTEKE_READ_ONLY_TOKEN` | ReadOnly | GET endpoints only (403 on writes) |
+| `--read-only-token` / `UTEKE_READ_ONLY_TOKEN` | ReadOnly | All read endpoints (GET + POST search/list/graph). 403 on writes. |
 
 ```bash
 # Start with dual tokens
