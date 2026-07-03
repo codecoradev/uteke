@@ -297,6 +297,34 @@ impl<'a> GraphStore<'a> {
         Ok(())
     }
 
+    /// Remove an edge between two nodes. Returns true if an edge was deleted.
+    /// When `relation` is Some, only deletes the edge matching that relation type.
+    /// When `relation` is None, deletes ALL edges between source and target.
+    pub fn remove_edge(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        relation: Option<&str>,
+    ) -> Result<bool, Error> {
+        let affected = match relation {
+            Some(rel) => self
+                .conn
+                .execute(
+                    "DELETE FROM graph_edges WHERE source_id = ?1 AND target_id = ?2 AND relation = ?3",
+                    params![source_id, target_id, rel],
+                )
+                .map_err(|e| Error::db("delete graph edge", e))?,
+            None => self
+                .conn
+                .execute(
+                    "DELETE FROM graph_edges WHERE source_id = ?1 AND target_id = ?2",
+                    params![source_id, target_id],
+                )
+                .map_err(|e| Error::db("delete graph edge", e))?,
+        };
+        Ok(affected > 0)
+    }
+
     /// Find a node by label (case-insensitive).
     pub fn find_node(&self, label: &str) -> Result<Option<GraphNode>, Error> {
         self.conn

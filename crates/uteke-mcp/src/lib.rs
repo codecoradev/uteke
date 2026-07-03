@@ -125,6 +125,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_doc_search(),
                 tool_doc_delete(),
                 tool_graph(),
+                tool_graph_add_edge(),
+                tool_graph_remove_edge(),
                 tool_room_recall(),
             ]
         })),
@@ -152,6 +154,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_doc_search" => exec_doc_search(uteke, &arguments)?,
                 "uteke_doc_delete" => exec_doc_delete(uteke, &arguments)?,
                 "uteke_graph" => exec_graph(uteke, &arguments)?,
+                "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments)?,
+                "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
@@ -888,4 +892,104 @@ fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         }],
         is_error: false,
     })
+}
+
+// ── Graph mutation tools (#542) ────────────────────────────────────────
+
+fn tool_graph_add_edge() -> Value {
+    serde_json::json!({
+        "name": "uteke_graph_add_edge",
+        "description": "Add an edge between two nodes in the knowledge graph. The source and target must be valid graph node IDs (not memory IDs). If the edge already exists, it is a no-op.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["source", "target"],
+            "properties": {
+                "source": { "type": "string", "description": "Graph node ID of the source node" },
+                "target": { "type": "string", "description": "Graph node ID of the target node" },
+                "relation": { "type": "string", "description": "Edge relation type (default: references)" },
+                "weight": { "type": "number", "description": "Edge weight (default: 1.0)" }
+            }
+        }
+    })
+}
+
+fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let source = args["source"].as_str().ok_or("Missing source")?;
+    let target = args["target"].as_str().ok_or("Missing target")?;
+
+    if source == target {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "Error: self-loop edges are not allowed (source == target)".to_string(),
+            }],
+            is_error: true,
+        });
+    }
+
+    let relation = args["relation"].as_str().unwrap_or("references");
+    let weight = args["weight"].as_f64().unwrap_or(1.0);
+
+    uteke
+        .add_graph_edge(source, target, relation, weight)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!(
+                "Edge added: {} -[{}]-> {} (weight: {})",
+                source, relation, target, weight
+            ),
+        }],
+        is_error: false,
+    })
+}
+
+fn tool_graph_remove_edge() -> Value {
+    serde_json::json!({
+        "name": "uteke_graph_remove_edge",
+        "description": "Remove an edge between two nodes in the knowledge graph. When relation is specified, only removes edges matching that relation type. When omitted, removes ALL edges between source and target.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["source", "target"],
+            "properties": {
+                "source": { "type": "string", "description": "Graph node ID of the source node" },
+                "target": { "type": "string", "description": "Graph node ID of the target node" },
+                "relation": { "type": "string", "description": "Edge relation type to remove (optional)" }
+            }
+        }
+    })
+}
+
+fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let source = args["source"].as_str().ok_or("Missing source")?;
+    let target = args["target"].as_str().ok_or("Missing target")?;
+    let relation = args["relation"].as_str();
+
+    let deleted = uteke
+        .remove_graph_edge(source, target, relation)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let rel_label = relation.unwrap_or("any");
+    if deleted {
+        Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Edge removed: {} -[{}]-> {}", source, rel_label, target),
+            }],
+            is_error: false,
+        })
+    } else {
+        Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!(
+                    "No edge found: {} -[{}]-> {} (nothing removed)",
+                    source, rel_label, target
+                ),
+            }],
+            is_error: false,
+        })
+    }
 }

@@ -545,6 +545,100 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Graph Mutation: Add Edge (#542) ──────────────────────────────
+        (Method::Post, "/graph/edge") => {
+            #[derive(Deserialize)]
+            struct AddEdgeRequest {
+                source: String,
+                target: String,
+                #[serde(default = "default_relation")]
+                relation: String,
+                #[serde(default = "default_weight")]
+                weight: f64,
+            }
+
+            fn default_relation() -> String {
+                "references".to_string()
+            }
+            fn default_weight() -> f64 {
+                1.0
+            }
+
+            match read_body::<AddEdgeRequest>(req.as_reader()) {
+                Ok(body) => {
+                    if body.source == body.target {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            "Self-loop edges are not allowed (source == target)",
+                        );
+                    }
+                    match uteke.add_graph_edge(
+                        &body.source,
+                        &body.target,
+                        &body.relation,
+                        body.weight,
+                    ) {
+                        Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"ok": true})),
+                        Err(e) => {
+                            let msg = e.to_string();
+                            if msg.contains("FOREIGN KEY") || msg.contains("not found") {
+                                ctx.error_response_for(
+                                    req,
+                                    404,
+                                    format!(
+                                        "Node not found: source or target does not exist ({msg})"
+                                    ),
+                                )
+                            } else {
+                                error!("Graph add_edge error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── Graph Mutation: Remove Edge (#542) ────────────────────────────
+        (Method::Delete, p) if p == "/graph/edge" || p.starts_with("/graph/edge?") => {
+            let url = req.url().to_string();
+            let query = url.split('?').nth(1).unwrap_or("");
+            let source = parse_query_param(query, "source");
+            let target = parse_query_param(query, "target");
+            let relation = parse_query_param(query, "relation");
+
+            let (source, target) = match (source, target) {
+                (Some(s), Some(t)) => (s, t),
+                _ => {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "Missing required query params: source and target",
+                    );
+                }
+            };
+
+            if source == target {
+                return ctx.error_response_for(
+                    req,
+                    400,
+                    "Self-loop edges are not allowed (source == target)",
+                );
+            }
+
+            match uteke.remove_graph_edge(&source, &target, relation.as_deref()) {
+                Ok(deleted) => {
+                    ctx.ok_response_for(req, &serde_json::json!({"ok": true, "deleted": deleted}))
+                }
+                Err(e) => {
+                    error!("Graph remove_edge error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
         // ── Room Summary ────────────────────────────────────────────────
         (Method::Post, "/room/summary") => {
             #[derive(Deserialize)]

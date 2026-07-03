@@ -662,6 +662,36 @@ impl Uteke {
         &self.store.conn
     }
 
+    /// Add an edge between two graph nodes (#542).
+    ///
+    /// `source_id` and `target_id` are graph node IDs (not memory IDs).
+    /// The edge uses INSERT OR IGNORE — if the edge already exists, it's a no-op.
+    pub fn add_graph_edge(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        relation: &str,
+        weight: f64,
+    ) -> Result<(), Error> {
+        let gs = GraphStore::new(&self.store.conn);
+        gs.add_edge(source_id, target_id, relation, weight)
+    }
+
+    /// Remove an edge between two graph nodes (#542).
+    ///
+    /// When `relation` is Some, only removes edges matching that relation type.
+    /// When None, removes ALL edges between source and target.
+    /// Returns true if at least one edge was deleted.
+    pub fn remove_graph_edge(
+        &self,
+        source_id: &str,
+        target_id: &str,
+        relation: Option<&str>,
+    ) -> Result<bool, Error> {
+        let gs = GraphStore::new(&self.store.conn);
+        gs.remove_edge(source_id, target_id, relation)
+    }
+
     /// Get graph nodes + edges for visualization (#408).
     ///
     /// Returns all nodes and edges in the knowledge graph, optionally
