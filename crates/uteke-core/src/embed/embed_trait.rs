@@ -1,7 +1,10 @@
 //! Embedder trait — abstraction over embedding backends.
 //!
 //! Implementations:
-//! - [`OnnxEmbedder`](crate::embed::OnnxEmbedder) — local ONNX EmbeddingGemma (default)
+//! - [`OnnxEmbedder`](crate::embed::OnnxEmbedder) — local ONNX EmbeddingGemma (default) *(requires `onnx` feature)*
+//! - [`OllamaEmbedder`](crate::embed::OllamaEmbedder) — Ollama API
+//! - [`OpenAiEmbedder`](crate::embed::OpenAiEmbedder) — OpenAI API
+//! - [`FallbackEmbedder`](crate::embed::FallbackEmbedder) — passthrough (no-op, zero vectors)
 //!
 //! Future backends (OpenAI, Ollama, etc.) implement this trait without
 //! touching recall/remember code.

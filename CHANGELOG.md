@@ -1,3 +1,20 @@
+## [0.6.4] — Unreleased
+
+### Added
+- **Gate ONNX behind `onnx` feature (#533, #534)** — `ort` and transitive `numkong` are now optional, gated behind `default-features = false`. Consumers that don't need ONNX/embedding can opt out entirely, resolving CI build failures on Ubuntu 22.04 (AVX-512) and macOS Intel (no prebuilt).
+- **Unified search across memories and documents (#531)** — single search endpoint returns results from both memories and documents.
+- **`/namespaces?with_counts=true` + `/recent` endpoints (#527, #528)** — namespace listing with per-namespace memory counts; recent memories across all namespaces.
+- **Cross-namespace `/list` and `/list_at_time` (#526)** — calling `/list` without namespace returns results from all namespaces.
+
+### Changed
+- **Split uteke-server monolith into modules (#514)** — refactored single-file server into modular structure for maintainability.
+
+### Fixed
+- **Read-only token on POST read endpoints (#524)** — read-only tokens now work on POST-based read endpoints (search, list, graph, etc).
+- **SQLite count column type** — use `u32` instead of `usize` (no `FromSql` impl for `usize`).
+- **`Option<String>` to `Option<&str>`** — fixed `list()` call parameter type.
+- **CodeCora alerts** — min_score in document path + improved error logging.
+
 ## [Unreleased]
 
 ## [0.6.3] — 2026-07-01

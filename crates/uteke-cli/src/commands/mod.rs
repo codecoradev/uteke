@@ -79,6 +79,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             at,
             content_format,
             r#where,
+            r#type,
         } => recall::run_recall(
             cli,
             uteke,
@@ -100,6 +101,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             r#where.as_deref(),
             *salience,
             *recency,
+            r#type.as_deref(),
         ),
 
         Commands::Search { query, limit, tags } => {

@@ -17,5 +17,8 @@ pub use rooms::{
     TimeRange, TopicCluster,
 };
 pub use store::Store;
-pub use types::{Memory, RecallStrategy, SearchResult, StoreStats};
+pub use types::{
+    Memory, RecallStrategy, SearchResult, SearchResultType, SearchType, StoreStats,
+    UnifiedSearchResult,
+};
 pub use vector::VectorIndex;

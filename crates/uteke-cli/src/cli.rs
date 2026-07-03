@@ -135,6 +135,12 @@ pub enum Commands {
         /// Filter results by JSON field (format: key=value, e.g. --where role=CTO)
         #[arg(long)]
         r#where: Option<String>,
+        /// Search type filter: 'all' (default, unified), 'memory', or 'doc'.
+        /// 'all' searches both memories and documents merged via RRF.
+        /// 'memory' returns memories only (backward compatible).
+        /// 'doc' returns documents only.
+        #[arg(long)]
+        r#type: Option<String>,
     },
     /// Search memories by content keywords (text search)
     Search {

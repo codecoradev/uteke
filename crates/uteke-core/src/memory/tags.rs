@@ -354,4 +354,32 @@ impl super::Store {
         }
         Ok(namespaces)
     }
+
+    /// List namespaces with memory counts.
+    ///
+    /// Returns `[(namespace, count)]` — e.g. `[("default", 432), ("cto", 28)]`.
+    /// Used by `/namespaces?with_counts=true` endpoint (#527).
+    pub fn list_namespaces_with_counts(&self) -> Result<Vec<(String, usize)>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT namespace, COUNT(*) as cnt \
+                 FROM memories \
+                 GROUP BY namespace \
+                 ORDER BY namespace",
+            )
+            .map_err(|e| Error::db("database operation", e))?;
+
+        let rows = stmt
+            .query_map([], |row: &rusqlite::Row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)? as usize))
+            })
+            .map_err(|e| Error::db("database operation", e))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row.map_err(|e| Error::db("database operation", e))?);
+        }
+        Ok(result)
+    }
 }
