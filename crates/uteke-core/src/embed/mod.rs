@@ -1,18 +1,21 @@
 //! Embedding engine components.
 
 pub mod embed_trait;
+#[cfg(feature = "onnx")]
 pub mod engine;
 pub mod fallback;
 pub mod ollama;
 pub mod openai;
 
 pub use embed_trait::Embedder;
+#[cfg(feature = "onnx")]
 pub use engine::OnnxEmbedder;
 pub use fallback::FallbackEmbedder;
 pub use ollama::OllamaEmbedder;
 pub use openai::OpenAiEmbedder;
 
 /// Backward-compat alias — old code referencing `EmbeddingEngine` continues to work.
+#[cfg(feature = "onnx")]
 #[allow(dead_code)]
 pub type EmbeddingEngine = OnnxEmbedder;
 

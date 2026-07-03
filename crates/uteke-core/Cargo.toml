@@ -10,6 +10,10 @@ keywords = ["memory", "ai", "embedding", "vector-search", "semantic"]
 categories = ["science", "data-structures"]
 readme = "../../README.md"
 
+[features]
+default = ["onnx"]
+onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:sha2"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -18,13 +22,14 @@ usearch = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 thiserror = "2"
-ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
-ndarray = "0.17"
-tokenizers = "0.23"
 dirs = "6"
 tracing = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
-sha2 = "0.11"
+# ONNX-only dependencies (gated behind `onnx` feature)
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = true }
+ndarray = { version = "0.17", optional = true }
+tokenizers = { version = "0.23", optional = true }
+sha2 = { version = "0.11", optional = true }
 
 [dev-dependencies]
 tempfile = "3"
