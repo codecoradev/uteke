@@ -1,4 +1,4 @@
-## [0.6.4] — Unreleased
+## [0.6.4] — 2026-07-03
 
 ### Added
 - **Gate ONNX behind `onnx` feature (#533, #534)** — `ort` and transitive `numkong` are now optional, gated behind `default-features = false`. Consumers that don't need ONNX/embedding can opt out entirely, resolving CI build failures on Ubuntu 22.04 (AVX-512) and macOS Intel (no prebuilt).
