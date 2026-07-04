@@ -132,6 +132,29 @@ impl super::Store {
         self.ensure_documents_has_children()?;
         self.ensure_documents_fts()?;
 
+        // Ensure FTS5 virtual table and sync triggers exist (#544).
+        //
+        // Fresh databases skip all migrations (version is stamped directly at
+        // CURRENT_SCHEMA_VERSION), so migrate_v1_to_v2() — which calls init_fts5()
+        // — never runs. Existing databases at the correct version also skip
+        // migrations. In both cases FTS5 may be missing even though memories
+        // exist, causing FTS5 recall to return empty results.
+        //
+        // init_fts5() is idempotent (CREATE IF NOT EXISTS / TRIGGER IF NOT EXISTS),
+        // so it's safe to call on every open.
+        if !self.fts5_exists()? {
+            tracing::info!("FTS5 virtual table missing — initializing (#544)");
+            self.init_fts5()?;
+            let count: i64 = self
+                .conn
+                .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))
+                .unwrap_or(0);
+            if count > 0 {
+                tracing::info!("Rebuilding FTS5 index for {count} existing memories");
+                self.rebuild_fts5()?;
+            }
+        }
+
         Ok(())
     }
 
