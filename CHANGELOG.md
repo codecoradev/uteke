@@ -29,6 +29,11 @@
 - **documents_fts migration repair (#549)** — FTS5 virtual table is rebuilt if missing or corrupted during migration, preventing `no such table: documents_fts` errors.
 - **Document delete by slug (#550)** — `uteke doc delete` now correctly resolves documents by slug (not just UUID), matching the behavior of `get` and `list`.
 
+### Docs
+- **HTTP API documentation for `/recent` and graph mutation endpoints** — `GET /recent` (with query params), `GET /graph`, `POST /graph/edge`, `DELETE /graph/edge` added to HTTP Endpoints table. Graph API section expanded with mutation curl examples.
+- **VitePress sidebar entries** — added Document Commands and Graph API links to docs sidebar.
+- **Version bump 0.6.4 → 0.6.5** — all version strings synchronized across Cargo.toml, README.md, README.id.md, AGENT.md, and cli-reference.md.
+
 ## [0.6.3] — 2026-07-01
 
 ### Fixed
