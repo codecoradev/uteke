@@ -1007,27 +1007,30 @@ impl Uteke {
     /// Cascades to children and chunks. Returns (deleted, subtree_size).
     /// Also removes chunk embeddings from usearch index.
     pub fn doc_delete(&self, id: &str, namespace: Option<&str>) -> Result<(bool, usize), Error> {
-        // Collect all document IDs in the subtree before deletion.
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+
+        // Resolve slug to ID FIRST, before any other operations.
+        // Accepts both UUID and slug (consistent with doc_get) (#550).
+        let resolved_id = match self.store.get_document(id)? {
+            Some(d) => d.id,
+            None => {
+                self.store
+                    .get_document_by_slug(id, ns)?
+                    .ok_or_else(|| Error::validation(format!("document not found: {id}")))?
+                    .id
+            }
+        };
+
+        // Collect all document IDs in the subtree before deletion.
         let subtree = self
             .store
-            .list_descendants(id, ns, None, 10000)
+            .list_descendants(&resolved_id, ns, None, 10000)
             .unwrap_or_default();
-
-        // Get the main document ID too.
-        let main_id = match self.store.get_document(id)? {
-            Some(d) => d.id,
-            None => self
-                .store
-                .get_document_by_slug(id, ns)?
-                .map(|d| d.id)
-                .unwrap_or_default(),
-        };
 
         let all_ids: Vec<String> = subtree
             .iter()
             .map(|d| d.id.clone())
-            .chain(std::iter::once(main_id.clone()))
+            .chain(std::iter::once(resolved_id.clone()))
             .collect();
 
         // Get chunk IDs to remove from usearch.
@@ -1036,7 +1039,7 @@ impl Uteke {
             .delete_chunks_for_documents(&all_ids)
             .unwrap_or_default();
 
-        let (deleted, subtree_size) = self.store.delete_document(id)?;
+        let (deleted, subtree_size) = self.store.delete_document(&resolved_id)?;
 
         // Remove chunk entries from usearch index.
         if !chunk_ids.is_empty() {

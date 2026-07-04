@@ -11,7 +11,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.6.4-green.svg" alt="v0.6.4" />
+  <img src="https://img.shields.io/badge/status-v0.6.5-green.svg" alt="v0.6.5" />
 </p>
 
 <p align="center">
@@ -113,7 +113,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 📝 **Document Engine** — Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking
 
 - 🤖 **Cosine Auto-Linking** — Automatically creates `similar_to` edges between related memories
-- 🌐 **Graph API** — `GET /graph` endpoint returns nodes + edges JSON for visualization
+- 🌐 **Graph API** — `GET /graph` returns nodes + edges JSON; `POST /graph/edge` and `DELETE /graph/edge` for mutation
 - 🔑 **View-Only API Keys** — Read-only tokens for safe GET-only access to the server
 - 📄 **Markdown Chunker** — Splits documents by headings, respects code blocks and token limits
 

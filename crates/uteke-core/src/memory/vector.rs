@@ -1,7 +1,15 @@
 //! Persistent vector index using usearch (HNSW with disk persistence).
+//!
+//! Cross-process safety (#543): Each VectorIndex acquires an exclusive file
+//! lock (via fs2) on the .usearch file during construction. The lock is held
+//! until the VectorIndex is dropped, serializing concurrent CLI invocations
+//! that share the same on-disk index. In-process thread safety uses
+//! RwLock<VectorIndex> in lib.rs.
 
 use crate::Error;
+use fs2::FileExt;
 use std::collections::HashMap;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
@@ -14,6 +22,11 @@ const DEFAULT_DIMS: usize = 768;
 /// - **Insert**: incremental, no rebuild
 /// - **Delete**: incremental, no rebuild
 /// - **Save**: persists to disk after mutations
+///
+/// **Cross-process safety (#543):** An exclusive file lock on the `.usearch`
+/// file serializes concurrent access from separate CLI processes. The lock is
+/// held for the lifetime of the VectorIndex. In-process thread safety uses
+/// `RwLock` in `Uteke`.
 pub struct VectorIndex {
     index: Index,
     /// Maps integer key (u64) → memory UUID string.
@@ -26,6 +39,9 @@ pub struct VectorIndex {
     path: Option<PathBuf>,
     /// Whether the index has unsaved changes.
     dirty: bool,
+    /// Cross-process file lock on the .usearch file (#543).
+    /// Held until the VectorIndex is dropped.
+    _lock_file: Option<File>,
 }
 
 impl VectorIndex {
@@ -39,19 +55,33 @@ impl VectorIndex {
             next_key: 0,
             path: None,
             dirty: false,
+            _lock_file: None,
         })
     }
 
     /// Load index from disk, or create empty if file doesn't exist.
     /// `path` is the path to the `.usearch` file.
+    ///
+    /// Acquires an **exclusive file lock** on the `.usearch` file to prevent
+    /// cross-process race conditions (e.g., `xargs -P5 uteke remember`).
+    /// The lock is held until this `VectorIndex` is dropped (#543).
     pub fn load_or_create(path: &Path, dims: usize) -> Result<Self, Error> {
-        if path.exists() {
-            Self::load(path)
-        } else {
-            let mut idx = Self::new(dims)?;
-            idx.path = Some(path.to_path_buf());
-            Ok(idx)
+        // Ensure the file exists so we can open + lock it.
+        if !path.exists() {
+            // Create a zero-byte placeholder; usearch will overwrite on save.
+            std::fs::write(path, []).map_err(|e| Error::embed("create usearch file", e))?;
         }
+
+        let lock_file = acquire_file_lock(path)?;
+
+        let mut idx = if path.metadata().map_or(true, |m| m.len() == 0) {
+            Self::new(dims)?
+        } else {
+            Self::load(path)?
+        };
+        idx.path = Some(path.to_path_buf());
+        idx._lock_file = Some(lock_file);
+        Ok(idx)
     }
 
     /// Load an existing index from disk.
@@ -92,6 +122,7 @@ impl VectorIndex {
             next_key,
             path: Some(path.to_path_buf()),
             dirty: false,
+            _lock_file: None, // Set by caller (load_or_create)
         })
     }
 
@@ -280,6 +311,32 @@ pub fn cosine_distance_to_similarity(distance: f32) -> f32 {
     // usearch cosine distance = 1 - cosine_similarity
     let sim = 1.0 - distance;
     sim.clamp(0.0, 1.0)
+}
+
+/// Acquire an exclusive file lock on the usearch index file (#543).
+///
+/// Blocks until the lock is available. This serializes concurrent access from
+/// separate CLI processes (e.g., `xargs -P5 uteke remember`).
+fn acquire_file_lock(path: &Path) -> Result<File, Error> {
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| Error::embed_msg(format!("Failed to open usearch file for locking: {e}")))?;
+
+    if file.try_lock_exclusive().is_ok() {
+        tracing::debug!("usearch file lock acquired: {}", path.display());
+    } else {
+        tracing::debug!("usearch file lock busy on {}, waiting...", path.display());
+        file.lock_exclusive()
+            .map_err(|e| Error::embed("acquire exclusive file lock on usearch", e))?;
+        tracing::debug!(
+            "usearch file lock acquired (after wait): {}",
+            path.display()
+        );
+    }
+
+    Ok(file)
 }
 
 /// Atomic file write: write to temp file then rename.

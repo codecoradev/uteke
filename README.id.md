@@ -7,7 +7,7 @@
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg" alt="Rust 1.75+" />
-  <img src="https://img.shields.io/badge/status-v0.6.4-green.svg" alt="v0.6.4" />
+  <img src="https://img.shields.io/badge/status-v0.6.5-green.svg" alt="v0.6.5" />
 </p>
 
 <p align="center">
@@ -92,7 +92,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 - 🔌 **MCP Server** — JSON-RPC via stdio + Streamable HTTP transport
 - 📝 **Document Engine** — Wiki/knowledge base dengan `uteke doc create/get/list` + auto-chunking
 - 🤖 **Cosine Auto-Linking** — Otomatis membuat edge `similar_to` antar memory terkait
-- 🌐 **Graph API** — Endpoint `GET /graph` mengembalikan nodes + edges JSON untuk visualisasi
+- 🌐 **Graph API** — `GET /graph` mengembalikan nodes + edges JSON; `POST /graph/edge` dan `DELETE /graph/edge` untuk mutasi
 - 🔑 **View-Only API Keys** — Token read-only untuk akses GET saja ke server
 - 📄 **Markdown Chunker** — Membagi dokumen berdasarkan heading, respect code block dan token limit
 - 📥 **Import/Export** — Backup dan restore berbasis JSONL

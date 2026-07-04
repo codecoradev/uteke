@@ -297,6 +297,19 @@ impl<'a> GraphStore<'a> {
         Ok(())
     }
 
+    /// Remove an edge between two nodes by source and target IDs.
+    /// Returns true if an edge was removed, false if none existed.
+    pub fn remove_edge(&self, source_id: &str, target_id: &str) -> Result<bool, Error> {
+        let affected = self
+            .conn
+            .execute(
+                "DELETE FROM graph_edges WHERE source_id = ?1 AND target_id = ?2",
+                params![source_id, target_id],
+            )
+            .map_err(|e| Error::db("remove graph edge", e))?;
+        Ok(affected > 0)
+    }
+
     /// Find a node by label (case-insensitive).
     pub fn find_node(&self, label: &str) -> Result<Option<GraphNode>, Error> {
         self.conn
@@ -799,6 +812,30 @@ mod tests {
         assert_eq!(triples.len(), 1);
         assert_eq!(triples[0].source.label, "Alice");
         assert_eq!(triples[0].target.label, "ProjectX");
+    }
+
+    #[test]
+    fn test_remove_edge() {
+        let conn = setup();
+        let g = GraphStore::new(&conn);
+        let alice = g.upsert_node("Alice", None, None).unwrap();
+        let bob = g.upsert_node("Bob", None, None).unwrap();
+        g.add_edge(&alice, &bob, "knows", 1.0).unwrap();
+        assert_eq!(g.all_edges().unwrap().len(), 1);
+
+        let removed = g.remove_edge(&alice, &bob).unwrap();
+        assert!(removed);
+        assert_eq!(g.all_edges().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_remove_edge_nonexistent() {
+        let conn = setup();
+        let g = GraphStore::new(&conn);
+        let alice = g.upsert_node("Alice", None, None).unwrap();
+        let bob = g.upsert_node("Bob", None, None).unwrap();
+        let removed = g.remove_edge(&alice, &bob).unwrap();
+        assert!(!removed);
     }
 
     #[test]

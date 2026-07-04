@@ -283,3 +283,15 @@ pub const STRICT_THRESHOLD: f32 = 0.5;
 /// Default minimum score for server recall.
 /// Used as fallback when [recall] min_score is not configured.
 pub const DEFAULT_MIN_SCORE: f32 = 0.0;
+
+// ── Graph Types ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct GraphEdgeRequest {
+    pub source: String,
+    pub target: String,
+    #[serde(default)]
+    pub edge_type: Option<String>,
+    #[serde(default)]
+    pub weight: Option<f64>,
+}
