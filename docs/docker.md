@@ -125,7 +125,7 @@ Docker automatically pulls the correct architecture.
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `v0.6.3` | Specific version |
+| `v0.6.5` | Specific version |
 | `0.6` | Minor version (latest patch) |
 
 ## CLI in Docker
