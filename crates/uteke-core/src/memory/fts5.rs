@@ -379,8 +379,7 @@ mod tests {
     #[test]
     fn test_fts5_exists() {
         let store = Store::open(":memory:").unwrap();
-        assert!(!store.fts5_exists().unwrap());
-        store.init_fts5().unwrap();
+        // FTS5 is now auto-initialized on open (#544).
         assert!(store.fts5_exists().unwrap());
     }
 }
