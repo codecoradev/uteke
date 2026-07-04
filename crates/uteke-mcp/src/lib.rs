@@ -125,6 +125,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_doc_search(),
                 tool_doc_delete(),
                 tool_graph(),
+                tool_graph_add_edge(),
+                tool_graph_remove_edge(),
                 tool_room_recall(),
             ]
         })),
@@ -152,6 +154,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_doc_search" => exec_doc_search(uteke, &arguments)?,
                 "uteke_doc_delete" => exec_doc_delete(uteke, &arguments)?,
                 "uteke_graph" => exec_graph(uteke, &arguments)?,
+                "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments)?,
+                "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
@@ -397,6 +401,38 @@ fn tool_room_recall() -> Value {
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 }
             },
             "required": ["room_id", "query"]
+        }
+    })
+}
+
+fn tool_graph_add_edge() -> Value {
+    serde_json::json!({
+        "name": "uteke_graph_add_edge",
+        "description": "Add an edge between two memories in the knowledge graph. Both memories must exist. Self-loops are rejected.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": { "type": "string", "description": "Source memory ID" },
+                "target": { "type": "string", "description": "Target memory ID" },
+                "edge_type": { "type": "string", "description": "Edge relation type (default: 'related')" },
+                "weight": { "type": "number", "description": "Edge weight (default: 1.0)" }
+            },
+            "required": ["source", "target"]
+        }
+    })
+}
+
+fn tool_graph_remove_edge() -> Value {
+    serde_json::json!({
+        "name": "uteke_graph_remove_edge",
+        "description": "Remove an edge between two memories in the knowledge graph.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": { "type": "string", "description": "Source memory ID" },
+                "target": { "type": "string", "description": "Target memory ID" }
+            },
+            "required": ["source", "target"]
         }
     })
 }
@@ -787,6 +823,93 @@ fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         }],
         is_error: false,
     })
+}
+
+fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let source = args["source"].as_str().ok_or("Missing 'source'")?;
+    let target = args["target"].as_str().ok_or("Missing 'target'")?;
+    let edge_type = args["edge_type"].as_str().unwrap_or("related");
+    let weight = args["weight"].as_f64().unwrap_or(1.0);
+
+    if source == target {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "Error: self-loop edges are not allowed (source == target)".to_string(),
+            }],
+            is_error: true,
+        });
+    }
+
+    // Validate both memories exist
+    match uteke.get_by_id(source) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: format!("Error: source memory not found: {source}"),
+                }],
+                is_error: true,
+            });
+        }
+        Err(e) => return Err(format!("Failed: {e}")),
+    }
+    match uteke.get_by_id(target) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: format!("Error: target memory not found: {target}"),
+                }],
+                is_error: true,
+            });
+        }
+        Err(e) => return Err(format!("Failed: {e}")),
+    }
+
+    let conn = uteke.graph_store();
+    let gs = uteke_core::graph::GraphStore::new(conn);
+    gs.add_edge(source, target, edge_type, weight)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("✓ Added edge: {source} -[{edge_type}]-> {target}"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let source = args["source"].as_str().ok_or("Missing 'source'")?;
+    let target = args["target"].as_str().ok_or("Missing 'target'")?;
+
+    let conn = uteke.graph_store();
+    let gs = uteke_core::graph::GraphStore::new(conn);
+    let removed = gs
+        .remove_edge(source, target)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if removed {
+        Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("✓ Removed edge: {source} -> {target}"),
+            }],
+            is_error: false,
+        })
+    } else {
+        Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Edge not found: {source} -> {target}"),
+            }],
+            is_error: true,
+        })
+    }
 }
 
 fn exec_context(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
