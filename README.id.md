@@ -92,7 +92,7 @@ AI agent melupakan semua hal antar sesi. Uteke memberikan mereka memori persiste
 - 🔌 **MCP Server** — JSON-RPC via stdio + Streamable HTTP transport
 - 📝 **Document Engine** — Wiki/knowledge base dengan `uteke doc create/get/list` + auto-chunking
 - 🤖 **Cosine Auto-Linking** — Otomatis membuat edge `similar_to` antar memory terkait
-- 🌐 **Graph API** — Endpoint `GET /graph` mengembalikan nodes + edges JSON untuk visualisasi
+- 🌐 **Graph API** — `GET /graph` mengembalikan nodes + edges JSON; `POST /graph/edge` dan `DELETE /graph/edge` untuk mutasi
 - 🔑 **View-Only API Keys** — Token read-only untuk akses GET saja ke server
 - 📄 **Markdown Chunker** — Membagi dokumen berdasarkan heading, respect code block dan token limit
 - 📥 **Import/Export** — Backup dan restore berbasis JSONL

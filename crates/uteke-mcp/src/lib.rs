@@ -666,13 +666,14 @@ fn exec_doc_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
     let title = args["title"].as_str().unwrap_or("");
     let namespace = args["namespace"].as_str();
+    let parent = args["parent"].as_str();
     let tags: Vec<&str> = args["tags"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
     let id = uteke
-        .doc_upsert(slug, title, content, &tags, namespace)
+        .doc_upsert_with_parent(slug, title, content, &tags, namespace, parent)
         .map_err(|e| format!("Failed: {e}"))?;
 
     Ok(ToolResult {
