@@ -89,11 +89,9 @@ impl crate::Uteke {
         }
         let id_set: std::collections::HashSet<String> = room_ids.into_iter().collect();
 
-        // 2. Over-fetch via hybrid recall (no namespace filter — rooms are cross-ns)
-        // Cap at 200 to prevent unbounded searches for large rooms.
+        // 2. Over-fetch via hybrid recall (no namespace filter — rooms are cross-ns).
+        // Cap at 200 to prevent unbounded searches for large rooms (#546).
         let fetch_limit = (limit * 5).min(200).max(limit);
-        // If room has fewer memories than fetch_limit, only fetch that many.
-        let fetch_limit = fetch_limit.min(id_set.len());
         let results = self.recall_hybrid(
             query,
             fetch_limit,

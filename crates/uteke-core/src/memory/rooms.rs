@@ -138,18 +138,19 @@ impl super::Store {
             .map_err(|e| Error::db("get room", e))
     }
 
-    /// List rooms that a namespace has participated in.
+    /// List rooms, optionally filtered by namespace.
     pub fn list_rooms(&self, namespace: Option<&str>) -> Result<Vec<Room>, Error> {
         // Rooms are cross-namespace collaboration spaces (#392).
         // By default, list ALL rooms across all namespaces.
-        // When a namespace is provided, filter to that namespace only.
+        // When a namespace is provided, filter to rooms whose namespace
+        // column matches. No JOIN needed — the namespace column lives
+        // on the rooms table itself (#545).
         let sql = match namespace {
             Some(_) => {
-                "SELECT DISTINCT r.id, r.title, r.namespace, r.created_at, r.updated_at \
-                 FROM rooms r \
-                 INNER JOIN room_memories rm ON r.id = rm.room_id \
-                 WHERE r.namespace = ?1 \
-                 ORDER BY r.updated_at DESC"
+                "SELECT id, title, namespace, created_at, updated_at \
+                 FROM rooms \
+                 WHERE namespace = ?1 \
+                 ORDER BY updated_at DESC"
             }
             None => {
                 "SELECT id, title, namespace, created_at, updated_at FROM rooms \
