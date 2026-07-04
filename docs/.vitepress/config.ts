@@ -43,6 +43,8 @@ export default defineConfig({
           { text: 'Relationship Graph', link: '/getting-started#relationship-graph' },
           { text: 'Benchmarks', link: '/getting-started#benchmarking' },
           { text: 'MCP Server', link: '/mcp' },
+          { text: 'Document Commands', link: '/cli-reference#document-commands' },
+          { text: 'Graph API', link: '/cli-reference#graph-api-408-542' },
         ],
       },
       {
