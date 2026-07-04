@@ -699,6 +699,9 @@ impl super::Store {
             heading: &'static str,
             icon: &'static str,
         }
+        // Known type sections — memories matching these keys get their own
+        // dedicated section (#547: previously only 5 types were mapped,
+        // causing note/insight/reference/event memories to vanish silently).
         let type_sections = [
             TypeSection {
                 key: "decision",
@@ -725,7 +728,26 @@ impl super::Store {
                 heading: "Context & Discussion",
                 icon: "💬",
             },
+            TypeSection {
+                key: "insight",
+                heading: "Insights",
+                icon: "💡",
+            },
+            TypeSection {
+                key: "reference",
+                heading: "References",
+                icon: "📎",
+            },
+            TypeSection {
+                key: "event",
+                heading: "Events",
+                icon: "📅",
+            },
         ];
+
+        // Collect which memory IDs have been assigned to a typed section,
+        // so we can put the remainder into a catch-all "Notes" section (#547).
+        let mut assigned: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for ts in &type_sections {
             let mut matching: Vec<&crate::memory::types::Memory> = memories
@@ -734,6 +756,9 @@ impl super::Store {
                 .collect();
             if matching.is_empty() {
                 continue;
+            }
+            for m in &matching {
+                assigned.insert(m.id.clone());
             }
             // Sort by importance desc, fallback recency
             matching.sort_by(|a, b| {
@@ -754,6 +779,29 @@ impl super::Store {
             sections.push(DocumentSection {
                 heading: ts.heading.to_string(),
                 icon: ts.icon.to_string(),
+                entries,
+            });
+        }
+
+        // Catch-all: any memory not yet assigned (e.g. "note" type, the
+        // default fallback from MemoryType::infer_from_content) lands here.
+        let unassigned: Vec<&crate::memory::types::Memory> = memories
+            .iter()
+            .filter(|m| !m.pinned && !assigned.contains(&m.id))
+            .collect();
+        if !unassigned.is_empty() {
+            let entries: Vec<DocumentEntry> = unassigned
+                .into_iter()
+                .map(|m| DocumentEntry {
+                    content: m.content.clone(),
+                    author: author_map.get(&m.id).cloned().unwrap_or_default(),
+                    tags: m.tags.clone(),
+                    created_at: fmt_time(&m.created_at.to_rfc3339()),
+                })
+                .collect();
+            sections.push(DocumentSection {
+                heading: "Notes & General".to_string(),
+                icon: "📝".to_string(),
                 entries,
             });
         }
