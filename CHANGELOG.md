@@ -17,6 +17,18 @@
 
 ## [Unreleased]
 
+### Added
+- **HTTP graph mutation endpoints (#542)** — `POST /graph/edge` creates a new typed edge between two memories; `DELETE /graph/edge` removes an edge by its ID. Enables programmatic graph editing without the CLI.
+
+### Fixed
+- **Cross-process file lock (#543)** — usearch index is now protected by a file lock to prevent race conditions when multiple uteke processes access the same database concurrently.
+- **FTS5 initialization on every startup (#544)** — FTS5 virtual table and triggers are now re-created on every startup, not just during schema migration. Fixes missing FTS5 after partial upgrades.
+- **Room list `--namespace` filter returns empty array (#545)** — namespace filtering now correctly matches room namespaces instead of returning no results.
+- **Room recall `--query` returns empty results (#546)** — semantic search within rooms now returns correct results; the query embedding was being silently discarded.
+- **Room document missing sections for note/insight/reference/event types (#547)** — document sections for non-core memory types (note, insight, reference, event) are now generated correctly in room documents.
+- **documents_fts migration repair (#549)** — FTS5 virtual table is rebuilt if missing or corrupted during migration, preventing `no such table: documents_fts` errors.
+- **Document delete by slug (#550)** — `uteke doc delete` now correctly resolves documents by slug (not just UUID), matching the behavior of `get` and `list`.
+
 ## [0.6.3] — 2026-07-01
 
 ### Fixed

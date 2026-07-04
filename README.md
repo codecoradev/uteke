@@ -113,7 +113,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 - 📝 **Document Engine** — Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking
 
 - 🤖 **Cosine Auto-Linking** — Automatically creates `similar_to` edges between related memories
-- 🌐 **Graph API** — `GET /graph` endpoint returns nodes + edges JSON for visualization
+- 🌐 **Graph API** — `GET /graph` returns nodes + edges JSON; `POST /graph/edge` and `DELETE /graph/edge` for mutation
 - 🔑 **View-Only API Keys** — Read-only tokens for safe GET-only access to the server
 - 📄 **Markdown Chunker** — Splits documents by headings, respects code blocks and token limits
 
