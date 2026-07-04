@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.6.4**.
+Complete reference for all uteke commands. Version **0.6.5**.
 
 ## Global Flags
 
@@ -701,6 +701,10 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/doc/search` | Hybrid/semantic/FTS document search (#440) |
 | POST | `/doc/move` | Move document to new parent (#438) |
 | DELETE | `/doc/delete?id=` | Delete document with cascade |
+| GET | `/recent` | Recent memories (supports `?namespace=`, `?limit=`, `?offset=`) (#528) |
+| GET | `/graph` | Graph visualization — nodes, edges, stats (#408) |
+| POST | `/graph/edge` | Create a typed edge between two memories (#542) |
+| DELETE | `/graph/edge` | Remove an edge by ID (#542) |
 | POST | `/mcp` | MCP JSON-RPC endpoint (#381) |
 
 ### MCP Server
@@ -817,15 +821,27 @@ uteke doc export           # markdown to stdout
 uteke doc export --json    # JSON to stdout
 ```
 
-## Graph API (#408)
+## Graph API (#408, #542)
 
-The server exposes a graph visualization endpoint:
+### Visualization
 
 ```bash
 # All nodes + edges + stats
 curl http://127.0.0.1:8767/graph
 
 # Response: { nodes: [...], edges: [...], stats: {...} }
+```
+
+### Mutation
+
+```bash
+# Create a typed edge
+curl -X POST http://127.0.0.1:8767/graph/edge \
+  -H "Content-Type: application/json" \
+  -d '{"from": "<uuid>", "to": "<uuid>", "edge_type": "references"}'
+
+# Delete an edge by ID
+curl -X DELETE "http://127.0.0.1:8767/graph/edge?id=<edge-uuid>"
 ```
 
 ## Server Authentication (#409)
