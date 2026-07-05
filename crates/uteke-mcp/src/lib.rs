@@ -128,6 +128,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_graph_add_edge(),
                 tool_graph_remove_edge(),
                 tool_room_recall(),
+                tool_room_memories(),
             ]
         })),
 
@@ -157,6 +158,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments)?,
                 "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
+                "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -401,6 +403,22 @@ fn tool_room_recall() -> Value {
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 }
             },
             "required": ["room_id", "query"]
+        }
+    })
+}
+
+fn tool_room_memories() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_memories",
+        "description": "List all memories in a room chronologically (by joined_at). Cross-namespace: returns memories from all namespaces. Use this for full timeline listing without semantic ranking.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier" },
+                "author": { "type": "string", "description": "Optional author filter" },
+                "limit": { "type": "integer", "description": "Max results (default 100)", "default": 100 }
+            },
+            "required": ["room_id"]
         }
     })
 }
@@ -1005,6 +1023,41 @@ fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .map(|sr| format!("[{:.2}] {}", sr.score, sr.memory.content))
         .collect();
 
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+    let author = args["author"].as_str();
+    let limit = args["limit"].as_u64().unwrap_or(100) as usize;
+
+    let memories = uteke
+        .recall_room(room_id, author, limit)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if memories.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No memories found in room.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = memories
+        .iter()
+        .map(|m| {
+            let created = m.created_at.format("%Y-%m-%d %H:%M");
+            format!("[{created} | {}] {}", m.namespace, m.content)
+        })
+        .collect();
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
