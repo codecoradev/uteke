@@ -475,11 +475,13 @@ impl super::Store {
                     .iter()
                     .take(3)
                     .map(|m| {
-                        let s = m.content.clone();
-                        if s.len() > 100 {
-                            format!("{}...", &s[..97])
+                        let content = m.content.clone();
+                        // Use char count, not byte index, to avoid panic on multi-byte Unicode
+                        if content.chars().count() > 100 {
+                            let truncated: String = content.chars().take(97).collect();
+                            format!("{}...", truncated)
                         } else {
-                            s
+                            content
                         }
                     })
                     .collect();
@@ -584,11 +586,13 @@ impl super::Store {
             .iter()
             .take(5)
             .map(|m| {
-                let s = m.content.clone();
-                if s.len() > 120 {
-                    format!("{}...", &s[..117])
+                let content = m.content.clone();
+                // Use char count, not byte index, to avoid panic on multi-byte Unicode
+                if content.chars().count() > 120 {
+                    let truncated: String = content.chars().take(117).collect();
+                    format!("{}...", truncated)
                 } else {
-                    s
+                    content
                 }
             })
             .collect();
@@ -599,11 +603,13 @@ impl super::Store {
             .filter(|m| m.pinned)
             .take(5)
             .map(|m| {
-                let s = m.content.clone();
-                if s.len() > 120 {
-                    format!("{}...", &s[..117])
+                let content = m.content.clone();
+                // Use char count, not byte index, to avoid panic on multi-byte Unicode
+                if content.chars().count() > 120 {
+                    let truncated: String = content.chars().take(117).collect();
+                    format!("{}...", truncated)
                 } else {
-                    s
+                    content
                 }
             })
             .collect();
