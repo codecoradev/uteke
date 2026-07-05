@@ -17,8 +17,11 @@
 
 ## [Unreleased]
 
+## [0.6.6] — 2026-07-05
+
 ### Added
 - **HTTP graph mutation endpoints (#542)** — `POST /graph/edge` creates a new typed edge between two memories; `DELETE /graph/edge` removes an edge by its ID. Enables programmatic graph editing without the CLI.
+- **Tags, pin, timeline, and edges HTTP endpoints (#566)** — 7 new REST endpoints: `GET /tags`, `POST /tags/rename`, `POST /tags/delete`, `POST /pin`, `POST /unpin`, `GET /timeline`, `GET /edges`. Enables full tag management, memory pinning, audit timeline, and graph edge queries via HTTP.
 
 ### Fixed
 - **Cross-process file lock (#543)** — usearch index is now protected by a file lock to prevent race conditions when multiple uteke processes access the same database concurrently.
@@ -28,11 +31,11 @@
 - **Room document missing sections for note/insight/reference/event types (#547)** — document sections for non-core memory types (note, insight, reference, event) are now generated correctly in room documents.
 - **documents_fts migration repair (#549)** — FTS5 virtual table is rebuilt if missing or corrupted during migration, preventing `no such table: documents_fts` errors.
 - **Document delete by slug (#550)** — `uteke doc delete` now correctly resolves documents by slug (not just UUID), matching the behavior of `get` and `list`.
+- **Room summary panic on multi-byte Unicode (#565)** — `room_summary()` panicked on Unicode chars (≤, ≥, etc.) because of byte-index slicing. Replaced with char-based truncation (`chars().take(N).collect()`).
 
 ### Docs
 - **HTTP API documentation for `/recent` and graph mutation endpoints** — `GET /recent` (with query params), `GET /graph`, `POST /graph/edge`, `DELETE /graph/edge` added to HTTP Endpoints table. Graph API section expanded with mutation curl examples.
 - **VitePress sidebar entries** — added Document Commands and Graph API links to docs sidebar.
-- **Version bump 0.6.4 → 0.6.5** — all version strings synchronized across Cargo.toml, README.md, README.id.md, AGENT.md, and cli-reference.md.
 
 ## [0.6.3] — 2026-07-01
 

@@ -284,6 +284,30 @@ pub const STRICT_THRESHOLD: f32 = 0.5;
 /// Used as fallback when [recall] min_score is not configured.
 pub const DEFAULT_MIN_SCORE: f32 = 0.0;
 
+// ── Tag Management Types ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct TagRenameRequest {
+    pub old: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    pub new: String,
+}
+
+#[derive(Deserialize)]
+pub struct TagDeleteRequest {
+    pub tag: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+// ── Pin Types ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PinRequest {
+    pub id: String,
+}
+
 // ── Graph Types ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

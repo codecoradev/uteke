@@ -1052,6 +1052,129 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Tags: List with counts ───────────────────────────────────────
+        (Method::Get, p) if p == "/tags" || p.starts_with("/tags?") => {
+            let ns = parse_query_namespace(&path);
+            match uteke.tags_with_counts(ns.as_deref()) {
+                Ok(tags) => ctx.ok_response_for(req, &tags),
+                Err(e) => {
+                    error!("Tags list error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
+        // ── Tags: Rename ─────────────────────────────────────────────────
+        (Method::Post, "/tags/rename") => match read_body::<TagRenameRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let count =
+                    match uteke.rename_tag(&req_data.old, &req_data.new, ns(&req_data.namespace)) {
+                        Ok(count) => count,
+                        Err(e) => {
+                            error!("Tag rename error: {e}");
+                            return ctx.error_response_for(req, 500, "Internal server error");
+                        }
+                    };
+                ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "renamed": count > 0,
+                        "count": count,
+                        "old": req_data.old,
+                        "new": req_data.new,
+                    }),
+                )
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Tags: Delete ─────────────────────────────────────────────────
+        (Method::Post, "/tags/delete") => match read_body::<TagDeleteRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let count = match uteke.delete_tag(&req_data.tag, ns(&req_data.namespace)) {
+                    Ok(count) => count,
+                    Err(e) => {
+                        error!("Tag delete error: {e}");
+                        return ctx.error_response_for(req, 500, "Internal server error");
+                    }
+                };
+                ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "deleted": count > 0,
+                        "count": count,
+                        "tag": req_data.tag,
+                    }),
+                )
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Pin ───────────────────────────────────────────────────────────
+        (Method::Post, "/pin") => match read_body::<PinRequest>(req.as_reader()) {
+            Ok(req_data) => match uteke.pin(&req_data.id) {
+                Ok(true) => ctx.ok_response_for(req, &serde_json::json!({"pinned": req_data.id})),
+                Ok(false) => {
+                    ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
+                }
+                Err(e) => {
+                    error!("Pin error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            },
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Unpin ─────────────────────────────────────────────────────────
+        (Method::Post, "/unpin") => match read_body::<PinRequest>(req.as_reader()) {
+            Ok(req_data) => match uteke.unpin(&req_data.id) {
+                Ok(true) => ctx.ok_response_for(req, &serde_json::json!({"unpinned": req_data.id})),
+                Ok(false) => {
+                    ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
+                }
+                Err(e) => {
+                    error!("Unpin error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            },
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Timeline ─────────────────────────────────────────────────────
+        (Method::Get, p) if p.starts_with("/timeline?") || p.starts_with("/timeline?id=") => {
+            let query = p.split('?').nth(1).unwrap_or("");
+            let id = match parse_query_param(query, "id") {
+                Some(id) => id,
+                None => return ctx.error_response_for(req, 400, "Missing 'id' query parameter"),
+            };
+            let limit = parse_query_param(query, "limit")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(50);
+            match uteke.timeline(&id, limit) {
+                Ok(events) => ctx.ok_response_for(req, &events),
+                Err(e) => {
+                    error!("Timeline error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
+        // ── Edges ────────────────────────────────────────────────────────
+        (Method::Get, p) if p.starts_with("/edges?") || p.starts_with("/edges?id=") => {
+            let query = p.split('?').nth(1).unwrap_or("");
+            let id = match parse_query_param(query, "id") {
+                Some(id) => id,
+                None => return ctx.error_response_for(req, 400, "Missing 'id' query parameter"),
+            };
+            match uteke.edges_for(&id) {
+                Ok(edges) => ctx.ok_response_for(req, &edges),
+                Err(e) => {
+                    error!("Edges error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
         // ── 404 ─────────────────────────────────────────────────────────
         _ => ctx.error_response_for(req, 404, "Not found"),
     }
