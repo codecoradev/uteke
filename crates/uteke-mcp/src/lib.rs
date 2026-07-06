@@ -148,6 +148,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_context(),
                 tool_dream(),
                 tool_doc_create(),
+                tool_doc_update(),
                 tool_doc_get(),
                 tool_doc_list(),
                 tool_doc_search(),
@@ -179,6 +180,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_context" => exec_context(uteke, &arguments)?,
                 "uteke_dream" => exec_dream(uteke, &arguments)?,
                 "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
+                "uteke_doc_update" => exec_doc_update(uteke, &arguments)?,
                 "uteke_doc_get" => exec_doc_get(uteke, &arguments)?,
                 "uteke_doc_list" => exec_doc_list(uteke, &arguments)?,
                 "uteke_doc_search" => exec_doc_search(uteke, &arguments)?,
@@ -316,6 +318,25 @@ fn tool_doc_create() -> Value {
                 "parent": { "type": "string", "description": "Parent document slug for hierarchy (optional)" }
             },
             "required": ["slug", "content"]
+        }
+    })
+}
+
+fn tool_doc_update() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_update",
+        "description": "Partially update a document. Changed content triggers automatic chunk rebuild. Title/tags/metadata-only updates skip chunk rebuild.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Document UUID or slug" },
+                "title": { "type": "string", "description": "New title (optional)" },
+                "content": { "type": "string", "description": "New markdown content (optional, triggers chunk rebuild)" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Replace tags (optional)" },
+                "metadata": { "type": "object", "description": "Replace metadata (optional)" },
+                "namespace": { "type": "string", "description": "Namespace (optional, default: configured)" }
+            },
+            "required": ["id"]
         }
     })
 }
@@ -747,6 +768,60 @@ fn exec_doc_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         }],
         is_error: false,
     })
+}
+
+fn exec_doc_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id = args["id"].as_str().ok_or("Missing 'id'")?;
+    let title = args["title"].as_str();
+    let content = args["content"].as_str();
+    let namespace = args["namespace"].as_str();
+    let tags: Option<Vec<String>> = args["tags"].as_array().map(|a| {
+        a.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect()
+    });
+    let metadata = args.get("metadata").filter(|v| !v.is_null()).cloned();
+
+    match uteke.doc_update(
+        id,
+        namespace,
+        title,
+        content,
+        tags.as_deref(),
+        metadata.as_ref(),
+    ) {
+        Ok(Some(doc)) => {
+            let chunks_hint = if content.is_some() {
+                " (chunks rebuilt)"
+            } else {
+                ""
+            };
+            Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: format!(
+                        "✓ Document '{}' updated to v{}{chunks_hint}",
+                        doc.slug, doc.version
+                    ),
+                }],
+                is_error: false,
+            })
+        }
+        Ok(None) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Document '{id}' not found"),
+            }],
+            is_error: false,
+        }),
+        Err(e) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Error: {e}"),
+            }],
+            is_error: true,
+        }),
+    }
 }
 
 fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
