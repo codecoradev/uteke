@@ -917,6 +917,101 @@ impl Uteke {
         self.store.get_document(id_or_slug)
     }
 
+    /// Partially update a document — only provided fields are changed.
+    ///
+    /// Content changes trigger chunk rebuild (old chunks deleted, new ones
+    /// embedded and indexed). Version is always incremented.
+    /// Returns the updated document, or `None` if not found.
+    pub fn doc_update(
+        &self,
+        id_or_slug: &str,
+        namespace: Option<&str>,
+        title: Option<&str>,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<Option<Document>, Error> {
+        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Resolve document.
+        let doc = match self.doc_get(id_or_slug, namespace)? {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        let doc_id = doc.id.clone();
+
+        // Partial update in SQLite.
+        let updated = self
+            .store
+            .update_document(&doc_id, title, content, tags, metadata)?;
+
+        let updated = match updated {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        // If content was changed, rebuild chunks.
+        if let Some(content_text) = content {
+            let old_chunk_ids = self
+                .store
+                .delete_chunks_for_documents(std::slice::from_ref(&doc_id))?;
+
+            self.ensure_embedder()?;
+            let embedder = self
+                .embedder
+                .lock()
+                .map_err(|_| Error::lock("embedder lock during document update"))?;
+            let embedder = embedder.as_ref().expect("embedder ensured above");
+
+            let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
+            let chunks = crate::chunker::chunk_markdown(content_text, max_chars);
+
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write lock during doc update"))?;
+
+            for old_id in &old_chunk_ids {
+                let key = format!("chunk:{}", old_id);
+                index.remove(&key);
+            }
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                let chunk_id = uuid::Uuid::new_v4().to_string();
+                let embedding = embedder.embed(&chunk.content)?;
+
+                self.store.insert_document_chunk(
+                    &DocumentChunk {
+                        id: chunk_id.clone(),
+                        document_id: doc_id.clone(),
+                        chunk_index: i as i64,
+                        heading: chunk.heading.clone(),
+                        content: chunk.content.clone(),
+                        char_start: chunk.char_start as i64,
+                        char_end: chunk.char_end as i64,
+                        tags: updated.tags.clone(),
+                    },
+                    &embedding,
+                )?;
+
+                let index_key = format!("chunk:{}", chunk_id);
+                if let Err(e) = index.insert(&index_key, &embedding) {
+                    tracing::warn!(
+                        "Failed to insert chunk {} into index during update: {}",
+                        chunk_id,
+                        e
+                    );
+                }
+            }
+
+            if let Err(e) = index.save() {
+                tracing::warn!("Failed to persist index after doc update: {}", e);
+            }
+        }
+
+        tracing::info!("Document '{id_or_slug}' updated in namespace '{ns}'");
+        Ok(Some(updated))
+    }
+
     /// List documents in a namespace.
     pub fn doc_list(
         &self,

@@ -1003,6 +1003,39 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             Err(e) => ctx.error_response_for(req, 400, e),
         },
 
+        // ── Document: Update (partial) ────────────────────────────────
+        (Method::Post, "/doc/update") => match read_body::<DocUpdateRequest>(req.as_reader()) {
+            Ok(req_data) => match resolve_doc_id_update(&req_data) {
+                Ok(id_or_slug) => {
+                    let title = req_data.title.as_deref();
+                    let content = req_data.content.as_deref();
+                    let tags = req_data.tags.as_deref();
+                    let metadata = req_data.metadata.as_ref();
+                    match uteke.doc_update(
+                        id_or_slug,
+                        ns(&req_data.namespace),
+                        title,
+                        content,
+                        tags,
+                        metadata,
+                    ) {
+                        Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
+                        Ok(None) => ctx.error_response_for(
+                            req,
+                            404,
+                            format!("document not found: {id_or_slug}"),
+                        ),
+                        Err(e) => {
+                            error!("doc update error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            },
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
         // ── Document: List ─────────────────────────────────────────────
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
             Ok(params) => {

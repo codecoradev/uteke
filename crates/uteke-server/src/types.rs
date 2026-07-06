@@ -61,6 +61,22 @@ pub struct DocMoveRequest {
     pub namespace: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct DocUpdateRequest {
+    pub id: Option<String>,
+    pub slug: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
 pub fn default_search_mode() -> String {
     "hybrid".to_string()
 }
@@ -76,6 +92,14 @@ pub fn resolve_doc_id(req: &DocGetRequest) -> Result<&str, &'static str> {
 }
 
 pub fn resolve_doc_id_move(req: &DocMoveRequest) -> Result<&str, &'static str> {
+    match (&req.id, &req.slug) {
+        (Some(id), _) => Ok(id),
+        (_, Some(slug)) => Ok(slug),
+        _ => Err("provide either 'id' or 'slug'"),
+    }
+}
+
+pub fn resolve_doc_id_update(req: &DocUpdateRequest) -> Result<&str, &'static str> {
     match (&req.id, &req.slug) {
         (Some(id), _) => Ok(id),
         (_, Some(slug)) => Ok(slug),
