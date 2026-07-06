@@ -46,7 +46,7 @@ uteke stats
 > Listens on localhost only by default. See [Docker docs](docs/docker.md) for auth setup.
 
 ```bash
-# One-liner (model pre-baked in image)
+# One-liner (model downloads on first run, cached in volume)
 docker run -d --name uteke -p 127.0.0.1:8767:8767 -v uteke-data:/data \
   ghcr.io/codecoradev/uteke:latest
 

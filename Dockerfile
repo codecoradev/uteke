@@ -40,10 +40,7 @@ COPY --from=builder /build/uteke /usr/local/bin/uteke
 COPY --from=builder /build/uteke-serve /usr/local/bin/uteke-serve
 COPY --from=builder /build/uteke-mcp /usr/local/bin/uteke-mcp
 
-# Copy embedding model (pre-baked by CI)
-COPY models/ /data/models/embeddinggemma-q4
-
-# Copy entrypoint script (handles lazy model download)
+# Copy entrypoint script (handles lazy model download on first run)
 COPY docker-entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
