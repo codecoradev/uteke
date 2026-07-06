@@ -489,6 +489,26 @@ pub enum DocCommands {
         #[arg(long, default_value = "hybrid")]
         mode: String,
     },
+    /// Partially update a document — only provided fields are changed (#589)
+    Update {
+        /// Document slug or ID
+        id_or_slug: String,
+        /// New title (optional — no chunk rebuild)
+        #[arg(long)]
+        title: Option<String>,
+        /// New content (triggers chunk rebuild)
+        #[arg(long)]
+        content: Option<String>,
+        /// Read new content from file (use - for stdin; triggers chunk rebuild)
+        #[arg(long)]
+        file: Option<String>,
+        /// Replace tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Replace metadata (JSON string)
+        #[arg(long)]
+        metadata: Option<String>,
+    },
     /// Delete a document by ID (cascades to children, #438)
     Delete {
         /// Document ID
