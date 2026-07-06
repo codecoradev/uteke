@@ -168,6 +168,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_tags_list(),
                 tool_tags_rename(),
                 tool_tags_delete(),
+                tool_pin(),
+                tool_unpin(),
             ]
         })),
 
@@ -209,6 +211,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_tags_list" => exec_tags_list(uteke, &arguments)?,
                 "uteke_tags_rename" => exec_tags_rename(uteke, &arguments)?,
                 "uteke_tags_delete" => exec_tags_delete(uteke, &arguments)?,
+                "uteke_pin" => exec_pin(uteke, &arguments)?,
+                "uteke_unpin" => exec_unpin(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -634,6 +638,34 @@ fn tool_tags_delete() -> Value {
                 "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
             },
             "required": ["tag"]
+        }
+    })
+}
+
+fn tool_pin() -> Value {
+    serde_json::json!({
+        "name": "uteke_pin",
+        "description": "Pin a memory so it never decays. Pinned memories are immune to aging and pruning during maintenance cycles.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The memory ID (UUID)" }
+            },
+            "required": ["id"]
+        }
+    })
+}
+
+fn tool_unpin() -> Value {
+    serde_json::json!({
+        "name": "uteke_unpin",
+        "description": "Unpin a memory, allowing it to decay normally.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "The memory ID (UUID)" }
+            },
+            "required": ["id"]
         }
     })
 }
@@ -1675,4 +1707,48 @@ fn exec_tags_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         }],
         is_error: false,
     })
+}
+
+fn exec_pin(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id = args["id"].as_str().ok_or("Missing 'id'")?;
+
+    match uteke.pin(id) {
+        Ok(true) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Pinned memory: {id}"),
+            }],
+            is_error: false,
+        }),
+        Ok(false) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Memory not found: {id}"),
+            }],
+            is_error: true,
+        }),
+        Err(e) => Err(format!("Failed: {e}")),
+    }
+}
+
+fn exec_unpin(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id = args["id"].as_str().ok_or("Missing 'id'")?;
+
+    match uteke.unpin(id) {
+        Ok(true) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Unpinned memory: {id}"),
+            }],
+            is_error: false,
+        }),
+        Ok(false) => Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Memory not found: {id}"),
+            }],
+            is_error: true,
+        }),
+        Err(e) => Err(format!("Failed: {e}")),
+    }
 }
