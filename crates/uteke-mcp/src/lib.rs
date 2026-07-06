@@ -8,13 +8,24 @@ use serde_json::Value;
 use uteke_core::Uteke;
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
+//
+// Per JSON-RPC 2.0 spec:
+//   - "result" and "error" are mutually exclusive; omit the absent one.
+//   - Notifications (id is None/absent) MUST NOT receive a response.
 
 #[derive(Serialize)]
-pub struct JsonRpcResponse {
-    pub jsonrpc: &'static str,
-    pub id: Value,
-    pub result: Option<Value>,
-    pub error: Option<JsonRpcError>,
+#[serde(untagged)]
+pub enum JsonRpcResponse {
+    Success {
+        jsonrpc: &'static str,
+        id: Value,
+        result: Value,
+    },
+    Error {
+        jsonrpc: &'static str,
+        id: Value,
+        error: JsonRpcError,
+    },
 }
 
 #[derive(Serialize)]
@@ -51,44 +62,61 @@ struct ToolResult {
 /// Handle a single MCP JSON-RPC request (#381).
 ///
 /// This is the shared handler used by both the stdio binary and the
-/// HTTP endpoint. Returns a `JsonRpcResponse` ready for serialization.
-pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> String {
+/// HTTP endpoint. Returns `Some(JsonRpcResponse)` for regular requests
+/// and `None` for notifications (which must not receive a response
+/// per JSON-RPC 2.0 §4.1).
+pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
     let req: JsonRpcRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
         Err(e) => {
-            let resp = JsonRpcResponse {
+            let resp = JsonRpcResponse::Error {
                 jsonrpc: "2.0",
                 id: Value::Null,
-                result: None,
-                error: Some(JsonRpcError {
+                error: JsonRpcError {
                     code: -32700,
                     message: format!("Parse error: {e}"),
-                }),
+                },
             };
-            return serde_json::to_string(&resp).unwrap_or_default();
+            return Some(serde_json::to_string(&resp).unwrap_or_default());
         }
     };
 
-    let id = req.id.clone().unwrap_or(Value::Null);
+    let is_notification = req.id.is_none();
+    let id = req.id.unwrap_or(Value::Null);
 
     match handle_request(uteke, &req.method, req.params) {
-        Ok(result) => serde_json::to_string(&JsonRpcResponse {
-            jsonrpc: "2.0",
-            id,
-            result: Some(result),
-            error: None,
-        })
-        .unwrap_or_default(),
-        Err(msg) => serde_json::to_string(&JsonRpcResponse {
-            jsonrpc: "2.0",
-            id,
-            result: None,
-            error: Some(JsonRpcError {
-                code: -32603,
-                message: msg,
-            }),
-        })
-        .unwrap_or_default(),
+        Ok(result) => {
+            if is_notification {
+                // Notifications must not receive any response per JSON-RPC 2.0 §4.1.
+                None
+            } else {
+                Some(
+                    serde_json::to_string(&JsonRpcResponse::Success {
+                        jsonrpc: "2.0",
+                        id,
+                        result,
+                    })
+                    .unwrap_or_default(),
+                )
+            }
+        }
+        Err(msg) => {
+            if is_notification {
+                None
+            } else {
+                Some(
+                    serde_json::to_string(&JsonRpcResponse::Error {
+                        jsonrpc: "2.0",
+                        id,
+                        error: JsonRpcError {
+                            code: -32603,
+                            message: msg,
+                        },
+                    })
+                    .unwrap_or_default(),
+                )
+            }
+        }
     }
 }
 

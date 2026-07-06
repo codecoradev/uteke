@@ -916,16 +916,33 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             if let Err(e) = req.as_reader().take(MAX_MCP_BODY).read_to_string(&mut body) {
                 return ctx.error_response_for(req, 400, format!("Failed to read body: {e}"));
             }
-            let response = uteke_mcp::handle_jsonrpc(&uteke, &body);
-            tiny_http::Response::from_string(response)
-                .with_header(
-                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+            // None = notification (no response per JSON-RPC 2.0 §4.1) → 204 No Content
+            match uteke_mcp::handle_jsonrpc(&uteke, &body) {
+                Some(response) => tiny_http::Response::from_string(response)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"application/json"[..],
+                        )
                         .unwrap(),
-                )
-                .with_header(
-                    tiny_http::Header::from_bytes(&b"MCP-Protocol-Version"[..], &b"2025-06-18"[..])
+                    )
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"MCP-Protocol-Version"[..],
+                            &b"2025-06-18"[..],
+                        )
                         .unwrap(),
-                )
+                    ),
+                None => tiny_http::Response::from_string("")
+                    .with_status_code(204)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"MCP-Protocol-Version"[..],
+                            &b"2025-06-18"[..],
+                        )
+                        .unwrap(),
+                    ),
+            }
         }
 
         // ── Document: Create / Upsert ────────────────────────────────────
