@@ -157,8 +157,14 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_graph(),
                 tool_graph_add_edge(),
                 tool_graph_remove_edge(),
+                tool_room_create(),
+                tool_room_list(),
+                tool_room_delete(),
                 tool_room_recall(),
                 tool_room_memories(),
+                tool_room_stats(),
+                tool_room_summary(),
+                tool_room_document(),
             ]
         })),
 
@@ -189,8 +195,14 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_graph" => exec_graph(uteke, &arguments)?,
                 "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments)?,
                 "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments)?,
+                "uteke_room_create" => exec_room_create(uteke, &arguments)?,
+                "uteke_room_list" => exec_room_list(uteke, &arguments)?,
+                "uteke_room_delete" => exec_room_delete(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
+                "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
+                "uteke_room_summary" => exec_room_summary(uteke, &arguments)?,
+                "uteke_room_document" => exec_room_document(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -484,6 +496,91 @@ fn tool_room_memories() -> Value {
                 "room_id": { "type": "string", "description": "Room identifier" },
                 "author": { "type": "string", "description": "Optional author filter" },
                 "limit": { "type": "integer", "description": "Max results (default 100)", "default": 100 }
+            },
+            "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_create() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_create",
+        "description": "Create a new room for collaborative memory. A room groups memories by topic with participant tracking.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Unique room identifier" },
+                "title": { "type": "string", "description": "Room title (optional)" },
+                "namespace": { "type": "string", "description": "Namespace for the room (default: 'default')" }
+            },
+            "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_list() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_list",
+        "description": "List all rooms, optionally filtered by namespace.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": { "type": "string", "description": "Filter by namespace (omit for all)" }
+            }
+        }
+    })
+}
+
+fn tool_room_delete() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_delete",
+        "description": "Delete a room. Removes room links from memories but preserves the memories themselves.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier to delete" }
+            },
+            "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_stats() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_stats",
+        "description": "Show room statistics including memory count, participant list, and activity timestamps.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier" }
+            },
+            "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_summary() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_summary",
+        "description": "Generate a topic clustering summary for a room. Returns topic clusters, participants, time range, top tags, recent decisions, and pinned highlights.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier" }
+            },
+            "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_document() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_document",
+        "description": "Generate a structured document from room memories, grouped by memory type (decisions, facts, procedures, preferences, etc.). Useful for producing meeting minutes or decision records.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier" }
             },
             "required": ["room_id"]
         }
@@ -1202,6 +1299,230 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
             format!("[{created} | {}] {}", m.namespace, m.content)
         })
         .collect();
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+    let title = args["title"].as_str();
+    let namespace = args["namespace"].as_str().unwrap_or("default");
+
+    uteke
+        .create_room(room_id, title, namespace)
+        .map_err(|e| format!("Failed to create room: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("Room created: {room_id} (namespace: {namespace})"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let namespace = args["namespace"].as_str();
+
+    let rooms = uteke
+        .list_rooms(namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if rooms.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No rooms found.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = rooms
+        .iter()
+        .map(|r| {
+            let title = r.title.as_deref().unwrap_or("(no title)");
+            format!("[{}] {} (ns: {})", r.id, title, r.namespace)
+        })
+        .collect();
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("Rooms ({}):\n{}", rooms.len(), lines.join("\n")),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+
+    uteke
+        .delete_room(room_id)
+        .map_err(|e| format!("Failed to delete room: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("Room deleted: {room_id}"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+
+    let stats = uteke
+        .room_stats(room_id)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let stats = match stats {
+        Some(s) => s,
+        None => {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: format!("Room not found: {room_id}"),
+                }],
+                is_error: false,
+            });
+        }
+    };
+
+    let text = format!(
+        "Room: {} (title: {})\nMemories: {}\nParticipants ({}): {}\nCreated: {}\nLast activity: {}",
+        stats.room_id,
+        stats.title.as_deref().unwrap_or("(none)"),
+        stats.memory_count,
+        stats.participant_count,
+        stats.participants.join(", "),
+        stats.created_at,
+        stats.last_activity.as_deref().unwrap_or("N/A"),
+    );
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_summary(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+
+    let summary = uteke
+        .room_summary(room_id)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let summary = match summary {
+        Some(s) => s,
+        None => {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: format!("Room not found: {room_id}"),
+                }],
+                is_error: false,
+            });
+        }
+    };
+
+    let mut lines = vec![format!(
+        "Room: {} — {} memories, {} participants ({}..{})",
+        summary.room_id,
+        summary.total_memories,
+        summary.participants.len(),
+        summary.time_range.earliest,
+        summary.time_range.latest,
+    )];
+
+    if !summary.clusters.is_empty() {
+        lines.push("".to_string());
+        lines.push("Topic Clusters:".to_string());
+        for c in &summary.clusters {
+            lines.push(format!(
+                "  [{:.1}] {} ({} memories, tags: {})",
+                c.score,
+                c.topic,
+                c.memory_count,
+                c.tags.join(", "),
+            ));
+        }
+    }
+
+    if !summary.recent_decisions.is_empty() {
+        lines.push("".to_string());
+        lines.push("Recent Decisions:".to_string());
+        for d in &summary.recent_decisions {
+            lines.push(format!("  - {d}"));
+        }
+    }
+
+    if !summary.pinned_highlights.is_empty() {
+        lines.push("".to_string());
+        lines.push("Pinned Highlights:".to_string());
+        for h in &summary.pinned_highlights {
+            lines.push(format!("  * {h}"));
+        }
+    }
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+
+    let doc = uteke
+        .room_document(room_id)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let doc = match doc {
+        Some(d) => d,
+        None => {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: format!("Room not found: {room_id}"),
+                }],
+                is_error: false,
+            });
+        }
+    };
+
+    let mut lines = vec![format!(
+        "Document for: {} (generated: {})",
+        doc.room_id, doc.generated_at,
+    )];
+
+    for section in &doc.sections {
+        lines.push("".to_string());
+        lines.push(format!("{} {}", section.icon, section.heading));
+        for entry in &section.entries {
+            lines.push(format!(
+                "  [{}] {} — {}",
+                entry.author, entry.created_at, entry.content,
+            ));
+            if !entry.tags.is_empty() {
+                lines.push(format!("    tags: {}", entry.tags.join(", ")));
+            }
+        }
+    }
+
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
