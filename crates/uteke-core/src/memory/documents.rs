@@ -253,6 +253,97 @@ impl super::Store {
         Ok(doc_id)
     }
 
+    /// Partially update a document — only provided fields are changed.
+    ///
+    /// Returns the updated document (full). Returns `None` if not found.
+    /// Version is always incremented. Chunks are NOT rebuilt here
+    /// (caller must handle re-chunking if content changed).
+    pub fn update_document(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<Option<Document>, Error> {
+        let existing = match self.get_document(id)? {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+
+        let new_title = title.unwrap_or(&existing.title);
+        let new_tags = match tags {
+            Some(t) => serde_json::to_string(t).unwrap_or_else(|_| "[]".into()),
+            None => serde_json::to_string(&existing.tags).unwrap_or_else(|_| "[]".into()),
+        };
+        let new_meta = match metadata {
+            Some(m) => m.to_string(),
+            None => existing.metadata.to_string(),
+        };
+        let new_version = existing.version + 1;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Build SET clause dynamically — only update columns that changed.
+        let set_title = title.is_some();
+        let set_content = content.is_some();
+        let set_tags = tags.is_some();
+        let set_meta = metadata.is_some();
+
+        // Always update version and updated_at.
+        let mut set_clauses = vec!["version = ?1".to_string(), "updated_at = ?2".to_string()];
+        let mut param_idx = 3usize;
+
+        if set_title {
+            set_clauses.push(format!("title = ?{param_idx}"));
+            param_idx += 1;
+        }
+        if set_content {
+            set_clauses.push(format!("content = ?{param_idx}"));
+            param_idx += 1;
+        }
+        if set_tags {
+            set_clauses.push(format!("tags = ?{param_idx}"));
+            param_idx += 1;
+        }
+        if set_meta {
+            set_clauses.push(format!("metadata = ?{param_idx}"));
+            param_idx += 1;
+        }
+
+        let set_sql = set_clauses.join(", ");
+        let sql = format!("UPDATE documents SET {set_sql} WHERE id = ?{param_idx}");
+
+        // Build params dynamically.
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(new_version), Box::new(now)];
+        if set_title {
+            param_values.push(Box::new(new_title.to_string()));
+        }
+        if let Some(c) = content {
+            param_values.push(Box::new(c.to_string()));
+        }
+        if let Some(t) = tags {
+            param_values.push(Box::new(
+                serde_json::to_string(t).unwrap_or_else(|_| "[]".into()),
+            ));
+        }
+        if let Some(m) = metadata {
+            param_values.push(Box::new(m.to_string()));
+        }
+        // WHERE id = ?
+        param_values.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|v| v.as_ref()).collect();
+
+        self.conn
+            .execute(&sql, param_refs.as_slice())
+            .map_err(|e| Error::db("update document (partial)", e))?;
+
+        // Fetch and return the updated document.
+        self.get_document(id)
+    }
+
     /// Insert a document chunk with embedding (#406).
     pub fn insert_document_chunk(
         &self,
