@@ -306,6 +306,104 @@ pub(crate) fn run(
             }
         }
 
+        DocCommands::Update {
+            id_or_slug,
+            title,
+            content,
+            file,
+            tags,
+            metadata,
+        } => {
+            // At least one field must be provided.
+            if title.is_none()
+                && content.is_none()
+                && file.is_none()
+                && tags.is_empty()
+                && metadata.is_none()
+            {
+                return Err(
+                    "Provide at least one field to update: --title, --content, --file, --tags, --metadata"
+                        .into(),
+                );
+            }
+
+            // Resolve content: --content, --file, or stdin.
+            let doc_content = if let Some(c) = content {
+                Some(c.clone())
+            } else if let Some(f) = file {
+                let text = if f == "-" {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+                    buf
+                } else {
+                    std::fs::read_to_string(f).map_err(|e| format!("Failed to read file: {e}"))?
+                };
+                Some(text)
+            } else {
+                None
+            };
+
+            // Parse metadata JSON if provided.
+            let meta_value: Option<serde_json::Value> = match metadata {
+                Some(ref json_str) => Some(
+                    serde_json::from_str(json_str)
+                        .map_err(|e| format!("Invalid metadata JSON: {e}"))?,
+                ),
+                None => None,
+            };
+
+            let title_ref = title.as_deref();
+            let content_ref = doc_content.as_deref();
+            let tag_refs: Option<&[String]> = if tags.is_empty() {
+                None
+            } else {
+                Some(tags.as_slice())
+            };
+            let meta_ref = meta_value.as_ref();
+
+            let updated = uteke
+                .doc_update(id_or_slug, ns, title_ref, content_ref, tag_refs, meta_ref)
+                .map_err(|e| format!("Failed to update document: {e}"))?;
+
+            match updated {
+                Some(d) => {
+                    let mut changed = Vec::new();
+                    if title.is_some() {
+                        changed.push("title");
+                    }
+                    if content.is_some() || file.is_some() {
+                        changed.push("content");
+                    }
+                    if !tags.is_empty() {
+                        changed.push("tags");
+                    }
+                    if metadata.is_some() {
+                        changed.push("metadata");
+                    }
+
+                    if cli.json {
+                        println!(
+                            r#"{{"slug": "{}", "title": "{}", "version": {}, "updated_fields": {}}}"#,
+                            d.slug,
+                            d.title,
+                            d.version,
+                            serde_json::to_string(&changed).unwrap_or_default()
+                        );
+                    } else {
+                        println!("✓ Document '{id_or_slug}' updated (v{})", d.version);
+                        println!("  Title: {}", d.title);
+                        println!("  Fields: {}", changed.join(", "));
+                    }
+                }
+                None => {
+                    return Err(format!("Document '{id_or_slug}' not found"));
+                }
+            }
+        }
+
         DocCommands::Delete { id } => {
             let (deleted, subtree_size) = uteke
                 .doc_delete(id, ns)

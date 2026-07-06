@@ -794,6 +794,40 @@ uteke doc search "API reference" --mode fts --limit 5
 | `--mode <mode>` | `hybrid` (default), `semantic`, or `fts` |
 | `--limit <n>` | Max results (default: 5) |
 
+### `uteke doc update`
+
+Partially update a document — only provided fields are changed (#589). Content changes trigger chunk rebuild; metadata-only or title-only updates skip it.
+
+```bash
+# Update title only (no chunk rebuild)
+uteke doc update architecture --title "New Architecture Guide"
+
+# Update content from file (triggers chunk rebuild)
+uteke doc update architecture --file updated-guide.md
+
+# Update content from stdin
+echo "# New content" | uteke doc update architecture --file -
+
+# Replace tags
+uteke doc update architecture --tags wiki,tech,v2
+
+# Replace metadata
+uteke doc update architecture --metadata '{"draft": false, "reviewer": "CTO"}'
+
+# Multiple fields at once
+uteke doc update architecture --title "Final Guide" --tags wiki,published
+```
+
+| Flag | Description |
+|------|-------------|
+| `--title <title>` | New title (no chunk rebuild) |
+| `--content <text>` | New content (triggers chunk rebuild) |
+| `--file <path>` | Read new content from file (`-` for stdin; triggers chunk rebuild) |
+| `--tags <tags>` | Replace tags (comma-separated) |
+| `--metadata <json>` | Replace metadata (JSON string) |
+
+At least one field is required. Omitted fields are left unchanged.
+
 ### `uteke doc move`
 
 Move a document to a new parent or root (#438).
