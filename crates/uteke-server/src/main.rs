@@ -127,6 +127,7 @@ fn main() {
                 println!("  GET  /namespaces           → {{ namespaces }}");
                 println!("  POST /room/create          → {{ room_id, title, namespace }} → {{ created }}");
                 println!("  GET  /room/list            → [?namespace=] → [rooms]");
+                println!("  GET  /room/memories       → ?room_id=<id>[&author=&limit=] → chronological memories");
                 println!("  POST /room/recall          → {{ room_id, query }} → ranked memories");
                 println!("  POST /room/summary         → {{ room_id }} → {{ summary }}");
                 println!("  POST /room/document        → {{ room_id }} → {{ document }}");

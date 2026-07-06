@@ -697,9 +697,44 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
-        // ── Room Recall (semantic) ────────────────────────────────────────
+        // ── Room Memories (chronological listing — GET /room/memories) ────
+        (Method::Get, p) if p == "/room/memories" || p.starts_with("/room/memories?") => {
+            let query_str = p.strip_prefix("/room/memories?");
+            let room_id = query_str.and_then(|q| parse_query_param(q, "room_id"));
+            let room_id = match room_id {
+                Some(id) => id,
+                None => {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "Missing required parameter: room_id. Usage: GET /room/memories?room_id=<id>[&author=<author>&limit=<n>]",
+                    );
+                }
+            };
+            let limit = query_str
+                .and_then(|q| parse_query_param(q, "limit"))
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(100);
+            let author = query_str.and_then(|q| parse_query_param(q, "author"));
+            match uteke.recall_room(&room_id, author.as_deref(), limit) {
+                Ok(memories) => ctx.ok_response_for(req, &memories),
+                Err(e) => {
+                    error!("Internal error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
+        // ── Room Recall (semantic — requires non-empty query) ─────────────
         (Method::Post, "/room/recall") => match read_body::<RoomRecallRequest>(req.as_reader()) {
             Ok(req_data) => {
+                if req_data.query.trim().is_empty() {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "Empty query is not allowed. Use GET /room/memories for chronological listing.",
+                    );
+                }
                 let min_score = req_data.min_score.unwrap_or(
                     ctx.recall_config
                         .as_ref()
@@ -881,16 +916,33 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             if let Err(e) = req.as_reader().take(MAX_MCP_BODY).read_to_string(&mut body) {
                 return ctx.error_response_for(req, 400, format!("Failed to read body: {e}"));
             }
-            let response = uteke_mcp::handle_jsonrpc(&uteke, &body);
-            tiny_http::Response::from_string(response)
-                .with_header(
-                    tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+            // None = notification (no response per JSON-RPC 2.0 §4.1) → 204 No Content
+            match uteke_mcp::handle_jsonrpc(&uteke, &body) {
+                Some(response) => tiny_http::Response::from_string(response)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"Content-Type"[..],
+                            &b"application/json"[..],
+                        )
                         .unwrap(),
-                )
-                .with_header(
-                    tiny_http::Header::from_bytes(&b"MCP-Protocol-Version"[..], &b"2025-06-18"[..])
+                    )
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"MCP-Protocol-Version"[..],
+                            &b"2025-06-18"[..],
+                        )
                         .unwrap(),
-                )
+                    ),
+                None => tiny_http::Response::from_string("")
+                    .with_status_code(204)
+                    .with_header(
+                        tiny_http::Header::from_bytes(
+                            &b"MCP-Protocol-Version"[..],
+                            &b"2025-06-18"[..],
+                        )
+                        .unwrap(),
+                    ),
+            }
         }
 
         // ── Document: Create / Upsert ────────────────────────────────────

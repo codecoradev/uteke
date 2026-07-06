@@ -275,20 +275,6 @@ jobs:
           chmod +x ../binaries/*
           ls -lh ../binaries/
 
-      - name: Download embedding model
-        run: |
-          mkdir -p models/onnx
-          curl -fSL --retry 3 --retry-delay 5 \
-            -o models/onnx/model_q4.onnx \
-            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx"
-          curl -fSL --retry 3 --retry-delay 5 \
-            -o models/onnx/model_q4.onnx_data \
-            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx_data"
-          curl -fSL --retry 3 --retry-delay 5 \
-            -o models/tokenizer.json \
-            "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/tokenizer.json"
-          ls -lh models/onnx/ models/tokenizer.json
-
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v6

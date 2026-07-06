@@ -18,9 +18,27 @@ pub(crate) fn run_init_command(cli: &Cli) -> Result<(), String> {
 /// Dispatch init to the appropriate agent type.
 pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
     match agent {
-        "pi" => init_pi(json),
-        "claude" => init_claude(json),
-        "cursor" => init_cursor(json),
+        "pi" => {
+            if memory_provider {
+                init_pi_memory_provider(json)
+            } else {
+                init_pi(json)
+            }
+        }
+        "claude" => {
+            if memory_provider {
+                init_claude_memory_provider(json)
+            } else {
+                init_claude(json)
+            }
+        }
+        "cursor" => {
+            if memory_provider {
+                init_cursor_memory_provider(json)
+            } else {
+                init_cursor(json)
+            }
+        }
         "hermes" => {
             if memory_provider {
                 init_hermes_memory_provider(json)
@@ -200,6 +218,224 @@ fn init_cursor(json: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Initialize uteke memory-provider integration for Pi (#575).
+///
+/// Installs the pi TypeScript extension that hooks `before_agent_start` to
+/// automatically inject relevant memories into every agent turn — mirroring
+/// the Hermes memory-provider experience. No manual `uteke recall` needed.
+///
+/// Extension template lives in `extensions/pi-memory-provider/`.
+fn init_pi_memory_provider(json: bool) -> Result<(), String> {
+    let ext_dir = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| {
+            let mut p = std::path::PathBuf::from(h);
+            p.push(".pi");
+            p.push("agent");
+            p.push("extensions");
+            p.push("uteke-memory-provider");
+            p
+        })
+        .or_else(|| {
+            std::env::current_dir().ok().map(|d| {
+                d.join(".pi")
+                    .join("extensions")
+                    .join("uteke-memory-provider")
+            })
+        })
+        .ok_or_else(|| "Cannot determine pi extension install directory".to_string())?;
+
+    let installed_to_home = ext_dir.components().any(|c| c.as_os_str() == ".pi");
+
+    std::fs::create_dir_all(&ext_dir)
+        .map_err(|e| format!("Failed to create extension dir: {e}"))?;
+
+    // Templates embedded from extensions/pi-memory-provider/ at build time.
+    let index_ts = include_str!("../../../extensions/pi-memory-provider/index.ts");
+    let package_json = include_str!("../../../extensions/pi-memory-provider/package.json");
+
+    std::fs::write(ext_dir.join("index.ts"), index_ts)
+        .map_err(|e| format!("Failed to write index.ts: {e}"))?;
+    std::fs::write(ext_dir.join("package.json"), package_json)
+        .map_err(|e| format!("Failed to write package.json: {e}"))?;
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "pi",
+            "plugin": "memory-provider",
+            "directory": ext_dir.to_string_lossy(),
+            "files": ["index.ts", "package.json"],
+            "status": "installed",
+            "auto_registered": installed_to_home
+        });
+        println!("{obj}");
+    } else {
+        println!(
+            "✓ Pi memory-provider extension installed: {}/",
+            ext_dir.display()
+        );
+        if installed_to_home {
+            println!("  Location: ~/.pi/agent/extensions/uteke-memory-provider/");
+        } else {
+            println!("  Location: {}/", ext_dir.display());
+        }
+        println!("  Restart pi to activate — memories are auto-recalled every turn.");
+    }
+    Ok(())
+}
+
+/// Initialize uteke memory-provider integration for Claude Code (#575).
+///
+/// Claude Code has no lifecycle hooks, so the approach is:
+/// 1. Generate an enhanced UTEKE.md with stronger auto-recall rules
+/// 2. Wire the MCP server (uteke-mcp) config snippet for claude_desktop_config.json
+///
+/// The MCP server provides `uteke_recall`/`uteke_remember` as first-class tools,
+/// and the rules instruct Claude to recall at task start.
+fn init_claude_memory_provider(json: bool) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+    let md_path = cwd.join("UTEKE.md");
+
+    // Enhanced rules that include MCP wiring instructions
+    let md_content = r#"# Uteke Memory Integration (Auto Mode)
+
+## MCP Server
+Your uteke MCP server provides these tools: `uteke_recall`, `uteke_remember`, `uteke_search`, `uteke_list`, `uteke_forget`, `uteke_stats`, `uteke_context`.
+
+## Auto-Recall Rule
+**At the start of every task**, before asking the user, run:
+```
+uteke_recall(query: "<task summary>", limit: 5)
+```
+Inject any relevant memories into your working context.
+
+## Store Proactively
+After each meaningful decision or discovery:
+```
+uteke_remember(content: "<fact>", tags: ["relevant", "tags"])
+```
+
+## Commands
+- `uteke remember "<text>" --tags <tags>` — Store a memory
+- `uteke recall "<query>" --limit <n>` — Semantic search
+- `uteke search "<keywords>"` — Keyword search
+- `uteke stats` — Statistics
+
+## MCP Config (add to claude_desktop_config.json or .claude.json)
+```json
+{
+  "mcpServers": {
+    "uteke": {
+      "command": "uteke-mcp",
+      "args": []
+    }
+  }
+}
+```
+"#;
+
+    std::fs::write(&md_path, md_content).map_err(|e| format!("Failed to write UTEKE.md: {e}"))?;
+
+    // Enhance CLAUDE.md with auto-recall reference
+    let claude_md = cwd.join("CLAUDE.md");
+    if claude_md.exists() {
+        let existing = std::fs::read_to_string(&claude_md)
+            .map_err(|e| format!("Failed to read CLAUDE.md: {e}"))?;
+        if !existing.contains("uteke_recall") {
+            let updated = format!(
+                "{existing}\n\n## Uteke Auto-Memory\n\nBefore every task, call `uteke_recall` with the task summary. See UTEKE.md for full integration.\n"
+            );
+            std::fs::write(&claude_md, updated)
+                .map_err(|e| format!("Failed to update CLAUDE.md: {e}"))?;
+        }
+    }
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "claude",
+            "plugin": "memory-provider",
+            "file": md_path.to_string_lossy(),
+            "status": "installed"
+        });
+        println!("{obj}");
+    } else {
+        println!("✓ Claude memory-provider installed: {}", md_path.display());
+        println!("  UTEKE.md includes auto-recall rules + MCP config snippet.");
+        if claude_md.exists() {
+            println!("  Auto-recall reference added to CLAUDE.md");
+        }
+        println!();
+        println!("  Add MCP server to your Claude config:");
+        println!("    claude mcp add uteke -- uteke-mcp");
+    }
+    Ok(())
+}
+
+/// Initialize uteke memory-provider integration for Cursor (#575).
+///
+/// Cursor has no lifecycle hooks. Strategy:
+/// 1. Generate enhanced cursor rules (.cursor/rules/uteke.mdc) with auto-recall rules
+/// 2. Include MCP server config snippet
+fn init_cursor_memory_provider(json: bool) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+    let rules_dir = cwd.join(".cursor").join("rules");
+    std::fs::create_dir_all(&rules_dir).map_err(|e| format!("Failed to create rules dir: {e}"))?;
+
+    let rules_content = r#"---
+description: Uteke auto-memory — recall before every task, store after decisions
+globs: 
+alwaysApply: true
+---
+
+# Uteke Memory (Auto Mode)
+
+## MCP Tools Available
+`uteke_recall`, `uteke_remember`, `uteke_search`, `uteke_list`, `uteke_forget`, `uteke_stats`, `uteke_context`
+
+## Auto-Recall Rule
+**Before starting any task**, call `uteke_recall` with the task summary as the query. Use the results to restore context from prior sessions.
+
+## Store Proactively
+After meaningful decisions, discoveries, or progress: call `uteke_remember` with relevant tags.
+
+## MCP Config (add to .cursor/mcp.json)
+```json
+{
+  "mcpServers": {
+    "uteke": {
+      "command": "uteke-mcp",
+      "args": []
+    }
+  }
+}
+```
+"#;
+
+    let rules_path = rules_dir.join("uteke.mdc");
+    std::fs::write(&rules_path, rules_content)
+        .map_err(|e| format!("Failed to write rules: {e}"))?;
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "cursor",
+            "plugin": "memory-provider",
+            "file": rules_path.to_string_lossy(),
+            "status": "installed"
+        });
+        println!("{obj}");
+    } else {
+        println!(
+            "✓ Cursor memory-provider installed: {}",
+            rules_path.display()
+        );
+        println!("  Rules include auto-recall + MCP config snippet.");
+        println!();
+        println!("  Add MCP server to .cursor/mcp.json:");
+        println!("    {{\"mcpServers\":{{\"uteke\":{{\"command\":\"uteke-mcp\"}}}}}}");
+    }
+    Ok(())
+}
+
 /// Initialize uteke integration for Hermes (#384).
 /// Generates a uteke-tool plugin in the Hermes plugins directory.
 fn init_hermes(json: bool) -> Result<(), String> {
@@ -375,5 +611,32 @@ mod tests {
             PLUGIN_YAML.contains("on_pre_compress"),
             "manifest must declare the on_pre_compress hook"
         );
+    }
+
+    // Pi memory-provider template guards (#575).
+    const PI_INDEX_TS: &str = include_str!("../../../extensions/pi-memory-provider/index.ts");
+    const PI_PACKAGE_JSON: &str =
+        include_str!("../../../extensions/pi-memory-provider/package.json");
+
+    #[test]
+    fn pi_memory_provider_has_before_agent_start_hook() {
+        assert!(
+            PI_INDEX_TS.contains("before_agent_start"),
+            "pi extension must hook before_agent_start for auto-recall"
+        );
+        assert!(
+            PI_INDEX_TS.contains("recallMemories"),
+            "pi extension must have recallMemories function"
+        );
+        assert!(
+            PI_INDEX_TS.contains("uteke recall"),
+            "pi extension must invoke uteke recall CLI"
+        );
+    }
+
+    #[test]
+    fn pi_memory_provider_manifest_valid() {
+        assert!(PI_PACKAGE_JSON.contains("uteke-memory-provider"));
+        assert!(PI_PACKAGE_JSON.contains("Apache-2.0"));
     }
 }

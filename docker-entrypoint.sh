@@ -22,7 +22,7 @@ verify_sha256() {
   fi
 }
 
-# Lazy download: only if model not pre-baked by CI
+# Lazy download: only if model not present in volume
 if [ ! -f "$MODEL_FILE" ]; then
   echo "Model not found, downloading embedding model (~208MB)..."
   mkdir -p "${MODEL_DIR}/onnx"

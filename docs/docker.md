@@ -4,7 +4,7 @@ title: Docker
 
 # Docker
 
-Uteke ships as a multi-arch Docker image with the embedding model pre-baked. No download needed on first run.
+Uteke ships as a lightweight multi-arch Docker image (~10MB). The embedding model (~208MB) downloads automatically on first run and is cached in the volume — subsequent updates are instant.
 
 ## Quick Start
 
