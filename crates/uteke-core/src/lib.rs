@@ -950,7 +950,7 @@ impl Uteke {
         };
 
         // If content was changed, rebuild chunks.
-        if content.is_some() {
+        if let Some(content_text) = content {
             let old_chunk_ids = self
                 .store
                 .delete_chunks_for_documents(std::slice::from_ref(&doc_id))?;
@@ -963,7 +963,7 @@ impl Uteke {
             let embedder = embedder.as_ref().expect("embedder ensured above");
 
             let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
-            let chunks = crate::chunker::chunk_markdown(content.unwrap(), max_chars);
+            let chunks = crate::chunker::chunk_markdown(content_text, max_chars);
 
             let mut index = self
                 .index

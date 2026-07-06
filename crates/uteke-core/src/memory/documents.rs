@@ -272,14 +272,6 @@ impl super::Store {
         };
 
         let new_title = title.unwrap_or(&existing.title);
-        let new_tags = match tags {
-            Some(t) => serde_json::to_string(t).unwrap_or_else(|_| "[]".into()),
-            None => serde_json::to_string(&existing.tags).unwrap_or_else(|_| "[]".into()),
-        };
-        let new_meta = match metadata {
-            Some(m) => m.to_string(),
-            None => existing.metadata.to_string(),
-        };
         let new_version = existing.version + 1;
         let now = chrono::Utc::now().to_rfc3339();
 
