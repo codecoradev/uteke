@@ -165,6 +165,9 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_room_stats(),
                 tool_room_summary(),
                 tool_room_document(),
+                tool_tags_list(),
+                tool_tags_rename(),
+                tool_tags_delete(),
             ]
         })),
 
@@ -203,6 +206,9 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
                 "uteke_room_summary" => exec_room_summary(uteke, &arguments)?,
                 "uteke_room_document" => exec_room_document(uteke, &arguments)?,
+                "uteke_tags_list" => exec_tags_list(uteke, &arguments)?,
+                "uteke_tags_rename" => exec_tags_rename(uteke, &arguments)?,
+                "uteke_tags_delete" => exec_tags_delete(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -583,6 +589,51 @@ fn tool_room_document() -> Value {
                 "room_id": { "type": "string", "description": "Room identifier" }
             },
             "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_tags_list() -> Value {
+    serde_json::json!({
+        "name": "uteke_tags_list",
+        "description": "List all tags with usage counts. Optionally filter by namespace and sort by count (default) or alphabetically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": { "type": "string", "description": "Namespace to filter tags (default: all namespaces)" },
+                "sort": { "type": "string", "enum": ["count", "alpha"], "description": "Sort order: 'count' by usage count descending (default), 'alpha' alphabetically" }
+            }
+        }
+    })
+}
+
+fn tool_tags_rename() -> Value {
+    serde_json::json!({
+        "name": "uteke_tags_rename",
+        "description": "Rename a tag across all memories. Updates both the tag index and memory records atomically.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "old_tag": { "type": "string", "description": "Current tag name to rename" },
+                "new_tag": { "type": "string", "description": "New tag name" },
+                "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
+            },
+            "required": ["old_tag", "new_tag"]
+        }
+    })
+}
+
+fn tool_tags_delete() -> Value {
+    serde_json::json!({
+        "name": "uteke_tags_delete",
+        "description": "Delete a tag from all memories. Removes the tag from every memory that uses it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tag": { "type": "string", "description": "Tag name to delete" },
+                "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
+            },
+            "required": ["tag"]
         }
     })
 }
@@ -1527,6 +1578,100 @@ fn exec_room_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_tags_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let namespace = args["namespace"].as_str();
+    let sort = args["sort"].as_str().unwrap_or("count");
+
+    let mut tags = uteke
+        .tags_with_counts(namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if sort == "alpha" {
+        tags.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    if tags.is_empty() {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: "No tags found.".to_string(),
+            }],
+            is_error: false,
+        });
+    }
+
+    let lines: Vec<String> = tags
+        .iter()
+        .map(|t| format!("{} ({})", t.name, t.count))
+        .collect();
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: lines.join("\n"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_tags_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let old_tag = args["old_tag"].as_str().ok_or("Missing 'old_tag'")?;
+    let new_tag = args["new_tag"].as_str().ok_or("Missing 'new_tag'")?;
+    let namespace = args["namespace"].as_str();
+
+    let count = uteke
+        .rename_tag(old_tag, new_tag, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if count == 0 {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Tag '{}' not found in scope.", old_tag),
+            }],
+            is_error: true,
+        });
+    }
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!(
+                "Renamed tag '{}' -> '{}' ({} memories updated)",
+                old_tag, new_tag, count
+            ),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_tags_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let tag = args["tag"].as_str().ok_or("Missing 'tag'")?;
+    let namespace = args["namespace"].as_str();
+
+    let count = uteke
+        .delete_tag(tag, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    if count == 0 {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Tag '{}' not found in scope.", tag),
+            }],
+            is_error: true,
+        });
+    }
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("Deleted tag '{}' ({} memories updated)", tag, count),
         }],
         is_error: false,
     })
