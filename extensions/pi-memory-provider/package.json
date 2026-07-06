@@ -1,0 +1,11 @@
+{
+  "name": "uteke-memory-provider",
+  "version": "0.1.0",
+  "description": "Pi extension — automatic uteke memory recall injected into every turn",
+  "main": "index.ts",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "keywords": ["pi-extension", "uteke", "memory", "memory-provider"],
+  "license": "Apache-2.0"
+}
