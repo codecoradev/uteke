@@ -431,7 +431,7 @@ After meaningful decisions, discoveries, or progress: call `uteke_remember` with
         println!("  Rules include auto-recall + MCP config snippet.");
         println!();
         println!("  Add MCP server to .cursor/mcp.json:");
-        println!("    {\"mcpServers\":{\"uteke\":{\"command\":\"uteke-mcp\"}}}");
+        println!("    {{\"mcpServers\":{{\"uteke\":{{\"command\":\"uteke-mcp\"}}}}}");
     }
     Ok(())
 }
