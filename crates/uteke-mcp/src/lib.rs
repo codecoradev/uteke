@@ -152,6 +152,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_doc_list(),
                 tool_doc_search(),
                 tool_doc_delete(),
+                tool_doc_move(),
                 tool_graph(),
                 tool_graph_add_edge(),
                 tool_graph_remove_edge(),
@@ -182,6 +183,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_doc_list" => exec_doc_list(uteke, &arguments)?,
                 "uteke_doc_search" => exec_doc_search(uteke, &arguments)?,
                 "uteke_doc_delete" => exec_doc_delete(uteke, &arguments)?,
+                "uteke_doc_move" => exec_doc_move(uteke, &arguments)?,
                 "uteke_graph" => exec_graph(uteke, &arguments)?,
                 "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments)?,
                 "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments)?,
@@ -372,6 +374,22 @@ fn tool_doc_delete() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "string", "description": "Document UUID" }
+            },
+            "required": ["id"]
+        }
+    })
+}
+
+fn tool_doc_move() -> Value {
+    serde_json::json!({
+        "name": "uteke_doc_move",
+        "description": "Move a document to a new parent or root. Updates parent_id in the documents table.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Document UUID or slug to move" },
+                "parent": { "type": "string", "description": "New parent document slug or UUID. Omit to move to root." },
+                "namespace": { "type": "string", "description": "Namespace (optional)" }
             },
             "required": ["id"]
         }
@@ -847,6 +865,29 @@ fn exec_doc_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             is_error: false,
         })
     }
+}
+
+fn exec_doc_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id = args["id"].as_str().ok_or("Missing 'id'")?;
+    let parent = args["parent"].as_str();
+    let namespace = args["namespace"].as_str();
+
+    let moved = uteke
+        .doc_move(id, parent, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let msg = match parent {
+        Some(p) => format!("Moved document: {id} -> parent: {p} ({moved} row(s) updated)"),
+        None => format!("Moved document: {id} -> root ({moved} row(s) updated)"),
+    };
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: msg,
+        }],
+        is_error: false,
+    })
 }
 
 fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
