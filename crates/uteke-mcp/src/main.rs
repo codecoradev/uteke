@@ -55,8 +55,10 @@ fn main() {
         }
 
         // Delegate to the shared handler (#381).
-        let response = uteke_mcp::handle_jsonrpc(&uteke, &line);
-        let _ = writeln!(stdout, "{response}");
-        let _ = stdout.flush();
+        // None = notification (no response per JSON-RPC 2.0 §4.1).
+        if let Some(response) = uteke_mcp::handle_jsonrpc(&uteke, &line) {
+            let _ = writeln!(stdout, "{response}");
+            let _ = stdout.flush();
+        }
     }
 }
