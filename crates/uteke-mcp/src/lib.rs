@@ -1271,10 +1271,7 @@ fn exec_room_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let lines: Vec<String> = rooms
         .iter()
         .map(|r| {
-            let title = r
-                .title
-                .as_deref()
-                .unwrap_or("(no title)");
+            let title = r.title.as_deref().unwrap_or("(no title)");
             format!("[{}] {} (ns: {})", r.id, title, r.namespace)
         })
         .collect();
