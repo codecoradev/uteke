@@ -17,6 +17,18 @@
 
 ## [Unreleased]
 
+## [0.6.7] — 2026-07-06
+
+### Added
+- **Automatic memory-provider for pi, claude, cursor (#575, #577)** — `uteke init --agent <agent> --memory-provider` now mirrors the Hermes auto-recall experience for all agents. Pi gets a TypeScript extension hooking `before_agent_start` with slash commands. Claude and Cursor get enhanced rules with auto-recall instructions and MCP server config snippets.
+- **GET /room/memories endpoint + uteke_room_memories MCP tool (#569)** — Chronological room memory listing with optional author filter.
+
+### Fixed
+- **uteke-mcp JSON-RPC 2.0 spec compliance (#573, #576)** — Success responses no longer include `"error": null` (tagged enum replaces flat struct with Option fields). Notifications (requests with no `id`) no longer receive a response. Fixes Claude Code `✗ Failed to connect`.
+
+### Changed
+- **Slim Docker image** — Removed bundled embedding model (~208MB) from Docker build. Image size reduced from ~218MB to ~10MB. Model downloads lazily on first container start and persists in the named volume.
+
 ## [0.6.6] — 2026-07-05
 
 ### Added
