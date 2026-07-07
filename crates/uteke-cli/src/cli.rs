@@ -692,4 +692,10 @@ pub enum AgingCommands {
         #[arg(long)]
         yes: bool,
     },
+    /// Check for updates and upgrade to the latest version
+    Update {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
