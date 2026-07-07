@@ -62,6 +62,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/doc/get",
             "/doc/list",
             "/doc/search",
+            "/orphans",
         ];
         let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
         if !is_read {
@@ -1380,6 +1381,120 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     error!("Export error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")
                 }
+            }
+        }
+
+        // ── Prune (maintenance) ───────────────────────────────────────────
+        (Method::Post, "/prune") => match read_body::<PruneRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let result =
+                    uteke.prune(req_data.ttl_days, ns(&req_data.namespace), req_data.dry_run);
+                match result {
+                    Ok(r) => ctx.ok_response_for(req, &r),
+                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Consolidate (maintenance) ────────────────────────────────────
+        (Method::Post, "/consolidate") => match read_body::<ConsolidateRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                if req_data.dry_run {
+                    let pairs = uteke.find_duplicates(ns(&req_data.namespace), req_data.threshold);
+                    match pairs {
+                        Ok(p) => ctx.ok_response_for(req, &p),
+                        Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    }
+                } else {
+                    let result =
+                        uteke.consolidate(ns(&req_data.namespace), req_data.threshold, false);
+                    match result {
+                        Ok(r) => ctx.ok_response_for(req, &r),
+                        Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Aging (maintenance) ─────────────────────────────────────────
+        (Method::Post, "/aging") => match read_body::<AgingRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                let result = match req_data.action.as_str() {
+                    "status" => {
+                        let status = uteke.aging_status(ns(&req_data.namespace));
+                        status.map(|s| serde_json::json!(s))
+                    }
+                    "preview" => {
+                        let older = req_data.older_than_days.unwrap_or(90);
+                        let max_acc = req_data.max_access_count.unwrap_or(1);
+                        let mems = uteke.aging_preview(older, max_acc, ns(&req_data.namespace));
+                        mems.map(|m| serde_json::json!(m))
+                    }
+                    "cleanup" => {
+                        if req_data.dry_run {
+                            let older = req_data.older_than_days.unwrap_or(90);
+                            let max_acc = req_data.max_access_count.unwrap_or(1);
+                            let mems = uteke.aging_preview(older, max_acc, ns(&req_data.namespace));
+                            mems.map(|m| serde_json::json!({ "dry_run": true, "candidates": m.len(), "memories": m }))
+                        } else {
+                            let older = req_data.older_than_days.unwrap_or(90);
+                            let max_acc = req_data.max_access_count.unwrap_or(1);
+                            let r = uteke.aging_cleanup(older, max_acc, ns(&req_data.namespace));
+                            r.map(|c| serde_json::json!(c))
+                        }
+                    }
+                    other => {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            format!("Unknown action: {other}. Use: status, preview, cleanup"),
+                        )
+                    }
+                };
+                match result {
+                    Ok(r) => ctx.ok_response_for(req, &r),
+                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Importance (monitoring) ────────────────────────────────────────
+        (Method::Post, "/importance") => match read_body::<ImportanceRequest>(req.as_reader()) {
+            Ok(_req_data) => match uteke.recompute_importance() {
+                Ok(count) => ctx.ok_response_for(req, &serde_json::json!({ "updated": count })),
+                Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+            },
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Orphans (monitoring — read-only) ─────────────────────────────
+        (Method::Post, "/orphans") => match read_body::<OrphansRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                match uteke.find_orphans(
+                    ns(&req_data.namespace),
+                    req_data.threshold,
+                    req_data.limit,
+                ) {
+                    Ok(orphans) => ctx.ok_response_for(req, &orphans),
+                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Rebuild Backlinks (monitoring) ────────────────────────────────
+        (Method::Post, "/rebuild-backlinks") => {
+            match read_body::<RebuildBacklinksRequest>(req.as_reader()) {
+                Ok(_req_data) => match uteke.rebuild_backlinks() {
+                    Ok(count) => {
+                        ctx.ok_response_for(req, &serde_json::json!({ "backlinks_created": count }))
+                    }
+                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
             }
         }
 
