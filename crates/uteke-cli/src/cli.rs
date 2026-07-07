@@ -407,6 +407,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: DocCommands,
     },
+    /// Check for updates and upgrade to the latest version
+    Upgrade {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 /// Document subcommands (#411, #438).
