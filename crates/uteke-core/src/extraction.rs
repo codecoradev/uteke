@@ -89,8 +89,8 @@ impl Extractor {
             .map_err(|e| Error::generic(format!("Failed to build HTTP client: {e}")))?;
 
         let endpoint = normalize_endpoint_path(&config.endpoint_path);
-        let model = if config.model.is_empty() {
-            DEFAULT_MODEL
+        let model: String = if config.model.is_empty() {
+            DEFAULT_MODEL.to_owned()
         } else {
             config.model.clone()
         };
