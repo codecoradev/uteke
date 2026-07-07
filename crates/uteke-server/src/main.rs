@@ -232,6 +232,7 @@ fn main() {
         read_only_token_hash,
         cors_origins: cors_origins.clone(),
         recall_config: config.recall.clone(),
+        extraction_config: config.extraction.clone(),
     };
 
     // Start server
@@ -410,6 +411,7 @@ fn main() {
 struct ServerFileConfig {
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
+    extraction: Option<uteke_core::extraction::ExtractionConfig>,
     maintenance: Option<MaintenanceFileSection>,
     aging: Option<AgingFileSection>,
 }

@@ -129,6 +129,8 @@ pub struct ReqCtx {
     pub cors_origins: Vec<String>,
     /// Recall threshold config from [recall] section in uteke.toml.
     pub recall_config: Option<RecallFileSection>,
+    /// Extraction config from [extraction] section in uteke.toml.
+    pub extraction_config: Option<uteke_core::extraction::ExtractionConfig>,
 }
 
 impl ReqCtx {

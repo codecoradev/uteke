@@ -1260,7 +1260,156 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Extract (LLM fact extraction → store) ────────────────────────
+        (Method::Post, "/extract") => match read_body::<ExtractRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                if let Err(_) = validate_content_size(&req_data.content, 1_048_576) {
+                    return ctx.error_response_for(req, 413, "Content too large (max 1MB)");
+                }
+                if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
+                    return ctx.error_response_for(req, 400, e.to_string());
+                }
+
+                let ext_config = resolve_extraction_config(
+                    &ctx,
+                    req_data.model.as_deref(),
+                    req_data.max_facts,
+                    None, // api_key from config only (not from request body)
+                );
+
+                let extractor = match uteke_core::extraction::Extractor::new(&ext_config) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        error!("Extractor init error: {e}");
+                        return ctx.error_response_for(req, 400, e.to_string());
+                    }
+                };
+
+                let facts = match extractor.extract(&req_data.content) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!("Extraction error: {e}");
+                        return ctx.error_response_for(req, 502, format!("Extraction failed: {e}"));
+                    }
+                };
+
+                // Store each extracted fact as a memory
+                let mut stored_ids = Vec::new();
+                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
+                let fact_ns = ns(&req_data.namespace);
+
+                for fact in &facts {
+                    let mut meta = serde_json::Map::new();
+                    if let Some(t) = &req_data.r#type {
+                        meta.insert("type".into(), serde_json::Value::String(t.clone()));
+                    }
+                    meta.insert(
+                        "source".into(),
+                        serde_json::Value::String("extraction".into()),
+                    );
+                    let metadata = if meta.is_empty() {
+                        None
+                    } else {
+                        Some(serde_json::Value::Object(meta))
+                    };
+
+                    if let Ok(id) = uteke.remember(fact, &tag_refs, metadata, fact_ns) {
+                        stored_ids.push(id);
+                    }
+                }
+
+                ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "facts": facts,
+                        "count": facts.len(),
+                        "stored": stored_ids.len(),
+                        "stored_ids": stored_ids,
+                    }),
+                )
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Import (JSONL) ──────────────────────────────────────────────
+        (Method::Post, "/import") => match read_body::<ImportRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                if let Err(_) = validate_content_size(&req_data.content, 5_242_880) {
+                    return ctx.error_response_for(req, 413, "Content too large (max 5MB)");
+                }
+
+                // Merge request tags into the JSONL entries.
+                // The core import method handles re-embedding.
+                let import_ns = ns(&req_data.namespace);
+                match uteke.import(&req_data.content, import_ns) {
+                    Ok(result) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({
+                            "imported": result.imported,
+                            "skipped": result.skipped,
+                        }),
+                    ),
+                    Err(e) => {
+                        error!("Import error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Export (JSONL) ──────────────────────────────────────────────
+        (Method::Get, p) if p == "/export" || p.starts_with("/export?") => {
+            let export_ns = parse_query_namespace(&path);
+            match uteke.export(export_ns.as_deref()) {
+                Ok(jsonl) => {
+                    let mut headers = ctx.cors_headers_for(req);
+                    headers.push(
+                        Header::from_bytes(&b"Content-Type"[..], &b"application/x-ndjson"[..])
+                            .unwrap(),
+                    );
+                    Response::new(
+                        StatusCode::from(200),
+                        headers,
+                        Cursor::new(jsonl.into_bytes()),
+                        None,
+                        None,
+                    )
+                }
+                Err(e) => {
+                    error!("Export error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
         // ── 404 ─────────────────────────────────────────────────────────
         _ => ctx.error_response_for(req, 404, "Not found"),
+    }
+}
+
+/// Helper: validate content for extract/import to prevent abuse.
+fn validate_content_size(content: &str, max_bytes: usize) -> Result<(), &'static str> {
+    if content.len() > max_bytes {
+        Err("Content too large")
+    } else {
+        Ok(())
+    }
+}
+
+/// Helper: resolve extraction config with per-request overrides.
+fn resolve_extraction_config(
+    ctx: &ReqCtx,
+    req_model: Option<&str>,
+    req_max_facts: Option<usize>,
+    req_api_key: Option<&str>,
+) -> uteke_core::extraction::ExtractionConfig {
+    let base = ctx.extraction_config.clone().unwrap_or_default();
+    uteke_core::extraction::ExtractionConfig {
+        model: req_model.map(String::from).unwrap_or(base.model),
+        api_key: req_api_key.map(String::from).unwrap_or(base.api_key),
+        base_url: base.base_url,
+        endpoint_path: base.endpoint_path,
+        max_facts: req_max_facts.unwrap_or(base.max_facts),
     }
 }
