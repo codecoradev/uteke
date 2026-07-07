@@ -375,3 +375,81 @@ pub struct ImportRequest {
     #[allow(dead_code)] // not yet merged into JSONL entries on import
     pub tags: Vec<String>,
 }
+
+// ── Maintenance Types (#607) ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PruneRequest {
+    #[serde(default = "default_prune_ttl")]
+    pub ttl_days: u32,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_prune_ttl() -> u32 {
+    30
+}
+
+#[derive(Deserialize)]
+pub struct ConsolidateRequest {
+    #[serde(default = "default_consolidate_threshold")]
+    pub threshold: f32,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_consolidate_threshold() -> f32 {
+    0.9
+}
+
+#[derive(Deserialize)]
+pub struct AgingRequest {
+    #[serde(default = "default_aging_action")]
+    pub action: String,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Days threshold for preview/cleanup (default: warm_days from config, fallback 90).
+    #[serde(default)]
+    pub older_than_days: Option<u32>,
+    /// Max access count threshold for preview/cleanup (default: 1).
+    #[serde(default)]
+    pub max_access_count: Option<u32>,
+}
+
+fn default_aging_action() -> String {
+    "status".to_string()
+}
+
+// ── Monitoring Types (#608) ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ImportanceRequest {
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OrphansRequest {
+    #[serde(default = "default_orphan_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_orphan_threshold() -> f64 {
+    0.3
+}
+
+#[derive(Deserialize)]
+pub struct RebuildBacklinksRequest {
+    #[serde(default)]
+    pub quiet: bool,
+}
