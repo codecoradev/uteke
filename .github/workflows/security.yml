@@ -27,7 +27,9 @@ jobs:
         #   RUSTSEC-2024-0436: paste unmaintained — informational, no vulnerability
         #   RUSTSEC-2026-0185: quinn-proto — comes transitively via reqwest/hyper,
         #     not used in server-facing code paths. Update when reqwest bumps quinn.
-        run: cargo audit --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0185
+        #   RUSTSEC-2026-0202: cxx unsound — transitive dep, waiting for upstream consumers to bump
+        #   RUSTSEC-2026-0190: anyhow unsound — transitive dep, waiting for upstream consumers to bump
+        run: cargo audit --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0185 --ignore RUSTSEC-2026-0202 --ignore RUSTSEC-2026-0190
 
   trivy:
     name: Trivy FS Scan
