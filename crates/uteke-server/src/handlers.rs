@@ -8,7 +8,7 @@ use std::io::{Cursor, Read as IoRead};
 use std::sync::Mutex;
 
 use serde::Deserialize;
-use tiny_http::{Method, Request, Response, StatusCode};
+use tiny_http::{Header, Method, Request, Response, StatusCode};
 use tracing::error;
 
 use uteke_core::Uteke;
