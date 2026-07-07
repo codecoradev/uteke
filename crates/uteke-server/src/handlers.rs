@@ -1263,7 +1263,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Extract (LLM fact extraction → store) ────────────────────────
         (Method::Post, "/extract") => match read_body::<ExtractRequest>(req.as_reader()) {
             Ok(req_data) => {
-                if let Err(_) = validate_content_size(&req_data.content, 1_048_576) {
+                if validate_content_size(&req_data.content, 1_048_576).is_err() {
                     return ctx.error_response_for(req, 413, "Content too large (max 1MB)");
                 }
                 if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
@@ -1271,7 +1271,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 }
 
                 let ext_config = resolve_extraction_config(
-                    &ctx,
+                    ctx,
                     req_data.model.as_deref(),
                     req_data.max_facts,
                     None, // api_key from config only (not from request body)
@@ -1334,7 +1334,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Import (JSONL) ──────────────────────────────────────────────
         (Method::Post, "/import") => match read_body::<ImportRequest>(req.as_reader()) {
             Ok(req_data) => {
-                if let Err(_) = validate_content_size(&req_data.content, 5_242_880) {
+                if validate_content_size(&req_data.content, 5_242_880).is_err() {
                     return ctx.error_response_for(req, 413, "Content too large (max 5MB)");
                 }
 

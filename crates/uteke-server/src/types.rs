@@ -372,5 +372,6 @@ pub struct ImportRequest {
     #[serde(default)]
     pub namespace: Option<String>,
     #[serde(default)]
+    #[allow(dead_code)] // not yet merged into JSONL entries on import
     pub tags: Vec<String>,
 }
