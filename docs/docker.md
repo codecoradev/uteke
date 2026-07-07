@@ -125,8 +125,10 @@ Docker automatically pulls the correct architecture.
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
+| `v0.6.7` | Specific version |
 | `v0.6.6` | Specific version |
 | `0.6` | Minor version (latest patch) |
+| `slim` | Slim image (no embedded model — mount model volume separately, see below) |
 
 ## CLI in Docker
 
@@ -243,9 +245,32 @@ Both transports expose the same tools (MCP protocol version `2025-06-18`):
 |------|-------------|
 | `uteke_remember` | Store a memory (supports type, room, author, tags) |
 | `uteke_recall` | Semantic search (supports tags filter, min_score) |
+| `uteke_search` | Text search with optional tag filter |
 | `uteke_list` | List memories (supports pagination via offset) |
 | `uteke_forget` | Delete a memory |
-| `uteke_stats` | Store statistics |
+| `uteke_stats` | Memory store statistics |
+| `uteke_context` | AI-optimized context output for prompts |
+| `uteke_dream` | One-command maintenance pipeline (lint → backlinks → dedup → orphans) |
+| `uteke_doc_create` | Create a document (wiki/knowledge base entry) |
+| `uteke_doc_get` | Retrieve a document by ID |
+| `uteke_doc_list` | List all documents |
+| `uteke_doc_search` | Search documents |
+| `uteke_doc_delete` | Delete a document |
+| `uteke_doc_update` | Partial document update with chunk rebuild (#589) |
+| `uteke_doc_move` | Move document to new parent (#438) |
+| `uteke_graph` | Get nodes + edges JSON for visualization |
+| `uteke_room_recall` | Semantic recall within a room |
+| `uteke_room_memories` | List memories in a room (#569) |
+| `uteke_room_create` | Create a room |
+| `uteke_room_delete` | Delete a room |
+| `uteke_room_stats` | Room statistics |
+| `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
+| `uteke_room_document` | Generate structured document from room |
+| `uteke_tags_list` | List all tags with counts (#566) |
+| `uteke_tags_rename` | Rename a tag across all memories (#566) |
+| `uteke_tags_delete` | Delete a tag from all memories (#566) |
+| `uteke_pin` | Pin a memory (prevent decay) (#566) |
+| `uteke_unpin` | Unpin a memory (#566) |
 
 
 
