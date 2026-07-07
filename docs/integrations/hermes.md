@@ -125,6 +125,7 @@ The MCP server provides the same tools via JSON-RPC (protocol version `2025-06-1
 - `uteke_list` — list memories (supports pagination via offset)
 - `uteke_forget` — delete memory
 - `uteke_stats` — store statistics
+- `uteke_room_memories` — list memories in a room (#569)
 
 ### MCP Client Configuration Examples
 
@@ -217,12 +218,37 @@ hermes mcp add uteke --command uteke-mcp
 | `room_stats` | Room statistics |
 | `room_delete` | Delete a room |
 
+## Memory-Provider for Other Agents (#575/#577)
+
+The `--memory-provider` pattern also works for non-Hermes agents:
+
+```bash
+# pi (pi.dev)
+uteke init --agent pi --memory-provider
+
+# Claude Code
+uteke init --agent claude --memory-provider
+
+# Cursor
+uteke init --agent cursor --memory-provider
+```
+
+This installs uteke as the agent's default memory provider — relevant memories are recalled and injected automatically every turn. No daemon needed; talks to the `uteke` binary directly via subprocess.
+
+> **Note:** For Hermes, use Mode A (uteke-tool) or Mode C (shell hook) instead — the
+> Hermes memory-provider plugin has been removed (see [Mode B](#mode-b--memory-provider-uteke-as-hermes-default-memory)).
+
 ## Mode B — memory-provider (uteke as Hermes default memory)
 
-> **DEPRECATED — Removed from production (2026-06-29)**
+> **DEPRECATED — Hermes only (removed 2026-06-29)**
 >
-> The memory-provider plugin (Mode B) has been removed from production deployments.
-> The plugin files and `memory.provider: uteke` configuration are no longer supported.
+> The Hermes-specific memory-provider plugin (Mode B) has been removed from production
+> deployments. The plugin files and `memory.provider: uteke` configuration are no longer
+> supported for Hermes.
+>
+> **This deprecation applies only to the Hermes memory-provider plugin.** The general
+> memory-provider pattern (`uteke init --agent <agent> --memory-provider`) remains
+> fully supported for **pi**, **Claude Code**, and **Cursor** (#575/#577).
 >
 > **Migrate to:** [Mode A (uteke-tool)](#mode-a--uteke-tool-manual-actions-multi-agent-rooms) for manual
 > tool-based memory, or [Mode C (shell hook)](#mode-c--pre_llm_call-shell-hook-automatic-recall-no-plugin)

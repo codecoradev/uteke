@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.6.6**.
+Complete reference for all uteke commands. Version **0.6.7**.
 
 ## Global Flags
 
@@ -654,7 +654,10 @@ uteke timeline <memory-id> --json
 | `uteke namespace switch <name>` | Set default namespace in config |
 | `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
 | `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, hermes) |
-| `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md) |
+| `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md). **Note:** Hermes Mode B deprecated — see [integrations/hermes.md](integrations/hermes.md) for migration. |
+| `uteke init --agent pi --memory-provider` | Install uteke as pi's default memory provider (auto recall + extraction, #575/#577) |
+| `uteke init --agent claude --memory-provider` | Install uteke as Claude Code's default memory provider (auto recall + extraction, #575/#577) |
+| `uteke init --agent cursor --memory-provider` | Install uteke as Cursor's default memory provider (auto recall + extraction, #575/#577) |
 | `uteke completions <shell>` | Generate shell completions |
 
 ## uteke-serve (Server Mode)
@@ -701,7 +704,16 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/doc/search` | Hybrid/semantic/FTS document search (#440) |
 | POST | `/doc/move` | Move document to new parent (#438) |
 | DELETE | `/doc/delete?id=` | Delete document with cascade |
+| POST | `/doc/update` | Partial document update with chunk rebuild (#589) |
 | GET | `/recent` | Recent memories (supports `?namespace=`, `?limit=`, `?offset=`) (#528) |
+| GET | `/tags` | List all tags with counts (#566) |
+| POST | `/tags/rename` | Rename a tag across all memories (#566) |
+| POST | `/tags/delete` | Delete a tag from all memories (#566) |
+| POST | `/pin` | Pin a memory (prevent decay) (#566) |
+| POST | `/unpin` | Unpin a memory (#566) |
+| GET | `/timeline` | Timeline events for a memory (#566) |
+| GET | `/edges` | List edges for a memory (#566) |
+| GET | `/room/memories` | List memories in a room (#569) |
 | GET | `/graph` | Graph visualization — nodes, edges, stats (#408) |
 | POST | `/graph/edge` | Create a typed edge between two memories (#542) |
 | DELETE | `/graph/edge` | Remove an edge by ID (#542) |
@@ -909,3 +921,11 @@ All limits can be overridden via env vars or `[limits]` config section:
 | `UTEKE_MAX_TAG_LENGTH` | `max_tag_length` | 50 | Max single tag length (chars) |
 | `UTEKE_MAX_PAYLOAD_SIZE` | `max_payload_size` | 10485760 | Max server payload (bytes) |
 | `UTEKE_DEFAULT_RECALL_LIMIT` | `default_recall_limit` | 5 | Default recall limit |
+
+## Changelog
+
+### v0.6.5
+- Room fixes (#545/#546/#547/#549/#550): Fixed room creation race conditions, room memory list pagination, room summary edge cases, room document generation for empty rooms, and room delete cascade consistency.
+
+### v0.6.6
+- Room summary Unicode fix (#565): Summary truncation now uses char boundaries instead of byte offsets, preventing mid-character cuts in multi-byte content.
