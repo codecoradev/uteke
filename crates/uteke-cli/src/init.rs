@@ -39,6 +39,13 @@ pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result
                 init_cursor(json)
             }
         }
+        "opencode" => {
+            if memory_provider {
+                init_opencode_memory_provider(json)
+            } else {
+                init_opencode(json)
+            }
+        }
         "hermes" => {
             if memory_provider {
                 init_hermes_memory_provider(json)
@@ -47,68 +54,40 @@ pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result
             }
         }
         _ => Err(format!(
-            "Unknown agent: {agent}. Supported: pi, claude, cursor, hermes"
+            "Unknown agent: {agent}. Supported: pi, claude, cursor, opencode, hermes"
         )),
     }
 }
 
-/// Initialize uteke integration for Pi agents.
-fn init_pi(json: bool) -> Result<(), String> {
-    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+/// Copy the bundled SKILL.md to a target `.agents/skills/uteke-memory/` directory.
+/// Returns the path to the written file.
+fn install_skill_md(cwd: &std::path::Path) -> Result<std::path::PathBuf, String> {
     let skill_dir = cwd.join(".agents").join("skills").join("uteke-memory");
     std::fs::create_dir_all(&skill_dir).map_err(|e| format!("Failed to create skill dir: {e}"))?;
+    let dest = skill_dir.join("SKILL.md");
+    // Bundled SKILL.md is in .agents/skills/uteke-memory/ relative to repo root.
+    // For `cargo install` builds it's embedded; for `cargo run` it lives in the
+    // crate's CWD.  We embed the content at compile time to always have it.
+    let bundled = include_str!("../../../.agents/skills/uteke-memory/SKILL.md");
+    std::fs::write(&dest, bundled).map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+    Ok(dest)
+}
 
-    let skill_content = r#"# Uteke Memory Skill
-
-Provides persistent memory for AI agents via the `uteke` CLI.
-
-## Commands
-
-- `uteke remember "<text>" --tags <tags>` — Store a memory
-- `uteke recall "<query>" --limit <n>` — Semantic search
-- `uteke search "<keywords>"` — Keyword search
-- `uteke list --tag <tag>` — List memories
-- `uteke get <id>` — Get a memory by ID
-- `uteke forget <id>` — Delete a memory
-- `uteke stats` — Show statistics
-- `uteke export [file]` — Export memories to JSONL
-- `uteke import [file]` — Import memories from JSONL
-
-## Usage Patterns
-
-### Store important context
-```bash
-uteke remember "Database uses WAL mode for concurrent reads" --tags architecture,db
-```
-
-### Recall relevant context
-```bash
-uteke recall "how does the database work?"
-```
-
-### Project-specific store
-```bash
-uteke --store .uteke remember "Uses React Server Components" --tags frontend
-```
-
-## When to Use
-- Before starting work: `uteke recall "<project context>"`
-- After making decisions: `uteke remember "<decision>" --tags <tags>`
-- Before closing session: `uteke remember "<session state>" --tags session`
-"#;
-
-    std::fs::write(skill_dir.join("SKILL.md"), skill_content)
-        .map_err(|e| format!("Failed to write skill: {e}"))?;
+/// Initialize uteke integration for Pi agents.
+/// Writes the bundled SKILL.md to `.agents/skills/uteke-memory/SKILL.md`.
+fn init_pi(json: bool) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+    let dest = install_skill_md(&cwd)?;
 
     if json {
         let obj = serde_json::json!({
             "agent": "pi",
-            "skill": skill_dir.to_string_lossy(),
+            "skill": dest.to_string_lossy(),
             "status": "installed"
         });
         println!("{obj}");
     } else {
-        println!("✓ Pi skill installed: {}", skill_dir.display());
+        println!("✓ Pi skill installed: {}", dest.display());
         println!("  Restart your agent to activate.");
     }
     Ok(())
@@ -432,6 +411,135 @@ After meaningful decisions, discoveries, or progress: call `uteke_remember` with
         println!();
         println!("  Add MCP server to .cursor/mcp.json:");
         println!("    {{\"mcpServers\":{{\"uteke\":{{\"command\":\"uteke-mcp\"}}}}}}");
+    }
+    Ok(())
+}
+
+/// Initialize uteke integration for OpenCode.
+/// Writes AGENTS.md (or appends to existing) with uteke instructions.
+fn init_opencode(json: bool) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+    let agents_path = cwd.join("AGENTS.md");
+
+    let md_content = r#"# Uteke Memory Integration
+
+## Commands
+- `uteke remember "<text>" --tags <tags>` — Store a memory
+- `uteke recall "<query>" --limit <n>` — Semantic search
+- `uteke search "<keywords>"` — Keyword search
+- `uteke list --tag <tag>` — List memories
+- `uteke get <id>` — Get by ID
+- `uteke forget <id>` — Delete
+- `uteke stats` — Statistics
+- `uteke export [file]` — Export to JSONL
+- `uteke import [file]` — Import from JSONL
+
+## Guidelines
+1. Before starting work: recall relevant context
+2. After making decisions: store them with tags
+3. Before closing session: store session state
+4. Use project-specific stores with `--store .uteke`
+"#;
+
+    if agents_path.exists() {
+        let existing = std::fs::read_to_string(&agents_path)
+            .map_err(|e| format!("Failed to read AGENTS.md: {e}"))?;
+        if !existing.contains("Uteke Memory") {
+            let updated = format!("{existing}\n\n{md_content}");
+            std::fs::write(&agents_path, updated)
+                .map_err(|e| format!("Failed to update AGENTS.md: {e}"))?;
+        }
+    } else {
+        std::fs::write(&agents_path, md_content)
+            .map_err(|e| format!("Failed to write AGENTS.md: {e}"))?;
+    }
+
+    // Also install the bundled SKILL.md for agents that read .agents/skills/
+    let _skill = install_skill_md(&cwd);
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "opencode",
+            "file": agents_path.to_string_lossy(),
+            "status": "installed"
+        });
+        println!("{obj}");
+    } else {
+        println!(
+            "✓ OpenCode integration installed: {}",
+            agents_path.display()
+        );
+        println!("  Restart OpenCode to activate.");
+    }
+    Ok(())
+}
+
+/// Initialize uteke memory-provider integration for OpenCode.
+///
+/// OpenCode has no lifecycle hooks. Strategy:
+/// 1. Generate enhanced AGENTS.md with auto-recall rules
+/// 2. Include MCP server config snippet
+fn init_opencode_memory_provider(json: bool) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("Cannot get cwd: {e}"))?;
+    let agents_path = cwd.join("AGENTS.md");
+
+    let md_content = r#"# Uteke Memory Integration (Auto Mode)
+
+## MCP Tools Available
+`uteke_recall`, `uteke_remember`, `uteke_search`, `uteke_list`, `uteke_forget`, `uteke_stats`, `uteke_context`
+
+## Auto-Recall Rule
+**Before starting any task**, call `uteke_recall` with the task summary as the query. Use the results to restore context from prior sessions.
+
+## Store Proactively
+After meaningful decisions, discoveries, or progress: call `uteke_remember` with relevant tags.
+
+## MCP Config (add to opencode.json)
+```json
+{
+  "mcp": {
+    "uteke": {
+      "command": "uteke-mcp",
+      "args": []
+    }
+  }
+}
+```
+"#;
+
+    if agents_path.exists() {
+        let existing = std::fs::read_to_string(&agents_path)
+            .map_err(|e| format!("Failed to read AGENTS.md: {e}"))?;
+        if !existing.contains("uteke_recall") {
+            let updated = format!("{existing}\n\n{md_content}");
+            std::fs::write(&agents_path, updated)
+                .map_err(|e| format!("Failed to update AGENTS.md: {e}"))?;
+        }
+    } else {
+        std::fs::write(&agents_path, md_content)
+            .map_err(|e| format!("Failed to write AGENTS.md: {e}"))?;
+    }
+
+    // Also install the bundled SKILL.md
+    let _skill = install_skill_md(&cwd);
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": "opencode",
+            "plugin": "memory-provider",
+            "file": agents_path.to_string_lossy(),
+            "status": "installed"
+        });
+        println!("{obj}");
+    } else {
+        println!(
+            "✓ OpenCode memory-provider installed: {}",
+            agents_path.display()
+        );
+        println!("  AGENTS.md includes auto-recall + MCP config snippet.");
+        println!();
+        println!("  Add MCP server to your opencode.json:");
+        println!("    {{\"mcp\":{{\"uteke\":{{\"command\":\"uteke-mcp\"}}}}}}");
     }
     Ok(())
 }
