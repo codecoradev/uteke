@@ -520,6 +520,12 @@ pub enum DocCommands {
         #[arg(long)]
         output: Option<String>,
     },
+    /// Check for updates and upgrade to the latest version
+    Upgrade {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 /// Subcommands for knowledge graph operations.
@@ -690,12 +696,6 @@ pub enum AgingCommands {
         max_access_count: u32,
         /// Skip confirmation prompt
         #[arg(long)]
-        yes: bool,
-    },
-    /// Check for updates and upgrade to the latest version
-    Update {
-        /// Skip confirmation prompt
-        #[arg(long, short)]
         yes: bool,
     },
 }

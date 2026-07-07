@@ -17,7 +17,7 @@ mod room;
 mod server;
 mod tags;
 mod timeline;
-mod update;
+mod upgrade;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
@@ -320,6 +320,6 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Doc { command } => crate::commands::doc::run(cli, uteke, command, config),
 
-        Commands::Update { yes } => update::run(*yes),
+        Commands::Upgrade { yes } => upgrade::run(*yes),
     }
 }
