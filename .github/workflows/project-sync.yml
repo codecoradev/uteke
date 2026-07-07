@@ -182,12 +182,13 @@ jobs:
                   " 2>/dev/null || true)
 
               if [ -z "$LINKED" ]; then
-                echo "No linked closing issues found for PR #$PR_NUMBER."
-                # If the PR content itself is on the board, mark it Done.
-                item_id=$(get_item_id "$PR_NODE_ID")
+                echo "No linked closing issues found for PR #$PR_NUMBER — nothing to sync."
+                # Also try to mark the PR itself on the board, if present.
+                item_id=$(get_item_id "$PR_NODE_ID") || true
                 if [ -n "$item_id" ]; then
-                  set_done "$item_id"
+                  set_done "$item_id" || true
                 fi
+                exit 0
               else
                 echo "$LINKED" | while read -r issue_node issue_num; do
                   [ -z "$issue_node" ] && continue
