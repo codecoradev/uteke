@@ -130,6 +130,27 @@ CREATE TABLE IF NOT EXISTS document_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_doc_chunks_heading ON document_chunks(heading);
+
+-- v3: Room-based collaborative memory tables.
+CREATE TABLE IF NOT EXISTS rooms (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    namespace TEXT NOT NULL DEFAULT 'default',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rooms_namespace ON rooms(namespace);
+
+CREATE TABLE IF NOT EXISTS room_memories (
+    room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    author TEXT NOT NULL DEFAULT 'unknown',
+    role TEXT NOT NULL DEFAULT 'participant',
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (room_id, memory_id)
+);
+CREATE INDEX IF NOT EXISTS idx_room_memories_room ON room_memories(room_id);
+CREATE INDEX IF NOT EXISTS idx_room_memories_author ON room_memories(author);
 "#;
 
 /// Indexes that depend on migration-added columns.
