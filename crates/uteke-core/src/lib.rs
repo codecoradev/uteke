@@ -15,6 +15,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod error;
+pub mod extraction;
 pub mod graph;
 pub mod graph_rerank;
 mod import_export;

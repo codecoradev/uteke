@@ -343,3 +343,35 @@ pub struct GraphEdgeRequest {
     #[serde(default)]
     pub weight: Option<f64>,
 }
+
+// ── Extract Types ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ExtractRequest {
+    pub content: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Override extraction model (else config default).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Override max facts per document.
+    #[serde(default)]
+    pub max_facts: Option<usize>,
+}
+
+// ── Import Types ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ImportRequest {
+    /// JSONL content to import.
+    pub content: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)] // not yet merged into JSONL entries on import
+    pub tags: Vec<String>,
+}
