@@ -431,6 +431,7 @@ fn default_aging_action() -> String {
 #[derive(Deserialize)]
 pub struct ImportanceRequest {
     #[serde(default)]
+    #[allow(dead_code)] // recompute_importance is global (no namespace filter)
     pub namespace: Option<String>,
 }
 
@@ -451,5 +452,6 @@ fn default_orphan_threshold() -> f64 {
 #[derive(Deserialize)]
 pub struct RebuildBacklinksRequest {
     #[serde(default)]
+    #[allow(dead_code)] // reserved for future verbose mode
     pub quiet: bool,
 }
