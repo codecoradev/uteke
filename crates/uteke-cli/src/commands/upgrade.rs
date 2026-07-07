@@ -92,32 +92,56 @@ pub fn run(yes: bool) -> Result<(), String> {
     io::copy(&mut resp, &mut file).map_err(|e| format!("Failed to write archive: {e}"))?;
     drop(file);
 
-    // 8. Verify checksum
+    // 8. Verify checksum — fail-hard to prevent MITM on unchecked binaries.
+    // Use --no-verify (via env UTEKE_UPGRADE_SKIP_CHECKSUM=1) to opt out.
     let checksums_url = format!(
         "https://github.com/{REPO}/releases/download/{latest_version}/checksums-sha256.txt"
     );
 
     println!("[INFO] Verifying checksum ...");
 
-    if let Ok(checksums_resp) = client.get(&checksums_url).send() {
-        if checksums_resp.status().is_success() {
-            let checksums_text = checksums_resp.text().unwrap_or_default();
-            if let Some(expected) = parse_checksum(&checksums_text, &archive_name) {
-                let actual = sha256_file(&archive_path)?;
-                if actual != expected {
-                    // Clean up on mismatch
-                    let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!(
-                        "Checksum mismatch! Expected: {expected}, got: {actual}"
-                    ));
-                }
-                println!("[INFO] Checksum verified: {actual}");
-            } else {
-                println!("[WARN] Checksum for {archive_name} not found — skipping verification");
-            }
-        } else {
-            println!("[WARN] Failed to download checksums — skipping verification");
+    let skip_checksum = std::env::var("UTEKE_UPGRADE_SKIP_CHECKSUM")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
+    if skip_checksum {
+        println!("[WARN] Checksum verification skipped (UTEKE_UPGRADE_SKIP_CHECKSUM=1)");
+    } else {
+        let checksums_resp = client.get(&checksums_url).send().map_err(|e| {
+            format!("Failed to download checksums: {e}. Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to skip.")
+        })?;
+
+        if !checksums_resp.status().is_success() {
+            let status = checksums_resp.status();
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(format!(
+                "Failed to download checksums (HTTP {status}). \
+                 Refusing to install unverified binary. \
+                 Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
+            ));
         }
+
+        let checksums_text = checksums_resp
+            .text()
+            .map_err(|e| format!("Failed to read checksums body: {e}"))?;
+
+        let expected = parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
+            let _ = fs::remove_dir_all(&temp_dir);
+            format!(
+                "Checksum for '{archive_name}' not found in checksums file. \
+                 Refusing to install unverified binary. \
+                 Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
+            )
+        })?;
+
+        let actual = sha256_file(&archive_path)?;
+        if actual != expected {
+            let _ = fs::remove_dir_all(&temp_dir);
+            return Err(format!(
+                "Checksum mismatch! Expected: {expected}, got: {actual}"
+            ));
+        }
+        println!("[INFO] Checksum verified: {actual}");
     }
 
     // 9. Verify archive integrity (path traversal check)
