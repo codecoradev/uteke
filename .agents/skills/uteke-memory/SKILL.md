@@ -203,12 +203,57 @@ uteke importance                      # Recompute scores
 uteke orphans --threshold 0.2         # Find disconnected
 ```
 
+## Project-Aware Memory (MANDATORY)
+
+**Always tag memories with `project:<name>` when working in a project.** This prevents noise when recalling — you only see memories relevant to the current project.
+
+### How to detect the project name
+
+1. From `workdir` / `cwd` — extract the repo folder name:
+   - `/home/user/repos/bond/` → `project:bond`
+   - `/home/user/repos/uteke/` → `project:uteke`
+   - `/home/user/repos/my-saas-app/` → `project:my-saas-app`
+2. From file paths mentioned in the conversation
+3. From the project name the user mentions
+
+### Rules
+
+| Rule | Details |
+|------|---------|
+| **REMEMBER** | Always include `project:<name>` in `--tags` when the memory is project-specific |
+| **RECALL** | Always include `--tags project:<name>` to scope recall to the current project |
+| **NO PROJECT** | If the conversation is not about any specific project (e.g., general chat), do NOT add a `project:` tag |
+| **TAG FORMAT** | Always lowercase: `project:bond`, `project:uteke` (not `project:Bond`) |
+
+### Examples
+
+```bash
+# Working on the "bond" project
+uteke recall "auth flow" --tags project:bond
+uteke remember "JWT rotation implemented with refresh tokens" --tags project:bond,decision,auth
+uteke remember "DB schema uses UUID v7 for primary keys" --tags project:bond,architecture,db
+
+# Working on the "uteke" project
+uteke recall "vector index corruption" --tags project:uteke
+uteke remember "Fixed usearch rebuild race condition" --tags project:uteke,bugfix,index
+
+# General conversation — no project tag
+uteke remember "User prefers concise responses" --tags preference
+
+# Cross-project recall (explicitly requested)
+uteke recall "shared auth pattern" --tags project:bond,project:corin
+```
+
+### Why this matters
+
+Without project tags, memories from all projects mix together. When you recall "fix auth bug" while working on project Bond, you might get results from project Corin's auth system — causing confusion and wasted context. Project tags ensure recall is scoped and noise-free.
+
 ## When to Use
 
 | Trigger | Action |
 |---------|--------|
-| Before starting work | `uteke recall "<project context>"` |
-| After making decisions | `uteke remember "<decision>" --tags <tags> --entity <name>` |
+| Before starting work | `uteke recall "<project context>" --tags project:<name>` |
+| After making decisions | `uteke remember "<decision>" --tags project:<name>,<other tags>` |
 | Important documents | `uteke doc create <slug> --file <path> --parent <slug>` |
 | Collaborative decisions | `uteke remember "..." --room <room> --author <name>` |
 | Memory feels stale | `uteke dream` or `uteke importance` |
