@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.6.6**.
+Complete reference for all uteke commands. Version **0.7.0**.
 
 ## Global Flags
 
@@ -16,6 +16,21 @@ Complete reference for all uteke commands. Version **0.6.6**.
 | `--verbose` | Enable debug logging | off |
 
 Config file path is auto-resolved (`~/.uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
+
+## uteke upgrade
+
+Check for updates and upgrade to the latest Uteke release.
+
+```bash
+uteke upgrade
+uteke upgrade --yes
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip confirmation prompt |
+
+> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies SHA-256 checksums by default. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip verification (not recommended).
 
 ## uteke remember
 
@@ -653,8 +668,12 @@ uteke timeline <memory-id> --json
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
 | `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
-| `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, hermes) |
-| `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md) |
+| `uteke init --agent <type>` | Initialize integration (opencode, pi, claude, cursor, hermes) |
+| `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md). **Note:** Hermes Mode B deprecated — see [integrations/hermes.md](integrations/hermes.md) for migration. |
+| `uteke init --agent pi --memory-provider` | Install uteke as pi's default memory provider (auto recall + extraction, #575/#577) |
+| `uteke init --agent claude --memory-provider` | Install uteke as Claude Code's default memory provider (auto recall + extraction, #575/#577) |
+| `uteke init --agent cursor --memory-provider` | Install uteke as Cursor's default memory provider (auto recall + extraction, #575/#577) |
+| `uteke init --agent opencode` | Generate AGENTS.md with uteke instructions for OpenCode (#612) |
 | `uteke completions <shell>` | Generate shell completions |
 
 ## uteke-serve (Server Mode)
@@ -701,7 +720,25 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/doc/search` | Hybrid/semantic/FTS document search (#440) |
 | POST | `/doc/move` | Move document to new parent (#438) |
 | DELETE | `/doc/delete?id=` | Delete document with cascade |
+| POST | `/doc/update` | Partial document update with chunk rebuild (#589) |
+| GET | `/export` | JSONL export (optional `?namespace=` filter) (#606) |
+| POST | `/extract` | LLM fact extraction + auto-store (1MB limit) (#610) |
+| POST | `/import` | JSONL import with re-embedding (5MB limit) (#610) |
+| POST | `/prune` | TTL-based deprecated memory cleanup (#611) |
+| POST | `/consolidate` | Near-duplicate merging (#611) |
+| POST | `/aging` | Memory lifecycle: status, preview, cleanup (#611) |
+| POST | `/importance` | Recalculate importance scores (#611) |
+| POST | `/orphans` | Find disconnected low-importance memories (read-only) (#611) |
+| POST | `/rebuild-backlinks` | Rebuild referenced_by from forward edges (#611) |
 | GET | `/recent` | Recent memories (supports `?namespace=`, `?limit=`, `?offset=`) (#528) |
+| GET | `/tags` | List all tags with counts (#566) |
+| POST | `/tags/rename` | Rename a tag across all memories (#566) |
+| POST | `/tags/delete` | Delete a tag from all memories (#566) |
+| POST | `/pin` | Pin a memory (prevent decay) (#566) |
+| POST | `/unpin` | Unpin a memory (#566) |
+| GET | `/timeline` | Timeline events for a memory (#566) |
+| GET | `/edges` | List edges for a memory (#566) |
+| GET | `/room/memories` | List memories in a room (#569) |
 | GET | `/graph` | Graph visualization — nodes, edges, stats (#408) |
 | POST | `/graph/edge` | Create a typed edge between two memories (#542) |
 | DELETE | `/graph/edge` | Remove an edge by ID (#542) |
@@ -765,7 +802,7 @@ uteke doc get architecture --json
 
 ### `uteke doc list`
 
-List documents in the current namespace.
+List all documents (global — not namespace-scoped, v0.7.0).
 
 ```bash
 uteke doc list --limit 20
@@ -793,6 +830,40 @@ uteke doc search "API reference" --mode fts --limit 5
 |------|-------------|
 | `--mode <mode>` | `hybrid` (default), `semantic`, or `fts` |
 | `--limit <n>` | Max results (default: 5) |
+
+### `uteke doc update`
+
+Partially update a document — only provided fields are changed (#589). Content changes trigger chunk rebuild; metadata-only or title-only updates skip it.
+
+```bash
+# Update title only (no chunk rebuild)
+uteke doc update architecture --title "New Architecture Guide"
+
+# Update content from file (triggers chunk rebuild)
+uteke doc update architecture --file updated-guide.md
+
+# Update content from stdin
+echo "# New content" | uteke doc update architecture --file -
+
+# Replace tags
+uteke doc update architecture --tags wiki,tech,v2
+
+# Replace metadata
+uteke doc update architecture --metadata '{"draft": false, "reviewer": "CTO"}'
+
+# Multiple fields at once
+uteke doc update architecture --title "Final Guide" --tags wiki,published
+```
+
+| Flag | Description |
+|------|-------------|
+| `--title <title>` | New title (no chunk rebuild) |
+| `--content <text>` | New content (triggers chunk rebuild) |
+| `--file <path>` | Read new content from file (`-` for stdin; triggers chunk rebuild) |
+| `--tags <tags>` | Replace tags (comma-separated) |
+| `--metadata <json>` | Replace metadata (JSON string) |
+
+At least one field is required. Omitted fields are left unchanged.
 
 ### `uteke doc move`
 
@@ -875,3 +946,11 @@ All limits can be overridden via env vars or `[limits]` config section:
 | `UTEKE_MAX_TAG_LENGTH` | `max_tag_length` | 50 | Max single tag length (chars) |
 | `UTEKE_MAX_PAYLOAD_SIZE` | `max_payload_size` | 10485760 | Max server payload (bytes) |
 | `UTEKE_DEFAULT_RECALL_LIMIT` | `default_recall_limit` | 5 | Default recall limit |
+
+## Changelog
+
+### v0.6.5
+- Room fixes (#545/#546/#547/#549/#550): Fixed room creation race conditions, room memory list pagination, room summary edge cases, room document generation for empty rooms, and room delete cascade consistency.
+
+### v0.6.6
+- Room summary Unicode fix (#565): Summary truncation now uses char boundaries instead of byte offsets, preventing mid-character cuts in multi-byte content.

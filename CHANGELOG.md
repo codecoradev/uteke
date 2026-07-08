@@ -1,21 +1,30 @@
-## [0.6.4] — 2026-07-03
+## [Unreleased]
+
+## [0.7.0] — 2026-07-08
 
 ### Added
-- **Gate ONNX behind `onnx` feature (#533, #534)** — `ort` and transitive `numkong` are now optional, gated behind `default-features = false`. Consumers that don't need ONNX/embedding can opt out entirely, resolving CI build failures on Ubuntu 22.04 (AVX-512) and macOS Intel (no prebuilt).
-- **Unified search across memories and documents (#531)** — single search endpoint returns results from both memories and documents.
-- **`/namespaces?with_counts=true` + `/recent` endpoints (#527, #528)** — namespace listing with per-namespace memory counts; recent memories across all namespaces.
-- **Cross-namespace `/list` and `/list_at_time` (#526)** — calling `/list` without namespace returns results from all namespaces.
+- **Project-aware memory tagging for noise-free recall (#616)** — Tag-based project scoping using `project:<name>` convention. SKILL.md includes mandatory project-aware memory section. pi-memory-provider extension auto-detects project from CWD and auto-tags recall. Hermes hooks detect project from `/repos/<project>/` paths. No binary changes — works with existing `--tags` flag.
+- **OpenCode init support (#612)** — `uteke init --agent opencode` generates AGENTS.md with uteke instructions. Bundled SKILL.md updated to v0.6.7.
+- **Maintenance HTTP endpoints (#607)** — `POST /prune` (TTL-based deprecated memory cleanup), `POST /consolidate` (near-duplicate merging), `POST /aging` (memory lifecycle: status/preview/cleanup). Write token required.
+- **Monitoring HTTP endpoints (#608)** — `POST /importance` (recalculate importance scores), `POST /orphans` (find disconnected low-importance memories, read-only), `POST /rebuild-backlinks` (rebuild referenced_by edges). Orphans accepts read-only token.
+- **Extract/Import/Export HTTP endpoints (#604–#606)** — `POST /extract` (LLM fact extraction + auto-store, 1MB limit), `POST /import` (JSONL import with re-embedding, 5MB limit), `GET /export` (JSONL export with optional namespace filter). Extractor moved from uteke-cli to uteke-core (shared module).
+- **Document partial update CLI + HTTP (#589, #583)** — `uteke doc update <slug>` for partial document updates (title, content, tags, metadata) with automatic chunk rebuild. `POST /doc/update` endpoint.
+- **MCP: pin/unpin tools (#588)** — `uteke_pin` and `uteke_unpin` MCP tools for memory persistence control.
+- **MCP: 6 room tools (#586)** — `uteke_room_create`, `uteke_room_delete`, `uteke_room_stats`, `uteke_room_summary`, `uteke_room_document`, `uteke_room_memories` MCP tools for full room management.
+- **MCP: tag management tools (#566)** — `uteke_tags_list`, `uteke_tags_rename`, `uteke_tags_delete` MCP tools.
+- **MCP: document update + move tools (#589, #438)** — `uteke_doc_update` (partial document update with chunk rebuild), `uteke_doc_move` (move document to new parent).
+- **`uteke upgrade` command (#603)** — Renamed from `uteke update` (which conflicted with `uteke doc update`). Self-update mechanism for installing latest Uteke release.
 
 ### Changed
-- **Split uteke-server monolith into modules (#514)** — refactored single-file server into modular structure for maintainability.
+- **Documents are now global — no namespace isolation (#614, #615)** — Documents use unique slugs across all namespaces. Schema migration v12→v13 adds `author` column, deprecates namespace on documents, migrates duplicate slugs. All document CRUD (CLI, server, MCP) no longer accepts namespace parameter.
+- **Extractor moved to uteke-core** — `Extractor` struct moved from `uteke-cli` to `uteke-core` shared module. CLI extract command delegates to core. Net -213 lines.
+- **Schema version v13** — Migration v12→v13: documents namespace deprecated, `author` column added, duplicate slug cleanup, global unique slug index.
 
 ### Fixed
-- **Read-only token on POST read endpoints (#524)** — read-only tokens now work on POST-based read endpoints (search, list, graph, etc).
-- **SQLite count column type** — use `u32` instead of `usize` (no `FromSql` impl for `usize`).
-- **`Option<String>` to `Option<&str>`** — fixed `list()` call parameter type.
-- **CodeCora alerts** — min_score in document path + improved error logging.
-
-## [Unreleased]
+- **Security: fail-hard on checksum verification failure (#609)** — `uteke upgrade` now fails with error when checksums download fails or archive checksum is missing, preventing MITM tampering. Found by Cora code review (GLM-5.2).
+- **Room tables in SCHEMA constant (#596)** — Fresh databases now include room tables in the base SCHEMA, preventing issues when schema_version check doesn't run migrations.
+- **CI: graceful sync workflow (#598)** — Fixed sync workflow + added missing cargo audit ignores for known advisories.
+- **Deps: crossbeam-epoch 0.9.18 → 0.9.20 (#597)** — Security update (RUSTSEC-2026-0204).
 
 ## [0.6.7] — 2026-07-06
 
@@ -32,8 +41,15 @@
 ## [0.6.6] — 2026-07-05
 
 ### Added
-- **HTTP graph mutation endpoints (#542)** — `POST /graph/edge` creates a new typed edge between two memories; `DELETE /graph/edge` removes an edge by its ID. Enables programmatic graph editing without the CLI.
 - **Tags, pin, timeline, and edges HTTP endpoints (#566)** — 7 new REST endpoints: `GET /tags`, `POST /tags/rename`, `POST /tags/delete`, `POST /pin`, `POST /unpin`, `GET /timeline`, `GET /edges`. Enables full tag management, memory pinning, audit timeline, and graph edge queries via HTTP.
+
+### Fixed
+- **Room summary panic on multi-byte Unicode (#565)** — `room_summary()` panicked on Unicode chars (≤, ≥, etc.) because of byte-index slicing. Replaced with char-based truncation (`chars().take(N).collect()`).
+
+## [0.6.5] — 2026-07-05
+
+### Added
+- **HTTP graph mutation endpoints (#542)** — `POST /graph/edge` creates a new typed edge between two memories; `DELETE /graph/edge` removes an edge by its ID. Enables programmatic graph editing without the CLI.
 
 ### Fixed
 - **Cross-process file lock (#543)** — usearch index is now protected by a file lock to prevent race conditions when multiple uteke processes access the same database concurrently.
@@ -43,11 +59,27 @@
 - **Room document missing sections for note/insight/reference/event types (#547)** — document sections for non-core memory types (note, insight, reference, event) are now generated correctly in room documents.
 - **documents_fts migration repair (#549)** — FTS5 virtual table is rebuilt if missing or corrupted during migration, preventing `no such table: documents_fts` errors.
 - **Document delete by slug (#550)** — `uteke doc delete` now correctly resolves documents by slug (not just UUID), matching the behavior of `get` and `list`.
-- **Room summary panic on multi-byte Unicode (#565)** — `room_summary()` panicked on Unicode chars (≤, ≥, etc.) because of byte-index slicing. Replaced with char-based truncation (`chars().take(N).collect()`).
 
 ### Docs
 - **HTTP API documentation for `/recent` and graph mutation endpoints** — `GET /recent` (with query params), `GET /graph`, `POST /graph/edge`, `DELETE /graph/edge` added to HTTP Endpoints table. Graph API section expanded with mutation curl examples.
 - **VitePress sidebar entries** — added Document Commands and Graph API links to docs sidebar.
+
+## [0.6.4] — 2026-07-03
+
+### Added
+- **Gate ONNX behind `onnx` feature (#533, #534)** — `ort` and transitive `numkong` are now optional, gated behind `default-features = false`. Consumers that don't need ONNX/embedding can opt out entirely, resolving CI build failures on Ubuntu 22.04 (AVX-512) and macOS Intel (no prebuilt).
+- **Unified search across memories and documents (#531)** — single search endpoint returns results from both memories and documents.
+- **`/namespaces?with_counts=true` + `/recent` endpoints (#527, #528)** — namespace listing with per-namespace memory counts; recent memories across all namespaces.
+- **Cross-namespace `/list` and `/list_at_time` (#526)** — calling `/list` without namespace returns results from all namespaces.
+
+### Changed
+- **Split uteke-server monolith into modules (#514)** — refactored single-file server into modular structure for maintainability.
+
+### Fixed
+- **Read-only token on POST read endpoints (#524)** — read-only tokens now work on POST-based read endpoints (search, list, graph, etc).
+- **SQLite count column type** — use `u32` instead of `usize` (no `FromSql` impl for `usize`).
+- **`Option<String>` to `Option<&str>`** — fixed `list()` call parameter type.
+- **CodeCora alerts** — min_score in document path + improved error logging.
 
 ## [0.6.3] — 2026-07-01
 
@@ -1127,8 +1159,32 @@
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
+[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/codecoradev/uteke/compare/v0.6.7...v0.7.0
+[0.6.7]: https://github.com/codecoradev/uteke/releases/tag/v0.6.7
+[0.6.6]: https://github.com/codecoradev/uteke/releases/tag/v0.6.6
+[0.6.5]: https://github.com/codecoradev/uteke/releases/tag/v0.6.5
+[0.6.4]: https://github.com/codecoradev/uteke/releases/tag/v0.6.4
+[0.6.3]: https://github.com/codecoradev/uteke/releases/tag/v0.6.3
+[0.6.2]: https://github.com/codecoradev/uteke/releases/tag/v0.6.2
+[0.6.1]: https://github.com/codecoradev/uteke/releases/tag/v0.6.1
+[0.6.0]: https://github.com/codecoradev/uteke/releases/tag/v0.6.0
+[0.5.0]: https://github.com/codecoradev/uteke/releases/tag/v0.5.0
+[0.4.3]: https://github.com/codecoradev/uteke/releases/tag/v0.4.3
+[0.4.2]: https://github.com/codecoradev/uteke/releases/tag/v0.4.2
+[0.4.1]: https://github.com/codecoradev/uteke/releases/tag/v0.4.1
+[0.4.0]: https://github.com/codecoradev/uteke/releases/tag/v0.4.0
+[0.3.2]: https://github.com/codecoradev/uteke/releases/tag/v0.3.2
+[0.3.1]: https://github.com/codecoradev/uteke/releases/tag/v0.3.1
+[0.3.0]: https://github.com/codecoradev/uteke/releases/tag/v0.3.0
+[0.2.1]: https://github.com/codecoradev/uteke/releases/tag/v0.2.1
+[0.2.0]: https://github.com/codecoradev/uteke/releases/tag/v0.2.0
+[0.1.0]: https://github.com/codecoradev/uteke/releases/tag/v0.1.0
+[0.0.15]: https://github.com/codecoradev/uteke/releases/tag/v0.0.15
+[0.0.14]: https://github.com/codecoradev/uteke/releases/tag/v0.0.14
 [0.0.13]: https://github.com/codecoradev/uteke/releases/tag/v0.0.13
 [0.0.12]: https://github.com/codecoradev/uteke/releases/tag/v0.0.12
+[0.0.11]: https://github.com/codecoradev/uteke/releases/tag/v0.0.11
 [0.0.10]: https://github.com/codecoradev/uteke/releases/tag/v0.0.10
 [0.0.9]: https://github.com/codecoradev/uteke/releases/tag/v0.0.9
 [0.0.8]: https://github.com/codecoradev/uteke/releases/tag/v0.0.8

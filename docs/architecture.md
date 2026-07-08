@@ -109,11 +109,41 @@ ID → usearch REMOVE (RwLock write, acquired first)
 
 Index lock acquired **before** SQLite delete — narrows the inconsistency window.
 
+
+### Extract / Import / Export (v0.7.0)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/extract` | POST | Write | LLM fact extraction + auto-store (1MB body limit) |
+| `/import` | POST | Write | JSONL import with re-embedding (5MB body limit) |
+| `/export` | GET | Read | JSONL export (optional `?namespace=` filter) |
+
+### Maintenance & Monitoring (v0.7.0)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/prune` | POST | Write | TTL-based deprecated memory cleanup |
+| `/consolidate` | POST | Write | Near-duplicate merging |
+| `/aging` | POST | Write | Memory lifecycle: status, preview, cleanup |
+| `/importance` | POST | Write | Recalculate importance scores |
+| `/orphans` | POST | Read | Find disconnected, low-importance memories |
+| `/rebuild-backlinks` | POST | Write | Rebuild `referenced_by` from forward edges |
+
+### Document Update (v0.7.0)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/doc/update` | POST | Write | Partial document update with chunk rebuild |
+
 ## Key Design Decisions
 
 ### RwLock for Vector Index (not Mutex)
 
 Read-heavy workload: recall/search operations far outnumber remember/forget. Multiple concurrent recalls share a read lock. Embedder remains `Mutex` because ONNX tokenizer requires `&mut self` internally.
+
+### Cross-Process File Lock (#543)
+
+The RwLock provides intra-process concurrency only (multiple threads within a single `uteke-serve` process). For cross-process safety (multiple `uteke-serve` instances or CLI + server sharing the same store), a file-based lock (`fs2` crate) guards the SQLite database and usearch index files. The lock is acquired on store open and held until the process exits or the store is dropped. This prevents concurrent writes from corrupting the index or database when multiple processes access the same `~/.uteke/` directory.
 
 ### FTS5 + Vector Hybrid via RRF
 
@@ -137,7 +167,7 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v10 (`source` + `source_type` columns, #348). Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v13. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant), v13 global documents (namespace deprecated, author column, slug uniqueness). Zero data loss guaranteed.
 
 ### Rooms
 
@@ -173,7 +203,7 @@ The `uteke-mcp` crate provides a shared JSON-RPC handler used by both:
 - **stdio binary** (`uteke-mcp`) — for local agents (Claude Desktop, Cursor)
 - **HTTP endpoint** (`POST /mcp` on `uteke-serve`) — for remote MCP clients
 
-Protocol version: `2025-06-18` (Streamable HTTP spec). 1 MiB body limit enforced on HTTP endpoint.
+Protocol version: `2025-06-18` (Streamable HTTP spec). 1 MiB body limit enforced on HTTP endpoint. JSON-RPC 2.0 strict compliance (v0.6.7, #573/#576): tagged union responses, no notification response, Claude Code compatible.
 
 ## Performance
 
@@ -215,6 +245,14 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
 └── logs/
     ├── uteke.log               # Current log
     └── uteke.log.YYYY-MM-DD    # Rotated logs
+```
+
+In Docker, the data directory defaults to `/data` (set via `UTEKE_HOME`). The `slim` image variant does not bundle the embedding model — mount the model directory separately:
+```bash
+docker run -d --name uteke \
+  -v uteke-data:/data \
+  -v ./models/embeddinggemma-q4:/data/embeddinggemma-q4 \
+  ghcr.io/codecoradev/uteke:slim
 ```
 
 ## Known Limitations

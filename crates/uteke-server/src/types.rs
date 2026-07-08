@@ -15,8 +15,6 @@ pub struct DocCreateRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub namespace: Option<String>,
-    #[serde(default)]
     pub parent: Option<String>,
 }
 
@@ -24,14 +22,10 @@ pub struct DocCreateRequest {
 pub struct DocGetRequest {
     pub id: Option<String>,
     pub slug: Option<String>,
-    #[serde(default)]
-    pub namespace: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct DocListParams {
-    #[serde(default)]
-    pub namespace: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default)]
@@ -45,8 +39,6 @@ pub struct DocSearchRequest {
     pub query: String,
     #[serde(default = "default_limit")]
     pub limit: usize,
-    #[serde(default)]
-    pub namespace: Option<String>,
     #[serde(default = "default_search_mode")]
     pub mode: String,
 }
@@ -57,8 +49,20 @@ pub struct DocMoveRequest {
     pub slug: Option<String>,
     #[serde(default)]
     pub new_parent: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct DocUpdateRequest {
+    pub id: Option<String>,
+    pub slug: Option<String>,
     #[serde(default)]
-    pub namespace: Option<String>,
+    pub title: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 pub fn default_search_mode() -> String {
@@ -76,6 +80,14 @@ pub fn resolve_doc_id(req: &DocGetRequest) -> Result<&str, &'static str> {
 }
 
 pub fn resolve_doc_id_move(req: &DocMoveRequest) -> Result<&str, &'static str> {
+    match (&req.id, &req.slug) {
+        (Some(id), _) => Ok(id),
+        (_, Some(slug)) => Ok(slug),
+        _ => Err("provide either 'id' or 'slug'"),
+    }
+}
+
+pub fn resolve_doc_id_update(req: &DocUpdateRequest) -> Result<&str, &'static str> {
     match (&req.id, &req.slug) {
         (Some(id), _) => Ok(id),
         (_, Some(slug)) => Ok(slug),
@@ -318,4 +330,116 @@ pub struct GraphEdgeRequest {
     pub edge_type: Option<String>,
     #[serde(default)]
     pub weight: Option<f64>,
+}
+
+// ── Extract Types ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ExtractRequest {
+    pub content: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Override extraction model (else config default).
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Override max facts per document.
+    #[serde(default)]
+    pub max_facts: Option<usize>,
+}
+
+// ── Import Types ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ImportRequest {
+    /// JSONL content to import.
+    pub content: String,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    #[allow(dead_code)] // not yet merged into JSONL entries on import
+    pub tags: Vec<String>,
+}
+
+// ── Maintenance Types (#607) ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct PruneRequest {
+    #[serde(default = "default_prune_ttl")]
+    pub ttl_days: u32,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_prune_ttl() -> u32 {
+    30
+}
+
+#[derive(Deserialize)]
+pub struct ConsolidateRequest {
+    #[serde(default = "default_consolidate_threshold")]
+    pub threshold: f32,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_consolidate_threshold() -> f32 {
+    0.9
+}
+
+#[derive(Deserialize)]
+pub struct AgingRequest {
+    #[serde(default = "default_aging_action")]
+    pub action: String,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Days threshold for preview/cleanup (default: warm_days from config, fallback 90).
+    #[serde(default)]
+    pub older_than_days: Option<u32>,
+    /// Max access count threshold for preview/cleanup (default: 1).
+    #[serde(default)]
+    pub max_access_count: Option<u32>,
+}
+
+fn default_aging_action() -> String {
+    "status".to_string()
+}
+
+// ── Monitoring Types (#608) ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct ImportanceRequest {
+    #[serde(default)]
+    #[allow(dead_code)] // recompute_importance is global (no namespace filter)
+    pub namespace: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OrphansRequest {
+    #[serde(default = "default_orphan_threshold")]
+    pub threshold: f64,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_orphan_threshold() -> f64 {
+    0.3
+}
+
+#[derive(Deserialize)]
+pub struct RebuildBacklinksRequest {
+    #[serde(default)]
+    #[allow(dead_code)] // reserved for future verbose mode
+    pub quiet: bool,
 }

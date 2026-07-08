@@ -272,7 +272,7 @@ pub enum Commands {
     },
     /// Initialize uteke integration for an AI agent
     Init {
-        /// Agent type: pi, claude, cursor, hermes
+        /// Agent type: pi, claude, cursor, opencode, hermes
         #[arg(long, default_value = "pi")]
         agent: String,
         /// For --agent hermes: install the memory-provider plugin (automatic
@@ -407,6 +407,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: DocCommands,
     },
+    /// Check for updates and upgrade to the latest version
+    Upgrade {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
+    },
 }
 
 /// Document subcommands (#411, #438).
@@ -488,6 +494,26 @@ pub enum DocCommands {
         /// Search mode: semantic, fts, or hybrid (default)
         #[arg(long, default_value = "hybrid")]
         mode: String,
+    },
+    /// Partially update a document — only provided fields are changed (#589)
+    Update {
+        /// Document slug or ID
+        id_or_slug: String,
+        /// New title (optional — no chunk rebuild)
+        #[arg(long)]
+        title: Option<String>,
+        /// New content (triggers chunk rebuild)
+        #[arg(long)]
+        content: Option<String>,
+        /// Read new content from file (use - for stdin; triggers chunk rebuild)
+        #[arg(long)]
+        file: Option<String>,
+        /// Replace tags (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        tags: Vec<String>,
+        /// Replace metadata (JSON string)
+        #[arg(long)]
+        metadata: Option<String>,
     },
     /// Delete a document by ID (cascades to children, #438)
     Delete {

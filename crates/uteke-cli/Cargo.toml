@@ -14,7 +14,7 @@ name = "uteke"
 path = "src/main.rs"
 
 [dependencies]
-uteke-core = { path = "../uteke-core", version = "0.6.0", features = ["onnx"] }
+uteke-core = { path = "../uteke-core", version = "0.7.0", features = ["onnx"] }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
@@ -26,6 +26,9 @@ clap_complete = "4"
 ctrlc = "3"
 tracing-appender = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 urlencoding = "2.1.3"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 

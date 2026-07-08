@@ -89,23 +89,8 @@ impl EmbeddingConfig {
 
 /// LLM fact-extraction configuration for `import --extract` (opt-in).
 ///
-/// All fields are inert unless the user passes `--extract`. This keeps uteke
-/// offline-first by default; extraction only ever runs on explicit request.
-#[derive(serde::Deserialize, Clone, Default)]
-#[serde(default)]
-pub struct ExtractionConfig {
-    /// Chat-completions model used to distill facts (e.g. "gpt-4o-mini").
-    pub model: String,
-    /// API key. May also be supplied via UTEKE_EXTRACTION_API_KEY,
-    /// or falls back to the embedding/OPENAI key at call time.
-    pub api_key: String,
-    /// Base URL of the OpenAI-compatible endpoint. Empty = OpenAI default.
-    pub base_url: String,
-    /// Endpoint path appended to base_url. Empty = "/chat/completions".
-    pub endpoint_path: String,
-    /// Maximum facts to keep per document. 0 = built-in default.
-    pub max_facts: usize,
-}
+/// Re-exported from uteke-core so the server can share the same config.
+pub type ExtractionConfig = uteke_core::extraction::ExtractionConfig;
 
 /// Embedding fallback configuration for cloud API when local ONNX fails.
 ///

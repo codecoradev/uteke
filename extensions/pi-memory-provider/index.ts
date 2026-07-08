@@ -5,6 +5,9 @@
  * experience. Hooks `before_agent_start` to inject relevant memories into
  * every agent turn without manual tool calls.
  *
+ * Project-aware: auto-detects project name from the current working directory
+ * and tags all memories with `project:<name>` for noise-free recall.
+ *
  * Install:
  *   Global:  ~/.pi/agent/extensions/uteke-memory-provider/index.ts
  *   Project: .pi/extensions/uteke-memory-provider/index.ts
@@ -14,8 +17,8 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execSync } from "node:child_process";
-import { join } from "node:path";
-import { homedir } from "node:os";
+import { basename, resolve } from "node:path";
+import { existsSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Config (reads from env, can be extended)
@@ -25,6 +28,63 @@ const DEFAULT_NAMESPACE = "default";
 const RECALL_LIMIT = 6;
 const RECALL_MIN_SCORE = 0.45;
 const RECALL_TIMEOUT_MS = 15_000;
+
+// Known project root directories to scan for project detection
+const KNOWN_PROJECT_DIRS = [
+	"/opt/data/repos",
+	"/home",
+	process.env.HOME || "",
+].filter(Boolean);
+
+// ---------------------------------------------------------------------------
+// Project Detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect project name from the current working directory.
+ * Walks up from cwd to find a known project root, then extracts the folder name.
+ * Returns lowercase project name or empty string.
+ */
+function detectProjectFromCwd(): string {
+	const cwd = process.cwd();
+
+	for (const root of KNOWN_PROJECT_DIRS) {
+		if (!root || !existsSync(root)) continue;
+		const resolved = resolve(root);
+
+		// Check if cwd is inside or equal to this project root
+		if (cwd.startsWith(resolved + "/") || cwd === resolved) {
+			// Extract the immediate subdirectory name
+			const relative = cwd.slice(resolved.length + 1);
+			const firstSegment = relative.split("/")[0];
+			if (firstSegment && !firstSegment.startsWith(".")) {
+				return firstSegment.toLowerCase();
+			}
+		}
+	}
+
+	return "";
+}
+
+/**
+ * Detect project name from text (file paths, mentions).
+ * Falls back to cwd detection if nothing found in text.
+ */
+function detectProject(text: string, fallbackToCwd = false): string {
+	if (!text) return fallbackToCwd ? detectProjectFromCwd() : "";
+
+	// Strategy 1: file paths containing known project roots
+	for (const root of KNOWN_PROJECT_DIRS) {
+		if (!root) continue;
+		const escaped = root.replace(/\//g, "\\/");
+		const match = text.match(new RegExp(`${escaped}/([a-zA-Z0-9_.-]+)`));
+		if (match && match[1] && !match[1].startsWith(".")) {
+			return match[1].toLowerCase();
+		}
+	}
+
+	return fallbackToCwd ? detectProjectFromCwd() : "";
+}
 
 // ---------------------------------------------------------------------------
 // Subprocess helpers
@@ -59,18 +119,25 @@ function runUteke(args: string[], timeout = RECALL_TIMEOUT_MS): string {
 	}
 }
 
-function recallMemories(query: string): string[] {
+function recallMemories(query: string, project: string): string[] {
 	const ns = process.env.UTEKE_NAMESPACE || DEFAULT_NAMESPACE;
 	const limit = process.env.UTEKE_RECALL_LIMIT || String(RECALL_LIMIT);
 	const minScore = process.env.UTEKE_RECALL_MIN_SCORE || String(RECALL_MIN_SCORE);
 
-	const raw = runUteke([
+	const args: string[] = [
 		"recall", `"${query}"`,
 		"--namespace", ns,
 		"--limit", limit,
 		"--min-score", minScore,
 		"--json",
-	]);
+	];
+
+	// Filter by project tag if detected
+	if (project) {
+		args.push("--tags", `project:${project}`);
+	}
+
+	const raw = runUteke(args);
 
 	if (!raw.trim()) return [];
 
@@ -90,11 +157,12 @@ function recallMemories(query: string): string[] {
 	}
 }
 
-function formatMemories(memories: string[]): string {
+function formatMemories(memories: string[], project: string): string {
 	if (!memories.length) return "";
+	const projectHint = project ? ` [project: ${project}]` : "";
 	const lines = memories.map((m, i) => `${i + 1}. ${m}`).join("\n");
 	return (
-		"\n\n## Relevant Memories (uteke)\n\n" +
+		`\n\n## Relevant Memories (uteke)${projectHint}\n\n` +
 		lines +
 		"\n\nUse `uteke remember` to store new facts, `uteke recall` to search more."
 	);
@@ -112,11 +180,14 @@ export default function (pi: ExtensionAPI) {
 		const out = runUteke(["stats"], 3000);
 		available = out.trim().length > 0;
 
-		if (available) {
-			ctx.ui.setStatus("uteke", "🧠 uteke: active");
-		} else {
-			ctx.ui.setStatus("uteke", "🧠 uteke: not found");
-		}
+		const project = detectProjectFromCwd();
+		const status = project
+			? `🧠 uteke: active (${project})`
+			: available
+				? "🧠 uteke: active"
+				: "🧠 uteke: not found";
+
+		ctx.ui.setStatus("uteke", status);
 	});
 
 	// Core hook: inject relevant memories before every agent turn
@@ -126,10 +197,12 @@ export default function (pi: ExtensionAPI) {
 		const prompt = (event.prompt || "").trim();
 		if (!prompt || prompt.length < 3) return;
 
-		const memories = recallMemories(prompt);
+		// Detect project from prompt text, fallback to cwd
+		const project = detectProject(prompt, true);
+		const memories = recallMemories(prompt, project);
 		if (!memories.length) return;
 
-		const injection = formatMemories(memories);
+		const injection = formatMemories(memories, project);
 
 		return {
 			systemPrompt: event.systemPrompt + injection,
@@ -142,19 +215,32 @@ export default function (pi: ExtensionAPI) {
 		handler: async (args, _ctx) => {
 			const query = args.join(" ").trim();
 			if (!query) return "Usage: /uteke-recall <topic>";
-			const memories = recallMemories(query);
+			const project = detectProject(query, true);
+			const memories = recallMemories(query, project);
 			if (!memories.length) return "No relevant memories found.";
-			return formatMemories(memories);
+			return formatMemories(memories, project);
 		},
 	});
 
 	pi.registerCommand("uteke-save", {
-		description: "Save a memory to uteke",
+		description: "Save a memory to uteke (auto-tagged with project)",
 		handler: async (args, _ctx) => {
 			const content = args.join(" ").trim();
 			if (!content) return "Usage: /uteke-save <content>";
-			runUteke(["remember", `"${content}"`], RECALL_TIMEOUT_MS);
-			return "✓ Memory saved.";
+
+			const ns = process.env.UTEKE_NAMESPACE || DEFAULT_NAMESPACE;
+			const project = detectProjectFromCwd();
+			const cmdArgs: string[] = [
+				"remember", `"${content}"`,
+				"--namespace", ns,
+			];
+			if (project) {
+				cmdArgs.push("--tags", `project:${project}`);
+			}
+
+			runUteke(cmdArgs, RECALL_TIMEOUT_MS);
+			const projectNote = project ? ` [project: ${project}]` : "";
+			return `✓ Memory saved.${projectNote}`;
 		},
 	});
 

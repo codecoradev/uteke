@@ -15,6 +15,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod error;
+pub mod extraction;
 pub mod graph;
 pub mod graph_rerank;
 mod import_export;
@@ -753,18 +754,19 @@ impl Uteke {
 
     /// Create or update a document (#406, #438).
     ///
-    /// If the slug exists in the namespace, updates content and re-chunks.
+    /// If the slug exists, updates content and re-chunks.
     /// Chunks are created via the markdown chunker (#405) and embedded.
     /// Optional parent slug for hierarchical documents.
+    /// Slugs are globally unique — no namespace isolation (#614).
     pub fn doc_upsert(
         &self,
         slug: &str,
         title: &str,
         content: &str,
         tags: &[&str],
-        namespace: Option<&str>,
+        author: Option<&str>,
     ) -> Result<String, Error> {
-        self.doc_upsert_with_parent(slug, title, content, tags, namespace, None)
+        self.doc_upsert_with_parent(slug, title, content, tags, author, None)
     }
 
     /// Create or update a document with optional parent (#438).
@@ -778,16 +780,15 @@ impl Uteke {
         title: &str,
         content: &str,
         tags: &[&str],
-        namespace: Option<&str>,
+        author: Option<&str>,
         parent_slug: Option<&str>,
     ) -> Result<String, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let now = chrono::Utc::now().to_rfc3339();
 
         // Resolve parent if specified.
         let (parent_id, parent_path, parent_depth) = match parent_slug {
             Some(ps) => {
-                let parent = self.store.get_document_by_slug(ps, ns)?.ok_or_else(|| {
+                let parent = self.store.get_document_by_slug(ps)?.ok_or_else(|| {
                     Error::validation(format!("parent document '{ps}' not found"))
                 })?;
                 if parent.depth >= 9 {
@@ -801,7 +802,7 @@ impl Uteke {
         };
 
         // Check if document exists to get current version.
-        let existing = self.store.get_document_by_slug(slug, ns)?;
+        let existing = self.store.get_document_by_slug(slug)?;
         let (id, version) = match &existing {
             Some(doc) => (doc.id.clone(), doc.version),
             None => (uuid::Uuid::new_v4().to_string(), 1),
@@ -818,7 +819,8 @@ impl Uteke {
             slug: slug.to_string(),
             title: title.to_string(),
             content: content.to_string(),
-            namespace: ns.to_string(),
+            namespace: None,
+            author: author.map(|s| s.to_string()),
             tags: tags.iter().map(|t| t.to_string()).collect(),
             metadata: serde_json::Value::Null,
             version,
@@ -895,56 +897,131 @@ impl Uteke {
             tracing::warn!("Failed to persist vector index after doc chunking: {}", e);
         }
 
-        tracing::info!(
-            "Document '{slug}' upserted in namespace '{ns}': {} chunks",
-            chunks.len()
-        );
+        tracing::info!("Document '{slug}' upserted: {} chunks", chunks.len());
 
         Ok(doc_id)
     }
 
     /// Get a document by ID or slug.
-    pub fn doc_get(
-        &self,
-        id_or_slug: &str,
-        namespace: Option<&str>,
-    ) -> Result<Option<Document>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+    pub fn doc_get(&self, id_or_slug: &str) -> Result<Option<Document>, Error> {
         // Try by slug first, then by ID.
-        if let Some(doc) = self.store.get_document_by_slug(id_or_slug, ns)? {
+        if let Some(doc) = self.store.get_document_by_slug(id_or_slug)? {
             return Ok(Some(doc));
         }
         self.store.get_document(id_or_slug)
     }
 
-    /// List documents in a namespace.
-    pub fn doc_list(
+    /// Partially update a document — only provided fields are changed.
+    ///
+    /// Content changes trigger chunk rebuild (old chunks deleted, new ones
+    /// embedded and indexed). Version is always incremented.
+    /// Returns the updated document, or `None` if not found.
+    pub fn doc_update(
         &self,
-        namespace: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<DocumentSummary>, Error> {
-        self.store.list_documents(namespace, limit)
+        id_or_slug: &str,
+        title: Option<&str>,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<Option<Document>, Error> {
+        // Resolve document.
+        let doc = match self.doc_get(id_or_slug)? {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        let doc_id = doc.id.clone();
+
+        // Partial update in SQLite.
+        let updated = self
+            .store
+            .update_document(&doc_id, title, content, tags, metadata)?;
+
+        let updated = match updated {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        // If content was changed, rebuild chunks.
+        if let Some(content_text) = content {
+            let old_chunk_ids = self
+                .store
+                .delete_chunks_for_documents(std::slice::from_ref(&doc_id))?;
+
+            self.ensure_embedder()?;
+            let embedder = self
+                .embedder
+                .lock()
+                .map_err(|_| Error::lock("embedder lock during document update"))?;
+            let embedder = embedder.as_ref().expect("embedder ensured above");
+
+            let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
+            let chunks = crate::chunker::chunk_markdown(content_text, max_chars);
+
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write lock during doc update"))?;
+
+            for old_id in &old_chunk_ids {
+                let key = format!("chunk:{}", old_id);
+                index.remove(&key);
+            }
+
+            for (i, chunk) in chunks.iter().enumerate() {
+                let chunk_id = uuid::Uuid::new_v4().to_string();
+                let embedding = embedder.embed(&chunk.content)?;
+
+                self.store.insert_document_chunk(
+                    &DocumentChunk {
+                        id: chunk_id.clone(),
+                        document_id: doc_id.clone(),
+                        chunk_index: i as i64,
+                        heading: chunk.heading.clone(),
+                        content: chunk.content.clone(),
+                        char_start: chunk.char_start as i64,
+                        char_end: chunk.char_end as i64,
+                        tags: updated.tags.clone(),
+                    },
+                    &embedding,
+                )?;
+
+                let index_key = format!("chunk:{}", chunk_id);
+                if let Err(e) = index.insert(&index_key, &embedding) {
+                    tracing::warn!(
+                        "Failed to insert chunk {} into index during update: {}",
+                        chunk_id,
+                        e
+                    );
+                }
+            }
+
+            if let Err(e) = index.save() {
+                tracing::warn!("Failed to persist index after doc update: {}", e);
+            }
+        }
+
+        tracing::info!("Document '{id_or_slug}' updated");
+        Ok(Some(updated))
     }
 
-    /// List root documents (no parent) in a namespace (#438).
-    pub fn doc_list_roots(
-        &self,
-        namespace: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<DocumentSummary>, Error> {
-        self.store.list_root_documents(namespace, limit)
+    /// List documents (global, no namespace filter).
+    pub fn doc_list(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_documents(limit)
+    }
+
+    /// List root documents (parent_id IS NULL, global).
+    pub fn doc_list_roots(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_root_documents(limit)
     }
 
     /// List children of a document (#438).
     pub fn doc_list_children(
         &self,
         parent_id_or_slug: &str,
-        namespace: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         // Resolve slug to ID first.
-        let parent_id = match self.store.get_document_by_slug(parent_id_or_slug, ns)? {
+        let parent_id = match self.store.get_document_by_slug(parent_id_or_slug)? {
             Some(doc) => doc.id,
             None => parent_id_or_slug.to_string(),
         };
@@ -955,23 +1032,15 @@ impl Uteke {
     pub fn doc_list_descendants(
         &self,
         id_or_slug: &str,
-        namespace: Option<&str>,
         max_depth: Option<i64>,
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        self.store
-            .list_descendants(id_or_slug, ns, max_depth, limit)
+        self.store.list_descendants(id_or_slug, max_depth, limit)
     }
 
     /// Get breadcrumbs from root to a document (#438).
-    pub fn doc_breadcrumbs(
-        &self,
-        id_or_slug: &str,
-        namespace: Option<&str>,
-    ) -> Result<Vec<DocumentSummary>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-        self.store.get_breadcrumbs(id_or_slug, ns)
+    pub fn doc_breadcrumbs(&self, id_or_slug: &str) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.get_breadcrumbs(id_or_slug)
     }
 
     /// Move a document to a new parent or root (#438).
@@ -979,18 +1048,16 @@ impl Uteke {
         &self,
         id_or_slug: &str,
         new_parent_slug: Option<&str>,
-        namespace: Option<&str>,
     ) -> Result<usize, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let doc = self
             .store
-            .get_document_by_slug(id_or_slug, ns)?
+            .get_document_by_slug(id_or_slug)?
             .or_else(|| self.store.get_document(id_or_slug).unwrap_or(None))
             .ok_or_else(|| Error::validation("document not found for move"))?;
 
         let new_parent_id = match new_parent_slug {
             Some(ps) => {
-                let parent = self.store.get_document_by_slug(ps, ns)?.ok_or_else(|| {
+                let parent = self.store.get_document_by_slug(ps)?.ok_or_else(|| {
                     Error::validation(format!("parent document '{ps}' not found"))
                 })?;
                 Some(parent.id)
@@ -1006,16 +1073,14 @@ impl Uteke {
     ///
     /// Cascades to children and chunks. Returns (deleted, subtree_size).
     /// Also removes chunk embeddings from usearch index.
-    pub fn doc_delete(&self, id: &str, namespace: Option<&str>) -> Result<(bool, usize), Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
-
+    pub fn doc_delete(&self, id: &str) -> Result<(bool, usize), Error> {
         // Resolve slug to ID FIRST, before any other operations.
         // Accepts both UUID and slug (consistent with doc_get) (#550).
         let resolved_id = match self.store.get_document(id)? {
             Some(d) => d.id,
             None => {
                 self.store
-                    .get_document_by_slug(id, ns)?
+                    .get_document_by_slug(id)?
                     .ok_or_else(|| Error::validation(format!("document not found: {id}")))?
                     .id
             }
@@ -1024,7 +1089,7 @@ impl Uteke {
         // Collect all document IDs in the subtree before deletion.
         let subtree = self
             .store
-            .list_descendants(&resolved_id, ns, None, 10000)
+            .list_descendants(&resolved_id, None, 10000)
             .unwrap_or_default();
 
         let all_ids: Vec<String> = subtree
@@ -1067,24 +1132,21 @@ impl Uteke {
     pub fn doc_search(
         &self,
         query: &str,
-        namespace: Option<&str>,
         limit: usize,
         mode: &str,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
-        let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         let limit = limit.min(50);
 
         match mode {
-            "semantic" => self.doc_search_semantic(query, ns, limit),
-            "fts" => self.doc_search_fts(query, ns, limit),
-            _ => self.doc_search_hybrid(query, ns, limit),
+            "semantic" => self.doc_search_semantic(query, limit),
+            "fts" => self.doc_search_fts(query, limit),
+            _ => self.doc_search_hybrid(query, limit),
         }
     }
 
     fn doc_search_semantic(
         &self,
         query: &str,
-        _ns: &str,
         limit: usize,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
@@ -1145,6 +1207,7 @@ impl Uteke {
                     slug: doc.slug.clone(),
                     title: doc.title.clone(),
                     namespace: doc.namespace.clone(),
+                    author: doc.author.clone(),
                     version: doc.version,
                     updated_at: doc.updated_at.clone(),
                     parent_id: doc.parent_id.clone(),
@@ -1197,14 +1260,13 @@ impl Uteke {
     fn doc_search_fts(
         &self,
         query: &str,
-        ns: &str,
         limit: usize,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
         let docs = self
             .store
-            .search_documents_fts(query, Some(ns), limit)
+            .search_documents_fts(query, limit)
             .unwrap_or_default();
 
         Ok(docs
@@ -1223,17 +1285,14 @@ impl Uteke {
     fn doc_search_hybrid(
         &self,
         query: &str,
-        ns: &str,
         limit: usize,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
         let semantic_results = self
-            .doc_search_semantic(query, ns, limit * 2)
+            .doc_search_semantic(query, limit * 2)
             .unwrap_or_default();
-        let fts_results = self
-            .doc_search_fts(query, ns, limit * 2)
-            .unwrap_or_default();
+        let fts_results = self.doc_search_fts(query, limit * 2).unwrap_or_default();
 
         // Reciprocal Rank Fusion (RRF): score = sum(1 / (k + rank))
         let rrf_k: f32 = 60.0;
@@ -1347,10 +1406,10 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
-        ns: &str,
+        _ns: &str,
         min_score: f32,
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
-        let results = self.doc_search(query, Some(ns), limit, "hybrid")?;
+        let results = self.doc_search(query, limit, "hybrid")?;
         Ok(results
             .into_iter()
             .filter(|dr| dr.score >= min_score)
@@ -1404,7 +1463,7 @@ impl Uteke {
         };
 
         // 2. Document search (hybrid)
-        let doc_results = match self.doc_search(query, Some(ns), limit * 2, "hybrid") {
+        let doc_results = match self.doc_search(query, limit * 2, "hybrid") {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Unified search: doc search failed, using partial results: {e}");

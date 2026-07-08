@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local clone
-- **Version:** 0.6.6
+- **Version:** 0.6.7
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -146,10 +146,11 @@ feature branch → PR → develop (default branch)
 - Release workflow has `verify-main` job that aborts if tag is not on main.
 
 #### `main` branch
-- PR required (no direct push)
-- `allow_force_pushes: true` (for release workflow only)
+- PR required (no direct push) — **enforce_admins: true**
+- `allow_force_pushes: false`
 - `required_linear_history: true`
 - `allow_deletions: false`
+- Required checks: Build, Check, Clippy, Format, Test
 
 #### `develop` branch
 - All changes via PR — no direct push
