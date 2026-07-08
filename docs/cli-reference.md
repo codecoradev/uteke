@@ -721,6 +721,15 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/doc/move` | Move document to new parent (#438) |
 | DELETE | `/doc/delete?id=` | Delete document with cascade |
 | POST | `/doc/update` | Partial document update with chunk rebuild (#589) |
+| GET | `/export` | JSONL export (optional `?namespace=` filter) (#606) |
+| POST | `/extract` | LLM fact extraction + auto-store (1MB limit) (#610) |
+| POST | `/import` | JSONL import with re-embedding (5MB limit) (#610) |
+| POST | `/prune` | TTL-based deprecated memory cleanup (#611) |
+| POST | `/consolidate` | Near-duplicate merging (#611) |
+| POST | `/aging` | Memory lifecycle: status, preview, cleanup (#611) |
+| POST | `/importance` | Recalculate importance scores (#611) |
+| POST | `/orphans` | Find disconnected low-importance memories (read-only) (#611) |
+| POST | `/rebuild-backlinks` | Rebuild referenced_by from forward edges (#611) |
 | GET | `/recent` | Recent memories (supports `?namespace=`, `?limit=`, `?offset=`) (#528) |
 | GET | `/tags` | List all tags with counts (#566) |
 | POST | `/tags/rename` | Rename a tag across all memories (#566) |
@@ -793,7 +802,7 @@ uteke doc get architecture --json
 
 ### `uteke doc list`
 
-List documents in the current namespace.
+List all documents (global — not namespace-scoped, v0.7.0).
 
 ```bash
 uteke doc list --limit 20

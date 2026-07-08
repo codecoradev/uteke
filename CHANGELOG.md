@@ -1160,6 +1160,7 @@
 - **Minimum Rust version:** 1.75+
 
 [Unreleased]: https://github.com/codecoradev/uteke/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/codecoradev/uteke/compare/v0.6.7...v0.7.0
 [0.6.7]: https://github.com/codecoradev/uteke/releases/tag/v0.6.7
 [0.6.6]: https://github.com/codecoradev/uteke/releases/tag/v0.6.6
 [0.6.5]: https://github.com/codecoradev/uteke/releases/tag/v0.6.5
