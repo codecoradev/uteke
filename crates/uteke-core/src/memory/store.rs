@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS documents (
     slug TEXT NOT NULL COLLATE NOCASE,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
-    namespace TEXT NOT NULL DEFAULT 'default',
+    namespace TEXT DEFAULT NULL,
     tags TEXT DEFAULT '[]',
     metadata TEXT DEFAULT '{}',
     version INTEGER NOT NULL DEFAULT 1,
@@ -104,10 +104,10 @@ CREATE TABLE IF NOT EXISTS documents (
     depth INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
     has_children INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(namespace, slug)
+    author TEXT DEFAULT NULL,
+    UNIQUE(slug)
 );
 -- Base indexes on columns that always exist (present in CREATE TABLE above).
-CREATE INDEX IF NOT EXISTS idx_documents_namespace ON documents(namespace);
 CREATE INDEX IF NOT EXISTS idx_documents_slug ON documents(slug);
 CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
 -- NOTE: idx_documents_path/parent/depth/sort are NOT here.
@@ -163,7 +163,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 12;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 13;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

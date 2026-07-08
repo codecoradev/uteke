@@ -332,11 +332,10 @@ fn tool_doc_create() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "slug": { "type": "string", "description": "URL-friendly identifier (unique per namespace)" },
+                "slug": { "type": "string", "description": "URL-friendly identifier (globally unique)" },
                 "title": { "type": "string", "description": "Document title (auto-derived from first heading if omitted)" },
                 "content": { "type": "string", "description": "Full markdown content" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags (optional)" },
-                "namespace": { "type": "string", "description": "Namespace (default: 'default')" },
                 "parent": { "type": "string", "description": "Parent document slug for hierarchy (optional)" }
             },
             "required": ["slug", "content"]
@@ -356,7 +355,6 @@ fn tool_doc_update() -> Value {
                 "content": { "type": "string", "description": "New markdown content (optional, triggers chunk rebuild)" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Replace tags (optional)" },
                 "metadata": { "type": "object", "description": "Replace metadata (optional)" },
-                "namespace": { "type": "string", "description": "Namespace (optional, default: configured)" }
             },
             "required": ["id"]
         }
@@ -371,7 +369,6 @@ fn tool_doc_get() -> Value {
             "type": "object",
             "properties": {
                 "id_or_slug": { "type": "string", "description": "Document slug or UUID" },
-                "namespace": { "type": "string", "description": "Namespace (default: 'default')" }
             },
             "required": ["id_or_slug"]
         }
@@ -386,7 +383,6 @@ fn tool_doc_list() -> Value {
             "type": "object",
             "properties": {
                 "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
             }
         }
     })
@@ -402,7 +398,6 @@ fn tool_doc_search() -> Value {
                 "query": { "type": "string", "description": "Search query" },
                 "mode": { "type": "string", "description": "Search mode: semantic, fts, or hybrid (default: hybrid)" },
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
             },
             "required": ["query"]
         }
@@ -431,8 +426,7 @@ fn tool_doc_move() -> Value {
             "type": "object",
             "properties": {
                 "id": { "type": "string", "description": "Document UUID or slug to move" },
-                "parent": { "type": "string", "description": "New parent document slug or UUID. Omit to move to root." },
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
+                "parent": { "type": "string", "description": "New parent document slug or UUID. Omit to move to root." }
             },
             "required": ["id"]
         }
@@ -930,7 +924,6 @@ fn exec_doc_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let slug = args["slug"].as_str().ok_or("Missing 'slug'")?;
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
     let title = args["title"].as_str().unwrap_or("");
-    let namespace = args["namespace"].as_str();
     let parent = args["parent"].as_str();
     let tags: Vec<&str> = args["tags"]
         .as_array()
@@ -938,7 +931,7 @@ fn exec_doc_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .unwrap_or_default();
 
     let id = uteke
-        .doc_upsert_with_parent(slug, title, content, &tags, namespace, parent)
+        .doc_upsert_with_parent(slug, title, content, &tags, None, parent)
         .map_err(|e| format!("Failed: {e}"))?;
 
     Ok(ToolResult {
@@ -954,7 +947,6 @@ fn exec_doc_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id = args["id"].as_str().ok_or("Missing 'id'")?;
     let title = args["title"].as_str();
     let content = args["content"].as_str();
-    let namespace = args["namespace"].as_str();
     let tags: Option<Vec<String>> = args["tags"].as_array().map(|a| {
         a.iter()
             .filter_map(|v| v.as_str().map(String::from))
@@ -962,14 +954,7 @@ fn exec_doc_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     });
     let metadata = args.get("metadata").filter(|v| !v.is_null()).cloned();
 
-    match uteke.doc_update(
-        id,
-        namespace,
-        title,
-        content,
-        tags.as_deref(),
-        metadata.as_ref(),
-    ) {
+    match uteke.doc_update(id, title, content, tags.as_deref(), metadata.as_ref()) {
         Ok(Some(doc)) => {
             let chunks_hint = if content.is_some() {
                 " (chunks rebuilt)"
@@ -1006,10 +991,9 @@ fn exec_doc_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id_or_slug = args["id_or_slug"].as_str().ok_or("Missing 'id_or_slug'")?;
-    let namespace = args["namespace"].as_str();
 
     let doc = uteke
-        .doc_get(id_or_slug, namespace)
+        .doc_get(id_or_slug)
         .map_err(|e| format!("Failed: {e}"))?;
 
     match doc {
@@ -1032,11 +1016,8 @@ fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 fn exec_doc_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
-    let namespace = args["namespace"].as_str();
 
-    let docs = uteke
-        .doc_list(namespace, limit)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let docs = uteke.doc_list(limit).map_err(|e| format!("Failed: {e}"))?;
 
     if docs.is_empty() {
         return Ok(ToolResult {
@@ -1066,10 +1047,9 @@ fn exec_doc_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
     let mode = args["mode"].as_str().unwrap_or("hybrid");
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
-    let namespace = args["namespace"].as_str();
 
     let results = uteke
-        .doc_search(query, namespace, limit, mode)
+        .doc_search(query, limit, mode)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if results.is_empty() {
@@ -1099,9 +1079,7 @@ fn exec_doc_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_doc_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id = args["id"].as_str().ok_or("Missing 'id'")?;
 
-    let (deleted, chunks) = uteke
-        .doc_delete(id, None)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let (deleted, chunks) = uteke.doc_delete(id).map_err(|e| format!("Failed: {e}"))?;
 
     if deleted {
         Ok(ToolResult {
@@ -1125,10 +1103,9 @@ fn exec_doc_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_doc_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id = args["id"].as_str().ok_or("Missing 'id'")?;
     let parent = args["parent"].as_str();
-    let namespace = args["namespace"].as_str();
 
     let moved = uteke
-        .doc_move(id, parent, namespace)
+        .doc_move(id, parent)
         .map_err(|e| format!("Failed: {e}"))?;
 
     let msg = match parent {

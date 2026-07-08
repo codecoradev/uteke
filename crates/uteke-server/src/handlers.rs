@@ -955,7 +955,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     req_data.title.as_deref().unwrap_or(""),
                     &req_data.content,
                     &tag_refs,
-                    ns(&req_data.namespace),
+                    None,
                     parent,
                 ) {
                     Ok(id) => ctx.ok_response_for(
@@ -986,7 +986,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Document: Get ───────────────────────────────────────────────
         (Method::Post, "/doc/get") => match read_body::<DocGetRequest>(req.as_reader()) {
             Ok(req_data) => match resolve_doc_id(&req_data) {
-                Ok(id_or_slug) => match uteke.doc_get(id_or_slug, ns(&req_data.namespace)) {
+                Ok(id_or_slug) => match uteke.doc_get(id_or_slug) {
                     Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
                     Ok(None) => ctx.error_response_for(
                         req,
@@ -1011,14 +1011,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     let content = req_data.content.as_deref();
                     let tags = req_data.tags.as_deref();
                     let metadata = req_data.metadata.as_ref();
-                    match uteke.doc_update(
-                        id_or_slug,
-                        ns(&req_data.namespace),
-                        title,
-                        content,
-                        tags,
-                        metadata,
-                    ) {
+                    match uteke.doc_update(id_or_slug, title, content, tags, metadata) {
                         Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
                         Ok(None) => ctx.error_response_for(
                             req,
@@ -1040,11 +1033,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
             Ok(params) => {
                 let result = if params.roots_only {
-                    uteke.doc_list_roots(ns(&params.namespace), params.limit)
+                    uteke.doc_list_roots(params.limit)
                 } else if let Some(ref parent) = params.parent {
-                    uteke.doc_list_children(parent, ns(&params.namespace), params.limit)
+                    uteke.doc_list_children(parent, params.limit)
                 } else {
-                    uteke.doc_list(ns(&params.namespace), params.limit)
+                    uteke.doc_list(params.limit)
                 };
                 match result {
                     Ok(docs) => ctx.ok_response_for(req, &docs),
@@ -1060,12 +1053,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Document: Search ────────────────────────────────────────────
         (Method::Post, "/doc/search") => match read_body::<DocSearchRequest>(req.as_reader()) {
             Ok(req_data) => {
-                match uteke.doc_search(
-                    &req_data.query,
-                    ns(&req_data.namespace),
-                    req_data.limit,
-                    &req_data.mode,
-                ) {
+                match uteke.doc_search(&req_data.query, req_data.limit, &req_data.mode) {
                     Ok(results) => ctx.ok_response_for(req, &results),
                     Err(e) => {
                         if e.to_string().contains("embed") {
@@ -1089,7 +1077,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             Ok(req_data) => match resolve_doc_id_move(&req_data) {
                 Ok(id_or_slug) => {
                     let new_parent = req_data.new_parent.as_deref();
-                    match uteke.doc_move(id_or_slug, new_parent, ns(&req_data.namespace)) {
+                    match uteke.doc_move(id_or_slug, new_parent) {
                         Ok(moved) => ctx.ok_response_for(req, &serde_json::json!({"moved": moved})),
                         Err(e) => {
                             if e.to_string().contains("not found") {
@@ -1109,7 +1097,6 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Document: Delete ─────────────────────────────────────────────
         (Method::Delete, p) if p == "/doc/delete" || p.starts_with("/doc/delete?") => {
             let url = req.url().to_string();
-            let ns_param = parse_query_param(&url, "namespace");
             let id = parse_query_param(&url, "id");
             let slug = parse_query_param(&url, "slug");
 
@@ -1125,7 +1112,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 }
             };
 
-            match uteke.doc_delete(id_or_slug, ns_param.as_deref()) {
+            match uteke.doc_delete(id_or_slug) {
                 Ok((deleted, subtree)) => ctx.ok_response_for(
                     req,
                     &serde_json::json!({"deleted": deleted, "subtree_size": subtree}),

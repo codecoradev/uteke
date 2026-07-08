@@ -1,11 +1,11 @@
 # Cora Code Review Configuration
 # See: https://github.com/codecoradev/cora-cli
 
-# Provider settings — matches CI (CORA_API_KEY, CORA_BASE_URL, CORA_MODEL)
-provider:
-  provider: freemodel
-  model: gpt-5.4
-  base_url: https://api.freemodel.dev/v1
+# Provider settings — use global config (~/.cora/config.yaml)
+# provider:
+#   provider: freemodel
+#   model: gpt-5.4
+#   base_url: https://api.freemodel.dev/v1
 
 # Review focus areas: security, performance, bugs, best-practice, style
 focus:
