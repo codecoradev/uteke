@@ -15,8 +15,6 @@ pub struct DocCreateRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub namespace: Option<String>,
-    #[serde(default)]
     pub parent: Option<String>,
 }
 
@@ -24,14 +22,10 @@ pub struct DocCreateRequest {
 pub struct DocGetRequest {
     pub id: Option<String>,
     pub slug: Option<String>,
-    #[serde(default)]
-    pub namespace: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct DocListParams {
-    #[serde(default)]
-    pub namespace: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default)]
@@ -45,8 +39,6 @@ pub struct DocSearchRequest {
     pub query: String,
     #[serde(default = "default_limit")]
     pub limit: usize,
-    #[serde(default)]
-    pub namespace: Option<String>,
     #[serde(default = "default_search_mode")]
     pub mode: String,
 }
@@ -57,8 +49,6 @@ pub struct DocMoveRequest {
     pub slug: Option<String>,
     #[serde(default)]
     pub new_parent: Option<String>,
-    #[serde(default)]
-    pub namespace: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -73,8 +63,6 @@ pub struct DocUpdateRequest {
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
-    #[serde(default)]
-    pub namespace: Option<String>,
 }
 
 pub fn default_search_mode() -> String {

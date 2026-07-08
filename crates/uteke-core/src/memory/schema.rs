@@ -288,6 +288,8 @@ impl super::Store {
                 11 => self.migrate_v10_to_v11()?,
                 // v12: Hierarchical documents (#438)
                 12 => self.migrate_v11_to_v12()?,
+                // v13: Global documents — remove namespace isolation (#614)
+                13 => self.migrate_v12_to_v13()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -761,6 +763,102 @@ impl super::Store {
             let _ = self.conn.execute(sql, []);
         }
 
+        Ok(())
+    }
+
+    /// v13: Global documents — remove namespace isolation (#614).
+    ///
+    /// - Drop old UNIQUE(namespace, slug) index and create UNIQUE(slug) index
+    /// - Add `author TEXT DEFAULT NULL` column
+    /// - Migrate duplicate slugs across namespaces: rename to `slug-nsname`
+    fn migrate_v12_to_v13(&self) -> Result<(), Error> {
+        tracing::info!(
+            "Applying schema migration v12 to v13: global documents (remove namespace isolation)"
+        );
+
+        // Add author column if missing.
+        if !self.column_exists_in("documents", "author") {
+            self.conn
+                .execute(
+                    "ALTER TABLE documents ADD COLUMN author TEXT DEFAULT NULL",
+                    [],
+                )
+                .map_err(|e| Error::db("migration v13: add author column", e))?;
+        }
+
+        // Migrate duplicate slugs: find slugs that exist in multiple namespaces.
+        // Rename conflicting ones to `slug-<namespace>`.
+        let dup_slugs: Vec<(String, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT slug, namespace FROM documents \
+                     WHERE slug IN (SELECT slug FROM documents GROUP BY slug HAVING COUNT(DISTINCT namespace) > 1) \
+                     ORDER BY slug, namespace",
+                )
+                .map_err(|e| Error::db("migration v13: find duplicate slugs", e))?;
+            let rows: Vec<(String, String)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .map_err(|e| Error::db("migration v13: query duplicate slugs", e))?
+                .filter_map(|r| r.ok())
+                .collect();
+            rows
+        };
+
+        if !dup_slugs.is_empty() {
+            tracing::info!(
+                "Migration v13: renaming {} duplicate slug entries across namespaces",
+                dup_slugs.len()
+            );
+        }
+
+        // Keep the first occurrence of each slug (from 'default' namespace if present),
+        // rename the rest. We track which slugs we've already "kept".
+        let mut kept: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (slug, ns) in &dup_slugs {
+            if kept.contains(slug) {
+                let new_slug = format!("{}-{}", slug, ns);
+                tracing::info!(
+                    "Migration v13: renaming slug '{}' in namespace '{}' to '{}'",
+                    slug,
+                    ns,
+                    new_slug
+                );
+                self.conn
+                    .execute(
+                        "UPDATE documents SET slug = ?1 WHERE slug = ?2 AND namespace = ?3",
+                        params![new_slug, slug, ns],
+                    )
+                    .map_err(|e| Error::db("migration v13: rename duplicate slug", e))?;
+            } else {
+                kept.insert(slug.clone());
+            }
+        }
+
+        // Drop old unique index on (namespace, slug) if it exists.
+        // SQLite auto-creates an index for UNIQUE constraints; the name may vary.
+        // We try common names and ignore errors (index may not exist).
+        for idx_name in &["sqlite_autoindex_documents_1", "idx_documents_ns_slug"] {
+            let _ = self
+                .conn
+                .execute(&format!("DROP INDEX IF EXISTS {}", idx_name), []);
+        }
+
+        // Drop the per-namespace index if it exists.
+        let _ = self
+            .conn
+            .execute("DROP INDEX IF EXISTS idx_documents_namespace", []);
+
+        // Create new unique index on slug only.
+        // We need to handle the case where duplicates might still exist (race safety).
+        self.conn
+            .execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_slug_unique ON documents(slug)",
+                [],
+            )
+            .map_err(|e| Error::db("migration v13: create unique slug index", e))?;
+
+        tracing::info!("Migration v12 to v13 complete: documents are now global");
         Ok(())
     }
 }

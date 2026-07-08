@@ -10,11 +10,8 @@ pub(crate) fn run(
     cli: &Cli,
     uteke: &mut Uteke,
     command: &DocCommands,
-    config: &Config,
+    _config: &Config,
 ) -> Result<(), String> {
-    let ns = crate::resolve_namespace(cli, config);
-    let ns: Option<&str> = Some(ns.as_str());
-
     match command {
         DocCommands::Create {
             slug,
@@ -55,7 +52,7 @@ pub(crate) fn run(
             let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
             let parent_ref = parent.as_deref();
             let id = uteke
-                .doc_upsert_with_parent(slug, &doc_title, &doc_content, &tag_refs, ns, parent_ref)
+                .doc_upsert_with_parent(slug, &doc_title, &doc_content, &tag_refs, None, parent_ref)
                 .map_err(|e| format!("Failed to create document: {e}"))?;
 
             if cli.json {
@@ -76,7 +73,7 @@ pub(crate) fn run(
 
         DocCommands::Get { id_or_slug } => {
             let doc = uteke
-                .doc_get(id_or_slug, ns)
+                .doc_get(id_or_slug)
                 .map_err(|e| format!("Failed to get document: {e}"))?;
             match doc {
                 Some(d) => {
@@ -105,11 +102,11 @@ pub(crate) fn run(
         DocCommands::List { limit, tree } => {
             let docs = if *tree {
                 uteke
-                    .doc_list_roots(ns, *limit)
+                    .doc_list_roots(*limit)
                     .map_err(|e| format!("Failed to list root documents: {e}"))?
             } else {
                 uteke
-                    .doc_list(ns, *limit)
+                    .doc_list(*limit)
                     .map_err(|e| format!("Failed to list documents: {e}"))?
             };
             if cli.json {
@@ -124,7 +121,7 @@ pub(crate) fn run(
                         docs.iter().map(|d| (d.id.clone(), 0)).collect();
                     while let Some((current_id, current_depth)) = stack.pop() {
                         let children = uteke
-                            .doc_list_children(&current_id, ns, 1000)
+                            .doc_list_children(&current_id, 1000)
                             .unwrap_or_default();
                         let prefix: String = indent.repeat(current_depth);
                         if let Some(parent) = docs.iter().find(|d| d.id == current_id) {
@@ -170,7 +167,7 @@ pub(crate) fn run(
 
         DocCommands::Children { parent, limit } => {
             let docs = uteke
-                .doc_list_children(parent, ns, *limit)
+                .doc_list_children(parent, *limit)
                 .map_err(|e| format!("Failed to list children: {e}"))?;
             if cli.json {
                 output::print_json(&docs);
@@ -196,7 +193,7 @@ pub(crate) fn run(
         DocCommands::Move { id_or_slug, parent } => {
             let new_parent = parent.as_deref();
             let affected = uteke
-                .doc_move(id_or_slug, new_parent, ns)
+                .doc_move(id_or_slug, new_parent)
                 .map_err(|e| format!("Failed to move document: {e}"))?;
             if cli.json {
                 println!(
@@ -212,7 +209,7 @@ pub(crate) fn run(
 
         DocCommands::Breadcrumbs { id_or_slug } => {
             let crumbs = uteke
-                .doc_breadcrumbs(id_or_slug, ns)
+                .doc_breadcrumbs(id_or_slug)
                 .map_err(|e| format!("Failed to get breadcrumbs: {e}"))?;
             if cli.json {
                 output::print_json(&crumbs);
@@ -243,7 +240,7 @@ pub(crate) fn run(
                 Some(*max_depth as i64)
             };
             let docs = uteke
-                .doc_list_descendants(id_or_slug, ns, max, *limit)
+                .doc_list_descendants(id_or_slug, max, *limit)
                 .map_err(|e| format!("Failed to list descendants: {e}"))?;
             if cli.json {
                 output::print_json(&docs);
@@ -268,7 +265,7 @@ pub(crate) fn run(
 
         DocCommands::Search { query, limit, mode } => {
             let results = uteke
-                .doc_search(query, ns, *limit, mode)
+                .doc_search(query, *limit, mode)
                 .map_err(|e| format!("Failed to search documents: {e}"))?;
             if cli.json {
                 output::print_json(&results);
@@ -365,7 +362,7 @@ pub(crate) fn run(
             let meta_ref = meta_value.as_ref();
 
             let updated = uteke
-                .doc_update(id_or_slug, ns, title_ref, content_ref, tag_refs, meta_ref)
+                .doc_update(id_or_slug, title_ref, content_ref, tag_refs, meta_ref)
                 .map_err(|e| format!("Failed to update document: {e}"))?;
 
             match updated {
@@ -406,7 +403,7 @@ pub(crate) fn run(
 
         DocCommands::Delete { id } => {
             let (deleted, subtree_size) = uteke
-                .doc_delete(id, ns)
+                .doc_delete(id)
                 .map_err(|e| format!("Failed to delete document: {e}"))?;
             if deleted {
                 if cli.json {
@@ -424,14 +421,13 @@ pub(crate) fn run(
 
         DocCommands::Export { output: _ } => {
             let docs = uteke
-                .doc_list(ns, 1000)
+                .doc_list(1000)
                 .map_err(|e| format!("Failed to list documents for export: {e}"))?;
             if cli.json {
                 output::print_json(&docs);
             } else {
                 for d in &docs {
-                    println!("--- {} ---", d.slug);
-                    if let Some(doc) = uteke.doc_get(&d.id, ns).ok().flatten() {
+                    if let Some(doc) = uteke.doc_get(&d.id).ok().flatten() {
                         println!("{}", doc.content);
                         println!();
                     }
