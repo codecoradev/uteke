@@ -258,9 +258,16 @@ fn import_with_extraction(
         .unwrap_or_else(|| cfg.api_key.clone());
     let max_facts = opts.max_facts.unwrap_or(cfg.max_facts);
 
-    let extractor =
-        crate::extract::Extractor::new(&api_key, &model, &base_url, &cfg.endpoint_path, max_facts)
-            .map_err(|e| format!("Failed to initialize extractor: {e}"))?;
+    let ext_config = uteke_core::extraction::ExtractionConfig {
+        model,
+        api_key,
+        base_url,
+        endpoint_path: cfg.endpoint_path.clone(),
+        max_facts,
+    };
+
+    let extractor = uteke_core::extraction::Extractor::new(&ext_config)
+        .map_err(|e| format!("Failed to initialize extractor: {e}"))?;
 
     let facts = extractor
         .extract(content)

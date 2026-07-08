@@ -132,7 +132,7 @@ uteke init --agent hermes  # Installs pre_llm_call hook
 
 ## Available Tools
 
-Both transports expose the same 15 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 27 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -149,8 +149,21 @@ Both transports expose the same 15 tools (MCP protocol version `2025-06-18`):
 | `uteke_doc_list` | List all documents |
 | `uteke_doc_search` | Search documents |
 | `uteke_doc_delete` | Delete a document |
+| `uteke_doc_update` | Partial document update with chunk rebuild (#589) |
+| `uteke_doc_move` | Move document to new parent (#438) |
 | `uteke_graph` | Get nodes + edges JSON for visualization |
 | `uteke_room_recall` | Semantic recall within a room |
+| `uteke_room_memories` | List memories in a room (#569) |
+| `uteke_room_create` | Create a room |
+| `uteke_room_delete` | Delete a room |
+| `uteke_room_stats` | Room statistics |
+| `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
+| `uteke_room_document` | Generate structured document from room |
+| `uteke_tags_list` | List all tags with counts (#566) |
+| `uteke_tags_rename` | Rename a tag across all memories (#566) |
+| `uteke_tags_delete` | Delete a tag from all memories (#566) |
+| `uteke_pin` | Pin a memory (prevent decay) (#566) |
+| `uteke_unpin` | Unpin a memory (#566) |
 
 ## Transport Comparison
 
@@ -256,6 +269,33 @@ See [TLS & Reverse Proxy](/tls) for full setup guides (Caddy, Nginx, Cloudflare 
 The MCP server uses the `default` namespace by default. Each agent can use its own isolated namespace by passing a `namespace` argument to any tool call. Memories in one namespace are never visible to another.
 
 This is the MCP equivalent of the CLI's `--namespace` flag — see [Multi-Agent Isolation](/getting-started#multi-agent-isolation) for details.
+
+## JSON-RPC 2.0 Compliance (#573/#576)
+
+The MCP server implements strict JSON-RPC 2.0 compliance (v0.6.7):
+
+- **Tagged union responses**: The `result` field uses a tagged union (`{"type": "result", "content": [...]}`) per the MCP spec, not a bare array.
+- **No notification response**: JSON-RPC notifications (requests without `id`) receive no response body, as required by the spec. This fixes Claude Code connectivity issues where unexpected responses on notifications caused handshake failures.
+- **Claude Code compatible**: Tested and verified with Claude Code, Claude Desktop, Cursor, and Hermes MCP client.
+
+## Memory-Provider Integration (#575/#577)
+
+For automatic recall (memories injected every LLM call without the agent asking), use the `--memory-provider` flag with `uteke init`:
+
+```bash
+# pi (pi.dev)
+uteke init --agent pi --memory-provider
+
+# Claude Code
+uteke init --agent claude --memory-provider
+
+# Cursor
+uteke init --agent cursor --memory-provider
+```
+
+This installs uteke as the agent's default memory provider — relevant memories are recalled and injected automatically every turn. No MCP server needed; talks to the `uteke` binary directly.
+
+> **Note:** The `--memory-provider` flag is only deprecated for Hermes (removed 2026-06-29). For pi, Claude Code, and Cursor, it is the recommended integration mode.
 
 ## Docker
 

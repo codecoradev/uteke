@@ -272,7 +272,7 @@ pub enum Commands {
     },
     /// Initialize uteke integration for an AI agent
     Init {
-        /// Agent type: pi, claude, cursor, hermes
+        /// Agent type: pi, claude, cursor, opencode, hermes
         #[arg(long, default_value = "pi")]
         agent: String,
         /// For --agent hermes: install the memory-provider plugin (automatic
@@ -406,6 +406,12 @@ pub enum Commands {
     Doc {
         #[command(subcommand)]
         command: DocCommands,
+    },
+    /// Check for updates and upgrade to the latest version
+    Upgrade {
+        /// Skip confirmation prompt
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 
