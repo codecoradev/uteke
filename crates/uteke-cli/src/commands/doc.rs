@@ -10,7 +10,7 @@ pub(crate) fn run(
     cli: &Cli,
     uteke: &mut Uteke,
     command: &DocCommands,
-    config: &Config,
+    _config: &Config,
 ) -> Result<(), String> {
     match command {
         DocCommands::Create {

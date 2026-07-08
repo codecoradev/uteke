@@ -1742,7 +1742,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 12, "schema_version should be 12 after migration");
+        assert_eq!(version, 13, "schema_version should be 13 after migration");
 
         // 7. Verify hierarchy columns now exist (in documents table).
         let cols = ["parent_id", "path", "depth", "sort_order", "has_children"];
