@@ -83,6 +83,16 @@ The `--namespace` flag works on every command:
 | `export` | Export from namespace |
 | `import` | Import to namespace |
 
+## Documents Are Global
+
+Unlike memories, **documents are global** (v0.7.0, #614/#615). Documents use unique slugs across all namespaces — no namespace isolation. This means:
+
+- Documents created in any namespace are visible in all namespaces via `uteke doc list`
+- Document commands (`create`, `get`, `update`, `search`, `list`, `delete`) do not accept `--namespace`
+- Slugs must be globally unique — a duplicate slug across namespaces will be auto-migrated on upgrade (schema v12→v13)
+
+This is intentional: documents represent shared knowledge (wiki, architecture guides, runbooks) that should be accessible to all agents regardless of their memory namespace.
+
 ## Best Practices
 
 - **One namespace per agent role** — Use descriptive names like "planner", "coder", "reviewer" instead of "agent-1", "agent-2".
