@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.6.7**.
+Complete reference for all uteke commands. Version **0.7.0**.
 
 ## Global Flags
 
@@ -16,6 +16,25 @@ Complete reference for all uteke commands. Version **0.6.7**.
 | `--verbose` | Enable debug logging | off |
 
 Config file path is auto-resolved (`~/.uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
+
+
+## uteke upgrade
+
+Check for updates and upgrade to the latest Uteke release.
+
+```bash
+# Check current version and upgrade
+uteke upgrade
+
+# Skip confirmation
+uteke upgrade --yes
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip confirmation prompt |
+
+> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. The upgrade command verifies SHA-256 checksums by default. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip verification (not recommended).
 
 ## uteke remember
 
@@ -653,11 +672,12 @@ uteke timeline <memory-id> --json
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
 | `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
-| `uteke init --agent <type>` | Initialize integration (pi, claude, cursor, hermes) |
+| `uteke init --agent <type>` | Initialize integration (opencode, pi, claude, cursor, hermes) |
 | `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md). **Note:** Hermes Mode B deprecated — see [integrations/hermes.md](integrations/hermes.md) for migration. |
 | `uteke init --agent pi --memory-provider` | Install uteke as pi's default memory provider (auto recall + extraction, #575/#577) |
 | `uteke init --agent claude --memory-provider` | Install uteke as Claude Code's default memory provider (auto recall + extraction, #575/#577) |
 | `uteke init --agent cursor --memory-provider` | Install uteke as Cursor's default memory provider (auto recall + extraction, #575/#577) |
+| `uteke init --agent opencode` | Generate AGENTS.md with uteke instructions for OpenCode (#612) |
 | `uteke completions <shell>` | Generate shell completions |
 
 ## uteke-serve (Server Mode)

@@ -1,5 +1,32 @@
 ## [Unreleased]
 
+
+## [0.7.0] — 2026-07-08
+
+### Added
+- **Project-aware memory tagging for noise-free recall (#616)** — Tag-based project scoping using `project:<name>` convention. SKILL.md includes mandatory project-aware memory section. pi-memory-provider extension auto-detects project from CWD and auto-tags recall. Hermes hooks detect project from `/repos/<project>/` paths. No binary changes — works with existing `--tags` flag.
+- **OpenCode init support (#612)** — `uteke init --agent opencode` generates AGENTS.md with uteke instructions. Bundled SKILL.md updated to v0.6.7.
+- **Maintenance HTTP endpoints (#607)** — `POST /prune` (TTL-based deprecated memory cleanup), `POST /consolidate` (near-duplicate merging), `POST /aging` (memory lifecycle: status/preview/cleanup). Write token required.
+- **Monitoring HTTP endpoints (#608)** — `POST /importance` (recalculate importance scores), `POST /orphans` (find disconnected low-importance memories, read-only), `POST /rebuild-backlinks` (rebuild referenced_by edges). Orphans accepts read-only token.
+- **Extract/Import/Export HTTP endpoints (#604–#606)** — `POST /extract` (LLM fact extraction + auto-store, 1MB limit), `POST /import` (JSONL import with re-embedding, 5MB limit), `GET /export` (JSONL export with optional namespace filter). Extractor moved from uteke-cli to uteke-core (shared module).
+- **Document partial update CLI + HTTP (#589, #583)** — `uteke doc update <slug>` for partial document updates (title, content, tags, metadata) with automatic chunk rebuild. `POST /doc/update` endpoint.
+- **MCP: pin/unpin tools (#588)** — `uteke_pin` and `uteke_unpin` MCP tools for memory persistence control.
+- **MCP: 6 room tools (#586)** — `uteke_room_create`, `uteke_room_delete`, `uteke_room_stats`, `uteke_room_summary`, `uteke_room_document`, `uteke_room_memories` MCP tools for full room management.
+- **MCP: tag management tools (#566)** — `uteke_tags_list`, `uteke_tags_rename`, `uteke_tags_delete` MCP tools.
+- **MCP: document update + move tools (#589, #438)** — `uteke_doc_update` (partial document update with chunk rebuild), `uteke_doc_move` (move document to new parent).
+- **`uteke upgrade` command (#603)** — Renamed from `uteke update` (which conflicted with `uteke doc update`). Self-update mechanism for installing latest Uteke release.
+
+### Changed
+- **Documents are now global — no namespace isolation (#614, #615)** — Documents use unique slugs across all namespaces. Schema migration v12→v13 adds `author` column, deprecates namespace on documents, migrates duplicate slugs. All document CRUD (CLI, server, MCP) no longer accepts namespace parameter.
+- **Extractor moved to uteke-core** — `Extractor` struct moved from `uteke-cli` to `uteke-core` shared module. CLI extract command delegates to core. Net -213 lines.
+- **Schema version v13** — Migration v12→v13: documents namespace deprecated, `author` column added, duplicate slug cleanup, global unique slug index.
+
+### Fixed
+- **Security: fail-hard on checksum verification failure (#609)** — `uteke upgrade` now fails with error when checksums download fails or archive checksum is missing, preventing MITM tampering. Found by Cora code review (GLM-5.2).
+- **Room tables in SCHEMA constant (#596)** — Fresh databases now include room tables in the base SCHEMA, preventing issues when schema_version check doesn't run migrations.
+- **CI: graceful sync workflow (#598)** — Fixed sync workflow + added missing cargo audit ignores for known advisories.
+- **Deps: crossbeam-epoch 0.9.18 → 0.9.20 (#597)** — Security update (RUSTSEC-2026-0204).
+
 ## [0.6.7] — 2026-07-06
 
 ### Added
@@ -1133,7 +1160,7 @@
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
-[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.6.7...HEAD
+[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.7.0...HEAD
 [0.6.7]: https://github.com/codecoradev/uteke/releases/tag/v0.6.7
 [0.6.6]: https://github.com/codecoradev/uteke/releases/tag/v0.6.6
 [0.6.5]: https://github.com/codecoradev/uteke/releases/tag/v0.6.5

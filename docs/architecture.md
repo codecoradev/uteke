@@ -109,6 +109,36 @@ ID → usearch REMOVE (RwLock write, acquired first)
 
 Index lock acquired **before** SQLite delete — narrows the inconsistency window.
 
+
+### Extract / Import / Export (v0.7.0)
+
+Three new endpoints move the Extractor from CLI-only to a shared core module:
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/extract` | POST | Write | LLM fact extraction + auto-store (1MB body limit) |
+| `/import` | POST | Write | JSONL import with re-embedding (5MB body limit) |
+| `/export` | GET | Read | JSONL export (optional `?namespace=` filter) |
+
+### Maintenance & Monitoring (v0.7.0)
+
+Six new endpoints provide CLI parity for maintenance and monitoring operations:
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/prune` | POST | Write | TTL-based deprecated memory cleanup (`dry_run` support) |
+| `/consolidate` | POST | Write | Near-duplicate merging (`dry_run` → find only) |
+| `/aging` | POST | Write | Memory lifecycle: `status`, `preview`, `cleanup` |
+| `/importance` | POST | Write | Recalculate importance scores |
+| `/orphans` | POST | Read | Find disconnected, low-importance memories |
+| `/rebuild-backlinks` | POST | Write | Rebuild `referenced_by` from forward edges |
+
+### Document Update (v0.7.0)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/doc/update` | POST | Write | Partial document update (title, content, tags, metadata) with chunk rebuild |
+
 ## Key Design Decisions
 
 ### RwLock for Vector Index (not Mutex)
@@ -141,7 +171,7 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v12. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v13. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant), v13 global documents (namespace deprecated, author column, slug uniqueness). Zero data loss guaranteed.
 
 ### Rooms
 
