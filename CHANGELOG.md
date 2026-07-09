@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+## [0.7.1] — 2026-07-09
+
+### Fixed
+- **Vector index silently desyncs from SQLite (#621)** — Memories exist in SQLite but have no vector embedding, invisible to `uteke recall`. Root cause: `index.save()` failure in `remember_precomputed` and `forget` silently returned `Ok(())`. Fix: explicit error propagation + `uteke verify` / `uteke repair` commands.
+- **`uteke remember` ignores stdin pipe content (#620)** — Piping content via `cat file | uteke remember -` stored literal `"-"` instead of reading stdin. Fix: added stdin detection when content argument is `"-"`, with `Box::leak` for lifetime extension.
+- **`uteke room recall` default limit 20 silently truncates (#623)** — Rooms with >20 memories had results silently cut. Fix: increased default limit to 100.
+- **Author metadata not exposed in room recall JSON (#624)** — `room_memories.author` was not selected in the recall SQL query. Fix: added `rm.author` to SELECT with fallback to `"unknown"`.
+
+### Changed
+- **Documentation audit (#618)** — Added 9 missing HTTP endpoints to docs, fixed CHANGELOG link, updated sidebar anchors, corrected `doc list` namespace description.
+
+### Dependencies
+- `clap_complete` 4.6.6 → 4.6.7
+
 ## [0.7.0] — 2026-07-08
 
 ### Added

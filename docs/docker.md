@@ -125,7 +125,7 @@ Docker automatically pulls the correct architecture.
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `v0.7.0` | Specific version |
+| `v0.7.1` | Specific version |
 | `v0.6.6` | Specific version |
 | `0.6` | Minor version (latest patch) |
 | `slim` | Slim image (no embedded model — mount model volume separately, see below) |
