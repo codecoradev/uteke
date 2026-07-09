@@ -93,6 +93,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 req,
                 &HealthResponse {
                     status: "ok",
+                    version: env!("CARGO_PKG_VERSION"),
                     memories: total,
                     namespaces,
                 },
