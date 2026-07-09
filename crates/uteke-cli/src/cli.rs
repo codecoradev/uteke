@@ -645,8 +645,8 @@ pub enum RoomCommands {
         /// Filter by author
         #[arg(long)]
         author: Option<String>,
-        /// Maximum results to return
-        #[arg(long, default_value = "20")]
+        /// Maximum results to return (0 = all, default for bounded room contexts)
+        #[arg(long, default_value = "0")]
         limit: usize,
         /// Minimum similarity score (0.0-1.0). Only used with --query.
         #[arg(long)]
