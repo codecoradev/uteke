@@ -172,6 +172,9 @@ pub struct ListParams {
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
+    /// Server version (uteke-server crate version), so HTTP clients can gate
+    /// features on the actual server capability rather than a local CLI probe.
+    pub version: &'static str,
     pub memories: usize,
     pub namespaces: usize,
 }
