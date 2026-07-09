@@ -5,6 +5,55 @@ use crate::memory::types::{
     BulkDeleteResult, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo, DEFAULT_NAMESPACE,
 };
 use crate::memory::vector::cosine_distance_to_similarity;
+use std::sync::Mutex;
+use std::time::Duration;
+
+/// Retry embedding generation with exponential backoff (#621).
+///
+/// Embedding failures silently drop vector entries, causing the vector
+/// index to desync from SQLite. This helper retries up to 3 times with
+/// 200ms, 400ms, then 800ms delays between attempts.
+fn retry_embed(
+    embedder: &Mutex<Option<Box<dyn crate::embed::Embedder>>>,
+    text: &str,
+) -> Result<Vec<f32>, Error> {
+    const MAX_RETRIES: usize = 3;
+    let mut delay = Duration::from_millis(200);
+
+    for attempt in 0..MAX_RETRIES {
+        let lock = embedder
+            .lock()
+            .map_err(|_| Error::lock("embedder lock during remember"))?;
+        let embedder = lock.as_ref().expect("embedder ensured above");
+        match embedder.embed(text) {
+            Ok(embedding) => return Ok(embedding),
+            Err(e) => {
+                drop(lock); // Release lock before sleeping
+                if attempt < MAX_RETRIES - 1 {
+                    tracing::warn!(
+                        "Embedding attempt {}/{} failed: {}. Retrying in {:?}...",
+                        attempt + 1,
+                        MAX_RETRIES,
+                        e,
+                        delay
+                    );
+                    std::thread::sleep(delay);
+                    delay *= 2;
+                } else {
+                    tracing::error!(
+                        "Embedding failed after {} attempts: {}. \
+                         Memory will be stored WITHOUT vector embedding. \
+                         Run `uteke repair` to rebuild index.",
+                        MAX_RETRIES,
+                        e
+                    );
+                    return Err(e);
+                }
+            }
+        }
+    }
+    unreachable!()
+}
 
 impl crate::Uteke {
     /// Store a new memory.
@@ -130,13 +179,9 @@ impl crate::Uteke {
         };
         // Lazy-load embedder on first use
         self.ensure_embedder()?;
-        let embedding = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during remember"))?
-            .as_ref()
-            .expect("embedder ensured above")
-            .embed(&embed_text)?;
+        // Retry embedding generation up to 3 times with exponential backoff.
+        // Embedding failures silently drop vector entries, causing desync (#621).
+        let embedding = self::retry_embed(&self.embedder, &embed_text)?;
 
         // Dedup check: if an existing memory has cosine >= 0.95, return it
         // instead of creating a duplicate (#442 enhancement).
@@ -286,11 +331,27 @@ impl crate::Uteke {
         self.recall_cache.invalidate_namespace(&memory.namespace);
 
         index.insert(&id, embedding)?;
-        if let Err(e) = index.save() {
-            tracing::warn!(
-                "Failed to persist vector index after remember for id={id}: {e}. \
-                 Index entry can be rebuilt via `uteke repair`."
-            );
+        // Retry index persistence up to 3 times (#621).
+        // A failed save means the in-memory index has the entry but
+        // on-disk doesn't → silent desync on next process launch.
+        for attempt in 0..3 {
+            match index.save() {
+                Ok(()) => break,
+                Err(e) => {
+                    if attempt < 2 {
+                        tracing::warn!(
+                            "Index save attempt {}/3 failed after remember for id={id}: {e}. Retrying...",
+                            attempt + 1
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    } else {
+                        tracing::warn!(
+                            "Failed to persist vector index after 3 attempts for remember id={id}: {e}. \
+                             Index entry can be rebuilt via `uteke repair`."
+                        );
+                    }
+                }
+            }
         }
         // Drop the write lock BEFORE auto_link_cosine to prevent deadlock.
         // auto_link_cosine needs a read lock on the same index — holding
@@ -787,6 +848,9 @@ impl crate::Uteke {
     }
 
     /// Delete a memory by ID. Incremental — no index rebuild.
+    ///
+    /// Holds the index write lock for the entire operation to prevent
+    /// concurrent processes from reading a partially-updated index (#621).
     pub fn forget(&self, id: &str) -> Result<(), Error> {
         // Look up namespace before delete for targeted cache invalidation.
         // If lookup succeeds, invalidate only that namespace.
@@ -808,11 +872,26 @@ impl crate::Uteke {
         if !index.remove(id) {
             tracing::warn!("Vector index entry not found during forget for id={id}");
         }
-        if let Err(e) = index.save() {
-            tracing::warn!(
-                "Failed to persist vector index after forget for id={id}: {e}. \
-                 Orphan entry will be cleaned up by verify/repair."
-            );
+        // Retry index persistence up to 3 times (#621).
+        // A failed save leaves orphan entries that desync from SQLite.
+        for attempt in 0..3 {
+            match index.save() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if attempt < 2 {
+                        tracing::warn!(
+                            "Index save attempt {}/3 failed after forget for id={id}: {e}. Retrying...",
+                            attempt + 1
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    } else {
+                        tracing::warn!(
+                            "Failed to persist vector index after 3 attempts for forget id={id}: {e}. \
+                             Orphan entry will be cleaned up by verify/repair."
+                        );
+                    }
+                }
+            }
         }
 
         Ok(())

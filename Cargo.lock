@@ -256,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "clap_complete"
-version = "4.6.6"
+version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97bf4965940c2382204c0ded6dd3dd48c0c4e872f1e76fb1bf94f45991a2cb6a"
+checksum = "db8b397918185f0161ff3d6fcaa9e4bfc09b8367caf6e1d4a2848e5477ed027b"
 dependencies = [
  "clap",
 ]
@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.6.7"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2930,7 +2930,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.6.7"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-mcp"
-version = "0.6.7"
+version = "0.7.0"
 dependencies = [
  "dirs",
  "serde",
@@ -2963,7 +2963,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.6.7"
+version = "0.7.0"
 dependencies = [
  "chrono",
  "ctrlc",

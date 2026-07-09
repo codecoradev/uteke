@@ -65,6 +65,28 @@ pub(crate) fn run(
     source_type: Option<&str>,
 ) -> Result<(), String> {
     tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
+
+    // Read from stdin when content argument is "-" (#620).
+    // Standard Unix convention: pipe content via echo "text" | uteke remember - --tags "test"
+    let content = if content == "-" {
+        use std::io::Read;
+        let mut buf = String::new();
+        let stdin = std::io::stdin();
+        let mut handle = stdin.lock();
+        handle
+            .read_to_string(&mut buf)
+            .map_err(|e| format!("Failed to read from stdin: {e}"))?;
+        let trimmed = buf.trim().to_string();
+        if trimmed.is_empty() {
+            return Err(
+                "Stdin is empty. Pipe content to remember or use positional argument.".to_string(),
+            );
+        }
+        // We need to extend the lifetime — leak is safe since we only need it for this function
+        Box::leak(trimmed.into_boxed_str())
+    } else {
+        content
+    };
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
 
     // Build metadata JSON from flags
