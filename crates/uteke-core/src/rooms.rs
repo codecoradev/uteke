@@ -91,7 +91,9 @@ impl crate::Uteke {
 
         // 2. Over-fetch via hybrid recall (no namespace filter — rooms are cross-ns).
         // Cap at 200 to prevent unbounded searches for large rooms (#546).
-        let fetch_limit = (limit * 5).min(200).max(limit);
+        // limit=0 means "return all" — use a generous fetch limit (#623).
+        let effective_limit = if limit == 0 { 1000 } else { limit };
+        let fetch_limit = (effective_limit * 5).min(200).max(effective_limit);
         let results = self.recall_hybrid(
             query,
             fetch_limit,
@@ -119,8 +121,10 @@ impl crate::Uteke {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // 6. Truncate to limit
-        filtered.truncate(limit);
+        // 6. Truncate to limit (0 = return all, no truncation)
+        if limit > 0 {
+            filtered.truncate(limit);
+        }
 
         Ok(filtered)
     }
