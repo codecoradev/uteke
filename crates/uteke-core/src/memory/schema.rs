@@ -155,6 +155,86 @@ impl super::Store {
             }
         }
 
+        // Repair datetime strings that lack timezone suffix.
+        //
+        // Older binaries (or manual inserts) may have written ISO 8601 strings
+        // without the mandatory RFC3339 timezone offset (e.g.
+        // "2026-07-09T19:53:45.493962" instead of
+        // "2026-07-09T19:53:45.493962+00:00"). This causes
+        // chrono::DateTime::parse_from_rfc3339() to fail with "premature end
+        // of input", crashing load_all().
+        self.repair_datetime_timezones()?;
+
+        Ok(())
+    }
+
+    /// Fix datetime columns that are missing the RFC3339 timezone suffix.
+    ///
+    /// Affected columns: `created_at`, `updated_at` in `memories` and
+    /// `created_at`, `updated_at` in `documents`. The fix appends `+00:00`
+    /// (assumes UTC) to any datetime string that doesn't contain a timezone
+    /// offset. This is idempotent — already-correct rows are untouched.
+    fn repair_datetime_timezones(&self) -> Result<(), Error> {
+        let datetime_cols: &[(&str, &str)] = &[
+            ("memories", "created_at"),
+            ("memories", "updated_at"),
+            ("documents", "created_at"),
+            ("documents", "updated_at"),
+        ];
+
+        let mut total_fixed = 0u64;
+
+        for &(table, column) in datetime_cols {
+            // Find rows where the datetime string doesn't contain '+' or 'Z' or
+            // a timezone-like offset pattern. Valid RFC3339 always ends with
+            // +HH:MM, -HH:MM, Z, or +00:00.
+            let sql = format!(
+                "SELECT id, {column} FROM {table} \
+                 WHERE {column} IS NOT NULL \
+                 AND {column} NOT LIKE '%+00:00' \
+                 AND {column} NOT LIKE '%+%' \
+                 AND {column} NOT LIKE '%Z'"
+            );
+
+            let rows: Vec<(String, String)> = {
+                let mut stmt = self
+                    .conn
+                    .prepare(&sql)
+                    .map_err(|e| Error::db("repair datetime: query", e))?;
+                let iter = stmt
+                    .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                    .map_err(|e| Error::db("repair datetime: iterate", e))?
+                    .filter_map(|r| r.ok());
+                // Drop stmt before the iterator temporary is dropped,
+                // avoiding a borrow-checker conflict (#E0597).
+                let rows: Vec<(String, String)> = iter.collect();
+                drop(stmt);
+                rows
+            };
+
+            if !rows.is_empty() {
+                tracing::info!(
+                    table,
+                    column,
+                    count = rows.len(),
+                    "Repairing datetime strings missing timezone suffix"
+                );
+            }
+
+            for (id, val) in &rows {
+                let fixed = format!("{val}+00:00");
+                let update_sql = format!("UPDATE {table} SET {column} = ?1 WHERE id = ?2");
+                self.conn
+                    .execute(&update_sql, params![fixed, id])
+                    .map_err(|e| Error::db("repair datetime: update", e))?;
+                total_fixed += 1;
+            }
+        }
+
+        if total_fixed > 0 {
+            tracing::info!(total_fixed, "Datetime timezone repair complete");
+        }
+
         Ok(())
     }
 
