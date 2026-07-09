@@ -113,7 +113,7 @@ fn main() {
                 println!("  Configure CORS origins in uteke.toml [server].cors_origins.");
                 println!();
                 println!("API:");
-                println!("  GET  /health              → {{ status, memories }}");
+                println!("  GET  /health              → {{ status, version, memories, namespaces }}");
                 println!("  POST /remember            → {{ content, tags? }} → {{ id }}");
                 println!("  POST /recall              → {{ query, limit? }} → {{ results }}");
                 println!("  POST /search              → {{ query, limit? }} → {{ results }}");
