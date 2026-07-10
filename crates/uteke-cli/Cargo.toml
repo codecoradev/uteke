@@ -14,7 +14,7 @@ name = "uteke"
 path = "src/main.rs"
 
 [dependencies]
-uteke-core = { path = "../uteke-core", version = "0.7.1", features = ["onnx"] }
+uteke-core = { path = "../uteke-core", version = "0.7.2", features = ["onnx"] }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"

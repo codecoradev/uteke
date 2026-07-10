@@ -26,7 +26,7 @@ pub struct DocGetRequest {
 
 #[derive(Deserialize)]
 pub struct DocListParams {
-    #[serde(default = "default_limit")]
+    #[serde(default = "default_doc_limit")]
     pub limit: usize,
     #[serde(default)]
     pub roots_only: bool,
@@ -172,6 +172,9 @@ pub struct ListParams {
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
+    /// Server version (uteke-server crate version), so HTTP clients can gate
+    /// features on the actual server capability rather than a local CLI probe.
+    pub version: &'static str,
     pub memories: usize,
     pub namespaces: usize,
 }
@@ -183,6 +186,13 @@ pub struct ErrorResponse {
 
 pub fn default_limit() -> usize {
     5
+}
+
+/// Document listings are not paginated like memories — callers (e.g. the Corin
+/// doc tree) need the full set to build the hierarchy client-side. Default high
+/// so omitting `limit` does not silently cap the tree at 5 docs.
+pub fn default_doc_limit() -> usize {
+    1000
 }
 #[derive(Deserialize)]
 pub struct RoomRecallRequest {

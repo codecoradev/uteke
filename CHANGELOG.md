@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+## [0.7.2] — 2026-07-09
+
+### Added
+- **Version field in `/health` response (#636)** — `GET /health` now reports the server's crate version (`CARGO_PKG_VERSION`). HTTP clients (e.g. Corin) can gate features against the remote server version instead of guessing from the local CLI. Backward compatible — `version` is an added JSON field.
+
+### Fixed
+- **Defensive datetime parsing — tolerate missing timezone in RFC3339 fields (#635)** — A single corrupted row with timezone-less `updated_at` (ISO 8601 but not RFC3339) crashed `load_all()`, making the entire memory database inaccessible. Fix: new `parse_datetime_flexible()` falls back to assuming UTC (`+00:00`) when strict RFC3339 parse fails; new idempotent `repair_datetime_timezones()` scans `memories` + `documents` on every DB open and repairs bad rows in-place.
+- **`POST /doc/list` default limit 5 → 1000 (#634)** — Document listing reused the memory pagination default (`5`), silently truncating client-side document trees. Documents are not paginated like memories — added dedicated `default_doc_limit() = 1000`. Memory and room-recall defaults unchanged.
+
 ## [0.7.1] — 2026-07-09
 
 ### Fixed
