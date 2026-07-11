@@ -5,7 +5,7 @@
 <h1 align="center">Uteke</h1>
 <p align="center"><strong>Give your AI a memory that never leaves your machine.</strong></p>
 <p align="center">
-  Your AI forgets everything between sessions. Uteke fixes that — one binary, fully offline, 30ms recall.
+  Your AI forgets everything between sessions. Uteke fixes that — one binary, fully offline, ~45ms recall.
 </p>
 
 <p align="center">
@@ -15,6 +15,7 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg?style=flat-square" alt="Rust 1.75+" />
   <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
+  <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
 </p>
 
 <p align="center">
@@ -76,9 +77,9 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | **API keys** | ❌ None | ✅ OpenAI/LLM | ✅ LLM key | ✅ LLM key | ✅ LLM key | ❌ None |
 | **Works offline** | ✅ Fully | ❌ Cloud embedding | ❌ Needs LLM | ❌ Needs LLM | ❌ Needs LLM + vector DB | ✅ Fully |
 | **Search** | **Hybrid** (Vector + FTS5 + RRF) | Vector + Graph | Vector + Graph | Vector | Temporal Graph | **FTS5 only** |
-| **Recall speed** | ~30ms | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Fast (local) |
+| **Recall speed** | ~45ms | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Fast (local) |
 | **Your data** | ✅ Never leaves machine | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ✅ Local |
-| **Stars** | 🌱 Growing | ⭐ ~48K | ⭐ ~25K | ⭐ ~21K | ⭐ ~24K | ⭐ ~2.4K |
+| **Stars** | 🌱 Growing | ⭐ ~60K | ⭐ ~25K | ⭐ ~24K | ⭐ ~5K | ⭐ ~5K |
 | **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
 > **Uteke vs Engram:** Both are single-binary, offline, no-API-key tools. But Engram is **FTS5-only** (keyword search). Uteke adds **vector semantic search + RRF fusion + rooms + time-travel + graph relationships + smart decay + document engine + batch import**. Same simplicity thesis, 10× the features.
@@ -132,7 +133,7 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | Feature | What it does |
 |---------|-------------|
 | 🔌 **MCP Server** | JSON-RPC over stdio + Streamable HTTP. Works with Claude Code, Cursor, Hermes. |
-| 🖥️ **Server Mode** | Persistent daemon with ~42ms warm recall (75x faster than CLI). |
+| 🖥️ **Server Mode** | Persistent daemon — eliminates cold-start embedding load on every call. |
 | 📂 **Batch Import** | Import entire directories with auto-strategy routing (document vs. memory extraction). |
 | 📝 **Document Engine** | Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking. |
 | 📥 **Import/Export** | JSONL-based backup and restore. |
@@ -146,9 +147,9 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | 🔒 **Fully Offline** | Local ONNX embeddings (EmbeddingGemma Q4, 768d). No telemetry, no cloud. |
 | ⚡ **Recall Cache** | LRU cache eliminates redundant embedding for repeated queries. |
 | 🔥 **Tiered Memory** | Hot/Warm/Cold tracking with auto-cleanup of stale memories. |
-| 🔄 **Embed Fallback** | Gracefully falls back to cloud API if local embedder fails. |
+| 🔄 **Embed Fallback** | Gracefully degrades to no-op embedder if local model fails (never crashes). |
 | 👥 **Multi-Agent Namespaces** | Fully isolated memory per agent, zero overhead. |
-| 📊 **Benchmarks** | Built-in `uteke bench` for perf testing + LongMemEval retrieval harness. |
+| 📊 **Benchmarks** | Built-in `uteke bench` for perf testing. [See results](docs/BENCHMARKS.md). |
 
 <details>
 <summary>🔌 MCP Server config — connect to Claude Code, Cursor, Hermes</summary>
@@ -223,13 +224,13 @@ Anything text-based: decisions, meeting notes, code snippets, project context, p
 <details>
 <summary><strong>Does it really work offline?</strong></summary>
 
-Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~188MB) on first run. After that, zero network calls. No telemetry. Optional cloud embed fallback if local fails, but the default is 100% local.
+Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~188MB) on first run. After that, zero network calls. No telemetry. If the local model fails, Uteke degrades gracefully to a no-op embedder — it never crashes and never calls a cloud API.
 </details>
 
 <details>
 <summary><strong>How fast is recall?</strong></summary>
 
-~30ms as a library, ~42ms in server mode (warm cache). No network round-trip because everything is local. The LRU recall cache eliminates redundant embedding computation for repeated queries.
+~45ms as a library (measured at 100–10K memories). No network round-trip because everything is local. The LRU recall cache eliminates redundant embedding computation for repeated queries.
 </details>
 
 <details>
@@ -241,7 +242,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.7.1 with 327 unit tests, CI/CD on every commit, and benchmark harness (LongMemEval). It's used in production by the CodeCora team and other early adopters. Still in 0.x — expect rough edges, but the core is stable.
+Uteke is at v0.7.2 with 206 tests, CI/CD on every commit, and benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x — expect rough edges, but the core is stable.
 </details>
 
 ---
@@ -250,7 +251,7 @@ Uteke is at v0.7.1 with 327 unit tests, CI/CD on every commit, and benchmark har
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (327 unit tests)
+cargo test --workspace         # Test (206 tests)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```
