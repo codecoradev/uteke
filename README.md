@@ -66,16 +66,20 @@ docker compose up -d
 
 AI agents forget everything between sessions. Uteke gives them persistent, searchable memory — entirely offline, in one binary.
 
-| | **Uteke** | **Mem0** | **Letta** | **Zep** |
-|---|---|---|---|---|
-| **Setup** | Single binary | pip + Docker + Qdrant | pip + Docker + Postgres | pip + Docker + Neo4j |
-| **API keys needed** | ❌ None | ✅ OpenAI/LLM key | ✅ LLM key | ✅ LLM key |
-| **Offline** | ✅ Fully | ❌ Cloud embedding | ❌ Needs LLM server | ❌ Needs LLM + vector DB |
-| **Semantic search** | ✅ Local ONNX + FTS5 hybrid | ✅ Cloud embedding | ⚠️ Keyword + archival | ✅ GraphRAG |
-| **Full-text search** | ✅ FTS5 built-in | ❌ | ⚠️ Keyword only | ❌ |
-| **Recall speed** | ~30ms (library) | Network round-trip | Network round-trip | Network round-trip |
-| **Privacy** | ✅ Data never leaves machine | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM |
-| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| | **Uteke** | **Mnemosyne** | **Mem0** | **Letta** | **Zep** |
+|---|---|---|---|---|---|
+| **Language** | Rust (single binary) | Python (pip) | Python | Python | Python |
+| **Setup** | `curl \| sh` → run | pip install + venv | pip + Docker + Qdrant | pip + Docker + Postgres | pip + Docker + Neo4j |
+| **Runtime deps** | ❌ Zero | ✅ Python 3.9+ | ✅ Docker + Qdrant | ✅ Docker + Postgres | ✅ Docker + Neo4j |
+| **API keys needed** | ❌ None | ⚠️ For remote embeddings | ✅ OpenAI/LLM key | ✅ LLM key | ✅ LLM key |
+| **Offline** | ✅ Fully | ⚠️ Optional | ❌ Cloud embedding | ❌ Needs LLM server | ❌ Needs LLM + vector DB |
+| **Semantic search** | ✅ Local ONNX (768d) + FTS5 hybrid | ✅ sqlite-vec + FTS5 | ✅ Cloud embedding | ⚠️ Keyword + archival | ✅ GraphRAG |
+| **Recall speed** | ~30ms (library) | ~50ms+ | Network round-trip | Network round-trip | Network round-trip |
+| **Multi-agent** | ✅ Rooms (built-in collaboration) | ⚠️ Shared API | ❌ | ❌ | ❌ |
+| **Time-travel queries** | ✅ Native point-in-time | ⚠️ Temporal triples | ❌ | ❌ | ❌ |
+| **MCP server** | ✅ JSON-RPC + HTTP | ✅ stdio + SSE | ❌ | ❌ | ❌ |
+| **Privacy** | ✅ Data never leaves machine | ✅ Local-first | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM | ⚠️ Data sent to LLM |
+| **License** | Apache 2.0 | MIT | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
 <p align="center">
   <img src="docs/assets/uteke-comparison.png" alt="Uteke vs cloud alternatives" width="640" />

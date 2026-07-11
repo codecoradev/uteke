@@ -62,7 +62,8 @@ def insert_sessions(args, store_path, entry):
     """
     Insert all haystack sessions for one question into uteke.
     Returns: (set of successfully inserted session_ids,
-              dict session_id -> set of turn indices that have answers).
+              dict session_id -> set of turn indices that has answers,
+              dict memory_id -> session_id).
     """
     session_ids = entry.get("haystack_session_ids", [])
     sessions = entry.get("haystack_sessions", [])
@@ -70,6 +71,7 @@ def insert_sessions(args, store_path, entry):
 
     answer_turns = {}  # session_id -> set of turn indices with has_answer
     inserted_sids = set()  # track which sessions actually inserted
+    mid_to_sid = {}  # memory_id -> session_id mapping
 
     for i, (sid, session) in enumerate(zip(session_ids, sessions)):
         text = session_to_text(session)
@@ -86,13 +88,21 @@ def insert_sessions(args, store_path, entry):
 
         # Insert
         try:
-            run_uteke(args, store_path, [
+            stdout = run_uteke(args, store_path, [
                 "remember", text,
-                "tags", tag,
+                "--tags", tag,
                 "--meta", meta_str,
                 "--type", "context",
             ])
             inserted_sids.add(sid)
+
+            # Parse memory_id from insert response
+            try:
+                insert_data = json.loads(stdout)
+                if isinstance(insert_data, dict) and "id" in insert_data:
+                    mid_to_sid[insert_data["id"]] = sid
+            except (json.JSONDecodeError, KeyError):
+                pass
         except RuntimeError as e:
             print(f"  Warning: insert failed for session {sid}: {e}", file=sys.stderr)
 
@@ -104,10 +114,10 @@ def insert_sessions(args, store_path, entry):
         if answer_indices:
             answer_turns[sid] = answer_indices
 
-    return inserted_sids, answer_turns
+    return inserted_sids, answer_turns, mid_to_sid
 
 
-def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids):
+def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids, mid_to_sid):
     """
     Run uteke recall for the question, then evaluate retrieval accuracy.
 
@@ -139,13 +149,20 @@ def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids)
     if not isinstance(results, list):
         results = [results]
 
-    # Extract session_ids from retrieved memories' metadata
+    # Extract session_ids via memory_id -> session_id mapping.
+    # Recall JSON in uteke 0.7+ returns memory_id, not metadata fields.
+    # We built mid_to_sid during insert to bridge this.
     retrieved_session_ids = []
     for r in results:
-        meta = r.get("metadata", {})
-        sid = meta.get("session_id")
-        if sid:
-            retrieved_session_ids.append(sid)
+        mid = r.get("memory_id") or r.get("id")
+        if mid and mid in mid_to_sid:
+            retrieved_session_ids.append(mid_to_sid[mid])
+        else:
+            # Fallback: try metadata (older uteke versions)
+            meta = r.get("metadata", {})
+            sid = meta.get("session_id")
+            if sid:
+                retrieved_session_ids.append(sid)
 
     # --- Session-level metrics ---
     # Recall@k: fraction of evidence sessions in top-k
@@ -226,10 +243,10 @@ def main():
             qid = entry.get("question_id", f"q{idx}")
 
             # Insert sessions
-            inserted_sids, answer_sessions = insert_sessions(args, store_path, entry)
+            inserted_sids, answer_sessions, mid_to_sid = insert_sessions(args, store_path, entry)
 
             # Recall + evaluate
-            metrics = recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids)
+            metrics = recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids, mid_to_sid)
 
             if metrics is not None:
                 result_entry = {
