@@ -215,6 +215,10 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="Limit questions (0 = all)")
     parser.add_argument("--keep-store", action="store_true",
                         help="Keep the uteke store after eval (for debugging)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from existing results file (skip already-evaluated questions)")
+    parser.add_argument("--reset-every", type=int, default=20,
+                        help="Wipe and recreate the store every N questions to prevent memory buildup (default: 20)")
     args = parser.parse_args()
 
     # Load data
@@ -236,11 +240,36 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     results_file = Path(args.output) / "retrieval_results.jsonl"
 
-    total_start = time.time()
+    # Resume support: load already-evaluated question IDs
+    done_ids = set()
+    if args.resume and results_file.exists():
+        with open(results_file) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                    done_ids.add(entry.get("question_id"))
+                except json.JSONDecodeError:
+                    pass
+        if done_ids:
+            print(f"Resume: {len(done_ids)} questions already evaluated, skipping...")
 
-    with open(results_file, "w") as fout:
+    total_start = time.time()
+    evaluated = 0
+
+    # Open in append mode for resume, write mode for fresh run
+    mode = "a" if args.resume and done_ids else "w"
+    with open(results_file, mode) as fout:
         for idx, entry in enumerate(tqdm(data, desc="Evaluating")):
             qid = entry.get("question_id", f"q{idx}")
+
+            # Skip if already evaluated (resume mode)
+            if qid in done_ids:
+                continue
+
+            # Periodic store reset to prevent memory buildup
+            if evaluated > 0 and evaluated % args.reset_every == 0:
+                shutil.rmtree(store_path, ignore_errors=True)
+                store_path.mkdir(parents=True, exist_ok=True)
 
             # Insert sessions
             inserted_sids, answer_sessions, mid_to_sid = insert_sessions(args, store_path, entry)
@@ -255,6 +284,9 @@ def main():
                     "retrieval_results": {"metrics": metrics},
                 }
                 fout.write(json.dumps(result_entry) + "\n")
+                fout.flush()  # Flush for resume safety
+
+            evaluated += 1
 
             # Clean up memories for this question (avoid cross-contamination).
             # If forget fails, wipe the entire store to guarantee a clean slate.
