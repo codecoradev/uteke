@@ -95,6 +95,32 @@ pub struct RoomMemory {
 }
 
 impl super::Store {
+    /// Get author mapping for all memories in a room.
+    ///
+    /// Returns a HashMap from memory_id → author string.
+    /// Used by recall_room to enrich output with author info (#624)
+    /// and by room_summary/document for participant tracking.
+    fn get_room_author_map(
+        &self,
+        room_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>, Error> {
+        let mut author_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT memory_id, author FROM room_memories WHERE room_id = ?1")
+            .map_err(|e| Error::db("room author map", e))?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map(params![room_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|e| Error::db("room author map", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("room author map", e))?;
+        for (mid, author) in rows {
+            author_map.insert(mid, author);
+        }
+        Ok(author_map)
+    }
+
     /// Create a new room. Returns error if room already exists.
     pub fn create_room(
         &self,
@@ -280,8 +306,10 @@ impl super::Store {
         author: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::memory::types::Memory>, Error> {
-        let sql = match author {
-            Some(_) => {
+        // limit=0 means "return all" — omit LIMIT clause (#623).
+        let no_limit = limit == 0;
+        let sql = match (author, no_limit) {
+            (Some(_), false) => {
                 "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
                  m.created_at, m.updated_at, m.namespace, m.access_count, \
                  m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type \
@@ -291,7 +319,16 @@ impl super::Store {
                  ORDER BY rm.joined_at ASC \
                  LIMIT ?3"
             }
-            None => {
+            (Some(_), true) => {
+                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
+                 m.created_at, m.updated_at, m.namespace, m.access_count, \
+                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type \
+                 FROM memories m \
+                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
+                 WHERE rm.room_id = ?1 AND rm.author = ?2 \
+                 ORDER BY rm.joined_at ASC"
+            }
+            (None, false) => {
                 "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
                  m.created_at, m.updated_at, m.namespace, m.access_count, \
                  m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type \
@@ -300,6 +337,15 @@ impl super::Store {
                  WHERE rm.room_id = ?1 \
                  ORDER BY rm.joined_at ASC \
                  LIMIT ?2"
+            }
+            (None, true) => {
+                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
+                 m.created_at, m.updated_at, m.namespace, m.access_count, \
+                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type \
+                 FROM memories m \
+                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
+                 WHERE rm.room_id = ?1 \
+                 ORDER BY rm.joined_at ASC"
             }
         };
 
@@ -310,20 +356,51 @@ impl super::Store {
 
         use super::store::row_to_memory;
 
-        let memories = match author {
-            Some(a) => stmt
+        let memories = match (author, no_limit) {
+            (Some(a), false) => stmt
                 .query_map(params![room_id, a, limit as i64], row_to_memory)
                 .map_err(|e| Error::db("recall room", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("recall room", e))?,
-            None => stmt
+            (Some(a), true) => stmt
+                .query_map(params![room_id, a], row_to_memory)
+                .map_err(|e| Error::db("recall room", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("recall room", e))?,
+            (None, false) => stmt
                 .query_map(params![room_id, limit as i64], row_to_memory)
+                .map_err(|e| Error::db("recall room", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("recall room", e))?,
+            (None, true) => stmt
+                .query_map(params![room_id], row_to_memory)
                 .map_err(|e| Error::db("recall room", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("recall room", e))?,
         };
 
-        Ok(memories)
+        // Enrich memories with author from room_memories (#624).
+        // Author is stored in room_memories, not in the memories table.
+        // Inject into metadata so JSON consumers can see who wrote each memory.
+        if !memories.is_empty() {
+            let author_map = self.get_room_author_map(room_id)?;
+            let mut enriched = memories;
+            for m in &mut enriched {
+                if let Some(author) = author_map.get(&m.id) {
+                    if m.metadata.is_null() {
+                        m.metadata = serde_json::json!({"author": author});
+                    } else if let Some(obj) = m.metadata.as_object_mut() {
+                        obj.insert(
+                            "author".to_string(),
+                            serde_json::Value::String(author.clone()),
+                        );
+                    }
+                }
+            }
+            Ok(enriched)
+        } else {
+            Ok(memories)
+        }
     }
 
     /// Get memory IDs linked to a room.

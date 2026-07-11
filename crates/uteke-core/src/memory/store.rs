@@ -324,6 +324,43 @@ pub(super) fn deserialize_embedding(blob: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+/// Parse a datetime string with fallback for missing timezone suffix.
+///
+/// Accepts both RFC3339 (`2026-07-09T19:53:45.493962+00:00`) and
+/// ISO 8601 without timezone (`2026-07-09T19:53:45.493962`),
+/// treating the latter as UTC.
+fn parse_datetime_flexible(
+    s: &str,
+    col_index: usize,
+) -> Result<chrono::DateTime<chrono::Utc>, rusqlite::Error> {
+    // Fast path: strict RFC3339 (the normal case)
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.to_utc());
+    }
+    // Fallback: try appending UTC offset for ISO 8601 without timezone
+    let with_tz = format!("{s}+00:00");
+    chrono::DateTime::parse_from_rfc3339(&with_tz)
+        .map(|dt| dt.to_utc())
+        .map_err(|e| {
+            tracing::warn!(
+                col = col_index,
+                value = s,
+                "Failed to parse datetime string (tried RFC3339 and ISO8601+UTC)"
+            );
+            rusqlite::Error::FromSqlConversionFailure(
+                col_index,
+                rusqlite::types::Type::Text,
+                Box::new(e),
+            )
+        })
+}
+
+/// Optional variant of [parse_datetime_flexible] — returns None on parse failure
+/// instead of an error. Used for nullable datetime columns (last_accessed, valid_from, etc).
+fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    parse_datetime_flexible(s, 0).ok()
+}
+
 /// Convert a database row to a Memory.
 pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
     let id: String = row.get(0)?;
@@ -356,40 +393,23 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         })
         .unwrap_or(serde_json::Value::Null);
     let created_at_str: String = row.get(5)?;
-    let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
-        .map(|dt| dt.to_utc())
-        .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(e))
-        })?;
+    let created_at = parse_datetime_flexible(&created_at_str, 5)?;
     let updated_at_str: String = row.get(6)?;
-    let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at_str)
-        .map(|dt| dt.to_utc())
-        .map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
-        })?;
+    let updated_at = parse_datetime_flexible(&updated_at_str, 6)?;
     let namespace: String = row
         .get(7)
         .unwrap_or_else(|_| crate::memory::types::DEFAULT_NAMESPACE.to_string());
     let access_count: u32 = row.get(8).unwrap_or(0);
     let last_accessed_str: Option<String> = row.get(9).ok().flatten();
-    let last_accessed = last_accessed_str
-        .as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.to_utc());
+    let last_accessed = last_accessed_str.as_deref().and_then(parse_datetime_opt);
     let deprecated: bool = row.get(10).unwrap_or_else(|e| {
         tracing::debug!("Failed to read deprecated field: {e}, defaulting to false");
         false
     });
     let valid_from_str: Option<String> = row.get(11).ok().flatten();
-    let valid_from = valid_from_str
-        .as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.to_utc());
+    let valid_from = valid_from_str.as_deref().and_then(parse_datetime_opt);
     let valid_until_str: Option<String> = row.get(12).ok().flatten();
-    let valid_until = valid_until_str
-        .as_deref()
-        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.to_utc());
+    let valid_until = valid_until_str.as_deref().and_then(parse_datetime_opt);
     let memory_type: String = row.get(13).unwrap_or_else(|_| "fact".to_string());
     let importance: f64 = row.get(14).unwrap_or(0.5);
     let pinned: bool = row.get(15).unwrap_or(false);
