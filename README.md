@@ -71,16 +71,21 @@ You just spent 2 hours explaining your codebase to ChatGPT. Next session? Blank 
 
 Every AI tool forgets. Context windows fill up, sessions end, and your AI starts over every single time. Uteke gives it persistent memory — and keeps it on your machine.
 
-| | **Uteke** | **Mem0** | **AgentMemory** | **Letta** | **Zep** | **Engram** |
-|---|---|---|---|---|---|---|
-| **Setup** | One binary | pip + Docker + Qdrant | npm + Docker (iii-engine) | pip + Docker + Postgres | pip + Docker + Neo4j | One binary (Go) |
-| **API keys** | ❌ None | ✅ OpenAI/LLM | ✅ LLM key | ✅ LLM key | ✅ LLM key | ❌ None |
-| **Works offline** | ✅ Fully | ❌ Cloud embedding | ❌ Needs LLM | ❌ Needs LLM | ❌ Needs LLM + vector DB | ✅ Fully |
-| **Search** | **Hybrid** (Vector + FTS5 + RRF) | Vector + Graph | Vector + Graph | Vector | Temporal Graph | **FTS5 only** |
-| **Recall speed** | ~45ms | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Fast (local) |
-| **Your data** | ✅ Never leaves machine | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ✅ Local |
-| **Stars** | 🌱 Growing | ⭐ ~60K | ⭐ ~25K | ⭐ ~24K | ⭐ ~5K | ⭐ ~5K |
-| **License** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+| | **Uteke** | **Mnemosyne** | **Mem0** | **AgentMemory** | **Letta** | **Zep** | **Engram** |
+|---|---|---|---|---|---|---|---|
+| **Language** | Rust (single binary) | Python (pip) | Python | TypeScript | Python | Python | Go (single binary) |
+| **Setup** | One binary (`curl \| sh`) | pip install + venv | pip + Docker + Qdrant | npm + Docker (iii-engine) | pip + Docker + Postgres | pip + Docker + Neo4j | One binary |
+| **API keys** | ❌ None | ⚠️ For remote embeddings | ✅ OpenAI/LLM | ✅ LLM key | ✅ LLM key | ✅ LLM key | ❌ None |
+| **Works offline** | ✅ Fully | ⚠️ Optional | ❌ Cloud embedding | ❌ Needs LLM | ❌ Needs LLM | ❌ Needs LLM + vector DB | ✅ Fully |
+| **Search** | **Hybrid** (Vector + FTS5 + RRF) | sqlite-vec + FTS5 | Vector + Graph | Vector + Graph | Vector | Temporal Graph | **FTS5 only** |
+| **Recall speed** | ~45ms | ~50ms+ | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Fast (local) |
+| **Multi-agent** | ✅ Rooms (built-in collaboration) | ⚠️ Shared API | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Time-travel** | ✅ Native point-in-time | ⚠️ Temporal triples | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **MCP server** | ✅ JSON-RPC + HTTP | ✅ stdio + SSE | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Your data** | ✅ Never leaves machine | ✅ Local-first | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ✅ Local |
+| **License** | Apache 2.0 | MIT | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
+
+> **Uteke vs Mnemosyne:** Both are local-first with semantic + FTS5 search. Mnemosyne is the closest competitor (~1.5K stars, Python). Uteke wins on **single binary** (no Python runtime), **rooms**, **time-travel queries**, and **zero runtime dependencies**.
 
 > **Uteke vs Engram:** Both are single-binary, offline, no-API-key tools. But Engram is **FTS5-only** (keyword search). Uteke adds **vector semantic search + RRF fusion + rooms + time-travel + graph relationships + smart decay + document engine + batch import**. Same simplicity thesis, 10× the features.
 
