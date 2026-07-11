@@ -5,7 +5,7 @@
 <h1 align="center">Uteke</h1>
 <p align="center"><strong>Beri AI kamu memori yang nggak pernah keluar dari laptop kamu.</strong></p>
 <p align="center">
-  AI kamu lupa semuanya antar sesi. Uteke fix ini — satu binary, fully offline, recall 30ms.
+  AI kamu lupa semuanya antar sesi. Uteke fix ini — satu binary, fully offline, recall ~45ms.
 </p>
 
 <p align="center">
@@ -15,6 +15,7 @@
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.75+-orange.svg?style=flat-square" alt="Rust 1.75+" />
   <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
+  <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
 </p>
 
 <p align="center">
@@ -76,9 +77,9 @@ Setiap AI tool lupa. Context window penuh, sesi berakhir, dan AI kamu start over
 | **API key** | ❌ Nggak perlu | ✅ OpenAI/LLM | ✅ LLM key | ✅ LLM key | ✅ LLM key | ❌ Nggak perlu |
 | **Offline** | ✅ Full | ❌ Cloud embedding | ❌ Butuh LLM | ❌ Butuh LLM | ❌ Butuh LLM + vector DB | ✅ Full |
 | **Search** | **Hybrid** (Vector + FTS5 + RRF) | Vector + Graph | Vector + Graph | Vector | Temporal Graph | **FTS5 doang** |
-| **Kecepatan recall** | ~30ms | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Cepat (lokal) |
+| **Kecepatan recall** | ~45ms | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Cepat (lokal) |
 | **Data kamu** | ✅ Nggak pernah keluar | ⚠️ Dikirim ke cloud LLM | ⚠️ Dikirim ke cloud LLM | ⚠️ Dikirim ke cloud LLM | ⚠️ Dikirim ke cloud LLM | ✅ Lokal |
-| **Stars** | 🌱 Growing | ⭐ ~48K | ⭐ ~25K | ⭐ ~21K | ⭐ ~24K | ⭐ ~2.4K |
+| **Stars** | 🌱 Growing | ⭐ ~60K | ⭐ ~25K | ⭐ ~24K | ⭐ ~5K | ⭐ ~5K |
 | **Lisensi** | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 |
 
 > **Uteke vs Engram:** Dua-duanya single-binary, offline, tanpa API key. Tapi Engram cuma **FTS5** (keyword search doang). Uteke punya **vector semantic search + RRF fusion + rooms + time-travel + graph relationships + smart decay + document engine + batch import**. Filosofi yang sama, fitur 10× lipat.
@@ -132,7 +133,7 @@ Setiap AI tool lupa. Context window penuh, sesi berakhir, dan AI kamu start over
 | Fitur | Apa fungsinya |
 |-------|---------------|
 | 🔌 **MCP Server** | JSON-RPC via stdio + Streamable HTTP. Langsung pakai dengan Claude Code, Cursor, Hermes. |
-| 🖥️ **Mode Server** | Daemon persisten dengan recall hangat ~42ms (75x lebih cepat dari CLI). |
+| 🖥️ **Mode Server** | Daemon persisten — eliminates cold-start embedding load di setiap call. |
 | 📂 **Batch Import** | Import seluruh direktori dengan routing strategi otomatis (dokumen vs. memori). |
 | 📝 **Document Engine** | Wiki/knowledge base dengan `uteke doc create/get/list` + auto-chunking. |
 | 📥 **Import/Export** | Backup dan restore berbasis JSONL. |
@@ -146,9 +147,9 @@ Setiap AI tool lupa. Context window penuh, sesi berakhir, dan AI kamu start over
 | 🔒 **Fully Offline** | Embedding ONNX lokal (EmbeddingGemma Q4, 768d). Tanpa telemetri, tanpa cloud. |
 | ⚡ **Recall Cache** | Cache LRU yang eliminate redundant embedding untuk query berulang. |
 | 🔥 **Tiered Memory** | Tracking Hot/Warm/Cold dengan auto-cleanup memori basi. |
-| 🔄 **Embed Fallback** | Otomatis fallback ke cloud API kalau local embedder gagal. |
+| 🔄 **Embed Fallback** | Degrade ke no-op embedder kalau local model gagal (nggak pernah crash). |
 | 👥 **Namespace Multi-Agent** | Memori terisolasi penuh per agent, tanpa overhead. |
-| 📊 **Benchmark** | `uteke bench` untuk perf testing + LongMemEval harness untuk evaluasi akurasi. |
+| 📊 **Benchmark** | `uteke bench` untuk perf testing. [Lihat hasil](docs/BENCHMARKS.md). |
 
 <details>
 <summary>🔌 Konfigurasi MCP Server — connect ke Claude Code, Cursor, Hermes</summary>
@@ -223,13 +224,13 @@ Apapun yang text-based: keputusan, meeting notes, code snippet, konteks project,
 <details>
 <summary><strong>Beneran bisa offline?</strong></summary>
 
-Ya. Embedding model (EmbeddingGemma Q4, 768d) download sekali (~188MB) saat first run. Setelah itu, zero network call. Tanpa telemetri. Ada opsi cloud embed fallback kalau local embedder gagal, tapi default-nya 100% lokal.
+Ya. Embedding model (EmbeddingGemma Q4, 768d) download sekali (~188MB) saat first run. Setelah itu, zero network call. Tanpa telemetri. Kalau local model gagal, Uteke degrade ke no-op embedder — nggak pernah crash dan nggak pernah manggil cloud API.
 </details>
 
 <details>
 <summary><strong>Cepetan recall-nya?</strong></summary>
 
-~30ms sebagai library, ~42ms di mode server (warm cache). Nggak ada network round-trip karena semuanya lokal. Recall cache LRU menghilangkan komputasi embedding berulang untuk query yang sama.
+~45ms sebagai library (diukur di 100–10K memori). Nggak ada network round-trip karena semuanya lokal. Recall cache LRU menghilangkan komputasi embedding berulang untuk query yang sama.
 </details>
 
 <details>
@@ -241,7 +242,7 @@ Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan
 <details>
 <summary><strong>Sudah production-ready?</strong></summary>
 
-Uteke sekarang v0.7.1 dengan 327 unit test, CI/CD di setiap commit, dan benchmark harness (LongMemEval). Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x — mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke sekarang v0.7.2 dengan 206 test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x — mungkin ada rough edges, tapi core-nya udah stabil.
 </details>
 
 ---
@@ -250,7 +251,7 @@ Uteke sekarang v0.7.1 dengan 327 unit test, CI/CD di setiap commit, dan benchmar
 
 ```bash
 cargo build --workspace        # Build
-cargo test --workspace         # Test (327 unit test)
+cargo test --workspace         # Test (206 test)
 cargo clippy -- -D warnings    # Lint
 cargo fmt                      # Format
 ```

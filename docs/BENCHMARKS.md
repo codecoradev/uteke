@@ -13,7 +13,7 @@
 
 ## Key Takeaways
 
-### Recall Latency: Flat ~40-42ms from 100 to 10K memories
+### Recall Latency: Flat ~40-45ms from 100 to 10K memories
 The killer stat: recall latency barely changes as the store grows.
 
 - 100 memories → **40ms**
@@ -66,7 +66,7 @@ uteke bench --counts 100,1000 --store /tmp/bench --json
 - **OS:** Linux 6.8.0 (aarch64)
 - **Rust:** 1.75+
 - **Embedding:** EmbeddingGemma Q4, 768d, ONNX Runtime CPU
-- **Uteke:** v0.7.1
+- **Uteke:** v0.7.2
 
 ## Methodology
 
