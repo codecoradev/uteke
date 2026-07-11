@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Uteke vs The Competition</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #0a0a0f;
+    color: #e4e4e7;
+    width: 1200px;
+    overflow-x: hidden;
+  }
+
+  .container {
+    width: 1200px;
+    padding: 48px;
+  }
+
+  /* === HEADER === */
+  .header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .header .badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #4a9eff 0%, #9333ea 100%);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 6px 16px;
+    border-radius: 20px;
+    margin-bottom: 16px;
+  }
+
+  .header h1 {
+    font-size: 42px;
+    font-weight: 900;
+    background: linear-gradient(135deg, #4a9eff 0%, #4aff9e 50%, #ff9e4a 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -1px;
+    margin-bottom: 12px;
+  }
+
+  .header p {
+    font-size: 18px;
+    color: #a1a1aa;
+    font-weight: 400;
+  }
+
+  /* === POSITIONING MAP === */
+  .map-section {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 16px;
+    padding: 32px;
+    margin-bottom: 32px;
+  }
+
+  .map-title {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 24px;
+    color: #f4f4f5;
+  }
+
+  .map-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    position: relative;
+    height: 360px;
+  }
+
+  /* Quadrant labels */
+  .quad-label {
+    position: absolute;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #52525b;
+  }
+  .quad-tl { top: 0; left: 0; }
+  .quad-tr { top: 0; right: 0; text-align: right; }
+  .quad-bl { bottom: 0; left: 0; }
+  .quad-br { bottom: 0; right: 0; text-align: right; }
+
+  /* Axis lines */
+  .axis-h { position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.1); }
+  .axis-v { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.1); }
+
+  /* Player dots */
+  .player {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    transition: all 0.3s;
+  }
+
+  .player .dot {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    margin: 0 auto 6px;
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.5);
+  }
+
+  .player .name {
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .player .stars {
+    font-size: 11px;
+    color: #71717a;
+    font-weight: 500;
+  }
+
+  .dot-uteke {
+    background: linear-gradient(135deg, #4a9eff, #4aff9e);
+    box-shadow: 0 0 24px rgba(74, 159, 255, 0.6), 0 0 0 3px rgba(0,0,0,0.5);
+  }
+  .dot-cloud { background: rgba(239, 68, 68, 0.3); border: 2px solid #ef4444; }
+  .dot-engram { background: rgba(168, 85, 247, 0.3); border: 2px solid #a855f7; }
+  .dot-cloud2 { background: rgba(251, 191, 36, 0.3); border: 2px solid #fbbf24; }
+
+  /* Axis labels */
+  .axis-label {
+    position: absolute;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #52525b;
+    font-weight: 500;
+  }
+
+  /* === COMPARISON TABLE === */
+  .table-section {
+    margin-bottom: 32px;
+  }
+
+  .comp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .comp-table th {
+    padding: 16px 14px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .comp-table th:first-child {
+    text-align: left;
+    color: #a1a1aa;
+    width: 160px;
+  }
+
+  .comp-table th.uteke-col {
+    background: linear-gradient(180deg, rgba(74, 159, 255, 0.15) 0%, rgba(74, 159, 255, 0.05) 100%);
+    color: #4a9eff;
+  }
+
+  .comp-table td {
+    padding: 14px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-weight: 500;
+  }
+
+  .comp-table td:first-child {
+    text-align: left;
+    color: #71717a;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .comp-table td.uteke-col {
+    background: rgba(74, 159, 255, 0.06);
+  }
+
+  .comp-table tr:last-child td { border-bottom: none; }
+
+  .yes { color: #4aff9e; }
+  .no { color: #ef4444; }
+  .partial { color: #fbbf24; }
+
+  /* === FEATURE BAR === */
+  .features-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .feature-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .feature-card .icon {
+    font-size: 32px;
+    margin-bottom: 8px;
+  }
+
+  .feature-card .title {
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    color: #f4f4f5;
+  }
+
+  .feature-card .desc {
+    font-size: 12px;
+    color: #71717a;
+    line-height: 1.5;
+  }
+
+  /* === FOOTER === */
+  .footer {
+    text-align: center;
+    padding: 24px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .footer .tagline {
+    font-size: 22px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #4a9eff, #4aff9e);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+
+  .footer .sub {
+    font-size: 14px;
+    color: #52525b;
+  }
+
+  .footer .links {
+    margin-top: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #4a9eff;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="badge">⚡ AI Agent Memory Landscape 2026</div>
+    <h1>Uteke vs The Competition</h1>
+    <p>The only offline, zero-dependency Rust binary with hybrid semantic search</p>
+  </div>
+
+  <!-- POSITIONING MAP -->
+  <div class="map-section">
+    <div class="map-title">📍 Positioning Map</div>
+    <div class="map-grid">
+      <!-- Axis lines -->
+      <div class="axis-h"></div>
+      <div class="axis-v"></div>
+
+      <!-- Quadrant labels -->
+      <div class="quad-label quad-tl">🔒 Privacy + Zero-Dep</div>
+      <div class="quad-label quad-tr">🌐 Full-Featured</div>
+      <div class="quad-label quad-bl">Local but Basic</div>
+      <div class="quad-label quad-br">☁️ Cloud + Docker</div>
+
+      <!-- Axis labels -->
+      <div class="axis-label" style="top: 50%; right: 8px; transform: translateY(-50%);">→ More Features</div>
+      <div class="axis-label" style="top: 50%; left: 8px; transform: translateY(-50%) rotate(-90deg); transform-origin: left center;">→ More Private</div>
+
+      <!-- Uteke (top-left, standout) -->
+      <div class="player" style="top: 22%; left: 22%;">
+        <div class="dot dot-uteke">🧠</div>
+        <div class="name" style="color: #4a9eff;">Uteke</div>
+        <div class="stars">🌱 Growing</div>
+      </div>
+
+      <!-- Engram (bottom-left, same thesis but basic) -->
+      <div class="player" style="top: 72%; left: 28%;">
+        <div class="dot dot-engram">📝</div>
+        <div class="name" style="color: #a855f7;">Engram</div>
+        <div class="stars">⭐ 2.4K · Go</div>
+      </div>
+
+      <!-- Mem0 (top-right, full features, cloud) -->
+      <div class="player" style="top: 18%; left: 72%;">
+        <div class="dot dot-cloud2">☁️</div>
+        <div class="name" style="color: #fbbf24;">Mem0</div>
+        <div class="stars">⭐ 48K · Python</div>
+      </div>
+
+      <!-- AgentMemory (middle-right) -->
+      <div class="player" style="top: 35%; left: 68%;">
+        <div class="dot dot-cloud">🤖</div>
+        <div class="name" style="color: #ef4444;">AgentMemory</div>
+        <div class="stars">⭐ 25K · TypeScript</div>
+      </div>
+
+      <!-- Letta (right) -->
+      <div class="player" style="top: 55%; left: 78%;">
+        <div class="dot dot-cloud">💾</div>
+        <div class="name" style="color: #ef4444;">Letta</div>
+        <div class="stars">⭐ 21K · Python</div>
+      </div>
+
+      <!-- Zep (right-bottom) -->
+      <div class="player" style="top: 72%; left: 65%;">
+        <div class="dot dot-cloud">🔗</div>
+        <div class="name" style="color: #ef4444;">Zep</div>
+        <div class="stars">⭐ 24K · Python</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPARISON TABLE -->
+  <div class="table-section">
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th></th>
+          <th class="uteke-col">🧠 Uteke</th>
+          <th>☁️ Mem0</th>
+          <th>🤖 AgentMemory</th>
+          <th>🔗 Zep</th>
+          <th>💾 Letta</th>
+          <th>📝 Engram</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>API Keys</td>
+          <td class="uteke-col"><span class="no">❌ None</span></td>
+          <td><span class="yes">✅ Required</span></td>
+          <td><span class="yes">✅ Required</span></td>
+          <td><span class="yes">✅ Required</span></td>
+          <td><span class="yes">✅ Required</span></td>
+          <td><span class="no">❌ None</span></td>
+        </tr>
+        <tr>
+          <td>Fully Offline</td>
+          <td class="uteke-col"><span class="yes">✅ Yes</span></td>
+          <td><span class="no">❌ Cloud</span></td>
+          <td><span class="no">❌ Cloud</span></td>
+          <td><span class="no">❌ Cloud</span></td>
+          <td><span class="no">❌ Cloud</span></td>
+          <td><span class="yes">✅ Yes</span></td>
+        </tr>
+        <tr>
+          <td>Hybrid Search</td>
+          <td class="uteke-col"><span class="yes">✅ Vector + FTS5 + RRF</span></td>
+          <td>Vector + Graph</td>
+          <td>Vector + Graph</td>
+          <td>Temporal Graph</td>
+          <td>Vector</td>
+          <td><span class="no">❌ FTS5 only</span></td>
+        </tr>
+        <tr>
+          <td>Setup</td>
+          <td class="uteke-col">One binary</td>
+          <td>pip + Docker</td>
+          <td>npm + Docker</td>
+          <td>pip + Docker</td>
+          <td>pip + Docker</td>
+          <td>One binary</td>
+        </tr>
+        <tr>
+          <td>Recall Speed</td>
+          <td class="uteke-col"><span class="yes">~30ms</span></td>
+          <td>Network</td>
+          <td>Network</td>
+          <td>Network</td>
+          <td>Network</td>
+          <td><span class="yes">Fast</span></td>
+        </tr>
+        <tr>
+          <td>Rooms</td>
+          <td class="uteke-col"><span class="yes">✅</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="partial">⚠️ Team share</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="no">❌</span></td>
+        </tr>
+        <tr>
+          <td>Time-Travel</td>
+          <td class="uteke-col"><span class="yes">✅</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="yes">✅ Temporal</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="no">❌</span></td>
+        </tr>
+        <tr>
+          <td>Graph Edges</td>
+          <td class="uteke-col"><span class="yes">✅</span></td>
+          <td><span class="yes">✅ ($249/mo)</span></td>
+          <td><span class="yes">✅</span></td>
+          <td><span class="yes">✅</span></td>
+          <td><span class="no">❌</span></td>
+          <td><span class="no">❌</span></td>
+        </tr>
+        <tr>
+          <td>Language</td>
+          <td class="uteke-col">🦀 Rust</td>
+          <td>🐍 Python</td>
+          <td>📜 TypeScript</td>
+          <td>🐍 Python</td>
+          <td>🐍 Python</td>
+          <td>🐹 Go</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- UNIQUE FEATURES -->
+  <div class="features-section">
+    <div class="feature-card">
+      <div class="icon">🔒</div>
+      <div class="title">Zero API Keys</div>
+      <div class="desc">No OpenAI. No Anthropic.<br>Local ONNX embeddings.<br>Your data never leaves.</div>
+    </div>
+    <div class="feature-card">
+      <div class="icon">⚡</div>
+      <div class="title">30ms Recall</div>
+      <div class="desc">Rust + HNSW + FTS5.<br>No network round-trip.<br>In-process only.</div>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🧠</div>
+      <div class="title">Hybrid Search</div>
+      <div class="desc">Find by meaning AND<br>exact keywords.<br>RRF fusion (k=60).</div>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🏠</div>
+      <div class="title">Multi-Agent Rooms</div>
+      <div class="desc">Shared knowledge spaces<br>with author attribution.<br>Only tool that has this.</div>
+    </div>
+    <div class="feature-card">
+      <div class="icon">⏳</div>
+      <div class="title">Time-Travel</div>
+      <div class="desc">Recall memories as they<br>existed at any point.<br>Version history for thoughts.</div>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📦</div>
+      <div class="title">Single Binary</div>
+      <div class="desc">No Docker. No Python.<br>No Node.js.<br>Just one Rust binary.</div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="tagline">Engram's simplicity. 10× the features. Zero cloud.</div>
+    <div class="sub">The only AI memory engine that's fully offline, hybrid-search, and zero-dependency</div>
+    <div class="links">github.com/codecoradev/uteke</div>
+  </div>
+
+</div>
+</body>
+</html>
