@@ -1397,6 +1397,7 @@ impl Uteke {
                 doc_title: None,
                 chunk_heading: None,
                 chunk_snippet: None,
+                metadata: Some(sr.memory.metadata),
             })
             .collect())
     }
@@ -1435,6 +1436,7 @@ impl Uteke {
                     Some(dr.chunk_snippet)
                 },
                 tags: vec![],
+                metadata: None,
             })
             .collect())
     }
@@ -1516,6 +1518,7 @@ impl Uteke {
                         doc_title: None,
                         chunk_heading: None,
                         chunk_snippet: None,
+                        metadata: Some(sr.memory.metadata.clone()),
                     }
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
@@ -1540,6 +1543,7 @@ impl Uteke {
                             Some(dr.chunk_snippet)
                         },
                         tags: vec![],
+                        metadata: None,
                     }
                 } else {
                     unreachable!("RRF key must reference either mem_map or doc_map")
