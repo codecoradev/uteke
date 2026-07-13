@@ -144,6 +144,9 @@ pub struct UnifiedSearchResult {
     /// Tags from the memory or document.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Arbitrary JSON metadata from the memory (populated for type=memory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 /// Filter for unified search — which sources to query (#531).
@@ -931,6 +934,7 @@ mod tests {
             doc_title: None,
             chunk_heading: None,
             chunk_snippet: None,
+            metadata: Some(serde_json::json!({"session_id": "abc123"})),
         };
         let json = serde_json::to_string(&result).unwrap();
         // Verify result_type field is lowercase "memory"
@@ -960,6 +964,7 @@ mod tests {
             doc_title: Some("My Document".to_string()),
             chunk_heading: Some("Section 2".to_string()),
             chunk_snippet: Some("chunk excerpt here".to_string()),
+            metadata: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"result_type\":\"document\""), "got: {json}");

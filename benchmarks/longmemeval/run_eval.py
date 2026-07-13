@@ -62,7 +62,8 @@ def insert_sessions(args, store_path, entry):
     """
     Insert all haystack sessions for one question into uteke.
     Returns: (set of successfully inserted session_ids,
-              dict session_id -> set of turn indices that have answers).
+              dict session_id -> set of turn indices that has answers,
+              dict memory_id -> session_id).
     """
     session_ids = entry.get("haystack_session_ids", [])
     sessions = entry.get("haystack_sessions", [])
@@ -70,6 +71,7 @@ def insert_sessions(args, store_path, entry):
 
     answer_turns = {}  # session_id -> set of turn indices with has_answer
     inserted_sids = set()  # track which sessions actually inserted
+    mid_to_sid = {}  # memory_id -> session_id mapping
 
     for i, (sid, session) in enumerate(zip(session_ids, sessions)):
         text = session_to_text(session)
@@ -86,13 +88,21 @@ def insert_sessions(args, store_path, entry):
 
         # Insert
         try:
-            run_uteke(args, store_path, [
+            stdout = run_uteke(args, store_path, [
                 "remember", text,
-                "tags", tag,
+                "--tags", tag,
                 "--meta", meta_str,
                 "--type", "context",
             ])
             inserted_sids.add(sid)
+
+            # Parse memory_id from insert response
+            try:
+                insert_data = json.loads(stdout)
+                if isinstance(insert_data, dict) and "id" in insert_data:
+                    mid_to_sid[insert_data["id"]] = sid
+            except (json.JSONDecodeError, KeyError):
+                pass
         except RuntimeError as e:
             print(f"  Warning: insert failed for session {sid}: {e}", file=sys.stderr)
 
@@ -104,10 +114,10 @@ def insert_sessions(args, store_path, entry):
         if answer_indices:
             answer_turns[sid] = answer_indices
 
-    return inserted_sids, answer_turns
+    return inserted_sids, answer_turns, mid_to_sid
 
 
-def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids):
+def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids, mid_to_sid):
     """
     Run uteke recall for the question, then evaluate retrieval accuracy.
 
@@ -139,13 +149,20 @@ def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids)
     if not isinstance(results, list):
         results = [results]
 
-    # Extract session_ids from retrieved memories' metadata
+    # Extract session_ids via memory_id -> session_id mapping.
+    # Recall JSON in uteke 0.7+ returns memory_id, not metadata fields.
+    # We built mid_to_sid during insert to bridge this.
     retrieved_session_ids = []
     for r in results:
-        meta = r.get("metadata", {})
-        sid = meta.get("session_id")
-        if sid:
-            retrieved_session_ids.append(sid)
+        mid = r.get("memory_id") or r.get("id")
+        if mid and mid in mid_to_sid:
+            retrieved_session_ids.append(mid_to_sid[mid])
+        else:
+            # Fallback: try metadata (older uteke versions)
+            meta = r.get("metadata", {})
+            sid = meta.get("session_id")
+            if sid:
+                retrieved_session_ids.append(sid)
 
     # --- Session-level metrics ---
     # Recall@k: fraction of evidence sessions in top-k
@@ -198,6 +215,10 @@ def main():
     parser.add_argument("--limit", type=int, default=0, help="Limit questions (0 = all)")
     parser.add_argument("--keep-store", action="store_true",
                         help="Keep the uteke store after eval (for debugging)")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from existing results file (skip already-evaluated questions)")
+    parser.add_argument("--reset-every", type=int, default=20,
+                        help="Wipe and recreate the store every N questions to prevent memory buildup (default: 20)")
     args = parser.parse_args()
 
     # Load data
@@ -219,17 +240,42 @@ def main():
     os.makedirs(args.output, exist_ok=True)
     results_file = Path(args.output) / "retrieval_results.jsonl"
 
-    total_start = time.time()
+    # Resume support: load already-evaluated question IDs
+    done_ids = set()
+    if args.resume and results_file.exists():
+        with open(results_file) as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                    done_ids.add(entry.get("question_id"))
+                except json.JSONDecodeError:
+                    pass
+        if done_ids:
+            print(f"Resume: {len(done_ids)} questions already evaluated, skipping...")
 
-    with open(results_file, "w") as fout:
+    total_start = time.time()
+    evaluated = 0
+
+    # Open in append mode for resume, write mode for fresh run
+    mode = "a" if args.resume and done_ids else "w"
+    with open(results_file, mode) as fout:
         for idx, entry in enumerate(tqdm(data, desc="Evaluating")):
             qid = entry.get("question_id", f"q{idx}")
 
+            # Skip if already evaluated (resume mode)
+            if qid in done_ids:
+                continue
+
+            # Periodic store reset to prevent memory buildup
+            if evaluated > 0 and evaluated % args.reset_every == 0:
+                shutil.rmtree(store_path, ignore_errors=True)
+                store_path.mkdir(parents=True, exist_ok=True)
+
             # Insert sessions
-            inserted_sids, answer_sessions = insert_sessions(args, store_path, entry)
+            inserted_sids, answer_sessions, mid_to_sid = insert_sessions(args, store_path, entry)
 
             # Recall + evaluate
-            metrics = recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids)
+            metrics = recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids, mid_to_sid)
 
             if metrics is not None:
                 result_entry = {
@@ -238,6 +284,9 @@ def main():
                     "retrieval_results": {"metrics": metrics},
                 }
                 fout.write(json.dumps(result_entry) + "\n")
+                fout.flush()  # Flush for resume safety
+
+            evaluated += 1
 
             # Clean up memories for this question (avoid cross-contamination).
             # If forget fails, wipe the entire store to guarantee a clean slate.
