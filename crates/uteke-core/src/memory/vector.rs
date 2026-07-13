@@ -5,6 +5,12 @@
 //! until the VectorIndex is dropped, serializing concurrent CLI invocations
 //! that share the same on-disk index. In-process thread safety uses
 //! RwLock<VectorIndex> in lib.rs.
+//!
+//! Windows compatibility (#647): `save()` uses buffer-based serialization
+//! (serialize to memory, then atomic-write via Rust std::fs) to bypass
+//! usearch's C++ `fopen("wb")` which has Windows-specific issues (MAX_PATH,
+//! file lock conflicts, AV interference). Load still uses usearch's native
+//! file reader since the on-disk format is identical.
 
 use crate::Error;
 use fs2::FileExt;
@@ -12,6 +18,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
+
+/// Extension for usearch index files.
+const USEARCH_EXT: &str = "usearch";
 
 /// Default dimensions for EmbeddingGemma Q4 (768d).
 const DEFAULT_DIMS: usize = 768;
@@ -65,6 +74,10 @@ impl VectorIndex {
     /// Acquires an **exclusive file lock** on the `.usearch` file to prevent
     /// cross-process race conditions (e.g., `xargs -P5 uteke remember`).
     /// The lock is held until this `VectorIndex` is dropped (#543).
+    ///
+    /// Note: `save()` uses buffer-based serialization to disk, but `load()` still
+    /// uses usearch's file-based `Index::restore()` for reading — this is safe
+    /// because the on-disk format is identical (both use the same stream format).
     pub fn load_or_create(path: &Path, dims: usize) -> Result<Self, Error> {
         // Ensure the file exists so we can open + lock it.
         if !path.exists() {
@@ -127,13 +140,36 @@ impl VectorIndex {
     }
 
     /// Save index and key mappings to disk.
-    /// Uses atomic write (temp file + rename) to prevent corruption on crash.
+    ///
+    /// Uses buffer-based serialization (#647): serializes the usearch index
+    /// into an in-memory buffer via `save_to_buffer`, then writes the buffer
+    /// to disk using Rust's `std::fs` with atomic write (temp file + rename).
+    ///
+    /// This bypasses usearch's C++ `fopen("wb")` file I/O which has known
+    /// issues on Windows:
+    /// - `fopen` fails silently on paths > 260 chars (MAX_PATH)
+    /// - `fopen("wb")` exclusive access conflicts with `fs2` exclusive lock
+    /// - Windows Defender can intercept `fwrite` calls
+    ///
+    /// The in-memory buffer approach is safe because:
+    /// - The index data is already fully in RAM (usearch always loads fully)
+    /// - Buffer size = `serialized_length()`, same data as file-based save
+    /// - Atomic write prevents corruption on crash
     pub fn save(&mut self) -> Result<(), Error> {
         if let Some(ref path) = self.path {
-            let path_str = path.to_string_lossy().to_string();
+            // Serialize index to in-memory buffer, bypassing C++ file I/O (#647)
+            let buf_len = self.index.serialized_length();
+            let mut buffer = vec![0u8; buf_len];
             self.index
-                .save(&path_str)
-                .map_err(|e| Error::embed("save vector index", e))?;
+                .save_to_buffer(&mut buffer)
+                .map_err(|e| Error::embed("save vector index to buffer", e))?;
+
+            // Write buffer to disk via atomic write (temp file + rename)
+            let tmp_path = path.with_extension(format!("{USEARCH_EXT}.tmp"));
+            std::fs::write(&tmp_path, &buffer)
+                .map_err(|e| Error::embed("write temp usearch index", e))?;
+            std::fs::rename(&tmp_path, path)
+                .map_err(|e| Error::embed("rename temp to final usearch index", e))?;
 
             // Save key→id mapping as sidecar file using atomic write
             let mapping_path = path.with_extension("keys");
@@ -438,7 +474,18 @@ mod tests {
         idx.insert("mem-2", &v2).unwrap();
         idx.save().unwrap();
 
-        // Load from disk
+        // Verify on-disk files are non-empty (#647 regression)
+        assert!(
+            path.metadata().unwrap().len() > 0,
+            ".usearch file must not be 0 bytes"
+        );
+        let keys_path = path.with_extension("keys");
+        assert!(
+            keys_path.metadata().unwrap().len() > 0,
+            ".keys file must not be 0 bytes"
+        );
+
+        // Load from disk — must work because buffer format == file format
         let loaded = VectorIndex::load(&path).unwrap();
         assert_eq!(loaded.len(), 2);
 
@@ -446,6 +493,32 @@ mod tests {
         let results = loaded.search(&v1, 5, 50);
         assert!(!results.is_empty());
         assert_eq!(results[0].0, "mem-1");
+    }
+
+    #[test]
+    fn test_save_buffer_produces_valid_index() {
+        // Round-trip test: save via buffer → load via usearch native restore (#647)
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("roundtrip.usearch");
+
+        let mut idx = VectorIndex::new(32).unwrap();
+        idx.path = Some(path.clone());
+
+        let v: Vec<f32> = {
+            let mut v = vec![0.0f32; 32];
+            v[5] = 1.0;
+            v
+        };
+        idx.insert("round-1", &v).unwrap();
+        idx.save().unwrap();
+
+        // Verify the saved file can be loaded by usearch's native Index::restore
+        let raw_index = usearch::Index::restore(path.to_str().unwrap());
+        assert!(
+            raw_index.is_ok(),
+            "Buffer-saved index must be loadable by usearch native restore"
+        );
+        assert_eq!(raw_index.unwrap().size(), 1);
     }
 
     #[test]
