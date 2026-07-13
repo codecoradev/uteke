@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+## [0.7.3] — 2026-07-13
+
+### Fixed
+- **Windows vector index 0 bytes after save (#647)** — usearch's C++ `fopen("wb")` silently fails on Windows due to MAX_PATH limits, file lock conflicts with `fs2` exclusive lock (#543), and Windows Defender interference. Fix: `save()` now serializes to an in-memory buffer via `save_to_buffer()`, then writes to disk using Rust's `std::fs::write()` with atomic temp+rename. Load still uses usearch native `Index::restore()` — the on-disk format is identical. New round-trip test proves compatibility.
+- **`recall --json` missing metadata field (#646)** — `UnifiedSearchResult` lacked a `metadata` field, so consumers (Hermes agent, MCP server, benchmarks) had to round-trip lookup by `memory_id` to access metadata stored via `--meta`. Fix: added `metadata` field to `UnifiedSearchResult` and populated it from the recall query.
+
+### Changed
+- **README fact-check and optimization (#642, #643)** — Verified all claims against source code and live data. Improved competitive positioning, added infographic, updated benchmarks.
+
 ## [0.7.2] — 2026-07-09
 
 ### Added
@@ -1182,7 +1191,10 @@
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
-[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/codecoradev/uteke/compare/v0.7.2...v0.7.3
+[0.7.2]: https://github.com/codecoradev/uteke/compare/v0.7.1...v0.7.2
+[0.7.1]: https://github.com/codecoradev/uteke/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/codecoradev/uteke/compare/v0.6.7...v0.7.0
 [0.6.7]: https://github.com/codecoradev/uteke/releases/tag/v0.6.7
 [0.6.6]: https://github.com/codecoradev/uteke/releases/tag/v0.6.6
