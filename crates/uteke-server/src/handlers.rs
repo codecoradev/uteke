@@ -110,7 +110,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
                 let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
 
-                // Build metadata from optional fields
+                // Build metadata from optional fields — matches CLI behavior.
                 let mut meta = serde_json::Map::new();
                 if let Some(t) = &req_data.r#type {
                     meta.insert("type".into(), serde_json::Value::String(t.clone()));
@@ -120,6 +120,21 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 }
                 if let Some(vu) = &req_data.valid_until {
                     meta.insert("valid_until".into(), serde_json::Value::String(vu.clone()));
+                }
+                if let Some(entity) = &req_data.entity {
+                    meta.insert("entity".into(), serde_json::Value::String(entity.clone()));
+                }
+                if let Some(category) = &req_data.category {
+                    meta.insert(
+                        "category".into(),
+                        serde_json::Value::String(category.clone()),
+                    );
+                }
+                // Merge caller-supplied metadata object into the map (#682).
+                if let Some(serde_json::Value::Object(extra)) = &req_data.metadata {
+                    for (k, v) in extra {
+                        meta.insert(k.clone(), v.clone());
+                    }
                 }
                 let metadata = if meta.is_empty() {
                     None
@@ -148,7 +163,16 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 };
 
                 match result {
-                    Ok(id) => ctx.ok_response_for(req, &serde_json::json!({"id": id})),
+                    Ok(id) => {
+                        // Set source provenance after storage (#682) — matches CLI.
+                        if req_data.source.is_some() || req_data.source_type.is_some() {
+                            let st = req_data.source_type.as_deref().unwrap_or("user");
+                            if let Err(e) = uteke.set_source(&id, req_data.source.as_deref(), st) {
+                                error!("Failed to set source for {id}: {e}");
+                            }
+                        }
+                        ctx.ok_response_for(req, &serde_json::json!({"id": id}))
+                    }
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
