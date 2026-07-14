@@ -366,6 +366,7 @@ impl crate::Uteke {
         Ok(id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Recall memories relevant to a query using vector similarity.
     ///
     /// Optionally filter by tags and namespace.
@@ -1083,6 +1084,7 @@ impl crate::Uteke {
     /// - `valid_until IS NULL OR valid_until > point_in_time`
     /// - `valid_from IS NULL OR valid_from <= point_in_time`
     /// - `deprecated = false`
+    #[allow(clippy::too_many_arguments)]
     pub fn recall_at_time(
         &self,
         query: &str,

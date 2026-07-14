@@ -1354,6 +1354,7 @@ impl Uteke {
     /// - `search_type::All` (default): searches both memories and documents.
     /// - `search_type::Memory`: memories only (equivalent to current recall).
     /// - `search_type::Document`: documents only (equivalent to doc search).
+    #[allow(clippy::too_many_arguments)]
     pub fn recall_unified(
         &self,
         query: &str,
@@ -1383,6 +1384,7 @@ impl Uteke {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Unified search — memories only (backward-compatible path).
     fn recall_unified_memories(
         &self,

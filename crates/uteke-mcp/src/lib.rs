@@ -762,7 +762,16 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // Use unified search when type is specified or default (all).
     // Fall back to legacy recall only for backward compat with existing MCP consumers.
     let results = uteke
-        .recall_unified(query, limit, tags_ref, namespace, min_score, search_type, None, None)
+        .recall_unified(
+            query,
+            limit,
+            tags_ref,
+            namespace,
+            min_score,
+            search_type,
+            None,
+            None,
+        )
         .map_err(|e| format!("Failed: {e}"))?;
 
     if results.is_empty() {
