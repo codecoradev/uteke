@@ -162,7 +162,16 @@ pub(crate) fn run_recall(
                 return Err("--at and --related cannot be used together".into());
             }
             uteke
-                .recall_at_time(query, limit, tags_filter, ns, point_in_time, min_score, None, None)
+                .recall_at_time(
+                    query,
+                    limit,
+                    tags_filter,
+                    ns,
+                    point_in_time,
+                    min_score,
+                    None,
+                    None,
+                )
                 .map_err(|e| format!("Failed to recall at time: {e}"))?
         } else if related {
             uteke
