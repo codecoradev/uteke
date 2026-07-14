@@ -215,6 +215,7 @@ impl super::Store {
     /// When `tags` is `Some`, performs dual-write: replaces junction table.
     /// When `content` is `Some`, caller must handle embedding regeneration
     /// separately (via `VectorIndex::insert` with the new embedding).
+    #[allow(clippy::too_many_arguments)]
     pub fn update_fields(
         &self,
         id: &str,

@@ -1087,6 +1087,7 @@ impl crate::Uteke {
     /// - Partial update semantics (only provided fields changed)
     /// - Content update regenerates embedding
     /// - 404 if not found (caller checks return value)
+    #[allow(clippy::too_many_arguments)]
     pub fn update_memory(
         &self,
         id: &str,
