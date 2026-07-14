@@ -741,6 +741,64 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Update memory by ID (PUT /memory, #659) ──────────────────
+        (Method::Put, "/memory") => match read_body::<MemoryUpdateRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                // Validate UUID format
+                if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        format!("Invalid UUID format: {}", req_data.id),
+                    );
+                }
+                // Check that at least one field is provided
+                if req_data.content.is_none()
+                    && req_data.tags.is_none()
+                    && req_data.metadata.is_none()
+                    && req_data.importance.is_none()
+                    && req_data.pinned.is_none()
+                    && req_data.memory_type.is_none()
+                {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type",
+                    );
+                }
+                let tag_refs: Option<Vec<String>> = req_data.tags;
+                let tag_slice: Option<&[String]> = tag_refs.as_deref();
+                match uteke.update_memory(
+                    &req_data.id,
+                    req_data.content.as_deref(),
+                    tag_slice,
+                    req_data.metadata.as_ref(),
+                    req_data.importance,
+                    req_data.pinned,
+                    req_data.memory_type.as_deref(),
+                ) {
+                    Ok(true) => {
+                        ctx.ok_response_for(req, &serde_json::json!({"updated": req_data.id}))
+                    }
+                    Ok(false) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Memory not found: {}", req_data.id),
+                    ),
+                    Err(e) => {
+                        error!("Update memory error: {e}");
+                        // Propagate validation errors with proper status codes
+                        let status = match e {
+                            uteke_core::Error::Validation(_) => 400,
+                            _ => 500,
+                        };
+                        ctx.error_response_for(req, status, e.to_string())
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
         // ── Room Memories (chronological listing — GET /room/memories) ────
         (Method::Get, p) if p == "/room/memories" || p.starts_with("/room/memories?") => {
             let query_str = p.strip_prefix("/room/memories?");
