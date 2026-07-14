@@ -104,8 +104,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/remember") => match read_body::<RememberRequest>(req.as_reader()) {
             Ok(req_data) => {
                 // Validate input
-                if let Err(e) = uteke_core::validate_input::<str>(&req_data.content, &req_data.tags)
-                {
+                if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
                     return ctx.error_response_for(req, 400, e.to_string());
                 }
 
@@ -1356,8 +1355,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 if validate_content_size(&req_data.content, 1_048_576).is_err() {
                     return ctx.error_response_for(req, 413, "Content too large (max 1MB)");
                 }
-                if let Err(e) = uteke_core::validate_input::<str>(&req_data.content, &req_data.tags)
-                {
+                if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
                     return ctx.error_response_for(req, 400, e.to_string());
                 }
 
