@@ -705,6 +705,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 13); // v13 = global docs no namespace (#614); v12 = hierarchical docs (#438); v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
+        assert_eq!(version, 14); // v14 = FTS5 memory_type column (#662); v13 = global docs no namespace (#614); v12 = hierarchical docs (#438); v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
     }
 }

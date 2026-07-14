@@ -656,6 +656,91 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Memory Pin/Unpin (#660) ──────────────────────────────────────
+        (Method::Post, "/memory/pin") => match read_body::<MemoryPinRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        format!("Invalid UUID format: {}", req_data.id),
+                    );
+                }
+                let result = if req_data.pinned {
+                    uteke.pin(&req_data.id)
+                } else {
+                    uteke.unpin(&req_data.id)
+                };
+                match result {
+                    Ok(true) => match uteke.get_by_id(&req_data.id) {
+                        Ok(Some(memory)) => ctx.ok_response_for(req, &memory),
+                        Ok(None) => ctx.error_response_for(
+                            req,
+                            500,
+                            "Memory updated but could not be retrieved",
+                        ),
+                        Err(e) => {
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    },
+                    Ok(false) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Memory not found: {}", req_data.id),
+                    ),
+                    Err(e) => {
+                        error!("Pin/unpin error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Memory Set Importance (#660) ──────────────────────────────────
+        (Method::Post, "/memory/importance") => {
+            match read_body::<MemoryImportanceRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            format!("Invalid UUID format: {}", req_data.id),
+                        );
+                    }
+                    match uteke.set_importance(&req_data.id, req_data.importance) {
+                        Ok(true) => match uteke.get_by_id(&req_data.id) {
+                            Ok(Some(memory)) => ctx.ok_response_for(req, &memory),
+                            Ok(None) => ctx.error_response_for(
+                                req,
+                                500,
+                                "Memory updated but could not be retrieved",
+                            ),
+                            Err(e) => {
+                                error!("Internal error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        },
+                        Ok(false) => ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Memory not found: {}", req_data.id),
+                        ),
+                        Err(e) => {
+                            if e.to_string().contains("importance must be") {
+                                ctx.error_response_for(req, 400, e.to_string())
+                            } else {
+                                error!("Set importance error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
         // ── Room Memories (chronological listing — GET /room/memories) ────
         (Method::Get, p) if p == "/room/memories" || p.starts_with("/room/memories?") => {
             let query_str = p.strip_prefix("/room/memories?");

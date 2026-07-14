@@ -163,7 +163,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 14;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -200,6 +200,22 @@ impl Store {
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
+    }
+
+    /// Set a memory's importance score directly (0.0-1.0).
+    /// Returns false if the memory does not exist.
+    pub fn set_importance(&self, id: &str, importance: f64) -> Result<bool, Error> {
+        if !(0.0..=1.0).contains(&importance) {
+            return Err(Error::validation("importance must be between 0.0 and 1.0"));
+        }
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET importance = ?1 WHERE id = ?2",
+                rusqlite::params![importance, id],
+            )
+            .map_err(|e| Error::db("set importance", e))?;
+        Ok(rows > 0)
     }
 
     /// Pin a memory (never decays).
@@ -1762,7 +1778,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 13, "schema_version should be 13 after migration");
+        assert_eq!(version, 14, "schema_version should be 14 after migration");
 
         // 7. Verify hierarchy columns now exist (in documents table).
         let cols = ["parent_id", "path", "depth", "sort_order", "has_children"];
