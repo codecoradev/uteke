@@ -270,7 +270,11 @@ impl super::Store {
             // Nothing to update — check existence
             let exists: bool = self
                 .conn
-                .query_row("SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1)", params![id], |row| row.get(0))
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1)",
+                    params![id],
+                    |row| row.get(0),
+                )
                 .map_err(|e| Error::db("database operation", e))?;
             return Ok(exists);
         }
@@ -281,7 +285,8 @@ impl super::Store {
         );
         params_vec.push(Box::new(id.to_string()));
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|b| b.as_ref()).collect();
         let rows = self
             .conn
             .execute(&sql, param_refs.as_slice())
@@ -290,10 +295,7 @@ impl super::Store {
         // Dual-write: sync junction table tags if tags were provided
         if tags.is_some() {
             self.conn
-                .execute(
-                    "DELETE FROM memory_tags WHERE memory_id = ?1",
-                    params![id],
-                )
+                .execute("DELETE FROM memory_tags WHERE memory_id = ?1", params![id])
                 .map_err(|e| Error::db("delete old tags", e))?;
             if let Some(t) = tags {
                 for tag in t {

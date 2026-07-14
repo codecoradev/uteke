@@ -102,7 +102,7 @@ impl crate::Uteke {
         namespace: Option<&str>,
         memory_type: &str,
     ) -> Result<String, Error> {
-        crate::validate_input(content, tags)?;
+        crate::validate_input::<str>(content, tags)?;
         // Validate memory_type against known variants. The type is used
         // as-is — no inference, no override.
         crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
@@ -163,7 +163,7 @@ impl crate::Uteke {
         namespace: Option<&str>,
         memory_type: &str,
     ) -> Result<String, Error> {
-        crate::validate_input(content, tags)?;
+        crate::validate_input::<str>(content, tags)?;
         // Validate memory_type against known variants.
         crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
             Error::Validation(format!(
@@ -1105,13 +1105,13 @@ impl crate::Uteke {
 
         // Validate new content if provided
         if let Some(c) = content {
-            crate::validate_input(c, &[])?;
+            crate::validate_input::<str>(c, &[])?;
         }
 
         // Validate new tags if provided
         if let Some(t) = tags {
             let tag_refs: Vec<&str> = t.iter().map(|s| s.as_str()).collect();
-            crate::validate_input(content.unwrap_or(&existing.content), &tag_refs)?;
+            crate::validate_input::<str>(content.unwrap_or(&existing.content), &tag_refs)?;
         }
 
         // Validate new memory_type if provided
