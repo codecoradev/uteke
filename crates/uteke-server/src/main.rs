@@ -124,7 +124,9 @@ fn main() {
                 );
                 println!("  DELETE /forget?id=UUID     → {{ forgotten }}");
                 println!("  DELETE /forget?tag=TAG     → {{ deleted }}");
-                println!("  GET  /memory?id=UUID       → {{ memory }}");
+                println!("  GET  /memory?id=UUID       -> {{ memory }}");
+                println!("  POST /memory/pin           -> {{ id, pinned }} -> {{ memory }}");
+                println!("  POST /memory/importance    -> {{ id, importance }} -> {{ memory }}");
                 println!("  GET  /stats               → {{ stats }}");
                 println!("  GET  /namespaces           → {{ namespaces }}");
                 println!("  POST /room/create          → {{ room_id, title, namespace }} → {{ created }}");
