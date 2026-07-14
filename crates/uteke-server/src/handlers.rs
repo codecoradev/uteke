@@ -789,7 +789,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         error!("Update memory error: {e}");
                         // Propagate validation errors with proper status codes
                         let status = match e {
-                            crate::Error::Validation(_) => 400,
+                            uteke_core::Error::Validation(_) => 400,
                             _ => 500,
                         };
                         ctx.error_response_for(req, status, e.to_string())
