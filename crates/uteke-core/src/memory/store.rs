@@ -202,6 +202,22 @@ impl Store {
         Ok(store)
     }
 
+    /// Set a memory's importance score directly (0.0-1.0).
+    /// Returns false if the memory does not exist.
+    pub fn set_importance(&self, id: &str, importance: f64) -> Result<bool, Error> {
+        if !(0.0..=1.0).contains(&importance) {
+            return Err(Error::validation("importance must be between 0.0 and 1.0"));
+        }
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET importance = ?1 WHERE id = ?2",
+                rusqlite::params![importance, id],
+            )
+            .map_err(|e| Error::db("set importance", e))?;
+        Ok(rows > 0)
+    }
+
     /// Pin a memory (never decays).
     pub fn pin(&self, id: &str) -> Result<bool, Error> {
         let rows = self

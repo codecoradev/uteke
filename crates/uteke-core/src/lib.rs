@@ -643,6 +643,11 @@ impl Uteke {
         self.store.unpin(id)
     }
 
+    /// Set a memory's importance score directly (0.0-1.0).
+    pub fn set_importance(&self, id: &str, importance: f64) -> Result<bool, Error> {
+        self.store.set_importance(id, importance)
+    }
+
     /// Set source provenance on a memory (#348).
     pub fn set_source(
         &self,

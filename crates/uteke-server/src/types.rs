@@ -330,6 +330,20 @@ pub struct PinRequest {
     pub id: String,
 }
 
+// ── Memory Mutation Types (#660) ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct MemoryPinRequest {
+    pub id: String,
+    pub pinned: bool,
+}
+
+#[derive(Deserialize)]
+pub struct MemoryImportanceRequest {
+    pub id: String,
+    pub importance: f64,
+}
+
 // ── Graph Types ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
