@@ -366,6 +366,7 @@ impl crate::Uteke {
         Ok(id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Recall memories relevant to a query using vector similarity.
     ///
     /// Optionally filter by tags and namespace.
@@ -379,6 +380,8 @@ impl crate::Uteke {
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
         min_score: f32,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
@@ -434,6 +437,30 @@ impl crate::Uteke {
                         .iter()
                         .any(|ft| memory.tags.iter().any(|t| t == ft));
                     if !has_tag {
+                        continue;
+                    }
+                }
+
+                // Apply entity metadata filter
+                if let Some(ent) = entity_filter {
+                    let matches = memory
+                        .metadata
+                        .get("entity")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|e| e == ent);
+                    if !matches {
+                        continue;
+                    }
+                }
+
+                // Apply category metadata filter
+                if let Some(cat) = category_filter {
+                    let matches = memory
+                        .metadata
+                        .get("category")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|c| c == cat);
+                    if !matches {
                         continue;
                     }
                 }
@@ -519,7 +546,7 @@ impl crate::Uteke {
 
         let results = match strategy {
             RecallStrategy::Vector => {
-                self.recall(query, limit, tags_filter, namespace, min_score)?
+                self.recall(query, limit, tags_filter, namespace, min_score, None, None)?
             }
             RecallStrategy::Fts5 => {
                 self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)?
@@ -659,7 +686,7 @@ impl crate::Uteke {
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
                 tracing::warn!("FTS5 search failed, falling back to vector: {e}");
-                return self.recall(query, limit, tags_filter, namespace, min_score);
+                return self.recall(query, limit, tags_filter, namespace, min_score, None, None);
             }
         };
 
@@ -724,13 +751,14 @@ impl crate::Uteke {
         const RRF_K: u32 = 60;
 
         // Run vector search (pass 0.0 for min_score since RRF does its own filtering)
-        let vector_results = match self.recall(query, limit * 3, tags_filter, namespace, 0.0) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("Vector search failed in hybrid: {e}");
-                return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
-            }
-        };
+        let vector_results =
+            match self.recall(query, limit * 3, tags_filter, namespace, 0.0, None, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Vector search failed in hybrid: {e}");
+                    return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
+                }
+            };
 
         // Run FTS5 search
         let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
@@ -1056,6 +1084,7 @@ impl crate::Uteke {
     /// - `valid_until IS NULL OR valid_until > point_in_time`
     /// - `valid_from IS NULL OR valid_from <= point_in_time`
     /// - `deprecated = false`
+    #[allow(clippy::too_many_arguments)]
     pub fn recall_at_time(
         &self,
         query: &str,
@@ -1064,6 +1093,8 @@ impl crate::Uteke {
         namespace: Option<&str>,
         point_in_time: chrono::DateTime<chrono::Utc>,
         min_score: f32,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
         // Retry loop: over-fetch with increasing multipliers to compensate
         // for temporal filtering removing candidates. If post-filtering
@@ -1073,7 +1104,15 @@ impl crate::Uteke {
 
         loop {
             let fetch_limit = (limit * multiplier).max(50);
-            let candidates = self.recall(query, fetch_limit, tags_filter, namespace, min_score)?;
+            let candidates = self.recall(
+                query,
+                fetch_limit,
+                tags_filter,
+                namespace,
+                min_score,
+                entity_filter,
+                category_filter,
+            )?;
             let candidates_len = candidates.len();
 
             let mut results: Vec<SearchResult> = candidates

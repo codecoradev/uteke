@@ -184,19 +184,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
                     )
                 };
-                // Strategy: when entity/category filters are present,
-                // recall WITHOUT min_score to avoid discarding valid matches
-                // that might satisfy metadata but be ranked lower. Apply
-                // min_score after metadata filtering.
-                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
-                let fetch_min_score = if has_meta_filter { 0.0 } else { min_score };
-                let fetch_limit = if has_meta_filter {
-                    // Cap at 200 to prevent unbounded amplification.
-                    // May return fewer than requested when matches are sparse.
-                    (req_data.limit * 10).min(200)
-                } else {
-                    req_data.limit
-                };
+                // Entity/category filters are now pushed into the core recall
+                // candidate loop (#663) — no 10x fetch amplification needed.
 
                 // Time-travel mode: parse --at and use recall_at_time
                 let point_in_time = match req_data.at.as_deref() {
@@ -215,34 +204,36 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     None => None,
                 };
 
+                let entity_filter = req_data.entity.as_deref();
+                let category_filter = req_data.category.as_deref();
+
                 let recall_result = if let Some(pit) = point_in_time {
                     uteke.recall_at_time(
                         &req_data.query,
-                        fetch_limit,
+                        req_data.limit,
                         tags_filter,
                         ns(&req_data.namespace),
                         pit,
-                        fetch_min_score,
+                        min_score,
+                        entity_filter,
+                        category_filter,
                     )
                 } else {
                     uteke.recall(
                         &req_data.query,
-                        fetch_limit,
+                        req_data.limit,
                         tags_filter,
                         ns(&req_data.namespace),
-                        fetch_min_score,
+                        min_score,
+                        entity_filter,
+                        category_filter,
                     )
                 };
 
-                // Unified search path (#531): when search_type is specified and
-                // no memory-only metadata filters (entity/category) are present,
-                // use recall_unified. Entity/category only apply to memories, so
-                // their presence forces the legacy memory-only recall path.
-                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
-                let unified_result = if req_data.search_type.is_some()
-                    && point_in_time.is_none()
-                    && !has_meta_filter
-                {
+                // Unified search path (#531): when search_type is specified,
+                // use recall_unified. Entity/category filters are passed
+                // through to the core recall candidate loop (#663).
+                let unified_result = if req_data.search_type.is_some() && point_in_time.is_none() {
                     let search_type = match req_data.search_type.as_deref() {
                         Some("memory") => uteke_core::SearchType::Memory,
                         Some("doc") => uteke_core::SearchType::Document,
@@ -262,6 +253,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         ns(&req_data.namespace),
                         min_score,
                         search_type,
+                        entity_filter,
+                        category_filter,
                     ))
                 } else {
                     None
@@ -275,46 +268,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         ctx.error_response_for(req, 500, "Internal server error")
                     }
                     None => {
-                        // Fall through to existing memory-only recall path
+                        // Memory-only recall path — entity/category filtering
+                        // is already applied in the core recall candidate loop (#663).
                         match recall_result {
-                            Ok(raw_results) => {
-                                // Post-filter by entity/category metadata
-                                let mut results: Vec<_> = raw_results
-                                    .into_iter()
-                                    .filter(|sr| {
-                                        if let Some(ent) = &req_data.entity {
-                                            let matches = sr
-                                                .memory
-                                                .metadata
-                                                .get("entity")
-                                                .and_then(|v| v.as_str())
-                                                .is_some_and(|e| e == ent);
-                                            if !matches {
-                                                return false;
-                                            }
-                                        }
-                                        if let Some(cat) = &req_data.category {
-                                            let matches = sr
-                                                .memory
-                                                .metadata
-                                                .get("category")
-                                                .and_then(|v| v.as_str())
-                                                .is_some_and(|c| c == cat);
-                                            if !matches {
-                                                return false;
-                                            }
-                                        }
-                                        true
-                                    })
-                                    .collect::<Vec<_>>();
-                                // Apply min_score filter after metadata filtering
-                                // (deferred from recall call to avoid losing valid matches)
-                                if min_score > 0.0 {
-                                    results.retain(|sr| sr.score >= min_score);
-                                }
-                                // Trim to requested limit after filtering
-                                results.truncate(req_data.limit);
-
+                            Ok(results) => {
                                 if results.is_empty() && min_score > 0.0 {
                                     ctx.ok_response_for(
                                         req,

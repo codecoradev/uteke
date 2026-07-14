@@ -218,7 +218,7 @@ fn bench_single_count(count: usize) -> Result<BenchResult, String> {
             let query = gen_query(&mut rng);
             let q_start = Instant::now();
             uteke
-                .recall(&query, 5, None, Some("bench"), 0.0)
+                .recall(&query, 5, None, Some("bench"), 0.0, None, None)
                 .map_err(|e| format!("Recall failed: {e}"))?;
             latencies.push(q_start.elapsed().as_secs_f64() * 1000.0);
         }
