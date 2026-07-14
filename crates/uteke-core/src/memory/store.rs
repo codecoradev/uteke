@@ -163,7 +163,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 14;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -1778,7 +1778,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 13, "schema_version should be 13 after migration");
+        assert_eq!(version, 14, "schema_version should be 14 after migration");
 
         // 7. Verify hierarchy columns now exist (in documents table).
         let cols = ["parent_id", "path", "depth", "sort_order", "has_children"];

@@ -31,6 +31,7 @@ impl super::Store {
                     content,
                     tags,
                     namespace,
+                    memory_type,
                     content='memories',
                     content_rowid='rowid'
                 );
@@ -45,20 +46,20 @@ impl super::Store {
             .execute_batch(
                 r#"
                 CREATE TRIGGER IF NOT EXISTS memories_fts_ai AFTER INSERT ON memories BEGIN
-                    INSERT INTO memories_fts(rowid, content, tags, namespace)
-                    VALUES (new.rowid, new.content, new.tags, new.namespace);
+                    INSERT INTO memories_fts(rowid, content, tags, namespace, memory_type)
+                    VALUES (new.rowid, new.content, new.tags, new.namespace, new.memory_type);
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS memories_fts_ad AFTER DELETE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content, tags, namespace)
-                    VALUES ('delete', old.rowid, old.content, old.tags, old.namespace);
+                    INSERT INTO memories_fts(memories_fts, rowid, content, tags, namespace, memory_type)
+                    VALUES ('delete', old.rowid, old.content, old.tags, old.namespace, old.memory_type);
                 END;
 
                 CREATE TRIGGER IF NOT EXISTS memories_fts_au AFTER UPDATE ON memories BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, content, tags, namespace)
-                    VALUES ('delete', old.rowid, old.content, old.tags, old.namespace);
-                    INSERT INTO memories_fts(rowid, content, tags, namespace)
-                    VALUES (new.rowid, new.content, new.tags, new.namespace);
+                    INSERT INTO memories_fts(memories_fts, rowid, content, tags, namespace, memory_type)
+                    VALUES ('delete', old.rowid, old.content, old.tags, old.namespace, old.memory_type);
+                    INSERT INTO memories_fts(rowid, content, tags, namespace, memory_type)
+                    VALUES (new.rowid, new.content, new.tags, new.namespace, new.memory_type);
                 END;
                 "#,
             )
@@ -381,5 +382,57 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         // FTS5 is now auto-initialized on open (#544).
         assert!(store.fts5_exists().unwrap());
+    }
+
+    #[test]
+    fn test_fts5_memory_type_column_search() {
+        let store = Store::open(":memory:").unwrap();
+        store.init_fts5().unwrap();
+
+        let mut decision = make_test_memory("1", "chose Rust for performance", &[]);
+        decision.memory_type = "decision".to_string();
+        store.insert(&decision).unwrap();
+
+        let mut fact = make_test_memory("2", "Rust has zero-cost abstractions", &[]);
+        fact.memory_type = "fact".to_string();
+        store.insert(&fact).unwrap();
+
+        let mut procedure = make_test_memory("3", "compile with cargo build", &[]);
+        procedure.memory_type = "procedure".to_string();
+        store.insert(&procedure).unwrap();
+
+        // Search by memory_type:decision
+        let results = store.search_fts5("decision", None, 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Should find at least 1 result for 'decision'"
+        );
+        // memory_type "decision" should match
+        assert!(results.iter().any(|(m, _)| m.memory_type == "decision"));
+
+        // Search by memory_type:fact
+        let results = store.search_fts5("fact", None, 10).unwrap();
+        assert!(
+            !results.is_empty(),
+            "Should find at least 1 result for 'fact'"
+        );
+        assert!(results.iter().any(|(m, _)| m.memory_type == "fact"));
+    }
+
+    #[test]
+    fn test_fts5_memory_type_rebuild() {
+        let store = Store::open(":memory:").unwrap();
+        store.init_fts5().unwrap();
+
+        let mut decision = make_test_memory("1", "deploy strategy", &[]);
+        decision.memory_type = "decision".to_string();
+        store.insert(&decision).unwrap();
+
+        // Rebuild FTS5 index — memory_type should still be searchable
+        store.rebuild_fts5().unwrap();
+
+        let results = store.search_fts5("decision", None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0.memory_type, "decision");
     }
 }
