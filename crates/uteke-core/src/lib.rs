@@ -6,7 +6,7 @@
 //!
 //! let uteke = Uteke::open("~/.uteke/db.sqlite")?;
 //! let id = uteke.remember("important context", &["tag1"], None)?;
-//! let results = uteke.recall("query", 5, None)?;
+//! let results = uteke.recall("query", 5, None, None, 0.0, None, None)?;
 //! ```
 
 pub mod chunker;
@@ -1362,14 +1362,22 @@ impl Uteke {
         namespace: Option<&str>,
         min_score: f32,
         search_type: SearchType,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
         let limit = limit.min(50);
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
         match search_type {
-            SearchType::Memory => {
-                self.recall_unified_memories(query, limit, tags_filter, namespace, min_score)
-            }
+            SearchType::Memory => self.recall_unified_memories(
+                query,
+                limit,
+                tags_filter,
+                namespace,
+                min_score,
+                entity_filter,
+                category_filter,
+            ),
             SearchType::Document => self.recall_unified_documents(query, limit, ns, min_score),
             SearchType::All => self.recall_unified_all(query, limit, tags_filter, ns, min_score),
         }
@@ -1383,8 +1391,18 @@ impl Uteke {
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
         min_score: f32,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
-        let results = self.recall(query, limit, tags_filter, namespace, min_score)?;
+        let results = self.recall(
+            query,
+            limit,
+            tags_filter,
+            namespace,
+            min_score,
+            entity_filter,
+            category_filter,
+        )?;
         Ok(results
             .into_iter()
             .map(|sr| UnifiedSearchResult {
@@ -1456,13 +1474,16 @@ impl Uteke {
         const RRF_K: u32 = 60;
 
         // 1. Memory recall (vector + FTS5 hybrid)
-        let mem_results = match self.recall(query, limit * 2, tags_filter, Some(ns), 0.0) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("Unified search: memory recall failed, using partial results: {e}");
-                Vec::new()
-            }
-        };
+        let mem_results =
+            match self.recall(query, limit * 2, tags_filter, Some(ns), 0.0, None, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        "Unified search: memory recall failed, using partial results: {e}"
+                    );
+                    Vec::new()
+                }
+            };
 
         // 2. Document search (hybrid)
         let doc_results = match self.doc_search(query, limit * 2, "hybrid") {
@@ -1799,13 +1820,21 @@ mod tests {
 
         // Recall with min_score=0.0 should return results
         let results = uteke
-            .recall("rust programming", 5, None, None, 0.0)
+            .recall("rust programming", 5, None, None, 0.0, None, None)
             .unwrap();
         assert!(!results.is_empty());
 
         // Recall with very high min_score should return empty
         let results = uteke
-            .recall("completely unrelated quantum physics", 5, None, None, 0.99)
+            .recall(
+                "completely unrelated quantum physics",
+                5,
+                None,
+                None,
+                0.99,
+                None,
+                None,
+            )
             .unwrap();
         assert!(
             results.is_empty(),
@@ -1823,7 +1852,9 @@ mod tests {
             .unwrap();
 
         // min_score=0.0 should return results (backward compatible)
-        let results = uteke.recall("content", 5, None, None, 0.0).unwrap();
+        let results = uteke
+            .recall("content", 5, None, None, 0.0, None, None)
+            .unwrap();
         assert!(!results.is_empty(), "Expected results with 0.0 threshold");
     }
 
@@ -1842,7 +1873,15 @@ mod tests {
 
         // Same content query should have high score and pass moderate threshold
         let results = uteke
-            .recall("Rust programming language safety", 5, None, None, 0.5)
+            .recall(
+                "Rust programming language safety",
+                5,
+                None,
+                None,
+                0.5,
+                None,
+                None,
+            )
             .unwrap();
         assert!(
             !results.is_empty(),
@@ -1871,7 +1910,7 @@ mod tests {
 
         // Per-call min_score=0.0 should still work (overrides config)
         let results = uteke
-            .recall("rust programming", 5, None, None, 0.0)
+            .recall("rust programming", 5, None, None, 0.0, None, None)
             .unwrap();
         assert!(!results.is_empty());
     }
