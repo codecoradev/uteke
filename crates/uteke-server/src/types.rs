@@ -112,6 +112,22 @@ pub struct RememberRequest {
     pub valid_until: Option<String>,
     #[serde(default)]
     pub detect_contradiction: bool,
+    /// Entity name — stored as metadata key "entity".
+    #[serde(default)]
+    pub entity: Option<String>,
+    /// Category — stored as metadata key "category".
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Extra metadata key=value pairs, merged into the metadata map.
+    /// Accepts an object (e.g. {"project": "uteke"}).
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// Source provenance — set via set_source() after storage.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Source type (defaults to "user").
+    #[serde(default)]
+    pub source_type: Option<String>,
 }
 
 #[derive(Deserialize)]
