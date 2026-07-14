@@ -163,7 +163,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 13;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 14;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

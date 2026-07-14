@@ -370,6 +370,8 @@ impl super::Store {
                 12 => self.migrate_v11_to_v12()?,
                 // v13: Global documents — remove namespace isolation (#614)
                 13 => self.migrate_v12_to_v13()?,
+                // v14: Add memory_type to FTS5 index (#662)
+                14 => self.migrate_v13_to_v14()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -939,6 +941,45 @@ impl super::Store {
             .map_err(|e| Error::db("migration v13: create unique slug index", e))?;
 
         tracing::info!("Migration v12 to v13 complete: documents are now global");
+        Ok(())
+    }
+
+    /// v14: Add memory_type column to FTS5 index (#662).
+    ///
+    /// FTS5 virtual tables cannot be ALTERed, so we must:
+    /// 1. Drop existing triggers (they reference old column set)
+    /// 2. Drop existing FTS5 table
+    /// 3. Recreate with memory_type column
+    /// 4. Rebuild index from existing memories
+    fn migrate_v13_to_v14(&self) -> Result<(), Error> {
+        tracing::info!(
+            "Applying schema migration v13 to v14: add memory_type to FTS5 index"
+        );
+
+        // Drop old triggers first (they reference the old column set).
+        for trigger_name in &[
+            "memories_fts_ai",
+            "memories_fts_ad",
+            "memories_fts_au",
+        ] {
+            let _ = self.conn.execute(
+                &format!("DROP TRIGGER IF EXISTS {}", trigger_name),
+                [],
+            );
+        }
+
+        // Drop old FTS5 table.
+        let _ = self
+            .conn
+            .execute("DROP TABLE IF EXISTS memories_fts", []);
+
+        // Recreate FTS5 with memory_type column.
+        self.init_fts5()?;
+
+        // Rebuild FTS5 index from existing memories.
+        self.rebuild_fts5()?;
+
+        tracing::info!("Migration v13 to v14 complete: memory_type now in FTS5 index");
         Ok(())
     }
 }
