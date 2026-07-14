@@ -1105,7 +1105,7 @@ impl crate::Uteke {
 
         // Validate new content if provided
         if let Some(c) = content {
-            crate::validate_input(c, &[])?;
+            crate::validate_input(c, &[] as &[&str])?;
         }
 
         // Validate new tags if provided
