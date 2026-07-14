@@ -206,6 +206,110 @@ impl super::Store {
         Ok(())
     }
 
+    /// Partial update of specific memory fields (#659).
+    ///
+    /// Only modifies fields that are `Some(...)` in the parameters.
+    /// Returns true if a row was found and updated, false if the memory ID
+    /// does not exist. Always sets `updated_at` to the provided timestamp.
+    ///
+    /// When `tags` is `Some`, performs dual-write: replaces junction table.
+    /// When `content` is `Some`, caller must handle embedding regeneration
+    /// separately (via `VectorIndex::insert` with the new embedding).
+    pub fn update_fields(
+        &self,
+        id: &str,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+        importance: Option<f64>,
+        pinned: Option<bool>,
+        memory_type: Option<&str>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<bool, Error> {
+        let mut set_clauses: Vec<String> = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        // updated_at is always set
+        set_clauses.push("updated_at = ?".to_string());
+        params_vec.push(Box::new(updated_at.to_rfc3339()));
+
+        if let Some(c) = content {
+            set_clauses.push("content = ?".to_string());
+            params_vec.push(Box::new(c.to_string()));
+            // Detect content_type for JSON content
+            let ct = detect_content_type(c);
+            set_clauses.push("content_type = ?".to_string());
+            params_vec.push(Box::new(ct.to_string()));
+        }
+        if let Some(t) = tags {
+            let tags_json =
+                serde_json::to_string(t).map_err(|e| Error::db("database operation", e))?;
+            set_clauses.push("tags = ?".to_string());
+            params_vec.push(Box::new(tags_json));
+        }
+        if let Some(m) = metadata {
+            let meta_json =
+                serde_json::to_string(m).map_err(|e| Error::db("database operation", e))?;
+            set_clauses.push("metadata = ?".to_string());
+            params_vec.push(Box::new(meta_json));
+        }
+        if let Some(imp) = importance {
+            set_clauses.push("importance = ?".to_string());
+            params_vec.push(Box::new(imp));
+        }
+        if let Some(p) = pinned {
+            set_clauses.push("pinned = ?".to_string());
+            params_vec.push(Box::new(p as i32));
+        }
+        if let Some(mt) = memory_type {
+            set_clauses.push("memory_type = ?".to_string());
+            params_vec.push(Box::new(mt.to_string()));
+        }
+
+        if set_clauses.is_empty() {
+            // Nothing to update — check existence
+            let exists: bool = self
+                .conn
+                .query_row("SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1)", params![id], |row| row.get(0))
+                .map_err(|e| Error::db("database operation", e))?;
+            return Ok(exists);
+        }
+
+        let sql = format!(
+            "UPDATE memories SET {} WHERE id = ?",
+            set_clauses.join(", ")
+        );
+        params_vec.push(Box::new(id.to_string()));
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|b| b.as_ref()).collect();
+        let rows = self
+            .conn
+            .execute(&sql, param_refs.as_slice())
+            .map_err(|e| Error::db("update memory fields", e))?;
+
+        // Dual-write: sync junction table tags if tags were provided
+        if tags.is_some() {
+            self.conn
+                .execute(
+                    "DELETE FROM memory_tags WHERE memory_id = ?1",
+                    params![id],
+                )
+                .map_err(|e| Error::db("delete old tags", e))?;
+            if let Some(t) = tags {
+                for tag in t {
+                    self.conn
+                        .execute(
+                            "INSERT OR IGNORE INTO memory_tags (memory_id, tag) VALUES (?1, ?2)",
+                            params![id, tag],
+                        )
+                        .map_err(|e| Error::db("insert tag", e))?;
+                }
+            }
+        }
+
+        Ok(rows > 0)
+    }
+
     /// List memories with optional tag filter, namespace filter, and pagination.
     ///
     /// When `namespace` is `None`, returns memories from ALL namespaces (#526).
