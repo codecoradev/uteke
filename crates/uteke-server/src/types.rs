@@ -323,6 +323,32 @@ pub struct TagDeleteRequest {
     pub namespace: Option<String>,
 }
 
+// ── Memory Update Types (#659) ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct MemoryUpdateRequest {
+    /// UUID of the memory to update (required).
+    pub id: String,
+    /// New content. Triggers embedding regeneration.
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Replace tags entirely with this list.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// Replace metadata entirely with this object.
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// Set importance score (0.0–1.0).
+    #[serde(default)]
+    pub importance: Option<f64>,
+    /// Set pinned state.
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    /// Set memory type (fact, procedure, preference, decision, context, note, insight, reference, event).
+    #[serde(default)]
+    pub memory_type: Option<String>,
+}
+
 // ── Pin Types ─────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

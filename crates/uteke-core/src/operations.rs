@@ -1076,6 +1076,140 @@ impl crate::Uteke {
         self.store.get_by_id(id)
     }
 
+    /// Update an existing memory with partial fields (#659).
+    ///
+    /// Only provided fields are changed. If `content` is changed, the
+    /// embedding is regenerated and the vector index is updated.
+    /// Returns `Ok(true)` if the memory was found and updated,
+    /// `Ok(false)` if the memory ID doesn't exist.
+    ///
+    /// Acceptance criteria:
+    /// - Partial update semantics (only provided fields changed)
+    /// - Content update regenerates embedding
+    /// - 404 if not found (caller checks return value)
+    pub fn update_memory(
+        &self,
+        id: &str,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+        importance: Option<f64>,
+        pinned: Option<bool>,
+        memory_type: Option<&str>,
+    ) -> Result<bool, Error> {
+        // Validate memory exists
+        let existing = self
+            .store
+            .get_by_id(id)?
+            .ok_or_else(|| Error::Validation(format!("Memory not found: {id}")))?;
+
+        // Validate new content if provided
+        if let Some(c) = content {
+            crate::validate_input(c, &[])?;
+        }
+
+        // Validate new tags if provided
+        if let Some(t) = tags {
+            let tag_refs: Vec<&str> = t.iter().map(|s| s.as_str()).collect();
+            crate::validate_input(content.unwrap_or(&existing.content), &tag_refs)?;
+        }
+
+        // Validate new memory_type if provided
+        if let Some(mt) = memory_type {
+            crate::memory::types::MemoryType::from_str_opt(mt).ok_or_else(|| {
+                Error::Validation(format!(
+                    "Unknown memory type '{mt}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+                ))
+            })?;
+        }
+
+        // Validate importance range
+        if let Some(imp) = importance {
+            if !(0.0..=1.0).contains(&imp) {
+                return Err(Error::Validation(format!(
+                    "Importance must be between 0.0 and 1.0, got {imp}"
+                )));
+            }
+        }
+
+        let now = chrono::Utc::now();
+
+        // Re-embed if content changed
+        if let Some(c) = content {
+            let content_type = crate::memory::crud::detect_content_type(c);
+            let embed_text = if content_type == "json" {
+                crate::memory::crud::flatten_json_for_embedding(c)
+            } else {
+                c.to_string()
+            };
+            self.ensure_embedder()?;
+            let new_embedding = retry_embed(&self.embedder, &embed_text)?;
+
+            // Update SQLite first, then vector index
+            let updated = self.store.update_fields(
+                id,
+                content,
+                tags,
+                metadata,
+                importance,
+                pinned,
+                memory_type,
+                now,
+            )?;
+
+            if !updated {
+                return Ok(false);
+            }
+
+            // Update vector index (insert handles dedup by removing old entry)
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write lock during update_memory"))?;
+            index.insert(id, &new_embedding)?;
+
+            // Persist index with retry
+            for attempt in 0..3 {
+                match index.save() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        if attempt < 2 {
+                            tracing::warn!(
+                                "Index save attempt {}/3 failed after update_memory for id={id}: {e}. Retrying...",
+                                attempt + 1
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        } else {
+                            tracing::error!(
+                                "Index save failed after 3 attempts for id={id}: {e}. Index may be stale on next launch."
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // No content change — just update SQLite fields
+            let updated = self.store.update_fields(
+                id,
+                None,
+                tags,
+                metadata,
+                importance,
+                pinned,
+                memory_type,
+                now,
+            )?;
+            if !updated {
+                return Ok(false);
+            }
+        }
+
+        // Invalidate recall cache for the memory's namespace
+        self.recall_cache.invalidate_namespace(&existing.namespace);
+
+        Ok(true)
+    }
+
     /// Recall memories that existed at a specific point in time.
     ///
     /// Runs a semantic recall to gather candidates, then post-filters by
