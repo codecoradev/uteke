@@ -952,26 +952,17 @@ impl super::Store {
     /// 3. Recreate with memory_type column
     /// 4. Rebuild index from existing memories
     fn migrate_v13_to_v14(&self) -> Result<(), Error> {
-        tracing::info!(
-            "Applying schema migration v13 to v14: add memory_type to FTS5 index"
-        );
+        tracing::info!("Applying schema migration v13 to v14: add memory_type to FTS5 index");
 
         // Drop old triggers first (they reference the old column set).
-        for trigger_name in &[
-            "memories_fts_ai",
-            "memories_fts_ad",
-            "memories_fts_au",
-        ] {
-            let _ = self.conn.execute(
-                &format!("DROP TRIGGER IF EXISTS {}", trigger_name),
-                [],
-            );
+        for trigger_name in &["memories_fts_ai", "memories_fts_ad", "memories_fts_au"] {
+            let _ = self
+                .conn
+                .execute(&format!("DROP TRIGGER IF EXISTS {}", trigger_name), []);
         }
 
         // Drop old FTS5 table.
-        let _ = self
-            .conn
-            .execute("DROP TABLE IF EXISTS memories_fts", []);
+        let _ = self.conn.execute("DROP TABLE IF EXISTS memories_fts", []);
 
         // Recreate FTS5 with memory_type column.
         self.init_fts5()?;
