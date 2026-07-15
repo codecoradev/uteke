@@ -35,8 +35,8 @@ pub use chunker::{
 };
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
-    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REPLIES_TO,
-    EDGE_SUPERSEDES, EDGE_TAGGED_AS,
+    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES,
+    EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS,
 };
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
@@ -1435,6 +1435,8 @@ impl Uteke {
                     last_accessed: m.last_accessed,
                     created_at: Some(m.created_at),
                     updated_at: Some(m.updated_at),
+                    linked_doc_slugs: None,
+                    linked_memory_ids: None,
                 }
             })
             .collect())
@@ -1485,6 +1487,8 @@ impl Uteke {
                 last_accessed: None,
                 created_at: None,
                 updated_at: None,
+                linked_doc_slugs: None,
+                linked_memory_ids: None,
             })
             .collect())
     }
@@ -1581,6 +1585,8 @@ impl Uteke {
                         last_accessed: m.last_accessed,
                         created_at: Some(m.created_at),
                         updated_at: Some(m.updated_at),
+                        linked_doc_slugs: None,
+                        linked_memory_ids: None,
                     }
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
@@ -1616,6 +1622,8 @@ impl Uteke {
                         last_accessed: None,
                         created_at: None,
                         updated_at: None,
+                        linked_doc_slugs: None,
+                        linked_memory_ids: None,
                     }
                 } else {
                     unreachable!("RRF key must reference either mem_map or doc_map")
@@ -1631,6 +1639,36 @@ impl Uteke {
         results.truncate(limit);
 
         Ok(results)
+    }
+
+    // ── Cross-entity recall (#689) ──────────────────────────────────────
+
+    /// Recall memories that reference a document via `[[doc-slug]]` wikilinks.
+    ///
+    /// Looks up `references_doc` edges where the document is the target.
+    /// Returns memory IDs (not full memories) for lightweight cross-referencing.
+    pub fn recall_memories_for_document(&self, doc_slug: &str) -> Result<Vec<String>, Error> {
+        let doc_id = match self.store.get_document_by_slug(doc_slug)? {
+            Some(d) => d.id,
+            None => return Ok(Vec::new()),
+        };
+        self.store.edge_sources(&doc_id, EDGE_REFERENCES_DOC)
+    }
+
+    /// Recall document slugs referenced by a memory via `[[doc-slug]]` wikilinks.
+    ///
+    /// Looks up `references_doc` edges where the memory is the source.
+    /// Returns document slugs for human-readable cross-referencing.
+    pub fn recall_documents_for_memory(&self, memory_id: &str) -> Result<Vec<String>, Error> {
+        let doc_ids = self.store.edge_targets(memory_id, EDGE_REFERENCES_DOC)?;
+        let mut slugs = Vec::with_capacity(doc_ids.len());
+        for id in doc_ids {
+            let doc = self.store.get_document(&id)?;
+            if let Some(d) = doc {
+                slugs.push(d.slug);
+            }
+        }
+        Ok(slugs)
     }
 }
 
