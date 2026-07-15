@@ -144,4 +144,26 @@ impl crate::Uteke {
     pub fn room_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
         self.store.room_document(room_id)
     }
+
+    // ── Room ↔ Document junction (v15, #689) ─────────────────────────────
+
+    /// Link a document to a room. No-op if already linked.
+    pub fn room_add_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        self.store.room_add_document(room_id, doc_slug)
+    }
+
+    /// Unlink a document from a room.
+    pub fn room_remove_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        self.store.room_remove_document(room_id, doc_slug)
+    }
+
+    /// List document slugs linked to a room.
+    pub fn room_list_documents(&self, room_id: &str) -> Result<Vec<String>, Error> {
+        self.store.room_list_documents(room_id)
+    }
+
+    /// List room IDs that have a given document linked.
+    pub fn document_list_rooms(&self, doc_slug: &str) -> Result<Vec<String>, Error> {
+        self.store.document_list_rooms(doc_slug)
+    }
 }

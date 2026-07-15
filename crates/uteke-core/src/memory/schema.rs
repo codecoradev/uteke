@@ -372,6 +372,8 @@ impl super::Store {
                 13 => self.migrate_v12_to_v13()?,
                 // v14: Add memory_type to FTS5 index (#662)
                 14 => self.migrate_v13_to_v14()?,
+                // v15: room_documents junction table (#689)
+                15 => self.migrate_v14_to_v15()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -971,6 +973,25 @@ impl super::Store {
         self.rebuild_fts5()?;
 
         tracing::info!("Migration v13 to v14 complete: memory_type now in FTS5 index");
+        Ok(())
+    }
+
+    /// v15: Add room_documents junction table for room→document associations (#689).
+    fn migrate_v14_to_v15(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v14 to v15: room_documents junction table");
+
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS room_documents (
+                     room_id  TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+                     doc_slug TEXT NOT NULL,
+                     added_at TEXT NOT NULL,
+                     PRIMARY KEY (room_id, doc_slug)
+                 )",
+            )
+            .map_err(|e| Error::db("create room_documents table", e))?;
+
+        tracing::info!("Migration v14 to v15 complete: room_documents table created");
         Ok(())
     }
 }
