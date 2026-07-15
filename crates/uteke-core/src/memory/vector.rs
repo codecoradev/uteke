@@ -6,11 +6,11 @@
 //! that share the same on-disk index. In-process thread safety uses
 //! RwLock<VectorIndex> in lib.rs.
 //!
-//! Windows compatibility (#647): `save()` uses buffer-based serialization
-//! (serialize to memory, then atomic-write via Rust std::fs) to bypass
-//! usearch's C++ `fopen("wb")` which has Windows-specific issues (MAX_PATH,
-//! file lock conflicts, AV interference). Load still uses usearch's native
-//! file reader since the on-disk format is identical.
+//! Windows compatibility (#647, #684): Both `save()` and `load()` use
+//! buffer-based serialization to bypass usearch's C++ file I/O (`fopen`,
+//! `fread`, `mmap`) which has Windows-specific issues (MAX_PATH, file lock
+//! conflicts, AV interference). Save serializes to memory then atomic-writes
+//! via Rust std::fs; load reads via Rust std::fs then deserializes from buffer.
 
 use crate::Error;
 use fs2::FileExt;
@@ -75,9 +75,10 @@ impl VectorIndex {
     /// cross-process race conditions (e.g., `xargs -P5 uteke remember`).
     /// The lock is held until this `VectorIndex` is dropped (#543).
     ///
-    /// Note: `save()` uses buffer-based serialization to disk, but `load()` still
-    /// uses usearch's file-based `Index::restore()` for reading — this is safe
-    /// because the on-disk format is identical (both use the same stream format).
+    /// Note: Both `save()` and `load()` use buffer-based serialization (#647,
+    /// #684) to bypass usearch's C++ file I/O on Windows. The on-disk format is
+    /// identical — `save_to_buffer` and `restore_from_buffer` produce/consume
+    /// the same byte stream as the native file-based methods.
     pub fn load_or_create(path: &Path, dims: usize) -> Result<Self, Error> {
         // Ensure the file exists so we can open + lock it.
         if !path.exists() {
@@ -98,9 +99,15 @@ impl VectorIndex {
     }
 
     /// Load an existing index from disk.
+    ///
+    /// Uses buffer-based deserialization (#684): reads the file into memory via
+    /// Rust's `std::fs::read()`, then deserializes via `restore_from_buffer()`.
+    /// This bypasses usearch's C++ `fopen("rb")` + `mmap()` which causes
+    /// "Permission denied" errors on Windows (#684).
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let path_str = path.to_string_lossy().to_string();
-        let index = Index::restore(&path_str).map_err(|e| Error::embed("load vector index", e))?;
+        let buffer = std::fs::read(path).map_err(|e| Error::embed("read usearch file", e))?;
+        let index = Index::restore_from_buffer(&buffer)
+            .map_err(|e| Error::embed("load vector index", e))?;
 
         let _size = index.size();
 
@@ -497,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_save_buffer_produces_valid_index() {
-        // Round-trip test: save via buffer → load via usearch native restore (#647)
+        // Round-trip test: save via buffer → load via buffer (#647, #684)
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("roundtrip.usearch");
 
@@ -512,11 +519,12 @@ mod tests {
         idx.insert("round-1", &v).unwrap();
         idx.save().unwrap();
 
-        // Verify the saved file can be loaded by usearch's native Index::restore
-        let raw_index = usearch::Index::restore(path.to_str().unwrap());
+        // Verify the saved file can be loaded by usearch's restore_from_buffer
+        let buffer = std::fs::read(&path).unwrap();
+        let raw_index = usearch::Index::restore_from_buffer(&buffer);
         assert!(
             raw_index.is_ok(),
-            "Buffer-saved index must be loadable by usearch native restore"
+            "Buffer-saved index must be loadable by usearch restore_from_buffer"
         );
         assert_eq!(raw_index.unwrap().size(), 1);
     }
