@@ -398,29 +398,25 @@ import pathlib
 import subprocess
 import sys
 
-def _resolve_agent_name() -> str:
-    """Extract agent name from Hermes CLI invocation."""
-    try:
-        with open("/proc/self/cmdline", "rb") as f:
-            parts = f.read().split(b"\x00")
-        for i, part in enumerate(parts):
-            if part == b"-p" and i + 1 < len(parts):
-                name = parts[i + 1].decode("utf-8", errors="ignore").strip()
-                if name:
-                    return name
-    except Exception:
-        pass
+def _resolve_agent_name(cwd: str = "") -> str:
+    """Extract agent name from Hermes hook payload cwd.
+
+    Priority: cwd from payload > HERMES_PROFILE env > fallback.
+    The /proc/self/cmdline approach is unreliable — shell hooks run as
+    child subprocesses whose cmdline is the handler script, not the
+    gateway. Use the cwd payload field (always set by Hermes) instead.
+    """
+    if cwd:
+        p = pathlib.Path(cwd)
+        for parent in [p, *p.parents]:
+            if parent.name and parent.name != "profiles":
+                return parent.name
     return "default"
 
-AGENT = _resolve_agent_name()
-UTEKE_BIN = pathlib.Path(shutil.which("uteke") or "/opt/data/.cargo/bin/uteke")  # adjust to your path
-
-def _recall_uteke(query: str, limit: int = 5) -> list:
-    if not UTEKE_BIN.exists():
-        return []
+def _recall_uteke(query: str, agent: str, limit: int = 5) -> list:
     try:
         proc = subprocess.run(
-            [str(UTEKE_BIN), "recall", "--namespace", AGENT,
+            ["uteke", "recall", "--namespace", agent,
              "--limit", str(limit), "--json", query],
             capture_output=True, text=True, timeout=15,
         )
@@ -446,12 +442,8 @@ def main():
     if not isinstance(message, str) or not message.strip() or len(message) < 5:
         sys.exit(0)
 
-    # Skip cron sessions
-    session_id = raw.get("session_id", "")
-    if isinstance(session_id, str) and session_id.startswith("cron_"):
-        sys.exit(0)
-
-    memories = _recall_uteke(message.strip()[:500], limit=5)
+    agent = _resolve_agent_name(raw.get("cwd", ""))
+    memories = _recall_uteke(message.strip()[:500], agent, limit=5)
     if not memories:
         sys.exit(0)
 
