@@ -1412,17 +1412,30 @@ impl Uteke {
         )?;
         Ok(results
             .into_iter()
-            .map(|sr| UnifiedSearchResult {
-                result_type: SearchResultType::Memory,
-                score: sr.score,
-                content: sr.memory.content,
-                memory_id: Some(sr.memory.id),
-                tags: sr.memory.tags,
-                doc_slug: None,
-                doc_title: None,
-                chunk_heading: None,
-                chunk_snippet: None,
-                metadata: Some(sr.memory.metadata),
+            .map(|sr| {
+                let m = &sr.memory;
+                UnifiedSearchResult {
+                    result_type: SearchResultType::Memory,
+                    score: sr.score,
+                    content: m.content.clone(),
+                    memory_id: Some(m.id.clone()),
+                    tags: m.tags.clone(),
+                    doc_slug: None,
+                    doc_title: None,
+                    chunk_heading: None,
+                    chunk_snippet: None,
+                    metadata: Some(m.metadata.clone()),
+                    memory_type: Some(m.memory_type.clone()),
+                    namespace: Some(m.namespace.clone()),
+                    source: m.source.clone(),
+                    source_type: Some(m.source_type.clone()),
+                    importance: Some(m.importance),
+                    pinned: Some(m.pinned),
+                    access_count: Some(m.access_count),
+                    last_accessed: m.last_accessed,
+                    created_at: Some(m.created_at),
+                    updated_at: Some(m.updated_at),
+                }
             })
             .collect())
     }
@@ -1462,6 +1475,16 @@ impl Uteke {
                 },
                 tags: vec![],
                 metadata: None,
+                memory_type: None,
+                namespace: None,
+                source: None,
+                source_type: None,
+                importance: None,
+                pinned: None,
+                access_count: None,
+                last_accessed: None,
+                created_at: None,
+                updated_at: None,
             })
             .collect())
     }
@@ -1536,17 +1559,28 @@ impl Uteke {
             .map(|(key, score)| {
                 let normalized = (score / max_rrf).clamp(0.0, 1.0) as f32;
                 if let Some(sr) = mem_map.remove(&key) {
+                    let m = &sr.memory;
                     UnifiedSearchResult {
                         result_type: SearchResultType::Memory,
                         score: normalized,
-                        content: sr.memory.content.clone(),
-                        memory_id: Some(sr.memory.id),
-                        tags: sr.memory.tags,
+                        content: m.content.clone(),
+                        memory_id: Some(m.id.clone()),
+                        tags: m.tags.clone(),
                         doc_slug: None,
                         doc_title: None,
                         chunk_heading: None,
                         chunk_snippet: None,
-                        metadata: Some(sr.memory.metadata.clone()),
+                        metadata: Some(m.metadata.clone()),
+                        memory_type: Some(m.memory_type.clone()),
+                        namespace: Some(m.namespace.clone()),
+                        source: m.source.clone(),
+                        source_type: Some(m.source_type.clone()),
+                        importance: Some(m.importance),
+                        pinned: Some(m.pinned),
+                        access_count: Some(m.access_count),
+                        last_accessed: m.last_accessed,
+                        created_at: Some(m.created_at),
+                        updated_at: Some(m.updated_at),
                     }
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
@@ -1572,6 +1606,16 @@ impl Uteke {
                         },
                         tags: vec![],
                         metadata: None,
+                        memory_type: None,
+                        namespace: None,
+                        source: None,
+                        source_type: None,
+                        importance: None,
+                        pinned: None,
+                        access_count: None,
+                        last_accessed: None,
+                        created_at: None,
+                        updated_at: None,
                     }
                 } else {
                     unreachable!("RRF key must reference either mem_map or doc_map")
