@@ -401,10 +401,11 @@ import sys
 def _resolve_agent_name(cwd: str = "") -> str:
     """Extract agent name from Hermes hook payload cwd.
 
-    Priority: cwd from payload > HERMES_PROFILE env > fallback.
     The /proc/self/cmdline approach is unreliable — shell hooks run as
     child subprocesses whose cmdline is the handler script, not the
     gateway. Use the cwd payload field (always set by Hermes) instead.
+
+    Falls back to "default" if cwd is empty or resolution fails.
     """
     if cwd:
         p = pathlib.Path(cwd)
