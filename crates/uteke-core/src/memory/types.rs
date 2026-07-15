@@ -147,6 +147,37 @@ pub struct UnifiedSearchResult {
     /// Arbitrary JSON metadata from the memory (populated for type=memory).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    // ── Memory detail fields (populated for type=memory) ──────────────
+    /// Memory type: fact, procedure, preference, decision, context.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    /// Namespace for multi-agent isolation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// Source of the memory (e.g. "user", "system").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Source type of the memory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_type: Option<String>,
+    /// Composite importance score (0.0–1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<f64>,
+    /// Whether this memory is pinned (never decays).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
+    /// How many times this memory has been accessed (recall, get).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_count: Option<u32>,
+    /// When this memory was last accessed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_accessed: Option<chrono::DateTime<chrono::Utc>>,
+    /// When this memory was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When this memory was last updated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Filter for unified search — which sources to query (#531).
@@ -924,6 +955,7 @@ mod tests {
 
     #[test]
     fn unified_search_result_memory_serde() {
+        let now = chrono::Utc::now();
         let result = UnifiedSearchResult {
             result_type: SearchResultType::Memory,
             score: 0.85,
@@ -935,6 +967,16 @@ mod tests {
             chunk_heading: None,
             chunk_snippet: None,
             metadata: Some(serde_json::json!({"session_id": "abc123"})),
+            memory_type: Some("fact".to_string()),
+            namespace: Some("default".to_string()),
+            source: Some("user".to_string()),
+            source_type: Some("user".to_string()),
+            importance: Some(0.8),
+            pinned: Some(false),
+            access_count: Some(5),
+            last_accessed: Some(now),
+            created_at: Some(now),
+            updated_at: Some(now),
         };
         let json = serde_json::to_string(&result).unwrap();
         // Verify result_type field is lowercase "memory"
@@ -945,11 +987,27 @@ mod tests {
             !json.contains("memory_id") || json.contains("\"memory_id\":\"abc-123\""),
             "memory_id should be present when Some"
         );
+        // Verify new memory detail fields are present
+        assert!(
+            json.contains("\"memory_type\":\"fact\""),
+            "memory_type should be present"
+        );
+        assert!(
+            json.contains("\"access_count\":5"),
+            "access_count should be present"
+        );
+        assert!(
+            json.contains("\"pinned\":false"),
+            "pinned should be present"
+        );
         // Roundtrip
         let parsed: UnifiedSearchResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.result_type, SearchResultType::Memory);
         assert_eq!(parsed.score, 0.85);
         assert_eq!(parsed.memory_id.as_deref(), Some("abc-123"));
+        assert_eq!(parsed.memory_type.as_deref(), Some("fact"));
+        assert_eq!(parsed.access_count, Some(5));
+        assert_eq!(parsed.pinned, Some(false));
     }
 
     #[test]
@@ -965,11 +1023,34 @@ mod tests {
             chunk_heading: Some("Section 2".to_string()),
             chunk_snippet: Some("chunk excerpt here".to_string()),
             metadata: None,
+            memory_type: None,
+            namespace: None,
+            source: None,
+            source_type: None,
+            importance: None,
+            pinned: None,
+            access_count: None,
+            last_accessed: None,
+            created_at: None,
+            updated_at: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"result_type\":\"document\""), "got: {json}");
         // memory_id is None so it should be omitted
         assert!(!json.contains("memory_id"), "memory_id should be skipped");
+        // Memory detail fields should all be omitted for documents
+        assert!(
+            !json.contains("memory_type"),
+            "memory_type should be skipped for doc"
+        );
+        assert!(
+            !json.contains("access_count"),
+            "access_count should be skipped for doc"
+        );
+        assert!(
+            !json.contains("importance"),
+            "importance should be skipped for doc"
+        );
         let parsed: UnifiedSearchResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.result_type, SearchResultType::Document);
         assert_eq!(parsed.doc_slug.as_deref(), Some("my-doc"));
