@@ -178,6 +178,15 @@ pub struct UnifiedSearchResult {
     /// When this memory was last updated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    // ── Cross-entity linking fields (#689) ──────────────────────────
+    /// Document slugs referenced by this memory via `[[doc-slug]]` wikilinks.
+    /// Populated for type=memory when cross-references exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_doc_slugs: Option<Vec<String>>,
+    /// Memory IDs that reference this document.
+    /// Populated for type=document when cross-references exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linked_memory_ids: Option<Vec<String>>,
 }
 
 /// Filter for unified search — which sources to query (#531).
@@ -977,6 +986,8 @@ mod tests {
             last_accessed: Some(now),
             created_at: Some(now),
             updated_at: Some(now),
+            linked_doc_slugs: None,
+            linked_memory_ids: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         // Verify result_type field is lowercase "memory"
@@ -1033,6 +1044,8 @@ mod tests {
             last_accessed: None,
             created_at: None,
             updated_at: None,
+            linked_doc_slugs: None,
+            linked_memory_ids: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"result_type\":\"document\""), "got: {json}");
