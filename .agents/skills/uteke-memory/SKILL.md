@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.6.7** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Zero unsafe code.
+Version: **0.7.3** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Zero unsafe code.
 
 ## Global Flags (all commands)
 

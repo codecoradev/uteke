@@ -1,5 +1,22 @@
 ## [Unreleased]
 
+### Added
+- **PUT /memory — partial memory updates (#676)** — Update any combination of content, tags, metadata, importance, pinned state, or memory_type on an existing memory. Content changes trigger embedding regeneration. Replaces the old pattern of forget+remember.
+- **POST /memory/pin and POST /memory/importance endpoints (#660)** — Dedicated endpoints for pin/unpin toggle (accepts `pinned` boolean) and importance score setting (0.0–1.0). Both return the updated memory on success.
+- **Room ↔ Document junction table — schema v15 (#689, #692)** — New `room_documents` table links rooms to documents bidirectionally. Endpoints: `POST /room/document/list`, `PUT /room/document/add`, `DELETE /room/document/remove`, `POST /doc/room/list`.
+- **memory↔document cross-entity linking via [[doc-slug]] wikilinks (#691)** — Memories containing `[[doc-slug]]` patterns are auto-wired to document references. Query endpoints: `POST /memory/doc-refs` (doc slugs for a memory) and `POST /doc/mem-refs` (memory IDs referencing a doc).
+- **Schema v14: memory_type added to FTS5 index (#662)** — FTS5 full-text search now indexes `memory_type`, enabling keyword search by type. Migration rebuilds the FTS5 index from existing memories.
+
+### Changed
+- **Entity/category filter pushed into core recall (#667)** — Entity and category metadata filters now run inside the core recall candidate loop instead of post-fetch amplification. Eliminates the 10x fetch overhead for filtered queries.
+- **Full memory detail fields in UnifiedSearchResult (#688)** — Unified search results now include complete memory metadata (tags, importance, pinned, namespace, memory_type, source info) directly in the response, eliminating secondary lookups.
+
+### Fixed
+- **Search access count tracking** — Search operations now correctly increment the access count on recalled memories, improving tier scoring accuracy.
+- **Windows usearch buffer overflow** — usearch save now serializes to an in-memory buffer first, avoiding C++ `fopen("wb")` failures on Windows due to MAX_PATH limits and file lock conflicts.
+- **Metadata fields propagation** — Metadata fields set via `POST /remember` are now consistently propagated through all downstream operations (recall, search, export).
+- **Cross-entity linking bugs** — Fixed edge cases in `[[doc-slug]]` resolution where slugs with special characters or missing documents produced incorrect edges.
+
 ## [0.7.3] — 2026-07-13
 
 ### Fixed
