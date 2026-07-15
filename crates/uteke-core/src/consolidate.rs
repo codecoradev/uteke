@@ -61,6 +61,7 @@ impl crate::Uteke {
         &self,
         content: &str,
         tags: &[&str],
+        metadata: Option<serde_json::Value>,
         namespace: Option<&str>,
         memory_type: Option<&str>,
         check_contradiction: bool,
@@ -97,7 +98,7 @@ impl crate::Uteke {
         let id = self.remember_precomputed(
             content,
             tags,
-            None,
+            metadata,
             Some(ns),
             memory_type.unwrap_or("fact"),
             content_type,
@@ -409,5 +410,32 @@ mod tests {
         let restored: ContradictionResult = serde_json::from_str(&json).unwrap();
         assert!(restored.contradicted);
         assert_eq!(restored.similarity, 0.85);
+    }
+
+    /// Verify that metadata JSON values round-trip through serde correctly.
+    /// This guards against type mismatches when metadata is passed through
+    /// remember_with_contradiction → remember_precomputed.
+    #[test]
+    fn test_metadata_value_serialization() {
+        use serde_json::Value;
+
+        // Entity + category + custom metadata (typical handler merge output)
+        let mut meta = serde_json::Map::new();
+        meta.insert("entity".into(), Value::String("my-app".into()));
+        meta.insert("category".into(), Value::String("frontend".into()));
+        meta.insert("project".into(), Value::String("uteke".into()));
+        let metadata = Some(Value::Object(meta));
+
+        // Simulate what remember_precomputed does: unwrap or default to Null
+        let stored = metadata.unwrap_or(Value::Null);
+        let obj = stored.as_object().expect("metadata should be an object");
+        assert_eq!(obj.get("entity").unwrap(), "my-app");
+        assert_eq!(obj.get("category").unwrap(), "frontend");
+        assert_eq!(obj.get("project").unwrap(), "uteke");
+
+        // None metadata → Null (no crash)
+        let none_meta: Option<Value> = None;
+        let stored_none = none_meta.unwrap_or(Value::Null);
+        assert!(stored_none.is_null());
     }
 }

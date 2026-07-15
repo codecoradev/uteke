@@ -147,6 +147,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         .remember_with_contradiction(
                             &req_data.content,
                             &tag_refs,
+                            metadata,
                             ns(&req_data.namespace),
                             req_data.r#type.as_deref(),
                             true,
