@@ -59,9 +59,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/room/summary",
             "/room/document",
             "/room/stats",
+            "/room/document/list",
             "/doc/get",
             "/doc/list",
             "/doc/search",
+            "/doc/room/list",
+            "/memory/doc-refs",
+            "/doc/mem-refs",
             "/orphans",
         ];
         let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
@@ -943,6 +947,81 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         404,
                         format!("Room not found: {}", req_data.room_id),
                     ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── Room ↔ Document junction (#689) ──────────────────────────────
+        // POST /room/document/list — list documents linked to a room
+        (Method::Post, "/room/document/list") => {
+            #[derive(Deserialize)]
+            struct RoomDocListReq {
+                room_id: String,
+            }
+            match read_body::<RoomDocListReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.store.room_list_documents(&req_data.room_id) {
+                    Ok(slugs) => ctx.ok_response_for(req, &json!({ "room_id": req_data.room_id, "doc_slugs": slugs })),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // PUT /room/document/add — link a document to a room
+        (Method::Put, "/room/document/add") => {
+            #[derive(Deserialize)]
+            struct RoomDocAddReq {
+                room_id: String,
+                doc_slug: String,
+            }
+            match read_body::<RoomDocAddReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.store.room_add_document(&req_data.room_id, &req_data.doc_slug) {
+                    Ok(()) => ctx.ok_response_for(req, &json!({ "status": "linked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // DELETE /room/document/remove — unlink a document from a room
+        (Method::Delete, "/room/document/remove") => {
+            #[derive(Deserialize)]
+            struct RoomDocRemoveReq {
+                room_id: String,
+                doc_slug: String,
+            }
+            match read_body::<RoomDocRemoveReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.store.room_remove_document(&req_data.room_id, &req_data.doc_slug) {
+                    Ok(()) => ctx.ok_response_for(req, &json!({ "status": "unlinked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // POST /doc/room/list — list rooms linked to a document
+        (Method::Post, "/doc/room/list") => {
+            #[derive(Deserialize)]
+            struct DocRoomListReq {
+                doc_slug: String,
+            }
+            match read_body::<DocRoomListReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.store.document_list_rooms(&req_data.doc_slug) {
+                    Ok(room_ids) => ctx.ok_response_for(req, &json!({ "doc_slug": req_data.doc_slug, "room_ids": room_ids })),
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")

@@ -900,4 +900,53 @@ impl super::Store {
             sections,
         }))
     }
+
+    // ── Room ↔ Document junction table (v15, #689) ──────────────────────
+
+    /// Link a document to a room. No-op if already linked.
+    pub fn room_add_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO room_documents (room_id, doc_slug, added_at) VALUES (?1, ?2, ?3)",
+                params![room_id, doc_slug, now],
+            )
+            .map_err(|e| Error::db("room_add_document", e))?;
+        Ok(())
+    }
+
+    /// Unlink a document from a room.
+    pub fn room_remove_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        self.conn
+            .execute(
+                "DELETE FROM room_documents WHERE room_id = ?1 AND doc_slug = ?2",
+                params![room_id, doc_slug],
+            )
+            .map_err(|e| Error::db("room_remove_document", e))?;
+        Ok(())
+    }
+
+    /// List document slugs linked to a room.
+    pub fn room_list_documents(&self, room_id: &str) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT doc_slug FROM room_documents WHERE room_id = ?1 ORDER BY added_at")
+            .map_err(|e| Error::db("room_list_documents", e))?;
+        let rows = stmt
+            .query_map(params![room_id], |r| r.get::<_, String>(0))
+            .map_err(|e| Error::db("query room_list_documents", e))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// List room IDs that have a given document linked.
+    pub fn document_list_rooms(&self, doc_slug: &str) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT room_id FROM room_documents WHERE doc_slug = ?1 ORDER BY added_at")
+            .map_err(|e| Error::db("document_list_rooms", e))?;
+        let rows = stmt
+            .query_map(params![doc_slug], |r| r.get::<_, String>(0))
+            .map_err(|e| Error::db("query document_list_rooms", e))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
 }

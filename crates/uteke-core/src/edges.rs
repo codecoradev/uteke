@@ -1276,7 +1276,7 @@ mod tests {
     fn migration_dispatcher_reaches_v8() {
         let store = Store::open(":memory:").unwrap();
         let v = store.schema_version().unwrap();
-        assert_eq!(v, 14, "fresh store must reach CURRENT_SCHEMA_VERSION=14");
+        assert_eq!(v, 15, "fresh store must reach CURRENT_SCHEMA_VERSION=15");
 
         // memory_edges table must exist and be queryable after migration.
         let n = store.count_memory_edges().unwrap();
