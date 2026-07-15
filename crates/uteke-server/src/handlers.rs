@@ -62,6 +62,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/doc/get",
             "/doc/list",
             "/doc/search",
+            "/memory/doc-refs",
+            "/doc/mem-refs",
             "/orphans",
         ];
         let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
@@ -1251,9 +1253,65 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Cross-entity references (#689) ───────────────────────────────
+        // POST /memory/doc-refs — get document slugs referenced by a memory
+        (Method::Post, "/memory/doc-refs") => {
+            let body = match read_json(req.as_reader()) {
+                Ok(b) => b,
+                Err(e) => return ctx.error_response_for(req, 400, e),
+            };
+            let memory_id = body
+                .get("memory_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if memory_id.is_empty() {
+                return ctx.error_response_for(req, 400, "memory_id is required");
+            }
+            match uteke.recall_documents_for_memory(memory_id) {
+                Ok(slugs) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "memory_id": memory_id,
+                        "doc_slugs": slugs,
+                    }),
+                ),
+                Err(e) => {
+                    error!("memory/doc-refs error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
+        // POST /doc/mem-refs — get memory IDs that reference a document
+        (Method::Post, "/doc/mem-refs") => {
+            let body = match read_json(req.as_reader()) {
+                Ok(b) => b,
+                Err(e) => return ctx.error_response_for(req, 400, e),
+            };
+            let doc_slug = body
+                .get("doc_slug")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if doc_slug.is_empty() {
+                return ctx.error_response_for(req, 400, "doc_slug is required");
+            }
+            match uteke.recall_memories_for_document(doc_slug) {
+                Ok(memory_ids) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "doc_slug": doc_slug,
+                        "memory_ids": memory_ids,
+                    }),
+                ),
+                Err(e) => {
+                    error!("doc/mem-refs error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+
         // ── Tags: List with counts ───────────────────────────────────────
         (Method::Get, p) if p == "/tags" || p.starts_with("/tags?") => {
-            let ns = parse_query_namespace(&path);
             match uteke.tags_with_counts(ns.as_deref()) {
                 Ok(tags) => ctx.ok_response_for(req, &tags),
                 Err(e) => {

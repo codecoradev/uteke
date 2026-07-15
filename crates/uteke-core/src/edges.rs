@@ -32,6 +32,8 @@ pub const EDGE_SUPERSEDES: &str = "supersedes";
 pub const EDGE_REPLIES_TO: &str = "replies_to";
 /// Cosine-similarity auto-link edge (#401).
 pub const EDGE_SIMILAR_TO: &str = "similar_to";
+/// Edge type for `[[doc-slug]]` document references (#689).
+pub const EDGE_REFERENCES_DOC: &str = "references_doc";
 /// Possible duplicate edge — high cosine similarity (#401).
 pub const EDGE_POSSIBLE_DUPLICATE: &str = "possible_duplicate";
 /// Inverse edge type created automatically by backlink auto-generation (#350).
@@ -47,6 +49,7 @@ pub const EDGE_REFERENCED_BY: &str = "referenced_by";
 /// infinite ping-pong.
 const BACKLINKED_EDGE_TYPES: &[&str] = &[
     EDGE_REFERENCES,
+    EDGE_REFERENCES_DOC,
     EDGE_TAGGED_AS,
     EDGE_SUPERSEDES,
     EDGE_REPLIES_TO,
@@ -446,6 +449,52 @@ impl Store {
         Ok(row)
     }
 
+    /// Resolve a slug to a document id (not memory). Returns `None` if no
+    /// document with that slug exists. Used by `wire_edges` for `[[doc-slug]]`
+    /// cross-entity linking (#689).
+    pub fn resolve_document_slug(&self, slug: &str) -> Result<Option<String>, Error> {
+        self.conn
+            .query_row(
+                "SELECT id FROM documents WHERE slug = ?1 LIMIT 1",
+                params![slug],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("resolve document slug", e))
+    }
+
+    /// Get all distinct target IDs for edges from `source_id` with a specific
+    /// edge_type. Used for cross-entity recall (#689).
+    pub fn edge_targets(&self, source_id: &str, edge_type: &str) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT target_id FROM memory_edges \
+                 WHERE source_id = ?1 AND edge_type = ?2",
+            )
+            .map_err(|e| Error::db("prepare edge_targets", e))?;
+        let rows = stmt
+            .query_map(params![source_id, edge_type], |r| r.get::<_, String>(0))
+            .map_err(|e| Error::db("query edge_targets", e))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// Get all distinct source IDs for edges pointing to `target_id` with a
+    /// specific edge_type. Used for cross-entity recall (#689).
+    pub fn edge_sources(&self, target_id: &str, edge_type: &str) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT source_id FROM memory_edges \
+                 WHERE target_id = ?1 AND edge_type = ?2",
+            )
+            .map_err(|e| Error::db("prepare edge_sources", e))?;
+        let rows = stmt
+            .query_map(params![target_id, edge_type], |r| r.get::<_, String>(0))
+            .map_err(|e| Error::db("query edge_sources", e))?;
+        Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
     /// Resolve a tag to the most recent memory id carrying that tag.
     pub fn resolve_tag_to_memory(
         &self,
@@ -589,18 +638,18 @@ impl Store {
         // Collect all forward edges first to avoid holding a read cursor
         // while we write backlinks into the same table.
         //
-        // BACKLINKED_EDGE_TYPES is fixed at 4 entries (references, tagged_as,
-        // supersedes, replies_to) — we bind them positionally.
+        // BACKLINKED_EDGE_TYPES is fixed at 5 entries (references, references_doc,
+        // tagged_as, supersedes, replies_to) — we bind them positionally.
         debug_assert_eq!(
             BACKLINKED_EDGE_TYPES.len(),
-            4,
+            5,
             "update rebuild_backlinks SQL if backlinked types change"
         );
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT source_id, target_id FROM memory_edges
-                 WHERE edge_type IN (?1, ?2, ?3, ?4)",
+                 WHERE edge_type IN (?1, ?2, ?3, ?4, ?5)",
             )
             .map_err(|e| Error::db("prepare rebuild backlinks scan", e))?;
         let rows: Vec<(String, String)> = stmt
@@ -610,6 +659,7 @@ impl Store {
                     BACKLINKED_EDGE_TYPES[1],
                     BACKLINKED_EDGE_TYPES[2],
                     BACKLINKED_EDGE_TYPES[3],
+                    BACKLINKED_EDGE_TYPES[4],
                 ],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             )
@@ -679,19 +729,37 @@ impl crate::Uteke {
         let mut resolved: Vec<(String, String)> = Vec::new();
         for r in refs {
             match r {
-                ExtractedRef::Slug(slug) => match self.store.resolve_slug(&slug, namespace) {
-                    Ok(Some(target)) => {
-                        if target != source_id {
-                            resolved.push((target, EDGE_REFERENCES.to_string()));
+                ExtractedRef::Slug(slug) => {
+                    match self.store.resolve_slug(&slug, namespace) {
+                        Ok(Some(target)) => {
+                            if target != source_id {
+                                resolved.push((target, EDGE_REFERENCES.to_string()));
+                            }
+                        }
+                        Ok(None) => {
+                            // Slug not found in memories — check documents (#689).
+                            match self.store.resolve_document_slug(&slug) {
+                                Ok(Some(doc_id)) => {
+                                    resolved
+                                        .push((doc_id, EDGE_REFERENCES_DOC.to_string()));
+                                }
+                                Ok(None) => {
+                                    tracing::debug!(
+                                        "Auto-edge: slug '{slug}' unresolved (no memory or document), skipped"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        "Auto-edge document slug resolve failed for '{slug}': {e}"
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Auto-edge slug resolve failed for '{slug}': {e}");
                         }
                     }
-                    Ok(None) => {
-                        tracing::debug!("Auto-edge: slug '{slug}' unresolved, skipped");
-                    }
-                    Err(e) => {
-                        tracing::warn!("Auto-edge slug resolve failed for '{slug}': {e}");
-                    }
-                },
+                }
                 ExtractedRef::Tag(tag) => match self.store.resolve_tag_to_memory(&tag, namespace) {
                     Ok(Some(target)) => {
                         if target != source_id {
