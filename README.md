@@ -120,6 +120,7 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | ⏳ **Time-travel** | Recall memories as they existed at any point in time. `uteke recall "deploy" --at 2025-01-15` |
 | 🏷️ **Rich Metadata** | Tags, entities, categories, key:value pairs on every memory. |
 | 🧩 **Memory Types** | Typed categories (fact, procedure, decision, etc.) with auto-inference. |
+| ✏️ **Partial Updates** | Update content, tags, metadata, importance, or type without full rewrite. |
 | 📎 **Citations** | Source attribution on every memory (URL, file, user, import batch). |
 
 ### Search & Intelligence
@@ -127,6 +128,7 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | Feature | What it does |
 |---------|-------------|
 | 🔗 **Relationship Graph** | Link memories with typed edges (supersedes, contradicts, references). Auto-backlinks. |
+| 🔗 **Cross-Entity Linking** | Bidirectional memory↔document references via `[[doc-slug]]` wikilinks. |
 | 🤖 **Cosine Auto-Linking** | Automatically creates `similar_to` edges between related memories. |
 | 📉 **Smart Decay** | Composite importance scoring. Pin what matters, let stale memories fade. |
 | 📈 **Salience + Recency** | Dual-axis recall boost by memory type and age. |
@@ -247,7 +249,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.7.2 with 206 tests, CI/CD on every commit, and benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x — expect rough edges, but the core is stable.
+Uteke is at v0.7.3 with 206 tests, CI/CD on every commit, and benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x — expect rough edges, but the core is stable.
 </details>
 
 ---

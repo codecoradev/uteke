@@ -132,7 +132,7 @@ uteke init --agent hermes  # Installs pre_llm_call hook
 
 ## Available Tools
 
-Both transports expose the same 27 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 29 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -152,6 +152,8 @@ Both transports expose the same 27 tools (MCP protocol version `2025-06-18`):
 | `uteke_doc_update` | Partial document update with chunk rebuild (#589) |
 | `uteke_doc_move` | Move document to new parent (#438) |
 | `uteke_graph` | Get nodes + edges JSON for visualization |
+| `uteke_graph_add_edge` | Create a typed edge between two memories (#542) |
+| `uteke_graph_remove_edge` | Remove an edge between two memories (#542) |
 | `uteke_room_recall` | Semantic recall within a room |
 | `uteke_room_memories` | List memories in a room (#569) |
 | `uteke_room_create` | Create a room |

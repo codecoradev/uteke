@@ -92,7 +92,8 @@ Query → Recall Cache check (TTL 5min, LRU 256)
                             ↓
                     Tier boost (+0.1 hot)
                             ↓
-                    Entity/category filter
+                    Entity/category filter (#667)
+                    (pushed into core recall loop)
                             ↓
                     Ranked results
 ```
@@ -135,6 +136,30 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 |----------|--------|------|-------------|
 | `/doc/update` | POST | Write | Partial document update with chunk rebuild |
 
+### Memory Mutation (v0.7.4)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/memory` | PUT | Write | Partial memory update (content, tags, metadata, importance, pinned, memory_type) |
+| `/memory/pin` | POST | Write | Pin or unpin a memory by ID |
+| `/memory/importance` | POST | Write | Set importance score (0.0–1.0) for a memory |
+
+### Room ↔ Document Junction (v0.7.4)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/room/document/list` | POST | Read | List document slugs linked to a room |
+| `/room/document/add` | PUT | Write | Link a document to a room |
+| `/room/document/remove` | DELETE | Write | Unlink a document from a room |
+| `/doc/room/list` | POST | Read | List rooms linked to a document |
+
+### Cross-Entity References (v0.7.4)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/memory/doc-refs` | POST | Read | Get document slugs referenced by a memory |
+| `/doc/mem-refs` | POST | Read | Get memory IDs that reference a document |
+
 ## Key Design Decisions
 
 ### RwLock for Vector Index (not Mutex)
@@ -167,11 +192,13 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v13. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant), v13 global documents (namespace deprecated, author column, slug uniqueness). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v15. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant), v13 global documents (namespace deprecated, author column, slug uniqueness), v14 `memory_type` added to FTS5 index (#662), v15 `room_documents` junction table for room↔document linking (#689). Zero data loss guaranteed.
 
 ### Rooms
 
 Rooms group related memories with author attribution. Stored in `rooms` and `room_memories` tables (schema v4). Semantic room recall over-fetches via `recall_hybrid()`, then post-filters to room memory IDs. Room summaries use tag co-occurrence clustering — no LLM call required. Room documents group memories by `memory_type` into sections (Decisions, Facts, Procedures, etc).
+
+Rooms can also be linked to documents via the `room_documents` junction table (schema v15, #689), enabling bidirectional room↔document associations. Documents reference memories via `[[doc-slug]]` wikilinks, which are auto-resolved to cross-entity edges (#691).
 
 ### Memory Types (#349)
 
