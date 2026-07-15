@@ -1355,4 +1355,38 @@ mod dedup_tests {
             .unwrap();
         assert_ne!(id1, id2, "different namespace should not dedup");
     }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_contradiction_remembers_metadata() {
+        // Regression: remember_with_contradiction must pass metadata through
+        // to remember_precomputed (was dropping it as None).
+        let uteke = Uteke::open(":memory:").unwrap();
+        let meta = Some(serde_json::json!({
+            "entity": "test-app",
+            "category": "integration"
+        }));
+        let (id, _contradiction) = uteke
+            .remember_with_contradiction(
+                "Contradiction metadata test content",
+                &[],
+                meta,
+                Some("meta-test"),
+                None,
+                true,
+                0.65,
+            )
+            .unwrap();
+        // Retrieve and verify metadata was stored
+        let memory = uteke
+            .get_by_id(&id)
+            .expect("get_by_id should not error")
+            .expect("memory should exist");
+        let obj = memory
+            .metadata
+            .as_object()
+            .expect("metadata should be object");
+        assert_eq!(obj.get("entity").unwrap(), "test-app");
+        assert_eq!(obj.get("category").unwrap(), "integration");
+    }
 }
