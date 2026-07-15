@@ -35,8 +35,8 @@ pub use chunker::{
 };
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
-    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC,
-    EDGE_REPLIES_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS,
+    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES,
+    EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS,
 };
 pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
@@ -1652,8 +1652,7 @@ impl Uteke {
             Some(d) => d.id,
             None => return Ok(Vec::new()),
         };
-        self.store
-            .edge_sources(&doc_id, EDGE_REFERENCES_DOC)
+        self.store.edge_sources(&doc_id, EDGE_REFERENCES_DOC)
     }
 
     /// Recall document slugs referenced by a memory via `[[doc-slug]]` wikilinks.

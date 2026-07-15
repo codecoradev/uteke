@@ -740,8 +740,7 @@ impl crate::Uteke {
                             // Slug not found in memories — check documents (#689).
                             match self.store.resolve_document_slug(&slug) {
                                 Ok(Some(doc_id)) => {
-                                    resolved
-                                        .push((doc_id, EDGE_REFERENCES_DOC.to_string()));
+                                    resolved.push((doc_id, EDGE_REFERENCES_DOC.to_string()));
                                 }
                                 Ok(None) => {
                                     tracing::debug!(
