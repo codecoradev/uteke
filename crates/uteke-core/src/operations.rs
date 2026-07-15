@@ -855,7 +855,7 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         let memories = self.store.search_content(query, namespace, limit)?;
 
-        let results = memories
+        let results: Vec<SearchResult> = memories
             .into_iter()
             .filter(|memory| {
                 if let Some(filter_tags) = tags_filter {
@@ -871,6 +871,11 @@ impl crate::Uteke {
                 score: 1.0, // Text search doesn't have meaningful scores
             })
             .collect();
+
+        // Touch access for returned results
+        for r in &results {
+            self.store.touch_access(&r.memory.id).ok();
+        }
 
         Ok(results)
     }
