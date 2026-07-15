@@ -131,14 +131,16 @@ impl crate::Uteke {
     }
 
     pub fn get_related(&self, memory_id: &str) -> Result<Vec<Memory>, Error> {
-        // Prefer edge table (v8, #346) — indexed SQL, O(log n) per hop.
-        // Union with legacy JSON metadata scan so we never lose relations
-        // that exist in metadata but not (yet) in the edge table (e.g. a
-        // store that predates v8 auto-wiring, or refs we couldn't resolve).
+        // Use edge table (v8, #346) — indexed SQL, O(log n) per hop.
+        // edge_bfs() uses UNION on source_id/target_id so both directions
+        // are covered. No need for a full-table scan.
         let mut related = self.related_via_edges(memory_id, 1)?;
         let mut seen: HashSet<String> = related.iter().map(|m| m.id.clone()).collect();
         seen.insert(memory_id.to_string());
 
+        // Fallback: forward-only metadata scan for pre-v8 stores that may
+        // have relationships only in JSON metadata, not yet in the edge table.
+        // This is O(degree) — only reads the single memory, not the full table.
         if let Some(memory) = self.get_by_id(memory_id)? {
             for rel in parse_relationships(&memory) {
                 if !seen.contains(&rel.target) {
@@ -150,19 +152,6 @@ impl crate::Uteke {
             }
         }
 
-        let all_memories = self.store.load_all(None)?;
-        for m in all_memories {
-            if seen.contains(&m.id) {
-                continue;
-            }
-            for rel in parse_relationships(&m) {
-                if rel.target == memory_id {
-                    seen.insert(m.id.clone());
-                    related.push(m);
-                    break;
-                }
-            }
-        }
         Ok(related)
     }
 }
