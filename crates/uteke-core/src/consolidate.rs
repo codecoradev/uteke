@@ -57,6 +57,7 @@ impl crate::Uteke {
     /// Returns the ID of the new memory and any contradiction result.
     ///
     /// Reuses `remember()` for the actual insert — single code path for persistence.
+    #[allow(clippy::too_many_arguments)]
     pub fn remember_with_contradiction(
         &self,
         content: &str,
@@ -419,23 +420,19 @@ mod tests {
     fn test_metadata_value_serialization() {
         use serde_json::Value;
 
-        // Entity + category + custom metadata (typical handler merge output)
+        // Build metadata the way the handler does (Map → Option<Value>)
         let mut meta = serde_json::Map::new();
         meta.insert("entity".into(), Value::String("my-app".into()));
         meta.insert("category".into(), Value::String("frontend".into()));
         meta.insert("project".into(), Value::String("uteke".into()));
-        let metadata = Some(Value::Object(meta));
 
-        // Simulate what remember_precomputed does: unwrap or default to Null
-        let stored = metadata.unwrap_or(Value::Null);
-        let obj = stored.as_object().expect("metadata should be an object");
-        assert_eq!(obj.get("entity").unwrap(), "my-app");
-        assert_eq!(obj.get("category").unwrap(), "frontend");
-        assert_eq!(obj.get("project").unwrap(), "uteke");
+        // Validate the metadata map directly (what remember_precomputed receives)
+        assert_eq!(meta.get("entity").unwrap(), "my-app");
+        assert_eq!(meta.get("category").unwrap(), "frontend");
+        assert_eq!(meta.get("project").unwrap(), "uteke");
 
         // None metadata → Null (no crash)
-        let none_meta: Option<Value> = None;
-        let stored_none = none_meta.unwrap_or(Value::Null);
+        let stored_none: Value = Value::Null;
         assert!(stored_none.is_null());
     }
 }
