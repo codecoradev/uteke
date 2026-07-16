@@ -4,27 +4,33 @@
 
 ## Architecture
 
-Uteke integrates with Hermes in three ways. Pick the one that matches how you
+Uteke integrates with Hermes in three modes. Pick the one that matches how you
 want memory to behave.
 
 ```
 Hermes Agent
-├── uteke-tool (opt-in)            → manual uteke(action=...) calls via uteke-serve
-└── uteke memory-provider (opt-in) → automatic recall + extraction, no daemon
+├── Mode A: uteke-tool (recommended)  → manual uteke(action=...) calls via uteke-serve
+├── Mode C: shell hook (recommended)   → automatic recall on pre_llm_call, no daemon
+└── Mode B: memory-provider (deprecated — Hermes only, removed 2026-06-29)
 ```
 
-| | `uteke-tool` | memory-provider |
-|---|---|---|
-| Install | `uteke init --agent hermes` | `uteke init --agent hermes --memory-provider` |
-| Invocation | Agent calls `uteke(action="recall", ...)` explicitly | Automatic — recall injected every turn |
-| Capture | Agent decides what to store | Auto-extracts facts on session end / pre-compress |
-| Transport | HTTP to `uteke-serve` daemon | Direct subprocess to the `uteke` binary |
-| Daemon | Requires `uteke-serve` running | None |
-| Rooms / multi-agent | Yes | No (single-agent memory) |
-| Best for | Explicit, on-demand memory + multi-agent rooms | Replacing Hermes's default memory entirely |
+| | Mode A (uteke-tool) | Mode C (shell hook) | ~~Mode B~~ (memory-provider) |
+|---|---|---|---|
+| Install | `uteke init --agent hermes` | Write handler script | ~~`uteke init --agent hermes --memory-provider`~~ |
+| Invocation | Agent calls `uteke(action="recall")` | Automatic (hook) | ~~Automatic (provider)~~ |
+| Capture | Agent decides what to store | Manual (`uteke remember`) | ~~Auto-extract on session end~~ |
+| Transport | HTTP to `uteke-serve` | CLI subprocess | ~~CLI subprocess~~ |
+| Daemon | Requires `uteke-serve` | No | ~~No~~ |
+| Rooms / multi-agent | Yes | Yes (via uteke-serve) | ~~No~~ |
+| Best for | Explicit, on-demand memory | Lightweight auto-recall | ~~Drop-in replacement~~ |
 
-You can run the tool plugin and the memory-provider side by side — they read
-the same uteke store, just through different paths.
+**Recommended:** Mode A + Mode C side by side — automatic recall via hook, manual
+store via tool. Both read the same uteke store.
+
+> **Mode B removed for Hermes.** The memory-provider plugin was removed on
+> 2026-06-29. Use Mode A + Mode C instead. The `--memory-provider` pattern
+> remains supported for **pi**, **Claude Code**, and **Cursor** — see
+> [Memory-Provider for Other Agents](#memory-provider-for-other-agents).
 
 ## Mode A — uteke-tool (manual actions, multi-agent rooms)
 
@@ -218,9 +224,9 @@ hermes mcp add uteke --command uteke-mcp
 | `room_stats` | Room statistics |
 | `room_delete` | Delete a room |
 
-## Memory-Provider for Other Agents (#575/#577)
+## Memory-Provider for Other Agents
 
-The `--memory-provider` pattern also works for non-Hermes agents:
+The `--memory-provider` pattern also works for non-Hermes agents (#575, #577):
 
 ```bash
 # pi (pi.dev)
@@ -236,105 +242,19 @@ uteke init --agent cursor --memory-provider
 This installs uteke as the agent's default memory provider — relevant memories are recalled and injected automatically every turn. No daemon needed; talks to the `uteke` binary directly via subprocess.
 
 > **Note:** For Hermes, use Mode A (uteke-tool) or Mode C (shell hook) instead — the
-> Hermes memory-provider plugin has been removed (see [Mode B](#mode-b--memory-provider-uteke-as-hermes-default-memory)).
+> Hermes memory-provider plugin has been removed (see [Mode B](#mode-b--memory-provider-deprecated)).
 
-## Mode B — memory-provider (uteke as Hermes default memory)
+## ~~Mode B~~ — memory-provider (deprecated)
 
-> **DEPRECATED — Hermes only (removed 2026-06-29)**
+> **DEPRECATED for Hermes (removed 2026-06-29).** Use [Mode A](#mode-a--uteke-tool-manual-actions-multi-agent-rooms) +
+> [Mode C](#mode-c--pre_llm_call-shell-hook-automatic-recall-no-plugin) instead.
 >
-> The Hermes-specific memory-provider plugin (Mode B) has been removed from production
-> deployments. The plugin files and `memory.provider: uteke` configuration are no longer
-> supported for Hermes.
+> The `--memory-provider` pattern remains supported for **pi**, **Claude Code**, and **Cursor**.
+> See [Memory-Provider for Other Agents](#memory-provider-for-other-agents).
 >
-> **This deprecation applies only to the Hermes memory-provider plugin.** The general
-> memory-provider pattern (`uteke init --agent <agent> --memory-provider`) remains
-> fully supported for **pi**, **Claude Code**, and **Cursor** (#575/#577).
->
-> **Migrate to:** [Mode A (uteke-tool)](#mode-a--uteke-tool-manual-actions-multi-agent-rooms) for manual
-> tool-based memory, or [Mode C (shell hook)](#mode-c--pre_llm_call-shell-hook-automatic-recall-no-plugin)
-> for automatic recall. For MCP-based integration, use the [MCP Server](#mcp-server-alternative) with
-> [client configuration examples](#mcp-client-configuration-examples).
->
-> The documentation below is kept for historical reference only.
-
-This mode makes uteke Hermes's long-term memory backend. There are no manual
-`uteke(...)` calls: relevant memories are recalled and injected into the prompt
-automatically every turn, and the transcript is distilled into atomic facts
-when a session ends or is about to be compacted. It talks to the `uteke` binary
-directly, so no `uteke-serve` daemon is needed.
-
-### 1. Install uteke
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
-```
-
-### 2. Generate the memory-provider plugin
-
-```bash
-uteke init --agent hermes --memory-provider
-```
-
-This writes `~/.hermes/plugins/uteke/`:
-- `__init__.py` — the `MemoryProvider` implementation (`register()` entry point)
-- `plugin.yaml` — manifest declaring the `on_session_end` / `on_pre_compress` hooks
-
-### 3. Set uteke as the memory provider
-
-In `~/.hermes/config.yaml` (or a per-profile config):
-
-```yaml
-memory:
-  provider: uteke
-```
-
-Only one external memory provider can be active at a time. Setting this
-replaces Hermes's built-in memory with uteke.
-
-### 4. (Optional) Enable LLM fact extraction
-
-Recall works fully offline with no extra config. To also distill sessions into
-atomic facts on session end, configure an OpenAI-compatible chat endpoint in
-`~/.hermes/uteke.json`:
-
-```json
-{
-  "namespace": "default",
-  "extract": true,
-  "extract_model": "your-chat-model",
-  "extract_base_url": "https://your-endpoint/v1",
-  "extract_api_key": "sk-..."
-}
-```
-
-Equivalent environment variables also work: `UTEKE_NAMESPACE`,
-`UTEKE_EXTRACT`, `UTEKE_EXTRACT_MODEL`, `UTEKE_EXTRACT_BASE_URL`,
-`UTEKE_EXTRACT_API_KEY`, `UTEKE_BIN`, `UTEKE_HOME`, `UTEKE_RECALL_LIMIT`,
-`UTEKE_RECALL_MIN_SCORE`. Extraction is opt-in: with `extract` off (the
-default), the plugin only recalls and never makes a network call.
-
-### 5. Start a new Hermes session
-
-The plugin loads automatically. You should see a "Memory provider 'uteke'
-activated" line in the logs. From then on, recall is automatic.
-
-### Configuration reference (memory-provider)
-
-| Key (`uteke.json`) | Env var | Default | Description |
-|---|---|---|---|
-| `bin` | `UTEKE_BIN` | search `PATH` | Path to the `uteke` binary |
-| `uteke_home` | `UTEKE_HOME` | process `HOME` | Dir holding the `~/.uteke` store |
-| `namespace` | `UTEKE_NAMESPACE` | `default` | Memory namespace |
-| `extract` | `UTEKE_EXTRACT` | `true` | Run LLM extraction on session end |
-| `extract_model` | `UTEKE_EXTRACT_MODEL` | — | Chat model for extraction |
-| `extract_base_url` | `UTEKE_EXTRACT_BASE_URL` | — | OpenAI-compatible base URL |
-| `extract_api_key` | `UTEKE_EXTRACT_API_KEY` | — | API key (secret) |
-| `recall_limit` | `UTEKE_RECALL_LIMIT` | `6` | Memories prefetched per turn |
-| `recall_min_score` | `UTEKE_RECALL_MIN_SCORE` | `0.45` | Drop recall hits below this score |
-
-The provider has a built-in circuit breaker: after repeated subprocess
-failures it pauses calls for a cooldown so a misconfigured endpoint or missing
-binary never blocks the agent.
+> Historical reference: Mode B made uteke Hermes's long-term memory backend via
+> `uteke init --agent hermes --memory-provider` + `memory.provider: uteke` config.
+> Automatic recall every turn, auto-extract facts on session end. No daemon needed.
 
 ## Configuration (uteke-tool)
 
@@ -506,22 +426,21 @@ No stdout (exit 0) = observer mode, no injection.
 
 ### Mode Comparison Summary
 
-| | Mode A | Mode B | Mode C |
-|--|--------|--------|--------|
-| **What** | Manual tool | Full memory provider | Shell hook (recall only) |
-| **Recall** | Agent calls `uteke(action="recall")` | Automatic | Automatic (via hook) |
-| **Extraction** | Manual `uteke(action="remember")` | Automatic (session end) | Manual (combine with Mode A) |
-| **Daemon** | `uteke-serve` required | No | No |
-| **Replaces Hermes memory** | No | Yes | No |
-| **Best for** | On-demand memory, multi-agent rooms | Drop-in replacement for Hermes memory | Lightweight auto-recall, complements existing memory |
+| | Mode A | Mode C | ~~Mode B~~ |
+|---|---|---|---|
+| **What** | Manual tool | Shell hook (recall only) | ~~Full memory provider~~ |
+| **Recall** | Agent calls `uteke(action="recall")` | Automatic (via hook) | ~~Automatic~~ |
+| **Extraction** | Manual `uteke(action="remember")` | Manual (combine with Mode A) | ~~Automatic (session end)~~ |
+| **Daemon** | `uteke-serve` required | No | ~~No~~ |
+| **Replaces Hermes memory** | No | No | ~~Yes~~ |
+| **Best for** | On-demand memory, multi-agent rooms | Lightweight auto-recall | ~~Drop-in replacement~~ |
 
-**Recommended combo:** Mode A + Mode C — automatic recall via hook, manual
+**Recommended:** Mode A + Mode C — automatic recall via hook, manual
 store via tool. Keeps Hermes's built-in memory while adding uteke recall.
 
 ## Requirements
 
 - uteke v0.3.0+ (includes `uteke-mcp` binary)
 - Mode A (`uteke-tool`): `uteke-serve` running (daemon mode)
-- Mode B (memory-provider): no daemon; just the `uteke` binary on `PATH`
-- Mode C (shell hook): just the `uteke` binary on `PATH`, no daemon
+- Mode C (shell hook): `uteke` binary on `PATH`, no daemon
 - Python 3.7+ (stdlib only — no pip install needed)

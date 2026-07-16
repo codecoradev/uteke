@@ -904,7 +904,39 @@ impl super::Store {
     // ── Room ↔ Document junction table (v15, #689) ──────────────────────
 
     /// Link a document to a room. No-op if already linked.
+    ///
+    /// Validates that both `room_id` and `doc_slug` reference existing rows.
+    /// The `room_documents` table enforces an FK on `room_id` (→ rooms) but
+    /// has none on `doc_slug`, so both are checked here to return a clean
+    /// `Validation` error (→ 400) rather than a dangling insert or a raw FK
+    /// violation surfacing as a 500 (#698).
     pub fn room_add_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        let room_exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM rooms WHERE id = ?1)",
+                params![room_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("room_add_document room check", e))?;
+        if !room_exists {
+            return Err(Error::validation(format!("Unknown room: {room_id}")));
+        }
+
+        let doc_exists: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM documents WHERE slug = ?1)",
+                params![doc_slug],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("room_add_document doc check", e))?;
+        if !doc_exists {
+            return Err(Error::validation(format!(
+                "Unknown document slug: {doc_slug}"
+            )));
+        }
+
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
