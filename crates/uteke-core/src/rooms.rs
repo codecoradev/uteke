@@ -170,7 +170,6 @@ impl crate::Uteke {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     /// Create an Uteke instance backed by an in-memory store.
     /// The embedder is lazy-loaded on first use, so tests that only

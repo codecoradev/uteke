@@ -986,7 +986,8 @@ impl super::Store {
 #[cfg(test)]
 mod tests {
     use super::super::Store;
-    use super::*;
+    use super::Room;
+    use crate::memory::documents::Document;
     use crate::memory::types::Memory;
     use chrono::Utc;
 
@@ -1024,6 +1025,28 @@ mod tests {
         let mut m = make_test_memory(id, content, tags);
         m.memory_type = memory_type.to_string();
         m
+    }
+
+    fn make_test_document(slug: &str, title: &str) -> Document {
+        Document {
+            id: slug.to_string(),
+            slug: slug.to_string(),
+            title: title.to_string(),
+            content: format!("# {}\nContent for {}", title, title),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: format!("/{}/", slug),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        }
     }
 
     // ── CRUD tests ─────────────────────────────────────────────
@@ -1517,6 +1540,10 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         store.create_room("rd-room", None, "default").unwrap();
 
+        // Documents must exist before attaching to rooms
+        store.upsert_document(&make_test_document("doc-a", "Doc A")).unwrap();
+        store.upsert_document(&make_test_document("doc-b", "Doc B")).unwrap();
+
         store.room_add_document("rd-room", "doc-a").unwrap();
         store.room_add_document("rd-room", "doc-b").unwrap();
 
@@ -1531,6 +1558,7 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         store.create_room("idem-doc-room", None, "default").unwrap();
 
+        store.upsert_document(&make_test_document("doc-x", "Doc X")).unwrap();
         store.room_add_document("idem-doc-room", "doc-x").unwrap();
         store.room_add_document("idem-doc-room", "doc-x").unwrap();
 
@@ -1543,6 +1571,7 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         store.create_room("rem-doc-room", None, "default").unwrap();
 
+        store.upsert_document(&make_test_document("doc-r", "Doc R")).unwrap();
         store.room_add_document("rem-doc-room", "doc-r").unwrap();
         store.room_remove_document("rem-doc-room", "doc-r").unwrap();
 
@@ -1556,6 +1585,7 @@ mod tests {
         store.create_room("dlr-room1", None, "default").unwrap();
         store.create_room("dlr-room2", None, "default").unwrap();
 
+        store.upsert_document(&make_test_document("shared-doc", "Shared")).unwrap();
         store.room_add_document("dlr-room1", "shared-doc").unwrap();
         store.room_add_document("dlr-room2", "shared-doc").unwrap();
 
