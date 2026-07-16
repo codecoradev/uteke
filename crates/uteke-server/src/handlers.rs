@@ -989,10 +989,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             match read_body::<RoomDocAddReq>(req.as_reader()) {
                 Ok(req_data) => match uteke.room_add_document(&req_data.room_id, &req_data.doc_slug) {
                     Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "linked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => match e {
+                        uteke_core::Error::Validation(_) => {
+                            ctx.error_response_for(req, 400, e.to_string())
+                        }
+                        _ => {
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    },
                 },
                 Err(e) => ctx.error_response_for(req, 400, e),
             }
