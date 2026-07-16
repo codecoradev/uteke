@@ -89,7 +89,7 @@ crates/uteke-server/src/
 ### Schema Versioning
 
 - `schema_version` table with integer counter
-- Current: **v13** (global documents, author column, duplicate slug cleanup)
+- Current: **v15** (room↔document junction table — #689)
 - Auto-migration on upgrade, zero data loss
 
 ---
