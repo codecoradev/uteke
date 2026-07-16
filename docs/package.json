@@ -12,7 +12,7 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@codecora/theme": "github:codecoradev/codecora-theme",
+    "@codecora/theme": "github:codecoradev/codecora-theme#feat/add-ci-workflow",
     "vitepress": "^1.6.4",
     "vue": "^3.5.35"
   }
