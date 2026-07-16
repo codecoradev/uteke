@@ -38,6 +38,9 @@ pub struct RoomSummary {
     pub top_tags: Vec<crate::memory::types::TagInfo>,
     pub recent_decisions: Vec<String>,
     pub pinned_highlights: Vec<String>,
+    /// Document slugs linked to this room via the room_documents junction table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub referenced_documents: Option<Vec<String>>,
 }
 
 /// Time range of memories in a room.
@@ -465,6 +468,7 @@ impl super::Store {
                 top_tags: vec![],
                 recent_decisions: vec![],
                 pinned_highlights: vec![],
+                referenced_documents: None,
             }));
         }
 
@@ -708,7 +712,20 @@ impl super::Store {
             top_tags,
             recent_decisions,
             pinned_highlights: pinned,
+            referenced_documents: None,
         }))
+    }
+
+    /// Return a RoomSummary with referenced_documents populated from the junction table.
+    pub fn room_summary_with_docs(&self, room_id: &str) -> Result<Option<RoomSummary>, Error> {
+        let summary = match self.room_summary(room_id)? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let docs = self.room_list_documents(room_id)?;
+        let mut enriched = summary;
+        enriched.referenced_documents = if docs.is_empty() { None } else { Some(docs) };
+        Ok(Some(enriched))
     }
 
     /// Delete a room and all its memory links (CASCADE).
@@ -1602,5 +1619,61 @@ mod tests {
         assert_eq!(rooms.len(), 2);
         assert!(rooms.contains(&"dlr-room1".to_string()));
         assert!(rooms.contains(&"dlr-room2".to_string()));
+    }
+
+    // ── room_summary_with_docs ────────────────────────────────────
+
+    #[test]
+    fn room_summary_with_docs_returns_documents() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("summary-doc-room", None, "default")
+            .unwrap();
+        // Create documents
+        store
+            .upsert_document(&make_test_document("doc-alpha", "Doc Alpha"))
+            .unwrap();
+        store
+            .upsert_document(&make_test_document("doc-beta", "Doc Beta"))
+            .unwrap();
+        // Link documents to room
+        store
+            .room_add_document("summary-doc-room", "doc-alpha")
+            .unwrap();
+        store
+            .room_add_document("summary-doc-room", "doc-beta")
+            .unwrap();
+        // Get summary with docs
+        let summary = store
+            .room_summary_with_docs("summary-doc-room")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            summary.referenced_documents,
+            Some(vec!["doc-alpha".to_string(), "doc-beta".to_string()])
+        );
+    }
+
+    #[test]
+    fn room_summary_with_docs_empty_room_returns_none_docs() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("summary-empty-room", None, "default")
+            .unwrap();
+        // No documents linked
+        let summary = store
+            .room_summary_with_docs("summary-empty-room")
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary.referenced_documents, None);
+    }
+
+    #[test]
+    fn room_summary_with_docs_nonexistent_returns_none() {
+        let store = Store::open(":memory:").unwrap();
+        assert!(store
+            .room_summary_with_docs("nonexistent-room")
+            .unwrap()
+            .is_none());
     }
 }
