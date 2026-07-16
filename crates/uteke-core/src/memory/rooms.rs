@@ -1541,8 +1541,12 @@ mod tests {
         store.create_room("rd-room", None, "default").unwrap();
 
         // Documents must exist before attaching to rooms
-        store.upsert_document(&make_test_document("doc-a", "Doc A")).unwrap();
-        store.upsert_document(&make_test_document("doc-b", "Doc B")).unwrap();
+        store
+            .upsert_document(&make_test_document("doc-a", "Doc A"))
+            .unwrap();
+        store
+            .upsert_document(&make_test_document("doc-b", "Doc B"))
+            .unwrap();
 
         store.room_add_document("rd-room", "doc-a").unwrap();
         store.room_add_document("rd-room", "doc-b").unwrap();
@@ -1558,7 +1562,9 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         store.create_room("idem-doc-room", None, "default").unwrap();
 
-        store.upsert_document(&make_test_document("doc-x", "Doc X")).unwrap();
+        store
+            .upsert_document(&make_test_document("doc-x", "Doc X"))
+            .unwrap();
         store.room_add_document("idem-doc-room", "doc-x").unwrap();
         store.room_add_document("idem-doc-room", "doc-x").unwrap();
 
@@ -1571,7 +1577,9 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         store.create_room("rem-doc-room", None, "default").unwrap();
 
-        store.upsert_document(&make_test_document("doc-r", "Doc R")).unwrap();
+        store
+            .upsert_document(&make_test_document("doc-r", "Doc R"))
+            .unwrap();
         store.room_add_document("rem-doc-room", "doc-r").unwrap();
         store.room_remove_document("rem-doc-room", "doc-r").unwrap();
 
@@ -1585,7 +1593,9 @@ mod tests {
         store.create_room("dlr-room1", None, "default").unwrap();
         store.create_room("dlr-room2", None, "default").unwrap();
 
-        store.upsert_document(&make_test_document("shared-doc", "Shared")).unwrap();
+        store
+            .upsert_document(&make_test_document("shared-doc", "Shared"))
+            .unwrap();
         store.room_add_document("dlr-room1", "shared-doc").unwrap();
         store.room_add_document("dlr-room2", "shared-doc").unwrap();
 
