@@ -284,6 +284,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         search_type,
                         entity_filter,
                         category_filter,
+                        req_data.enrich,
                     ))
                 } else {
                     None
