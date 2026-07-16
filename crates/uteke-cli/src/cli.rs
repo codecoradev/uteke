@@ -413,6 +413,18 @@ pub enum Commands {
         #[arg(long, short)]
         yes: bool,
     },
+    /// Interactive onboarding — detect install, pick agent, toggle features, showcase
+    Onboard {
+        /// Skip interactive prompts and use defaults (non-TTY mode)
+        #[arg(long)]
+        yes: bool,
+        /// Agent to configure (skip agent selection prompt)
+        #[arg(long)]
+        agent: Option<String>,
+        /// Namespace to use (skip namespace prompt)
+        #[arg(long)]
+        namespace: Option<String>,
+    },
 }
 
 /// Document subcommands (#411, #438).

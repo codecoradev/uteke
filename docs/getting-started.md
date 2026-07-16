@@ -22,6 +22,31 @@ Pre-built binaries and Docker image also available from [GitHub Releases](https:
 
 > 💡 **Using Docker?** See the [Docker guide](docker.md) for `docker compose` setup, env vars, and persistence.
 
+## Interactive Onboarding
+
+New to uteke? Run the onboarding wizard — it detects your install, asks which AI agent you use, toggles features on/off, writes your config, and shows a full feature showcase:
+
+```bash
+uteke onboard
+```
+
+Non-interactive mode (use defaults, skip prompts):
+
+```bash
+uteke onboard --yes --agent hermes --namespace default
+```
+
+The wizard covers:
+
+1. **Install detection** — checks if `uteke` is on PATH and if a store exists
+2. **Agent selection** — Hermes, Claude, Cursor, Pi, or OpenCode
+3. **Integration mode** — manual tool (explicit calls) vs memory-provider (auto recall + extraction)
+4. **Namespace** — for multi-agent isolation
+5. **Feature toggles** — Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode
+6. **Config write** — generates `~/.uteke/uteke.toml` with your choices
+7. **Agent init** — runs `uteke init --agent <your-choice>` automatically
+8. **Feature showcase** — prints all uteke commands grouped by category
+
 ## Your First Memory
 
 ```bash

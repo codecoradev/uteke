@@ -321,5 +321,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         Commands::Doc { command } => crate::commands::doc::run(cli, uteke, command, config),
 
         Commands::Upgrade { yes } => upgrade::run(*yes),
+
+        // Onboard is handled in main.rs (early exit, no store needed).
+        Commands::Onboard { .. } => Ok(()),
     }
 }
