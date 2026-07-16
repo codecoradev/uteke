@@ -982,3 +982,625 @@ impl super::Store {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::Store;
+    use crate::memory::documents::Document;
+    use crate::memory::types::Memory;
+    use chrono::Utc;
+
+    fn make_test_memory(id: &str, content: &str, tags: &[&str]) -> Memory {
+        Memory {
+            id: id.to_string(),
+            content: content.to_string(),
+            embedding: vec![0.1; 768],
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            metadata: serde_json::json!({}),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
+            access_count: 0,
+            last_accessed: None,
+            deprecated: false,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
+            content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
+        }
+    }
+
+    fn make_test_memory_with_type(
+        id: &str,
+        content: &str,
+        tags: &[&str],
+        memory_type: &str,
+    ) -> Memory {
+        let mut m = make_test_memory(id, content, tags);
+        m.memory_type = memory_type.to_string();
+        m
+    }
+
+    fn make_test_document(slug: &str, title: &str) -> Document {
+        Document {
+            id: slug.to_string(),
+            slug: slug.to_string(),
+            title: title.to_string(),
+            content: format!("# {}\nContent for {}", title, title),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: format!("/{}/", slug),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        }
+    }
+
+    // ── CRUD tests ─────────────────────────────────────────────
+
+    #[test]
+    fn create_room_success() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("room-1", Some("Test Room"), "default")
+            .unwrap();
+        let room = store.get_room("room-1").unwrap().unwrap();
+        assert_eq!(room.id, "room-1");
+        assert_eq!(room.title, Some("Test Room".to_string()));
+        assert_eq!(room.namespace, "default");
+    }
+
+    #[test]
+    fn create_room_duplicate_errors() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("room-x", None, "default").unwrap();
+        let result = store.create_room("room-x", None, "default");
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("Room already exists"), "error: {err_msg}");
+    }
+
+    #[test]
+    fn get_room_found() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("room-g", Some("Found"), "ns1").unwrap();
+        let room = store.get_room("room-g").unwrap().unwrap();
+        assert_eq!(room.title, Some("Found".to_string()));
+    }
+
+    #[test]
+    fn get_room_not_found() {
+        let store = Store::open(":memory:").unwrap();
+        let room = store.get_room("nonexistent").unwrap();
+        assert!(room.is_none());
+    }
+
+    #[test]
+    fn list_rooms_all() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("r1", Some("One"), "ns1").unwrap();
+        store.create_room("r2", Some("Two"), "ns2").unwrap();
+        store.create_room("r3", None, "ns1").unwrap();
+        let rooms = store.list_rooms(None).unwrap();
+        assert_eq!(rooms.len(), 3);
+    }
+
+    #[test]
+    fn list_rooms_filtered_by_namespace() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("r1", Some("One"), "ns1").unwrap();
+        store.create_room("r2", Some("Two"), "ns2").unwrap();
+        store.create_room("r3", None, "ns1").unwrap();
+        let rooms = store.list_rooms(Some("ns1")).unwrap();
+        assert_eq!(rooms.len(), 2);
+        for r in &rooms {
+            assert_eq!(r.namespace, "ns1");
+        }
+    }
+
+    #[test]
+    fn delete_room_success() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("del-me", None, "default").unwrap();
+        store.delete_room("del-me").unwrap();
+        assert!(store.get_room("del-me").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_room_not_found_errors() {
+        let store = Store::open(":memory:").unwrap();
+        let result = store.delete_room("ghost");
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(err_msg.contains("Room not found"), "error: {err_msg}");
+    }
+
+    #[test]
+    fn delete_room_cascades_room_memories() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("cascade-room", None, "default").unwrap();
+        let m = make_test_memory("mem-1", "hello", &["tag"]);
+        store.insert(&m).unwrap();
+        store
+            .link_memory_to_room("cascade-room", "mem-1", "alice", "participant")
+            .unwrap();
+
+        let ids = store.get_room_memory_ids("cascade-room", None).unwrap();
+        assert_eq!(ids.len(), 1);
+
+        store.delete_room("cascade-room").unwrap();
+        // Memory itself survives — only the room_memories link is cascade-deleted
+        assert!(store.get_by_id("mem-1").unwrap().is_some());
+        // Room is gone, so recall_room should return empty (room doesn't exist)
+        assert!(store.get_room("cascade-room").unwrap().is_none());
+    }
+
+    // ── room_memories (link/recall/stats) ───────────────────────
+
+    #[test]
+    fn link_memory_to_room() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("link-room", None, "default").unwrap();
+        let m = make_test_memory("mem-l", "linked", &[]);
+        store.insert(&m).unwrap();
+        store
+            .link_memory_to_room("link-room", "mem-l", "bob", "participant")
+            .unwrap();
+
+        let ids = store.get_room_memory_ids("link-room", None).unwrap();
+        assert_eq!(ids, vec!["mem-l".to_string()]);
+    }
+
+    #[test]
+    fn link_memory_to_room_idempotent() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("idem-room", None, "default").unwrap();
+        let m = make_test_memory("mem-idem", "idempotent", &[]);
+        store.insert(&m).unwrap();
+
+        store
+            .link_memory_to_room("idem-room", "mem-idem", "alice", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("idem-room", "mem-idem", "alice", "participant")
+            .unwrap();
+
+        let ids = store.get_room_memory_ids("idem-room", None).unwrap();
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn link_memory_updates_room_updated_at() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("ts-room", None, "default").unwrap();
+        let room_before = store.get_room("ts-room").unwrap().unwrap();
+        let before = room_before.updated_at.clone();
+
+        let m = make_test_memory("mem-ts", "ts", &[]);
+        store.insert(&m).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        store
+            .link_memory_to_room("ts-room", "mem-ts", "alice", "participant")
+            .unwrap();
+
+        let room_after = store.get_room("ts-room").unwrap().unwrap();
+        assert_ne!(before, room_after.updated_at);
+    }
+
+    #[test]
+    fn recall_room_with_limit() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("recall-limit", None, "default").unwrap();
+
+        for i in 0..5 {
+            let m = make_test_memory(&format!("mem-rl-{i}"), &format!("content {i}"), &[]);
+            store.insert(&m).unwrap();
+            store
+                .link_memory_to_room(
+                    "recall-limit",
+                    &format!("mem-rl-{i}"),
+                    "alice",
+                    "participant",
+                )
+                .unwrap();
+        }
+
+        let mems = store.recall_room("recall-limit", None, 2).unwrap();
+        assert_eq!(mems.len(), 2);
+    }
+
+    #[test]
+    fn recall_room_with_author_filter() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("recall-author", None, "default").unwrap();
+
+        let m1 = make_test_memory("mem-a1", "from alice", &[]);
+        let m2 = make_test_memory("mem-b1", "from bob", &[]);
+        store.insert(&m1).unwrap();
+        store.insert(&m2).unwrap();
+        store
+            .link_memory_to_room("recall-author", "mem-a1", "alice", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("recall-author", "mem-b1", "bob", "participant")
+            .unwrap();
+
+        let alice_mems = store
+            .recall_room("recall-author", Some("alice"), 0)
+            .unwrap();
+        assert_eq!(alice_mems.len(), 1);
+        assert_eq!(alice_mems[0].id, "mem-a1");
+    }
+
+    #[test]
+    fn recall_room_empty() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("empty-recall", None, "default").unwrap();
+        let mems = store.recall_room("empty-recall", None, 10).unwrap();
+        assert!(mems.is_empty());
+    }
+
+    #[test]
+    fn recall_room_limit_zero_returns_all() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("recall-all", None, "default").unwrap();
+
+        for i in 0..5 {
+            let m = make_test_memory(&format!("mem-all-{i}"), &format!("content {i}"), &[]);
+            store.insert(&m).unwrap();
+            store
+                .link_memory_to_room(
+                    "recall-all",
+                    &format!("mem-all-{i}"),
+                    "alice",
+                    "participant",
+                )
+                .unwrap();
+        }
+
+        let mems = store.recall_room("recall-all", None, 0).unwrap();
+        assert_eq!(mems.len(), 5);
+    }
+
+    #[test]
+    fn recall_room_enriches_author_in_metadata() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("author-meta", None, "default").unwrap();
+
+        let m = make_test_memory("mem-am", "authored", &[]);
+        store.insert(&m).unwrap();
+        store
+            .link_memory_to_room("author-meta", "mem-am", "charlie", "lead")
+            .unwrap();
+
+        let mems = store.recall_room("author-meta", None, 10).unwrap();
+        assert_eq!(mems.len(), 1);
+        let author = mems[0]
+            .metadata
+            .get("author")
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert_eq!(author, "charlie");
+    }
+
+    #[test]
+    fn get_room_memory_ids_with_author() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("ids-auth", None, "default").unwrap();
+
+        let m1 = make_test_memory("mem-ia1", "a", &[]);
+        let m2 = make_test_memory("mem-ia2", "b", &[]);
+        store.insert(&m1).unwrap();
+        store.insert(&m2).unwrap();
+        store
+            .link_memory_to_room("ids-auth", "mem-ia1", "alice", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("ids-auth", "mem-ia2", "bob", "participant")
+            .unwrap();
+
+        let alice_ids = store
+            .get_room_memory_ids("ids-auth", Some("alice"))
+            .unwrap();
+        assert_eq!(alice_ids, vec!["mem-ia1".to_string()]);
+
+        let all_ids = store.get_room_memory_ids("ids-auth", None).unwrap();
+        assert_eq!(all_ids.len(), 2);
+    }
+
+    #[test]
+    fn room_stats_with_memories() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("stats-room", Some("Stats"), "default")
+            .unwrap();
+
+        let m1 = make_test_memory("mem-s1", "c1", &[]);
+        let m2 = make_test_memory("mem-s2", "c2", &[]);
+        store.insert(&m1).unwrap();
+        store.insert(&m2).unwrap();
+        store
+            .link_memory_to_room("stats-room", "mem-s1", "alice", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("stats-room", "mem-s2", "bob", "participant")
+            .unwrap();
+
+        let stats = store.room_stats("stats-room").unwrap().unwrap();
+        assert_eq!(stats.memory_count, 2);
+        assert_eq!(stats.participant_count, 2);
+        assert!(stats.participants.contains(&"alice".to_string()));
+        assert!(stats.participants.contains(&"bob".to_string()));
+        assert_eq!(stats.title, Some("Stats".to_string()));
+        assert!(stats.last_activity.is_some());
+    }
+
+    #[test]
+    fn room_stats_empty_room() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("empty-stats", Some("Empty"), "default")
+            .unwrap();
+
+        let stats = store.room_stats("empty-stats").unwrap().unwrap();
+        assert_eq!(stats.memory_count, 0);
+        assert_eq!(stats.participant_count, 0);
+        assert!(stats.participants.is_empty());
+        assert!(stats.last_activity.is_none());
+        assert_eq!(stats.title, Some("Empty".to_string()));
+    }
+
+    #[test]
+    fn room_stats_nonexistent_returns_none() {
+        let store = Store::open(":memory:").unwrap();
+        let stats = store.room_stats("nope").unwrap();
+        assert!(stats.is_none());
+    }
+
+    // ── room_summary ────────────────────────────────────────────
+
+    #[test]
+    fn room_summary_empty_room() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("empty-sum", Some("Empty Summary"), "default")
+            .unwrap();
+
+        let summary = store.room_summary("empty-sum").unwrap().unwrap();
+        assert_eq!(summary.total_memories, 0);
+        assert!(summary.participants.is_empty());
+        assert!(summary.clusters.is_empty());
+        assert!(summary.top_tags.is_empty());
+        assert!(summary.recent_decisions.is_empty());
+        assert!(summary.pinned_highlights.is_empty());
+        assert_eq!(summary.time_range.earliest, "");
+        assert_eq!(summary.time_range.latest, "");
+    }
+
+    #[test]
+    fn room_summary_with_memories() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("sum-room", Some("Summary Room"), "default")
+            .unwrap();
+
+        let m1 = make_test_memory_with_type(
+            "mem-sm1",
+            "A fact about architecture",
+            &["rust", "design"],
+            "fact",
+        );
+        let mut m2 = make_test_memory(
+            "mem-sm2",
+            "Chose Postgres over MySQL",
+            &["database", "decision"],
+        );
+        m2.memory_type = "decision".to_string();
+        let mut m3 = make_test_memory("mem-sm3", "Important note pinned", &["important"]);
+        m3.pinned = true;
+
+        store.insert(&m1).unwrap();
+        store.insert(&m2).unwrap();
+        store.insert(&m3).unwrap();
+        store
+            .link_memory_to_room("sum-room", "mem-sm1", "alice", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("sum-room", "mem-sm2", "bob", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("sum-room", "mem-sm3", "alice", "lead")
+            .unwrap();
+
+        let summary = store.room_summary("sum-room").unwrap().unwrap();
+        assert_eq!(summary.total_memories, 3);
+        assert!(summary.participants.contains(&"alice".to_string()));
+        assert!(summary.participants.contains(&"bob".to_string()));
+        assert!(!summary.time_range.earliest.is_empty());
+        assert!(!summary.time_range.latest.is_empty());
+        assert!(!summary.clusters.is_empty());
+        assert!(!summary.top_tags.is_empty());
+    }
+
+    #[test]
+    fn room_summary_decision_appears_in_recent_decisions() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("dec-room", None, "default").unwrap();
+
+        let mut m = make_test_memory("mem-dec", "We decided to use Rust", &["decision"]);
+        m.memory_type = "decision".to_string();
+        store.insert(&m).unwrap();
+        store
+            .link_memory_to_room("dec-room", "mem-dec", "alice", "participant")
+            .unwrap();
+
+        let summary = store.room_summary("dec-room").unwrap().unwrap();
+        assert_eq!(summary.recent_decisions.len(), 1);
+        assert!(summary.recent_decisions[0].contains("Rust"));
+    }
+
+    #[test]
+    fn room_summary_pinned_appears_in_highlights() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("pin-room", None, "default").unwrap();
+
+        let mut m = make_test_memory("mem-pin", "Pinned highlight content", &["highlight"]);
+        m.pinned = true;
+        store.insert(&m).unwrap();
+        store
+            .link_memory_to_room("pin-room", "mem-pin", "alice", "participant")
+            .unwrap();
+
+        let summary = store.room_summary("pin-room").unwrap().unwrap();
+        assert_eq!(summary.pinned_highlights.len(), 1);
+        assert!(summary.pinned_highlights[0].contains("Pinned"));
+    }
+
+    #[test]
+    fn room_summary_nonexistent_returns_none() {
+        let store = Store::open(":memory:").unwrap();
+        let summary = store.room_summary("nope").unwrap();
+        assert!(summary.is_none());
+    }
+
+    // ── room_document ───────────────────────────────────────────
+
+    #[test]
+    fn room_document_empty_room() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("doc-empty", Some("Doc Empty"), "default")
+            .unwrap();
+
+        let doc = store.room_document("doc-empty").unwrap().unwrap();
+        assert_eq!(doc.room_id, "doc-empty");
+        assert!(doc.sections.is_empty());
+    }
+
+    #[test]
+    fn room_document_with_memories() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .create_room("doc-room", Some("Doc Room"), "default")
+            .unwrap();
+
+        let m1 = make_test_memory("mem-doc1", "A fact here", &["fact"]);
+        let mut m2 = make_test_memory("mem-doc2", "A decision was made", &["dec"]);
+        m2.memory_type = "decision".to_string();
+        let mut m3 = make_test_memory("mem-doc3", "Pinned important", &["pin"]);
+        m3.pinned = true;
+
+        store.insert(&m1).unwrap();
+        store.insert(&m2).unwrap();
+        store.insert(&m3).unwrap();
+        store
+            .link_memory_to_room("doc-room", "mem-doc1", "alice", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("doc-room", "mem-doc2", "bob", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("doc-room", "mem-doc3", "alice", "lead")
+            .unwrap();
+
+        let doc = store.room_document("doc-room").unwrap().unwrap();
+        assert_eq!(doc.room_id, "doc-room");
+        assert!(doc.sections.len() >= 2);
+
+        let pinned_section = doc.sections.iter().find(|s| s.heading == "Pinned");
+        assert!(pinned_section.is_some());
+        assert_eq!(pinned_section.unwrap().entries.len(), 1);
+    }
+
+    #[test]
+    fn room_document_nonexistent_returns_none() {
+        let store = Store::open(":memory:").unwrap();
+        let doc = store.room_document("nope").unwrap();
+        assert!(doc.is_none());
+    }
+
+    // ── room_documents junction table ────────────────────────────
+
+    #[test]
+    fn room_add_and_list_documents() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("rd-room", None, "default").unwrap();
+
+        // Documents must exist before attaching to rooms
+        store
+            .upsert_document(&make_test_document("doc-a", "Doc A"))
+            .unwrap();
+        store
+            .upsert_document(&make_test_document("doc-b", "Doc B"))
+            .unwrap();
+
+        store.room_add_document("rd-room", "doc-a").unwrap();
+        store.room_add_document("rd-room", "doc-b").unwrap();
+
+        let docs = store.room_list_documents("rd-room").unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs.contains(&"doc-a".to_string()));
+        assert!(docs.contains(&"doc-b".to_string()));
+    }
+
+    #[test]
+    fn room_add_document_idempotent() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("idem-doc-room", None, "default").unwrap();
+
+        store
+            .upsert_document(&make_test_document("doc-x", "Doc X"))
+            .unwrap();
+        store.room_add_document("idem-doc-room", "doc-x").unwrap();
+        store.room_add_document("idem-doc-room", "doc-x").unwrap();
+
+        let docs = store.room_list_documents("idem-doc-room").unwrap();
+        assert_eq!(docs.len(), 1);
+    }
+
+    #[test]
+    fn room_remove_document() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("rem-doc-room", None, "default").unwrap();
+
+        store
+            .upsert_document(&make_test_document("doc-r", "Doc R"))
+            .unwrap();
+        store.room_add_document("rem-doc-room", "doc-r").unwrap();
+        store.room_remove_document("rem-doc-room", "doc-r").unwrap();
+
+        let docs = store.room_list_documents("rem-doc-room").unwrap();
+        assert!(docs.is_empty());
+    }
+
+    #[test]
+    fn document_list_rooms() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("dlr-room1", None, "default").unwrap();
+        store.create_room("dlr-room2", None, "default").unwrap();
+
+        store
+            .upsert_document(&make_test_document("shared-doc", "Shared"))
+            .unwrap();
+        store.room_add_document("dlr-room1", "shared-doc").unwrap();
+        store.room_add_document("dlr-room2", "shared-doc").unwrap();
+
+        let rooms = store.document_list_rooms("shared-doc").unwrap();
+        assert_eq!(rooms.len(), 2);
+        assert!(rooms.contains(&"dlr-room1".to_string()));
+        assert!(rooms.contains(&"dlr-room2".to_string()));
+    }
+}
