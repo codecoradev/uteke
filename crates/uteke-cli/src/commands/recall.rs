@@ -29,6 +29,7 @@ pub(crate) fn run_recall(
     salience: bool,
     recency: bool,
     search_type: Option<&str>,
+    enrich: bool,
 ) -> Result<(), String> {
     // Resolve search type: --type flag > default (All = unified)
     let resolved_search_type = match search_type {
@@ -120,7 +121,7 @@ pub(crate) fn run_recall(
                 resolved_search_type,
                 None,
                 None,
-                false,
+                enrich,
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
