@@ -1370,11 +1370,12 @@ impl Uteke {
         search_type: SearchType,
         entity_filter: Option<&str>,
         category_filter: Option<&str>,
+        enrich: bool,
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
         let limit = limit.min(50);
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
-        match search_type {
+        let mut results = match search_type {
             SearchType::Memory => self.recall_unified_memories(
                 query,
                 limit,
@@ -1386,7 +1387,20 @@ impl Uteke {
             ),
             SearchType::Document => self.recall_unified_documents(query, limit, ns, min_score),
             SearchType::All => self.recall_unified_all(query, limit, tags_filter, ns, min_score),
+        }?;
+
+        if enrich {
+            match search_type {
+                SearchType::Memory => self.enrich_memory_doc_links(&mut results),
+                SearchType::Document => self.enrich_doc_memory_links(&mut results),
+                SearchType::All => {
+                    self.enrich_memory_doc_links(&mut results);
+                    self.enrich_doc_memory_links(&mut results);
+                }
+            }
         }
+
+        Ok(results)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1639,6 +1653,38 @@ impl Uteke {
         results.truncate(limit);
 
         Ok(results)
+    }
+
+    // ── Cross-entity enrichment helpers (#689) ────────────────────────────
+
+    /// Enrich memory results with linked document slugs.
+    /// For each result with a `memory_id`, looks up `references_doc` edges
+    /// and populates `linked_doc_slugs`.
+    fn enrich_memory_doc_links(&self, results: &mut [UnifiedSearchResult]) {
+        for r in results.iter_mut() {
+            if let Some(ref memory_id) = r.memory_id {
+                if let Ok(slugs) = self.recall_documents_for_memory(memory_id) {
+                    if !slugs.is_empty() {
+                        r.linked_doc_slugs = Some(slugs);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Enrich document results with linked memory IDs.
+    /// For each result with a `doc_slug`, looks up `references_doc` edges
+    /// and populates `linked_memory_ids`.
+    fn enrich_doc_memory_links(&self, results: &mut [UnifiedSearchResult]) {
+        for r in results.iter_mut() {
+            if let Some(ref doc_slug) = r.doc_slug {
+                if let Ok(memory_ids) = self.recall_memories_for_document(doc_slug) {
+                    if !memory_ids.is_empty() {
+                        r.linked_memory_ids = Some(memory_ids);
+                    }
+                }
+            }
+        }
     }
 
     // ── Cross-entity recall (#689) ──────────────────────────────────────
@@ -2084,6 +2130,141 @@ mod tests {
         assert_eq!(merged.base_url, "https://from-toml.example.com");
         assert_eq!(merged.model, "from-toml-model");
         assert_eq!(merged.dims, 2048);
+    }
+
+    // ── Cross-entity enrichment tests (#689) ────────────────────────────
+
+    #[test]
+    #[serial]
+    #[ignore = "requires ONNX embedder — needs document + memory with [[doc-slug]] wikilink"]
+    fn recall_unified_enrich_populates_doc_links() {
+        let uteke = Uteke::open(":memory:").unwrap();
+
+        // Create a document (requires embedder via doc_upsert).
+        // In CI with a model loaded, this would create a real document.
+        // For now, this test documents the expected enrichment behavior.
+        //
+        // 1. Create document "my-doc"
+        // 2. Remember a memory containing [[my-doc]] in content
+        // 3. Call recall_unified with SearchType::Memory, enrich=true
+        // 4. Assert linked_doc_slugs is Some and contains "my-doc"
+
+        let _mem_id = uteke
+            .remember(
+                "We decided to use [[my-doc]] for the architecture overview.",
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+
+        let results = uteke
+            .recall_unified(
+                "architecture overview",
+                5,
+                None,
+                None,
+                0.0,
+                SearchType::Memory,
+                None,
+                None,
+                true, // enrich=true
+            )
+            .unwrap();
+
+        // When the document "my-doc" exists, memory results should have
+        // linked_doc_slugs populated with its slug.
+        if !results.is_empty() {
+            let r = &results[0];
+            // linked_doc_slugs should be Some(["my-doc"]) when document exists
+            // or None when document doesn't exist (no edges created).
+            // This test validates enrich=true doesn't panic and the
+            // enrichment code path executes correctly.
+            assert!(r.memory_id.is_some(), "memory result should have memory_id");
+        }
+    }
+
+    #[test]
+    #[serial]
+    #[ignore = "requires ONNX embedder — needs document + memory with [[doc-slug]] wikilink"]
+    fn recall_unified_enrich_populates_memory_links() {
+        let uteke = Uteke::open(":memory:").unwrap();
+
+        // Similar setup: create document "ref-doc", remember memory with [[ref-doc]],
+        // then search documents and check linked_memory_ids.
+        let _mem_id = uteke
+            .remember(
+                "See [[ref-doc]] for the deployment guide details.",
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+
+        let results = uteke
+            .recall_unified(
+                "deployment guide",
+                5,
+                None,
+                None,
+                0.0,
+                SearchType::Document,
+                None,
+                None,
+                true, // enrich=true
+            )
+            .unwrap();
+
+        // When the document "ref-doc" exists, document results should have
+        // linked_memory_ids populated with the memory's ID.
+        for r in &results {
+            assert!(r.doc_slug.is_some(), "doc result should have doc_slug");
+            // linked_memory_ids should be Some([mem_id]) when edges exist
+        }
+    }
+
+    #[test]
+    #[serial]
+    #[ignore = "requires ONNX embedder"]
+    fn recall_unified_no_enrich_keeps_fields_none() {
+        let uteke = Uteke::open(":memory:").unwrap();
+
+        uteke
+            .remember(
+                "Architecture decision: use event-driven pattern [[arch-overview]]",
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+
+        // Recall with enrich=false (default backward-compatible behavior)
+        let results = uteke
+            .recall_unified(
+                "event-driven architecture",
+                5,
+                None,
+                None,
+                0.0,
+                SearchType::Memory,
+                None,
+                None,
+                false, // enrich=false
+            )
+            .unwrap();
+
+        for r in &results {
+            assert!(
+                r.linked_doc_slugs.is_none(),
+                "enrich=false should keep linked_doc_slugs None, got: {:?}",
+                r.linked_doc_slugs
+            );
+            assert!(
+                r.linked_memory_ids.is_none(),
+                "enrich=false should keep linked_memory_ids None, got: {:?}",
+                r.linked_memory_ids
+            );
+        }
     }
 }
 

@@ -771,6 +771,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             search_type,
             None,
             None,
+            false,
         )
         .map_err(|e| format!("Failed: {e}"))?;
 

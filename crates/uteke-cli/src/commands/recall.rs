@@ -120,6 +120,7 @@ pub(crate) fn run_recall(
                 resolved_search_type,
                 None,
                 None,
+                false,
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
