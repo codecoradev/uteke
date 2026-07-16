@@ -756,14 +756,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             404,
                             format!("Memory not found: {}", req_data.id),
                         ),
-                        Err(e) => {
-                            if e.to_string().contains("importance must be") {
+                        Err(e) => match e {
+                            uteke_core::Error::Validation(_) => {
                                 ctx.error_response_for(req, 400, e.to_string())
-                            } else {
+                            }
+                            _ => {
                                 error!("Set importance error: {e}");
                                 ctx.error_response_for(req, 500, "Internal server error")
                             }
-                        }
+                        },
                     }
                 }
                 Err(e) => ctx.error_response_for(req, 400, e),
