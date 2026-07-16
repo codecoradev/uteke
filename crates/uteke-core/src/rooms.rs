@@ -140,6 +140,11 @@ impl crate::Uteke {
         self.store.room_summary(room_id)
     }
 
+    /// Get room summary with referenced documents populated.
+    pub fn room_summary_with_docs(&self, room_id: &str) -> Result<Option<RoomSummary>, Error> {
+        self.store.room_summary_with_docs(room_id)
+    }
+
     /// Generate a structured document from room memories.
     pub fn room_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
         self.store.room_document(room_id)

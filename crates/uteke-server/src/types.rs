@@ -157,6 +157,11 @@ pub struct RecallRequest {
     /// Search type filter: "all" (default, unified), "memory", or "doc" (#531).
     #[serde(default)]
     pub search_type: Option<String>,
+    /// Enrich results with cross-entity links (doc↔memory) (#689).
+    /// When true, populates `linked_doc_slugs` on memory results and
+    /// `linked_memory_ids` on document results.
+    #[serde(default)]
+    pub enrich: bool,
 }
 
 #[derive(Deserialize)]
