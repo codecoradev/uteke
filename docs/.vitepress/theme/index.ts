@@ -1,4 +1,4 @@
 import DefaultTheme from 'vitepress/theme'
-import './custom.css'
+import '@codecora/theme/vitepress/style.css'
 
-export default DefaultTheme
+export default { extends: DefaultTheme }
