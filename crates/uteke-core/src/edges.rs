@@ -1746,4 +1746,212 @@ mod tests {
             "should not have similar edge for dissimilar memories"
         );
     }
+
+    // ── Cross-entity integration tests (#689) ─────────────────────────────
+    //
+    // NOTE: memory_edges has FK constraints → memories(id) on both source_id
+    // and target_id. Document IDs don't exist in memories, so direct
+    // add_memory_edge(memory_id, doc_id, REFERENCES_DOC) violates the FK.
+    // To test edge operations with document-like targets, we insert a stub
+    // memory row with the document ID. This matches how the schema works
+    // and exercises the actual edge CRUD code paths.
+
+    /// Helper: insert a stub memory row with a given ID (bypasses FK constraints).
+    fn stub_memory(store: &Store, id: &str) {
+        let now = chrono::Utc::now().to_rfc3339();
+        store
+            .conn
+            .execute(
+                "INSERT INTO memories (id, content, namespace, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![id, "stub", "default", now, now],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn cross_entity_doc_edge_round_trip() {
+        let store = Store::open(":memory:").unwrap();
+
+        // 1. Create a document (no embedder needed).
+        let doc = crate::memory::documents::Document {
+            id: "doc-1".to_string(),
+            slug: "my-doc".to_string(),
+            title: "My Doc".to_string(),
+            content: "Document content here.".to_string(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::Value::Null,
+            version: 1,
+            content_type: "markdown".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: "/my-doc/".to_string(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+
+        // 2. Create a real memory via store.insert.
+        let m = mem("test memory content", &[]);
+        let mem_id = m.id.clone();
+        store.insert(&m).unwrap();
+
+        // Stub the doc ID in memories so the FK on memory_edges.target_id is satisfied.
+        stub_memory(&store, "doc-1");
+
+        // 3. Insert edge: memory → document, type=references_doc.
+        store
+            .add_memory_edge(&mem_id, "doc-1", EDGE_REFERENCES_DOC)
+            .unwrap();
+
+        // 4. Verify edge_targets returns doc-1 (memory → doc).
+        let targets = store
+            .edge_targets(&mem_id, EDGE_REFERENCES_DOC)
+            .unwrap();
+        assert_eq!(targets, vec!["doc-1"]);
+
+        // 5. Verify edge_sources returns memory_id (doc → memory lookup).
+        let sources = store.edge_sources("doc-1", EDGE_REFERENCES_DOC).unwrap();
+        assert_eq!(sources, vec![mem_id]);
+
+        // 6. Verify resolve_document_slug works for the created document.
+        let resolved = store.resolve_document_slug("my-doc").unwrap();
+        assert_eq!(resolved, Some("doc-1".to_string()));
+    }
+
+    #[test]
+    fn cross_entity_doc_edge_with_backlink() {
+        let store = Store::open(":memory:").unwrap();
+
+        // Create document.
+        let doc = crate::memory::documents::Document {
+            id: "doc-bl".to_string(),
+            slug: "backlink-doc".to_string(),
+            title: "Backlink Doc".to_string(),
+            content: "Content".to_string(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::Value::Null,
+            version: 1,
+            content_type: "markdown".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: "/backlink-doc/".to_string(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+        stub_memory(&store, "doc-bl");
+
+        let m = mem("memory with backlink", &[]);
+        let mem_id = m.id.clone();
+        store.insert(&m).unwrap();
+
+        // Insert forward edge WITH backlink (references_doc is in BACKLINKED_EDGE_TYPES).
+        let inserted = store
+            .add_memory_edge_with_backlink(&mem_id, "doc-bl", EDGE_REFERENCES_DOC)
+            .unwrap();
+        assert!(inserted, "forward edge should be new");
+
+        // Forward: memory → doc (references_doc)
+        let targets = store
+            .edge_targets(&mem_id, EDGE_REFERENCES_DOC)
+            .unwrap();
+        assert_eq!(targets, vec!["doc-bl"]);
+
+        // Backlink: doc → memory (referenced_by)
+        let backlinks = store
+            .edge_sources(&mem_id, EDGE_REFERENCED_BY)
+            .unwrap();
+        assert!(
+            backlinks.contains(&"doc-bl".to_string()),
+            "doc should have referenced_by edge back to memory"
+        );
+    }
+
+    #[test]
+    fn cross_entity_doc_edge_idempotent() {
+        let store = Store::open(":memory:").unwrap();
+
+        let doc = crate::memory::documents::Document {
+            id: "doc-idem".to_string(),
+            slug: "idem-doc".to_string(),
+            title: "Idempotent".to_string(),
+            content: "Content".to_string(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::Value::Null,
+            version: 1,
+            content_type: "markdown".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: "/idem-doc/".to_string(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+        stub_memory(&store, "doc-idem");
+
+        let m = mem("idempotent memory", &[]);
+        let mem_id = m.id.clone();
+        store.insert(&m).unwrap();
+
+        // Insert twice — second should be no-op (INSERT OR IGNORE).
+        store
+            .add_memory_edge(&mem_id, "doc-idem", EDGE_REFERENCES_DOC)
+            .unwrap();
+        store
+            .add_memory_edge(&mem_id, "doc-idem", EDGE_REFERENCES_DOC)
+            .unwrap();
+
+        let targets = store
+            .edge_targets(&mem_id, EDGE_REFERENCES_DOC)
+            .unwrap();
+        assert_eq!(
+            targets.len(),
+            1,
+            "should still have exactly one edge"
+        );
+    }
+
+    #[test]
+    fn cross_entity_doc_edge_fk_blocks_non_memory_target() {
+        // Verify that memory_edges FK prevents inserting a target_id that
+        // doesn't exist in the memories table. This is the current schema
+        // constraint that blocks direct memory→document edges without a
+        // stub memory row.
+        let store = Store::open(":memory:").unwrap();
+
+        let m = mem("source memory", &[]);
+        let mem_id = m.id.clone();
+        store.insert(&m).unwrap();
+
+        // "ghost-doc-id" is NOT in memories → FK violation.
+        let result = store.add_memory_edge(&mem_id, "ghost-doc-id", EDGE_REFERENCES_DOC);
+        assert!(result.is_err(), "FK should reject non-memory target_id");
+    }
+
+    #[test]
+    fn cross_entity_resolve_nonexistent_doc_slug_returns_none() {
+        let store = Store::open(":memory:").unwrap();
+        let resolved = store.resolve_document_slug("no-such-doc").unwrap();
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn cross_entity_edge_targets_empty_for_no_edges() {
+        let store = Store::open(":memory:").unwrap();
+        let targets = store.edge_targets("ghost-mem", EDGE_REFERENCES_DOC).unwrap();
+        assert!(targets.is_empty());
+    }
 }
