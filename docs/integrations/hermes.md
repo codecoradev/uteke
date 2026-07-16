@@ -30,7 +30,7 @@ store via tool. Both read the same uteke store.
 > **Mode B removed for Hermes.** The memory-provider plugin was removed on
 > 2026-06-29. Use Mode A + Mode C instead. The `--memory-provider` pattern
 > remains supported for **pi**, **Claude Code**, and **Cursor** — see
-> [Memory-Provider for Other Agents](#memory-provider-for-other-agents-575577).
+> [Memory-Provider for Other Agents](#memory-provider-for-other-agents).
 
 ## Mode A — uteke-tool (manual actions, multi-agent rooms)
 
@@ -224,9 +224,9 @@ hermes mcp add uteke --command uteke-mcp
 | `room_stats` | Room statistics |
 | `room_delete` | Delete a room |
 
-## Memory-Provider for Other Agents (#575/#577)
+## Memory-Provider for Other Agents
 
-The `--memory-provider` pattern also works for non-Hermes agents:
+The `--memory-provider` pattern also works for non-Hermes agents (#575, #577):
 
 ```bash
 # pi (pi.dev)
@@ -250,7 +250,7 @@ This installs uteke as the agent's default memory provider — relevant memories
 > [Mode C](#mode-c--pre_llm_call-shell-hook-automatic-recall-no-plugin) instead.
 >
 > The `--memory-provider` pattern remains supported for **pi**, **Claude Code**, and **Cursor**.
-> See [Memory-Provider for Other Agents](#memory-provider-for-other-agents-575577).
+> See [Memory-Provider for Other Agents](#memory-provider-for-other-agents).
 >
 > Historical reference: Mode B made uteke Hermes's long-term memory backend via
 > `uteke init --agent hermes --memory-provider` + `memory.provider: uteke` config.
