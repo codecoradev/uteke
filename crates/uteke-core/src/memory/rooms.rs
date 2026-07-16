@@ -1676,4 +1676,146 @@ mod tests {
             .unwrap()
             .is_none());
     }
+
+    // ── Cross-entity room↔document integration tests (#689 PR6) ─────────
+
+    #[test]
+    fn room_doc_enrichment_full_flow() {
+        let store = Store::open(":memory:").unwrap();
+
+        // 1. Create room.
+        store
+            .create_room("ce-room", Some("Cross-Entity Room"), "default")
+            .unwrap();
+
+        // 2. Create 2 documents.
+        store
+            .upsert_document(&make_test_document("ce-doc-alpha", "Doc Alpha"))
+            .unwrap();
+        store
+            .upsert_document(&make_test_document("ce-doc-beta", "Doc Beta"))
+            .unwrap();
+
+        // 3. Link documents to room.
+        store.room_add_document("ce-room", "ce-doc-alpha").unwrap();
+        store.room_add_document("ce-room", "ce-doc-beta").unwrap();
+
+        // 4. room_list_documents returns both.
+        let docs = store.room_list_documents("ce-room").unwrap();
+        assert_eq!(docs.len(), 2);
+        assert!(docs.contains(&"ce-doc-alpha".to_string()));
+        assert!(docs.contains(&"ce-doc-beta".to_string()));
+
+        // 5. room_summary_with_docs returns referenced_documents.
+        let summary = store.room_summary_with_docs("ce-room").unwrap().unwrap();
+        let ref_docs = summary.referenced_documents.unwrap();
+        assert_eq!(ref_docs.len(), 2);
+        assert!(ref_docs.contains(&"ce-doc-alpha".to_string()));
+        assert!(ref_docs.contains(&"ce-doc-beta".to_string()));
+
+        // 6. document_list_rooms returns the room for each document.
+        let rooms_for_alpha = store.document_list_rooms("ce-doc-alpha").unwrap();
+        assert_eq!(rooms_for_alpha, vec!["ce-room".to_string()]);
+
+        let rooms_for_beta = store.document_list_rooms("ce-doc-beta").unwrap();
+        assert_eq!(rooms_for_beta, vec!["ce-room".to_string()]);
+    }
+
+    #[test]
+    fn room_doc_remove_unlink() {
+        let store = Store::open(":memory:").unwrap();
+
+        store.create_room("unlink-room", None, "default").unwrap();
+        store
+            .upsert_document(&make_test_document("unlink-doc", "Unlink"))
+            .unwrap();
+
+        // Link then unlink.
+        store
+            .room_add_document("unlink-room", "unlink-doc")
+            .unwrap();
+        let docs_before = store.room_list_documents("unlink-room").unwrap();
+        assert_eq!(docs_before.len(), 1);
+
+        store
+            .room_remove_document("unlink-room", "unlink-doc")
+            .unwrap();
+        let docs_after = store.room_list_documents("unlink-room").unwrap();
+        assert!(docs_after.is_empty());
+
+        // document_list_rooms should also be empty now.
+        let rooms = store.document_list_rooms("unlink-doc").unwrap();
+        assert!(rooms.is_empty());
+
+        // room_summary_with_docs should return None for referenced_documents.
+        let summary = store
+            .room_summary_with_docs("unlink-room")
+            .unwrap()
+            .unwrap();
+        assert_eq!(summary.referenced_documents, None);
+    }
+
+    #[test]
+    fn room_doc_nonexistent_doc_rejected() {
+        let store = Store::open(":memory:").unwrap();
+
+        store.create_room("fake-doc-room", None, "default").unwrap();
+
+        // room_add_document with a slug that doesn't exist → Validation error.
+        let result = store.room_add_document("fake-doc-room", "no-such-slug");
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Unknown document"),
+            "expected Validation error about unknown document, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn room_doc_nonexistent_room_rejected() {
+        let store = Store::open(":memory:").unwrap();
+
+        store
+            .upsert_document(&make_test_document("orphan-doc", "Orphan"))
+            .unwrap();
+
+        // room_add_document with a room that doesn't exist → Validation error.
+        let result = store.room_add_document("no-such-room", "orphan-doc");
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Unknown room"),
+            "expected Validation error about unknown room, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn room_doc_shared_across_multiple_rooms() {
+        let store = Store::open(":memory:").unwrap();
+
+        store.create_room("shared-room-1", None, "default").unwrap();
+        store.create_room("shared-room-2", None, "default").unwrap();
+        store
+            .upsert_document(&make_test_document("shared-ce-doc", "Shared"))
+            .unwrap();
+
+        store
+            .room_add_document("shared-room-1", "shared-ce-doc")
+            .unwrap();
+        store
+            .room_add_document("shared-room-2", "shared-ce-doc")
+            .unwrap();
+
+        // Document should be linked to both rooms.
+        let rooms = store.document_list_rooms("shared-ce-doc").unwrap();
+        assert_eq!(rooms.len(), 2);
+        assert!(rooms.contains(&"shared-room-1".to_string()));
+        assert!(rooms.contains(&"shared-room-2".to_string()));
+
+        // Each room should see the document.
+        let docs1 = store.room_list_documents("shared-room-1").unwrap();
+        assert_eq!(docs1, vec!["shared-ce-doc".to_string()]);
+        let docs2 = store.room_list_documents("shared-room-2").unwrap();
+        assert_eq!(docs2, vec!["shared-ce-doc".to_string()]);
+    }
 }
