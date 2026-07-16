@@ -141,6 +141,11 @@ pub enum Commands {
         /// 'doc' returns documents only.
         #[arg(long)]
         r#type: Option<String>,
+        /// Enrich results with cross-entity links (doc↔memory references).
+        /// Populates linked_doc_slugs on memory results and linked_memory_ids
+        /// on document results (#689).
+        #[arg(long)]
+        enrich: bool,
     },
     /// Search memories by content keywords (text search)
     Search {
