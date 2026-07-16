@@ -986,7 +986,6 @@ impl super::Store {
 #[cfg(test)]
 mod tests {
     use super::super::Store;
-    use super::Room;
     use crate::memory::documents::Document;
     use crate::memory::types::Memory;
     use chrono::Utc;

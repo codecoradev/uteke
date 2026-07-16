@@ -293,49 +293,11 @@ mod tests {
     }
 
     // ── Room ↔ Document junction ──────────────────────────────────
-
-    #[test]
-    fn room_add_list_remove_documents() {
-        let uteke = open_in_memory();
-        uteke.create_room("jroom", None, "default").unwrap();
-
-        uteke.room_add_document("jroom", "doc-a").unwrap();
-        uteke.room_add_document("jroom", "doc-b").unwrap();
-
-        let docs = uteke.room_list_documents("jroom").unwrap();
-        assert_eq!(docs.len(), 2);
-
-        uteke.room_remove_document("jroom", "doc-a").unwrap();
-        let docs = uteke.room_list_documents("jroom").unwrap();
-        assert_eq!(docs.len(), 1);
-        assert_eq!(docs[0], "doc-b");
-    }
-
-    #[test]
-    fn room_add_document_idempotent() {
-        let uteke = open_in_memory();
-        uteke.create_room("idem-r", None, "default").unwrap();
-
-        uteke.room_add_document("idem-r", "doc-x").unwrap();
-        uteke.room_add_document("idem-r", "doc-x").unwrap();
-
-        assert_eq!(uteke.room_list_documents("idem-r").unwrap().len(), 1);
-    }
-
-    #[test]
-    fn document_list_rooms() {
-        let uteke = open_in_memory();
-        uteke.create_room("room-a", None, "default").unwrap();
-        uteke.create_room("room-b", None, "default").unwrap();
-
-        uteke.room_add_document("room-a", "shared").unwrap();
-        uteke.room_add_document("room-b", "shared").unwrap();
-
-        let rooms = uteke.document_list_rooms("shared").unwrap();
-        assert_eq!(rooms.len(), 2);
-        assert!(rooms.contains(&"room-a".to_string()));
-        assert!(rooms.contains(&"room-b".to_string()));
-    }
+    // NOTE: room_add_document / room_remove_document / document_list_rooms
+    // call Store::room_add_document which validates document slug existence.
+    // Creating documents requires the ONNX embedder via Uteke::doc_upsert,
+    // so these junction tests live in memory/rooms.rs (Store-level) where
+    // we can use Store::upsert_document directly without an embedder.
 
     // ── remember_in_room (requires embedder) ───────────────────────
 
