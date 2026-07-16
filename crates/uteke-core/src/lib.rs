@@ -2335,9 +2335,7 @@ mod tests {
         }
 
         // Cross-entity recall: memories for document.
-        let mem_ids = uteke
-            .recall_memories_for_document(doc_slug)
-            .unwrap();
+        let mem_ids = uteke.recall_memories_for_document(doc_slug).unwrap();
         // If document was created via doc_upsert, mem_ids should contain mem_id.
         // If document doesn't exist, this returns empty vec.
         if !mem_ids.is_empty() {

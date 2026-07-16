@@ -1731,7 +1731,9 @@ mod tests {
             .unwrap();
 
         // Link then unlink.
-        store.room_add_document("unlink-room", "unlink-doc").unwrap();
+        store
+            .room_add_document("unlink-room", "unlink-doc")
+            .unwrap();
         let docs_before = store.room_list_documents("unlink-room").unwrap();
         assert_eq!(docs_before.len(), 1);
 
@@ -1746,7 +1748,10 @@ mod tests {
         assert!(rooms.is_empty());
 
         // room_summary_with_docs should return None for referenced_documents.
-        let summary = store.room_summary_with_docs("unlink-room").unwrap().unwrap();
+        let summary = store
+            .room_summary_with_docs("unlink-room")
+            .unwrap()
+            .unwrap();
         assert_eq!(summary.referenced_documents, None);
     }
 
@@ -1794,8 +1799,12 @@ mod tests {
             .upsert_document(&make_test_document("shared-ce-doc", "Shared"))
             .unwrap();
 
-        store.room_add_document("shared-room-1", "shared-ce-doc").unwrap();
-        store.room_add_document("shared-room-2", "shared-ce-doc").unwrap();
+        store
+            .room_add_document("shared-room-1", "shared-ce-doc")
+            .unwrap();
+        store
+            .room_add_document("shared-room-2", "shared-ce-doc")
+            .unwrap();
 
         // Document should be linked to both rooms.
         let rooms = store.document_list_rooms("shared-ce-doc").unwrap();

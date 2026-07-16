@@ -1809,9 +1809,7 @@ mod tests {
             .unwrap();
 
         // 4. Verify edge_targets returns doc-1 (memory → doc).
-        let targets = store
-            .edge_targets(&mem_id, EDGE_REFERENCES_DOC)
-            .unwrap();
+        let targets = store.edge_targets(&mem_id, EDGE_REFERENCES_DOC).unwrap();
         assert_eq!(targets, vec!["doc-1"]);
 
         // 5. Verify edge_sources returns memory_id (doc → memory lookup).
@@ -1861,15 +1859,11 @@ mod tests {
         assert!(inserted, "forward edge should be new");
 
         // Forward: memory → doc (references_doc)
-        let targets = store
-            .edge_targets(&mem_id, EDGE_REFERENCES_DOC)
-            .unwrap();
+        let targets = store.edge_targets(&mem_id, EDGE_REFERENCES_DOC).unwrap();
         assert_eq!(targets, vec!["doc-bl"]);
 
         // Backlink: doc → memory (referenced_by)
-        let backlinks = store
-            .edge_sources(&mem_id, EDGE_REFERENCED_BY)
-            .unwrap();
+        let backlinks = store.edge_sources(&mem_id, EDGE_REFERENCED_BY).unwrap();
         assert!(
             backlinks.contains(&"doc-bl".to_string()),
             "doc should have referenced_by edge back to memory"
@@ -1914,14 +1908,8 @@ mod tests {
             .add_memory_edge(&mem_id, "doc-idem", EDGE_REFERENCES_DOC)
             .unwrap();
 
-        let targets = store
-            .edge_targets(&mem_id, EDGE_REFERENCES_DOC)
-            .unwrap();
-        assert_eq!(
-            targets.len(),
-            1,
-            "should still have exactly one edge"
-        );
+        let targets = store.edge_targets(&mem_id, EDGE_REFERENCES_DOC).unwrap();
+        assert_eq!(targets.len(), 1, "should still have exactly one edge");
     }
 
     #[test]
@@ -1951,7 +1939,9 @@ mod tests {
     #[test]
     fn cross_entity_edge_targets_empty_for_no_edges() {
         let store = Store::open(":memory:").unwrap();
-        let targets = store.edge_targets("ghost-mem", EDGE_REFERENCES_DOC).unwrap();
+        let targets = store
+            .edge_targets("ghost-mem", EDGE_REFERENCES_DOC)
+            .unwrap();
         assert!(targets.is_empty());
     }
 }
