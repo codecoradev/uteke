@@ -112,6 +112,22 @@ pub struct RememberRequest {
     pub valid_until: Option<String>,
     #[serde(default)]
     pub detect_contradiction: bool,
+    /// Entity name — stored as metadata key "entity".
+    #[serde(default)]
+    pub entity: Option<String>,
+    /// Category — stored as metadata key "category".
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Extra metadata key=value pairs, merged into the metadata map.
+    /// Accepts an object (e.g. {"project": "uteke"}).
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// Source provenance — set via set_source() after storage.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Source type (defaults to "user").
+    #[serde(default)]
+    pub source_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -141,6 +157,11 @@ pub struct RecallRequest {
     /// Search type filter: "all" (default, unified), "memory", or "doc" (#531).
     #[serde(default)]
     pub search_type: Option<String>,
+    /// Enrich results with cross-entity links (doc↔memory) (#689).
+    /// When true, populates `linked_doc_slugs` on memory results and
+    /// `linked_memory_ids` on document results.
+    #[serde(default)]
+    pub enrich: bool,
 }
 
 #[derive(Deserialize)]
@@ -323,11 +344,51 @@ pub struct TagDeleteRequest {
     pub namespace: Option<String>,
 }
 
+// ── Memory Update Types (#659) ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct MemoryUpdateRequest {
+    /// UUID of the memory to update (required).
+    pub id: String,
+    /// New content. Triggers embedding regeneration.
+    #[serde(default)]
+    pub content: Option<String>,
+    /// Replace tags entirely with this list.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+    /// Replace metadata entirely with this object.
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// Set importance score (0.0–1.0).
+    #[serde(default)]
+    pub importance: Option<f64>,
+    /// Set pinned state.
+    #[serde(default)]
+    pub pinned: Option<bool>,
+    /// Set memory type (fact, procedure, preference, decision, context, note, insight, reference, event).
+    #[serde(default)]
+    pub memory_type: Option<String>,
+}
+
 // ── Pin Types ─────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 pub struct PinRequest {
     pub id: String,
+}
+
+// ── Memory Mutation Types (#660) ───────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct MemoryPinRequest {
+    pub id: String,
+    pub pinned: bool,
+}
+
+#[derive(Deserialize)]
+pub struct MemoryImportanceRequest {
+    pub id: String,
+    pub importance: f64,
 }
 
 // ── Graph Types ────────────────────────────────────────────────────────────

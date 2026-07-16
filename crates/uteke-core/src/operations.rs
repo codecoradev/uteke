@@ -366,6 +366,7 @@ impl crate::Uteke {
         Ok(id)
     }
 
+    #[allow(clippy::too_many_arguments)]
     /// Recall memories relevant to a query using vector similarity.
     ///
     /// Optionally filter by tags and namespace.
@@ -379,6 +380,8 @@ impl crate::Uteke {
         tags_filter: Option<&[&str]>,
         namespace: Option<&str>,
         min_score: f32,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
@@ -434,6 +437,30 @@ impl crate::Uteke {
                         .iter()
                         .any(|ft| memory.tags.iter().any(|t| t == ft));
                     if !has_tag {
+                        continue;
+                    }
+                }
+
+                // Apply entity metadata filter
+                if let Some(ent) = entity_filter {
+                    let matches = memory
+                        .metadata
+                        .get("entity")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|e| e == ent);
+                    if !matches {
+                        continue;
+                    }
+                }
+
+                // Apply category metadata filter
+                if let Some(cat) = category_filter {
+                    let matches = memory
+                        .metadata
+                        .get("category")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|c| c == cat);
+                    if !matches {
                         continue;
                     }
                 }
@@ -519,7 +546,7 @@ impl crate::Uteke {
 
         let results = match strategy {
             RecallStrategy::Vector => {
-                self.recall(query, limit, tags_filter, namespace, min_score)?
+                self.recall(query, limit, tags_filter, namespace, min_score, None, None)?
             }
             RecallStrategy::Fts5 => {
                 self.recall_fts5_only(query, limit, tags_filter, namespace, min_score)?
@@ -659,7 +686,7 @@ impl crate::Uteke {
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
                 tracing::warn!("FTS5 search failed, falling back to vector: {e}");
-                return self.recall(query, limit, tags_filter, namespace, min_score);
+                return self.recall(query, limit, tags_filter, namespace, min_score, None, None);
             }
         };
 
@@ -724,13 +751,14 @@ impl crate::Uteke {
         const RRF_K: u32 = 60;
 
         // Run vector search (pass 0.0 for min_score since RRF does its own filtering)
-        let vector_results = match self.recall(query, limit * 3, tags_filter, namespace, 0.0) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("Vector search failed in hybrid: {e}");
-                return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
-            }
-        };
+        let vector_results =
+            match self.recall(query, limit * 3, tags_filter, namespace, 0.0, None, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("Vector search failed in hybrid: {e}");
+                    return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
+                }
+            };
 
         // Run FTS5 search
         let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
@@ -827,7 +855,7 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         let memories = self.store.search_content(query, namespace, limit)?;
 
-        let results = memories
+        let results: Vec<SearchResult> = memories
             .into_iter()
             .filter(|memory| {
                 if let Some(filter_tags) = tags_filter {
@@ -843,6 +871,11 @@ impl crate::Uteke {
                 score: 1.0, // Text search doesn't have meaningful scores
             })
             .collect();
+
+        // Touch access for returned results
+        for r in &results {
+            self.store.touch_access(&r.memory.id).ok();
+        }
 
         Ok(results)
     }
@@ -1048,6 +1081,141 @@ impl crate::Uteke {
         self.store.get_by_id(id)
     }
 
+    /// Update an existing memory with partial fields (#659).
+    ///
+    /// Only provided fields are changed. If `content` is changed, the
+    /// embedding is regenerated and the vector index is updated.
+    /// Returns `Ok(true)` if the memory was found and updated,
+    /// `Ok(false)` if the memory ID doesn't exist.
+    ///
+    /// Acceptance criteria:
+    /// - Partial update semantics (only provided fields changed)
+    /// - Content update regenerates embedding
+    /// - 404 if not found (caller checks return value)
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_memory(
+        &self,
+        id: &str,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+        importance: Option<f64>,
+        pinned: Option<bool>,
+        memory_type: Option<&str>,
+    ) -> Result<bool, Error> {
+        // Validate memory exists
+        let existing = self
+            .store
+            .get_by_id(id)?
+            .ok_or_else(|| Error::Validation(format!("Memory not found: {id}")))?;
+
+        // Validate new content if provided
+        if let Some(c) = content {
+            crate::validate_input(c, &[] as &[&str])?;
+        }
+
+        // Validate new tags if provided
+        if let Some(t) = tags {
+            let tag_refs: Vec<&str> = t.iter().map(|s| s.as_str()).collect();
+            crate::validate_input(content.unwrap_or(&existing.content), &tag_refs)?;
+        }
+
+        // Validate new memory_type if provided
+        if let Some(mt) = memory_type {
+            crate::memory::types::MemoryType::from_str_opt(mt).ok_or_else(|| {
+                Error::Validation(format!(
+                    "Unknown memory type '{mt}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+                ))
+            })?;
+        }
+
+        // Validate importance range
+        if let Some(imp) = importance {
+            if !(0.0..=1.0).contains(&imp) {
+                return Err(Error::Validation(format!(
+                    "Importance must be between 0.0 and 1.0, got {imp}"
+                )));
+            }
+        }
+
+        let now = chrono::Utc::now();
+
+        // Re-embed if content changed
+        if let Some(c) = content {
+            let content_type = crate::memory::crud::detect_content_type(c);
+            let embed_text = if content_type == "json" {
+                crate::memory::crud::flatten_json_for_embedding(c)
+            } else {
+                c.to_string()
+            };
+            self.ensure_embedder()?;
+            let new_embedding = retry_embed(&self.embedder, &embed_text)?;
+
+            // Update SQLite first, then vector index
+            let updated = self.store.update_fields(
+                id,
+                content,
+                tags,
+                metadata,
+                importance,
+                pinned,
+                memory_type,
+                now,
+            )?;
+
+            if !updated {
+                return Ok(false);
+            }
+
+            // Update vector index (insert handles dedup by removing old entry)
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write lock during update_memory"))?;
+            index.insert(id, &new_embedding)?;
+
+            // Persist index with retry
+            for attempt in 0..3 {
+                match index.save() {
+                    Ok(()) => break,
+                    Err(e) => {
+                        if attempt < 2 {
+                            tracing::warn!(
+                                "Index save attempt {}/3 failed after update_memory for id={id}: {e}. Retrying...",
+                                attempt + 1
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        } else {
+                            tracing::error!(
+                                "Index save failed after 3 attempts for id={id}: {e}. Index may be stale on next launch."
+                            );
+                        }
+                    }
+                }
+            }
+        } else {
+            // No content change — just update SQLite fields
+            let updated = self.store.update_fields(
+                id,
+                None,
+                tags,
+                metadata,
+                importance,
+                pinned,
+                memory_type,
+                now,
+            )?;
+            if !updated {
+                return Ok(false);
+            }
+        }
+
+        // Invalidate recall cache for the memory's namespace
+        self.recall_cache.invalidate_namespace(&existing.namespace);
+
+        Ok(true)
+    }
+
     /// Recall memories that existed at a specific point in time.
     ///
     /// Runs a semantic recall to gather candidates, then post-filters by
@@ -1056,6 +1224,7 @@ impl crate::Uteke {
     /// - `valid_until IS NULL OR valid_until > point_in_time`
     /// - `valid_from IS NULL OR valid_from <= point_in_time`
     /// - `deprecated = false`
+    #[allow(clippy::too_many_arguments)]
     pub fn recall_at_time(
         &self,
         query: &str,
@@ -1064,6 +1233,8 @@ impl crate::Uteke {
         namespace: Option<&str>,
         point_in_time: chrono::DateTime<chrono::Utc>,
         min_score: f32,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
         // Retry loop: over-fetch with increasing multipliers to compensate
         // for temporal filtering removing candidates. If post-filtering
@@ -1073,7 +1244,15 @@ impl crate::Uteke {
 
         loop {
             let fetch_limit = (limit * multiplier).max(50);
-            let candidates = self.recall(query, fetch_limit, tags_filter, namespace, min_score)?;
+            let candidates = self.recall(
+                query,
+                fetch_limit,
+                tags_filter,
+                namespace,
+                min_score,
+                entity_filter,
+                category_filter,
+            )?;
             let candidates_len = candidates.len();
 
             let mut results: Vec<SearchResult> = candidates
@@ -1180,5 +1359,39 @@ mod dedup_tests {
             .remember("Same content different namespace", &[], None, Some("ns2"))
             .unwrap();
         assert_ne!(id1, id2, "different namespace should not dedup");
+    }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_contradiction_remembers_metadata() {
+        // Regression: remember_with_contradiction must pass metadata through
+        // to remember_precomputed (was dropping it as None).
+        let uteke = Uteke::open(":memory:").unwrap();
+        let meta = Some(serde_json::json!({
+            "entity": "test-app",
+            "category": "integration"
+        }));
+        let (id, _contradiction) = uteke
+            .remember_with_contradiction(
+                "Contradiction metadata test content",
+                &[],
+                meta,
+                Some("meta-test"),
+                None,
+                true,
+                0.65,
+            )
+            .unwrap();
+        // Retrieve and verify metadata was stored
+        let memory = uteke
+            .get_by_id(&id)
+            .expect("get_by_id should not error")
+            .expect("memory should exist");
+        let obj = memory
+            .metadata
+            .as_object()
+            .expect("metadata should be object");
+        assert_eq!(obj.get("entity").unwrap(), "test-app");
+        assert_eq!(obj.get("category").unwrap(), "integration");
     }
 }

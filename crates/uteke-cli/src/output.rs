@@ -79,6 +79,24 @@ pub(crate) fn print_unified_human(results: &[uteke_core::UnifiedSearchResult]) {
                 if let Some(id) = &r.memory_id {
                     println!("     ID: {}", id);
                 }
+                if let Some(mt) = &r.memory_type {
+                    println!("     Type: {}", mt);
+                }
+                if let Some(src) = &r.source {
+                    println!("     Source: {}", src);
+                }
+                if let Some(imp) = r.importance {
+                    println!("     Importance: {:.2}", imp);
+                }
+                if r.pinned == Some(true) {
+                    println!("     📌 Pinned");
+                }
+                if let Some(count) = r.access_count {
+                    println!("     Accessed: {}x", count);
+                }
+                if let Some(ref doc_slugs) = r.linked_doc_slugs {
+                    println!("     📄 Docs: {}", doc_slugs.join(", "));
+                }
             }
             uteke_core::SearchResultType::Document => {
                 if let Some(slug) = &r.doc_slug {
@@ -89,6 +107,9 @@ pub(crate) fn print_unified_human(results: &[uteke_core::UnifiedSearchResult]) {
                 }
                 if let Some(heading) = &r.chunk_heading {
                     println!("     ↳ {}", heading);
+                }
+                if let Some(ref mem_ids) = r.linked_memory_ids {
+                    println!("     🔗 Memories: {}", mem_ids.len());
                 }
             }
         }

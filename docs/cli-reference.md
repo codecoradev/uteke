@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.7.2**.
+Complete reference for all uteke commands. Version **0.7.3**.
 
 ## Global Flags
 
@@ -707,6 +707,9 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/stats` | Store statistics (body params) |
 | GET | `/namespaces` | List all namespaces |
 | GET | `/memory?id=` | Get single memory |
+| PUT | `/memory` | Partial memory update (content, tags, metadata, importance, pinned, memory_type) (#676) |
+| POST | `/memory/pin` | Pin or unpin a memory by ID (#660) |
+| POST | `/memory/importance` | Set importance score (0.0–1.0) for a memory (#660) |
 | POST | `/room/create` | Create a room |
 | GET | `/room/list` | List rooms (supports `?namespace=`) |
 | POST | `/room/recall` | Recall from a room |
@@ -714,6 +717,9 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/room/document` | Generate document from room |
 | POST | `/room/stats` | Room statistics |
 | DELETE | `/room/delete` | Delete a room |
+| POST | `/room/document/list` | List documents linked to a room (#689) |
+| PUT | `/room/document/add` | Link a document to a room (#689) |
+| DELETE | `/room/document/remove` | Unlink a document from a room (#689) |
 | POST | `/doc/create` | Create/upsert document (#438) |
 | POST | `/doc/get` | Get document by id or slug |
 | POST | `/doc/list` | List documents (roots_only, parent filter) |
@@ -721,6 +727,9 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/doc/move` | Move document to new parent (#438) |
 | DELETE | `/doc/delete?id=` | Delete document with cascade |
 | POST | `/doc/update` | Partial document update with chunk rebuild (#589) |
+| POST | `/doc/room/list` | List rooms linked to a document (#689) |
+| POST | `/memory/doc-refs` | Get document slugs referenced by a memory (#691) |
+| POST | `/doc/mem-refs` | Get memory IDs that reference a document (#691) |
 | GET | `/export` | JSONL export (optional `?namespace=` filter) (#606) |
 | POST | `/extract` | LLM fact extraction + auto-store (1MB limit) (#610) |
 | POST | `/import` | JSONL import with re-embedding (5MB limit) (#610) |

@@ -115,7 +115,7 @@ fn main() {
         // Recall — Uteke::recall(query, limit, tags_filter, namespace, min_score)
         let recall_start = Instant::now();
         for query in RECALL_QUERIES {
-            let _ = black_box(uteke.recall(query, 5, None, Some("bench"), 0.0));
+            let _ = black_box(uteke.recall(query, 5, None, Some("bench"), 0.0, None, None));
         }
         let recall_ms = recall_start.elapsed().as_millis();
         let recall_per = recall_ms as f64 / RECALL_QUERIES.len() as f64;

@@ -59,9 +59,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/room/summary",
             "/room/document",
             "/room/stats",
+            "/room/document/list",
             "/doc/get",
             "/doc/list",
             "/doc/search",
+            "/doc/room/list",
+            "/memory/doc-refs",
+            "/doc/mem-refs",
             "/orphans",
         ];
         let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
@@ -110,7 +114,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
                 let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
 
-                // Build metadata from optional fields
+                // Build metadata from optional fields — matches CLI behavior.
                 let mut meta = serde_json::Map::new();
                 if let Some(t) = &req_data.r#type {
                     meta.insert("type".into(), serde_json::Value::String(t.clone()));
@@ -120,6 +124,21 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 }
                 if let Some(vu) = &req_data.valid_until {
                     meta.insert("valid_until".into(), serde_json::Value::String(vu.clone()));
+                }
+                if let Some(entity) = &req_data.entity {
+                    meta.insert("entity".into(), serde_json::Value::String(entity.clone()));
+                }
+                if let Some(category) = &req_data.category {
+                    meta.insert(
+                        "category".into(),
+                        serde_json::Value::String(category.clone()),
+                    );
+                }
+                // Merge caller-supplied metadata object into the map (#682).
+                if let Some(serde_json::Value::Object(extra)) = &req_data.metadata {
+                    for (k, v) in extra {
+                        meta.insert(k.clone(), v.clone());
+                    }
                 }
                 let metadata = if meta.is_empty() {
                     None
@@ -132,6 +151,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         .remember_with_contradiction(
                             &req_data.content,
                             &tag_refs,
+                            metadata,
                             ns(&req_data.namespace),
                             req_data.r#type.as_deref(),
                             true,
@@ -148,7 +168,16 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 };
 
                 match result {
-                    Ok(id) => ctx.ok_response_for(req, &serde_json::json!({"id": id})),
+                    Ok(id) => {
+                        // Set source provenance after storage (#682) — matches CLI.
+                        if req_data.source.is_some() || req_data.source_type.is_some() {
+                            let st = req_data.source_type.as_deref().unwrap_or("user");
+                            if let Err(e) = uteke.set_source(&id, req_data.source.as_deref(), st) {
+                                error!("Failed to set source for {id}: {e}");
+                            }
+                        }
+                        ctx.ok_response_for(req, &serde_json::json!({"id": id}))
+                    }
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
@@ -184,19 +213,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
                     )
                 };
-                // Strategy: when entity/category filters are present,
-                // recall WITHOUT min_score to avoid discarding valid matches
-                // that might satisfy metadata but be ranked lower. Apply
-                // min_score after metadata filtering.
-                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
-                let fetch_min_score = if has_meta_filter { 0.0 } else { min_score };
-                let fetch_limit = if has_meta_filter {
-                    // Cap at 200 to prevent unbounded amplification.
-                    // May return fewer than requested when matches are sparse.
-                    (req_data.limit * 10).min(200)
-                } else {
-                    req_data.limit
-                };
+                // Entity/category filters are now pushed into the core recall
+                // candidate loop (#663) — no 10x fetch amplification needed.
 
                 // Time-travel mode: parse --at and use recall_at_time
                 let point_in_time = match req_data.at.as_deref() {
@@ -215,34 +233,36 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     None => None,
                 };
 
+                let entity_filter = req_data.entity.as_deref();
+                let category_filter = req_data.category.as_deref();
+
                 let recall_result = if let Some(pit) = point_in_time {
                     uteke.recall_at_time(
                         &req_data.query,
-                        fetch_limit,
+                        req_data.limit,
                         tags_filter,
                         ns(&req_data.namespace),
                         pit,
-                        fetch_min_score,
+                        min_score,
+                        entity_filter,
+                        category_filter,
                     )
                 } else {
                     uteke.recall(
                         &req_data.query,
-                        fetch_limit,
+                        req_data.limit,
                         tags_filter,
                         ns(&req_data.namespace),
-                        fetch_min_score,
+                        min_score,
+                        entity_filter,
+                        category_filter,
                     )
                 };
 
-                // Unified search path (#531): when search_type is specified and
-                // no memory-only metadata filters (entity/category) are present,
-                // use recall_unified. Entity/category only apply to memories, so
-                // their presence forces the legacy memory-only recall path.
-                let has_meta_filter = req_data.entity.is_some() || req_data.category.is_some();
-                let unified_result = if req_data.search_type.is_some()
-                    && point_in_time.is_none()
-                    && !has_meta_filter
-                {
+                // Unified search path (#531): when search_type is specified,
+                // use recall_unified. Entity/category filters are passed
+                // through to the core recall candidate loop (#663).
+                let unified_result = if req_data.search_type.is_some() && point_in_time.is_none() {
                     let search_type = match req_data.search_type.as_deref() {
                         Some("memory") => uteke_core::SearchType::Memory,
                         Some("doc") => uteke_core::SearchType::Document,
@@ -262,6 +282,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         ns(&req_data.namespace),
                         min_score,
                         search_type,
+                        entity_filter,
+                        category_filter,
+                        req_data.enrich,
                     ))
                 } else {
                     None
@@ -275,46 +298,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         ctx.error_response_for(req, 500, "Internal server error")
                     }
                     None => {
-                        // Fall through to existing memory-only recall path
+                        // Memory-only recall path — entity/category filtering
+                        // is already applied in the core recall candidate loop (#663).
                         match recall_result {
-                            Ok(raw_results) => {
-                                // Post-filter by entity/category metadata
-                                let mut results: Vec<_> = raw_results
-                                    .into_iter()
-                                    .filter(|sr| {
-                                        if let Some(ent) = &req_data.entity {
-                                            let matches = sr
-                                                .memory
-                                                .metadata
-                                                .get("entity")
-                                                .and_then(|v| v.as_str())
-                                                .is_some_and(|e| e == ent);
-                                            if !matches {
-                                                return false;
-                                            }
-                                        }
-                                        if let Some(cat) = &req_data.category {
-                                            let matches = sr
-                                                .memory
-                                                .metadata
-                                                .get("category")
-                                                .and_then(|v| v.as_str())
-                                                .is_some_and(|c| c == cat);
-                                            if !matches {
-                                                return false;
-                                            }
-                                        }
-                                        true
-                                    })
-                                    .collect::<Vec<_>>();
-                                // Apply min_score filter after metadata filtering
-                                // (deferred from recall call to avoid losing valid matches)
-                                if min_score > 0.0 {
-                                    results.retain(|sr| sr.score >= min_score);
-                                }
-                                // Trim to requested limit after filtering
-                                results.truncate(req_data.limit);
-
+                            Ok(results) => {
                                 if results.is_empty() && min_score > 0.0 {
                                     ctx.ok_response_for(
                                         req,
@@ -699,6 +686,150 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Memory Pin/Unpin (#660) ──────────────────────────────────────
+        (Method::Post, "/memory/pin") => match read_body::<MemoryPinRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        format!("Invalid UUID format: {}", req_data.id),
+                    );
+                }
+                let result = if req_data.pinned {
+                    uteke.pin(&req_data.id)
+                } else {
+                    uteke.unpin(&req_data.id)
+                };
+                match result {
+                    Ok(true) => match uteke.get_by_id(&req_data.id) {
+                        Ok(Some(memory)) => ctx.ok_response_for(req, &memory),
+                        Ok(None) => ctx.error_response_for(
+                            req,
+                            500,
+                            "Memory updated but could not be retrieved",
+                        ),
+                        Err(e) => {
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    },
+                    Ok(false) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Memory not found: {}", req_data.id),
+                    ),
+                    Err(e) => {
+                        error!("Pin/unpin error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
+        // ── Memory Set Importance (#660) ──────────────────────────────────
+        (Method::Post, "/memory/importance") => {
+            match read_body::<MemoryImportanceRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            format!("Invalid UUID format: {}", req_data.id),
+                        );
+                    }
+                    match uteke.set_importance(&req_data.id, req_data.importance) {
+                        Ok(true) => match uteke.get_by_id(&req_data.id) {
+                            Ok(Some(memory)) => ctx.ok_response_for(req, &memory),
+                            Ok(None) => ctx.error_response_for(
+                                req,
+                                500,
+                                "Memory updated but could not be retrieved",
+                            ),
+                            Err(e) => {
+                                error!("Internal error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        },
+                        Ok(false) => ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Memory not found: {}", req_data.id),
+                        ),
+                        Err(e) => match e {
+                            uteke_core::Error::Validation(_) => {
+                                ctx.error_response_for(req, 400, e.to_string())
+                            }
+                            _ => {
+                                error!("Set importance error: {e}");
+                                ctx.error_response_for(req, 500, "Internal server error")
+                            }
+                        },
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── Update memory by ID (PUT /memory, #659) ──────────────────
+        (Method::Put, "/memory") => match read_body::<MemoryUpdateRequest>(req.as_reader()) {
+            Ok(req_data) => {
+                // Validate UUID format
+                if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        format!("Invalid UUID format: {}", req_data.id),
+                    );
+                }
+                // Check that at least one field is provided
+                if req_data.content.is_none()
+                    && req_data.tags.is_none()
+                    && req_data.metadata.is_none()
+                    && req_data.importance.is_none()
+                    && req_data.pinned.is_none()
+                    && req_data.memory_type.is_none()
+                {
+                    return ctx.error_response_for(
+                        req,
+                        400,
+                        "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type",
+                    );
+                }
+                let tag_refs: Option<Vec<String>> = req_data.tags;
+                let tag_slice: Option<&[String]> = tag_refs.as_deref();
+                match uteke.update_memory(
+                    &req_data.id,
+                    req_data.content.as_deref(),
+                    tag_slice,
+                    req_data.metadata.as_ref(),
+                    req_data.importance,
+                    req_data.pinned,
+                    req_data.memory_type.as_deref(),
+                ) {
+                    Ok(true) => {
+                        ctx.ok_response_for(req, &serde_json::json!({"updated": req_data.id}))
+                    }
+                    Ok(false) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Memory not found: {}", req_data.id),
+                    ),
+                    Err(e) => {
+                        error!("Update memory error: {e}");
+                        // Propagate validation errors with proper status codes
+                        let status = match e {
+                            uteke_core::Error::Validation(_) => 400,
+                            _ => 500,
+                        };
+                        ctx.error_response_for(req, status, e.to_string())
+                    }
+                }
+            }
+            Err(e) => ctx.error_response_for(req, 400, e),
+        },
+
         // ── Room Memories (chronological listing — GET /room/memories) ────
         (Method::Get, p) if p == "/room/memories" || p.starts_with("/room/memories?") => {
             let query_str = p.strip_prefix("/room/memories?");
@@ -817,6 +948,92 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         req,
                         404,
                         format!("Room not found: {}", req_data.room_id),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── Room ↔ Document junction (#689) ──────────────────────────────
+        // POST /room/document/list — list documents linked to a room
+        (Method::Post, "/room/document/list") => {
+            #[derive(Deserialize)]
+            struct RoomDocListReq {
+                room_id: String,
+            }
+            match read_body::<RoomDocListReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_list_documents(&req_data.room_id) {
+                    Ok(slugs) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({ "room_id": req_data.room_id, "doc_slugs": slugs }),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // PUT /room/document/add — link a document to a room
+        (Method::Put, "/room/document/add") => {
+            #[derive(Deserialize)]
+            struct RoomDocAddReq {
+                room_id: String,
+                doc_slug: String,
+            }
+            match read_body::<RoomDocAddReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_add_document(&req_data.room_id, &req_data.doc_slug) {
+                    Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "linked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
+                    Err(e) => match e {
+                        uteke_core::Error::Validation(_) => {
+                            ctx.error_response_for(req, 400, e.to_string())
+                        }
+                        _ => {
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    },
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // DELETE /room/document/remove — unlink a document from a room
+        (Method::Delete, "/room/document/remove") => {
+            #[derive(Deserialize)]
+            struct RoomDocRemoveReq {
+                room_id: String,
+                doc_slug: String,
+            }
+            match read_body::<RoomDocRemoveReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_remove_document(&req_data.room_id, &req_data.doc_slug) {
+                    Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "unlinked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // POST /doc/room/list — list rooms linked to a document
+        (Method::Post, "/doc/room/list") => {
+            #[derive(Deserialize)]
+            struct DocRoomListReq {
+                doc_slug: String,
+            }
+            match read_body::<DocRoomListReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.document_list_rooms(&req_data.doc_slug) {
+                    Ok(room_ids) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({ "doc_slug": req_data.doc_slug, "room_ids": room_ids }),
                     ),
                     Err(e) => {
                         error!("Internal error: {e}");
@@ -1123,6 +1340,55 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     error!("doc delete error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")
                 }
+            }
+        }
+
+        // ── Cross-entity references (#689) ───────────────────────────────
+        // POST /memory/doc-refs — get document slugs referenced by a memory
+        (Method::Post, "/memory/doc-refs") => {
+            #[derive(Deserialize)]
+            struct MemoryDocRefsReq {
+                memory_id: String,
+            }
+            match read_body::<MemoryDocRefsReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.recall_documents_for_memory(&req_data.memory_id) {
+                    Ok(slugs) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({
+                            "memory_id": req_data.memory_id,
+                            "doc_slugs": slugs,
+                        }),
+                    ),
+                    Err(e) => {
+                        error!("memory/doc-refs error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // POST /doc/mem-refs — get memory IDs that reference a document
+        (Method::Post, "/doc/mem-refs") => {
+            #[derive(Deserialize)]
+            struct DocMemRefsReq {
+                doc_slug: String,
+            }
+            match read_body::<DocMemRefsReq>(req.as_reader()) {
+                Ok(req_data) => match uteke.recall_memories_for_document(&req_data.doc_slug) {
+                    Ok(memory_ids) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({
+                            "doc_slug": req_data.doc_slug,
+                            "memory_ids": memory_ids,
+                        }),
+                    ),
+                    Err(e) => {
+                        error!("doc/mem-refs error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
             }
         }
 

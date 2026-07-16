@@ -29,6 +29,7 @@ pub(crate) fn run_recall(
     salience: bool,
     recency: bool,
     search_type: Option<&str>,
+    enrich: bool,
 ) -> Result<(), String> {
     // Resolve search type: --type flag > default (All = unified)
     let resolved_search_type = match search_type {
@@ -118,6 +119,9 @@ pub(crate) fn run_recall(
                 ns,
                 min_score,
                 resolved_search_type,
+                None,
+                None,
+                enrich,
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
@@ -160,7 +164,16 @@ pub(crate) fn run_recall(
                 return Err("--at and --related cannot be used together".into());
             }
             uteke
-                .recall_at_time(query, limit, tags_filter, ns, point_in_time, min_score)
+                .recall_at_time(
+                    query,
+                    limit,
+                    tags_filter,
+                    ns,
+                    point_in_time,
+                    min_score,
+                    None,
+                    None,
+                )
                 .map_err(|e| format!("Failed to recall at time: {e}"))?
         } else if related {
             uteke
