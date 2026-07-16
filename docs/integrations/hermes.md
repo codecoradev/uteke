@@ -242,7 +242,7 @@ uteke init --agent cursor --memory-provider
 This installs uteke as the agent's default memory provider — relevant memories are recalled and injected automatically every turn. No daemon needed; talks to the `uteke` binary directly via subprocess.
 
 > **Note:** For Hermes, use Mode A (uteke-tool) or Mode C (shell hook) instead — the
-> Hermes memory-provider plugin has been removed (see [Mode B](#mode-b--memory-provider-uteke-as-hermes-default-memory)).
+> Hermes memory-provider plugin has been removed (see [Mode B](#mode-b--memory-provider-deprecated)).
 
 ## ~~Mode B~~ — memory-provider (deprecated)
 
