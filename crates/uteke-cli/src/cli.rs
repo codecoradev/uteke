@@ -336,6 +336,16 @@ pub enum Commands {
         /// Memory ID (UUID)
         id: String,
     },
+    /// Record feedback on a memory's usefulness (#718)
+    ///
+    /// Boosts (helpful) or reduces (unhelpful) the memory's importance score.
+    /// Helpful: +0.05, Unhelpful: -0.10 (asymmetric — penalty > reward).
+    Feedback {
+        /// Memory ID (UUID)
+        id: String,
+        #[command(subcommand)]
+        action: FeedbackAction,
+    },
     /// Recalculate importance scores for all memories
     Importance,
     /// Room management: list, stats, recall
@@ -618,6 +628,15 @@ pub enum NamespaceCommands {
         /// Namespace name to set as default
         name: String,
     },
+}
+
+/// Feedback actions for trust scoring (#718).
+#[derive(Subcommand, Clone)]
+pub enum FeedbackAction {
+    /// Mark memory as helpful: importance += 0.05
+    Helpful,
+    /// Mark memory as unhelpful: importance -= 0.10
+    Unhelpful,
 }
 
 /// Subcommands for room management.

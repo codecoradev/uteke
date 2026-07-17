@@ -648,6 +648,42 @@ impl Uteke {
         self.store.set_importance(id, importance)
     }
 
+    /// Record positive feedback: boost importance (#718).
+    ///
+    /// Increments importance by `delta` (clamped to 1.0).
+    /// Default delta: 0.05 (adopted from Hermes trust scoring).
+    /// Returns the new importance value.
+    pub fn feedback_helpful(&self, id: &str) -> Result<f64, Error> {
+        self.feedback_adjust(id, 0.05)
+    }
+
+    /// Record negative feedback: reduce importance (#718).
+    ///
+    /// Decrements importance by `delta` (clamped to 0.0).
+    /// Default delta: 0.10 (adopted from Hermes trust scoring).
+    /// Unhelpful feedback is penalized more than helpful is rewarded.
+    /// Returns the new importance value.
+    pub fn feedback_unhelpful(&self, id: &str) -> Result<f64, Error> {
+        self.feedback_adjust(id, -0.10)
+    }
+
+    /// Internal: adjust importance by delta, clamped to [0.0, 1.0].
+    fn feedback_adjust(&self, id: &str, delta: f64) -> Result<f64, Error> {
+        let current: f64 = self
+            .store
+            .conn
+            .query_row(
+                "SELECT importance FROM memories WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("feedback_adjust read", e))?;
+
+        let new_importance = (current + delta).clamp(0.0, 1.0);
+        self.store.set_importance(id, new_importance)?;
+        Ok(new_importance)
+    }
+
     /// Set source provenance on a memory (#348).
     pub fn set_source(
         &self,
