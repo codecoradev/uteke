@@ -772,6 +772,54 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // ── Memory Feedback (Trust Scoring) (#718) ────────────────────
+        (Method::Post, "/memory/feedback") => {
+            match read_body::<MemoryFeedbackRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            format!("Invalid UUID format: {}", req_data.id),
+                        );
+                    }
+                    let result = match req_data.feedback.as_str() {
+                        "helpful" => uteke.feedback_helpful(&req_data.id).map(|imp| {
+                            serde_json::json!({
+                                "id": req_data.id,
+                                "feedback": "helpful",
+                                "delta": 0.05,
+                                "importance": imp,
+                            })
+                        }),
+                        "unhelpful" => uteke.feedback_unhelpful(&req_data.id).map(|imp| {
+                            serde_json::json!({
+                                "id": req_data.id,
+                                "feedback": "unhelpful",
+                                "delta": -0.10,
+                                "importance": imp,
+                            })
+                        }),
+                        _ => {
+                            return ctx.error_response_for(
+                                req,
+                                400,
+                                "Invalid feedback value. Use 'helpful' or 'unhelpful'.".to_string(),
+                            );
+                        }
+                    };
+                    match result {
+                        Ok(data) => ctx.ok_response_for(req, &data),
+                        Err(e) => {
+                            error!("Feedback error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
         // ── Update memory by ID (PUT /memory, #659) ──────────────────
         (Method::Put, "/memory") => match read_body::<MemoryUpdateRequest>(req.as_reader()) {
             Ok(req_data) => {

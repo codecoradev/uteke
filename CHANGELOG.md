@@ -1,21 +1,43 @@
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-17
+
 ### Added
 - **PUT /memory — partial memory updates (#676)** — Update any combination of content, tags, metadata, importance, pinned state, or memory_type on an existing memory. Content changes trigger embedding regeneration. Replaces the old pattern of forget+remember.
 - **POST /memory/pin and POST /memory/importance endpoints (#660)** — Dedicated endpoints for pin/unpin toggle (accepts `pinned` boolean) and importance score setting (0.0–1.0). Both return the updated memory on success.
 - **Room ↔ Document junction table — schema v15 (#689, #692)** — New `room_documents` table links rooms to documents bidirectionally. Endpoints: `POST /room/document/list`, `PUT /room/document/add`, `DELETE /room/document/remove`, `POST /doc/room/list`.
 - **memory↔document cross-entity linking via [[doc-slug]] wikilinks (#691)** — Memories containing `[[doc-slug]]` patterns are auto-wired to document references. Query endpoints: `POST /memory/doc-refs` (doc slugs for a memory) and `POST /doc/mem-refs` (memory IDs referencing a doc).
-- **Schema v14: memory_type added to FTS5 index (#662)** — FTS5 full-text search now indexes `memory_type`, enabling keyword search by type. Migration rebuilds the FTS5 index from existing memories.
+- **Schema v14: memory_type added to FTS5 index (#662, #664)** — FTS5 full-text search now indexes `memory_type`, enabling keyword search by type. Migration rebuilds the FTS5 index from existing memories.
+- **Trust scoring with feedback API (#718, #725)** — `uteke feedback helpful <id>` (+0.05 importance) and `uteke feedback unhelpful <id>` (-0.10 importance). HTTP endpoint: `POST /memory/feedback` with `{ id, feedback: 'helpful'|'unhelpful' }`. Importance clamped to [0.0, 1.0].
+- **Jaccard token similarity as post-RRF reranking signal (#719, #723)** — Token-level Jaccard similarity applied after RRF score normalization in `recall_rrf`. Configurable via `jaccard_weight` in config (default 0.0, opt-in). Module: `jaccard.rs`.
+- **Auto-contradiction scan as Dream pipeline phase (#720, #726)** — New Phase 4 (Contradict) in Dream maintenance pipeline. Scans top-200 recently updated memories for pairs with high tag overlap (Jaccard ≥ 0.3) + low embedding cosine similarity (≤ 0.6). Creates `contradicts` graph edges (older → newer). Pipeline order: lint → backlinks → dedup → contradict → orphans → compact → verify.
+- **Cross-entity enrichment in recall (#703, #704, #705)** — `--enrich` flag and `enrich` parameter on recall endpoints add cross-entity links to results. Room summaries include `referenced_documents`. `POST /memory/doc-refs` and `POST /doc/mem-refs` for cross-entity queries.
+- **Codecora theme adoption (#702)** — VitePress docs now use `@codecora/theme` (Catppuccin Mocha, new base `/uteke/docs/`).
+- **Room operations test suite (#701)** — Comprehensive tests for room CRUD and room-document junction operations.
+- **Cross-entity integration tests (#706)** — Integration tests covering memory↔document linking, room-document junction, and wikilink resolution.
 
 ### Changed
 - **Entity/category filter pushed into core recall (#667)** — Entity and category metadata filters now run inside the core recall candidate loop instead of post-fetch amplification. Eliminates the 10x fetch overhead for filtered queries.
 - **Full memory detail fields in UnifiedSearchResult (#688)** — Unified search results now include complete memory metadata (tags, importance, pinned, namespace, memory_type, source info) directly in the response, eliminating secondary lookups.
+- **Salience/recency boosts enabled by default (#721, #722)** — Default weights changed from 0.0 to 0.1 for both salience and recency. CLI flags now tri-state: `--salience`/`--recency` (explicit), `--no-salience`/`--no-recency` (disable), omit (default 0.1). No longer opt-in.
+- **Dream pipeline expanded to 7 phases** — Added Contradict phase between Dedup and Orphans. `all_in_order()` returns 7 phases. CLI `--phases` filter accepts `contradict`.
+- **Docs restructured (#716)** — Split getting-started into separate install/comparison/feature pages. Improved navigation and content organization.
+
+### Deprecated
+- **hermes-memory-provider extension (#724)** — The Hermes memory provider plugin is deprecated in favor of direct HTTP transport. Use `uteke serve` + HTTP API instead of the plugin wrapper.
 
 ### Fixed
-- **Search access count tracking** — Search operations now correctly increment the access count on recalled memories, improving tier scoring accuracy.
-- **Windows usearch buffer overflow** — usearch save now serializes to an in-memory buffer first, avoiding C++ `fopen("wb")` failures on Windows due to MAX_PATH limits and file lock conflicts.
-- **Metadata fields propagation** — Metadata fields set via `POST /remember` are now consistently propagated through all downstream operations (recall, search, export).
-- **Cross-entity linking bugs** — Fixed edge cases in `[[doc-slug]]` resolution where slugs with special characters or missing documents produced incorrect edges.
+- **Search access count tracking (#687)** — Search operations now correctly increment the access count on recalled memories, improving tier scoring accuracy.
+- **Windows usearch buffer overflow (#684, #685)** — usearch save/load now serializes via in-memory buffer first, avoiding C++ `fopen` failures on Windows due to MAX_PATH limits and file lock conflicts.
+- **Metadata fields propagation (#682, #683)** — Metadata fields set via `POST /remember` are now consistently propagated through all downstream operations (recall, search, export, contradiction detection).
+- **Cross-entity linking bugs (#690)** — Fixed edge cases in `[[doc-slug]]` resolution where slugs with special characters or missing documents produced incorrect edges. Fixed O(n) reverse scan in `get_related()`.
+- **Room-document validation (#698, #700)** — Room-document junction endpoints now validate that both room_id and doc_slug exist before linking/unlinking.
+- **Importance endpoint error dispatch (#697, #699)** — Fixed `POST /memory/importance` to match `Error::Validation` instead of string matching.
+
+### Dependencies
+- Bumped `usearch` 2.25.3 → 2.26.0 (#679)
+- Bumped `uuid` 1.23.4 → 1.23.5 (#680)
+- Bumped `actions/setup-node` 6 → 7 (#678)
 
 ## [0.7.3] — 2026-07-13
 
@@ -1208,7 +1230,8 @@
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
-[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/codecoradev/uteke/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/codecoradev/uteke/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/codecoradev/uteke/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/codecoradev/uteke/compare/v0.7.0...v0.7.1

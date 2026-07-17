@@ -136,7 +136,7 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 |----------|--------|------|-------------|
 | `/doc/update` | POST | Write | Partial document update with chunk rebuild |
 
-### Memory Mutation (v0.7.4)
+### Memory Mutation (v0.8.0)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -144,7 +144,7 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 | `/memory/pin` | POST | Write | Pin or unpin a memory by ID |
 | `/memory/importance` | POST | Write | Set importance score (0.0–1.0) for a memory |
 
-### Room ↔ Document Junction (v0.7.4)
+### Room ↔ Document Junction (v0.8.0)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -153,7 +153,7 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 | `/room/document/remove` | DELETE | Write | Unlink a document from a room |
 | `/doc/room/list` | POST | Read | List rooms linked to a document |
 
-### Cross-Entity References (v0.7.4)
+### Cross-Entity References (v0.8.0)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -214,11 +214,11 @@ Dual-axis recall boost applied after the RRF merge:
 - **Salience**: higher-scored by type weight (decision > insight > fact > note)
 - **Recency**: exponential decay `exp(-age/τ)` where τ is a per-type time constant
 
-Both are opt-in via `--salience` / `--recency` CLI flags or the API. Config leaks are prevented by setting/resetting config around each query.
+Both are enabled by default (weight 0.1). Use `--no-salience` / `--no-recency` to disable. Previously opt-in (v0.7.3), now opt-out (#721). Config leaks are prevented by setting/resetting config around each query.
 
 ### Dream Cycle (#353)
 
-The `dream` command runs a coordinated maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify. Phases run in canonical dependency order regardless of user-supplied order. Individual phase errors are recorded but don't abort the pipeline. Namespace-scoped phases (lint, dedup, orphans, compact) only affect the target namespace; global phases (backlinks, verify) run across all namespaces.
+The `dream` command runs a coordinated maintenance pipeline: lint → backlinks → dedup → contradict → orphans → compact → verify. Phase 4 (Contradict) scans for contradictory memories via tag overlap + embedding divergence (#720). Phases run in canonical dependency order regardless of user-supplied order. Individual phase errors are recorded but don't abort the pipeline. Namespace-scoped phases (lint, dedup, contradict, orphans, compact) only affect the target namespace; global phases (backlinks, verify) run across all namespaces.
 
 ### Citation & Source Attribution (#348)
 

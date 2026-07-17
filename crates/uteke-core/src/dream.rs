@@ -1,4 +1,4 @@
-//! Dream cycle — coordinated maintenance pipeline (#353).
+//! Dream cycle — coordinated maintenance pipeline (#353, #720).
 //!
 //! A single command (`uteke dream`) that runs all maintenance phases in
 //! dependency order, all local, zero LLM. Inspired by GBrain's overnight
@@ -9,9 +9,10 @@
 //! 1. **Lint** — type validation + broken-ref detection
 //! 2. **Backlinks** — rebuild `referenced_by` edges (#350)
 //! 3. **Dedup** — find & merge near-duplicates (existing consolidate)
-//! 4. **Orphans** — detect disconnected memories (#351, when available)
-//! 5. **Compact** — aging cleanup + prune cold memories (existing)
-//! 6. **Verify** — schema + index integrity check (existing doctor)
+//! 4. **Contradict** — detect contradictory memories via tag overlap + embedding divergence (#720)
+//! 5. **Orphans** — detect disconnected memories (#351, when available)
+//! 6. **Compact** — aging cleanup + prune cold memories (existing)
+//! 7. **Verify** — schema + index integrity check (existing doctor)
 //!
 //! All phases are idempotent and safe to re-run.
 
@@ -25,6 +26,7 @@ pub enum DreamPhase {
     Lint,
     Backlinks,
     Dedup,
+    Contradict,
     Orphans,
     Compact,
     Verify,
@@ -36,6 +38,7 @@ impl DreamPhase {
             DreamPhase::Lint,
             DreamPhase::Backlinks,
             DreamPhase::Dedup,
+            DreamPhase::Contradict,
             DreamPhase::Orphans,
             DreamPhase::Compact,
             DreamPhase::Verify,
@@ -47,6 +50,7 @@ impl DreamPhase {
             Self::Lint => "lint",
             Self::Backlinks => "backlinks",
             Self::Dedup => "dedup",
+            Self::Contradict => "contradict",
             Self::Orphans => "orphans",
             Self::Compact => "compact",
             Self::Verify => "verify",
@@ -58,6 +62,7 @@ impl DreamPhase {
             "lint" => Some(Self::Lint),
             "backlinks" => Some(Self::Backlinks),
             "dedup" => Some(Self::Dedup),
+            "contradict" => Some(Self::Contradict),
             "orphans" => Some(Self::Orphans),
             "compact" => Some(Self::Compact),
             "verify" => Some(Self::Verify),
@@ -186,6 +191,7 @@ impl crate::Uteke {
             DreamPhase::Lint => self.phase_lint(namespace),
             DreamPhase::Backlinks => self.phase_backlinks(dry_run),
             DreamPhase::Dedup => self.phase_dedup(namespace, dry_run),
+            DreamPhase::Contradict => self.phase_contradict(namespace, dry_run),
             DreamPhase::Orphans => self.phase_orphans(namespace),
             DreamPhase::Compact => self.phase_compact(namespace, dry_run),
             DreamPhase::Verify => self.phase_verify(),
@@ -323,6 +329,210 @@ impl crate::Uteke {
         })
     }
 
+    /// Contradiction detection phase (#720).
+    ///
+    /// Scans top-N most recently updated memories for pairs that:
+    /// 1. Share at least one tag (topic overlap)
+    /// 2. Have high tag Jaccard overlap (≥ 0.3)
+    /// 3. Have low embedding cosine similarity (≤ threshold, default 0.6)
+    ///
+    /// Flagged pairs get a "contradicts" graph edge (older → newer).
+    fn phase_contradict(
+        &self,
+        namespace: Option<&str>,
+        dry_run: bool,
+    ) -> Result<PhaseResult, Error> {
+        const SIMILARITY_THRESHOLD: f32 = 0.6;
+        const TAG_OVERLAP_MIN: usize = 1;
+        const TAG_JACCARD_MIN: f32 = 0.3;
+        const MAX_MEMORIES: usize = 200;
+
+        // Load top-N memories ordered by updated_at DESC
+        let memories = self.load_recent_memories(namespace, MAX_MEMORIES)?;
+
+        if memories.len() < 2 {
+            return Ok(PhaseResult {
+                phase: DreamPhase::Contradict.as_str().to_string(),
+                status: PhaseStatus::Ok,
+                summary: "✓ fewer than 2 memories, nothing to scan".to_string(),
+                changes: 0,
+                warnings: 0,
+            });
+        }
+
+        // Build tag sets for each memory
+        let tag_sets: Vec<std::collections::HashSet<&str>> = memories
+            .iter()
+            .map(|m| m.tags.iter().map(|t| t.as_str()).collect())
+            .collect();
+
+        // O(n²) pair scan
+        let mut contradiction_count = 0usize;
+        let mut edges_created = 0usize;
+
+        for i in 0..memories.len() {
+            for j in (i + 1)..memories.len() {
+                let m1 = &memories[i];
+                let m2 = &memories[j];
+
+                // Skip deprecated memories
+                if m1.deprecated || m2.deprecated {
+                    continue;
+                }
+
+                let tags1 = &tag_sets[i];
+                let tags2 = &tag_sets[j];
+
+                // Must share at least one tag
+                if tags1.is_empty() || tags2.is_empty() {
+                    continue;
+                }
+                let intersection = tags1.intersection(tags2).count();
+                if intersection < TAG_OVERLAP_MIN {
+                    continue;
+                }
+
+                // Tag Jaccard must be above minimum
+                let union = tags1.union(tags2).count();
+                let tag_jaccard = intersection as f32 / union as f32;
+                if tag_jaccard < TAG_JACCARD_MIN {
+                    continue;
+                }
+
+                // Both must have embeddings for cosine comparison
+                if m1.embedding.is_empty() || m2.embedding.is_empty() {
+                    continue;
+                }
+
+                // Cosine similarity
+                let cosine = crate::consolidate::cosine_similarity(&m1.embedding, &m2.embedding);
+
+                // Low similarity = potential contradiction
+                if cosine > SIMILARITY_THRESHOLD {
+                    continue;
+                }
+
+                contradiction_count += 1;
+
+                if dry_run {
+                    tracing::info!(
+                        "contradiction (dry-run): sim={:.3} tag_jaccard={:.2} | '{}' ↔ '{}'",
+                        cosine,
+                        tag_jaccard,
+                        &m1.content.chars().take(50).collect::<String>(),
+                        &m2.content.chars().take(50).collect::<String>(),
+                    );
+                    continue;
+                }
+
+                // Determine older → newer ordering
+                let (older, newer) = if m1.updated_at <= m2.updated_at {
+                    (&m1.id, &m2.id)
+                } else {
+                    (&m2.id, &m1.id)
+                };
+
+                // Create "contradicts" graph edge
+                let gs = crate::GraphStore::new(&self.store.conn);
+                match gs.add_edge(older, newer, "contradicts", cosine as f64) {
+                    Ok(()) => {
+                        edges_created += 1;
+                        tracing::info!(
+                            "contradiction detected: sim={:.3} tag_j={:.2} {} -[contradicts]-> {}",
+                            cosine,
+                            tag_jaccard,
+                            &older[..8.min(older.len())],
+                            &newer[..8.min(newer.len())],
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to create contradiction edge: {e}");
+                    }
+                }
+            }
+        }
+
+        let summary = if contradiction_count == 0 {
+            "✓ no contradictions detected".to_string()
+        } else if dry_run {
+            format!(
+                "⚠ {contradiction_count} potential contradiction{} (dry-run, no edges created)",
+                if contradiction_count == 1 { "" } else { "s" }
+            )
+        } else {
+            format!(
+                "⚠ {contradiction_count} contradiction{} detected, {edges_created} edge{} created",
+                if contradiction_count == 1 { "" } else { "s" },
+                if edges_created == 1 { "" } else { "s" },
+            )
+        };
+
+        Ok(PhaseResult {
+            phase: DreamPhase::Contradict.as_str().to_string(),
+            status: if contradiction_count == 0 {
+                PhaseStatus::Ok
+            } else {
+                PhaseStatus::Warning
+            },
+            summary,
+            changes: edges_created,
+            warnings: contradiction_count,
+        })
+    }
+
+    /// Load top-N most recently updated memories with embeddings.
+    fn load_recent_memories(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::memory::Memory>, Error> {
+        let sql = match namespace {
+            Some(_ns) => {
+                "SELECT id, content, embedding, tags, metadata, \
+                 created_at, updated_at, namespace, access_count, \
+                 last_accessed, deprecated, valid_from, valid_until, \
+                 memory_type, importance, pinned, content_type, slug \
+                 FROM memories WHERE namespace = ?1 AND deprecated = 0 \
+                 ORDER BY updated_at DESC LIMIT ?2"
+            }
+            None => {
+                "SELECT id, content, embedding, tags, metadata, \
+                 created_at, updated_at, namespace, access_count, \
+                 last_accessed, deprecated, valid_from, valid_until, \
+                 memory_type, importance, pinned, content_type, slug \
+                 FROM memories WHERE deprecated = 0 \
+                 ORDER BY updated_at DESC LIMIT ?1"
+            }
+        };
+
+        let mut stmt = self
+            .store
+            .conn
+            .prepare(sql)
+            .map_err(|e| Error::db("dream contradict prepare", e))?;
+
+        let rows = match namespace {
+            Some(ns) => stmt
+                .query_map(
+                    rusqlite::params![ns, limit as i64],
+                    crate::memory::store::row_to_memory,
+                )
+                .map_err(|e| Error::db("dream contradict query", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("dream contradict fetch", e))?,
+            None => stmt
+                .query_map(
+                    rusqlite::params![limit as i64],
+                    crate::memory::store::row_to_memory,
+                )
+                .map_err(|e| Error::db("dream contradict query", e))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::db("dream contradict fetch", e))?,
+        };
+
+        Ok(rows)
+    }
+
     fn phase_orphans(&self, namespace: Option<&str>) -> Result<PhaseResult, Error> {
         // Detection only — never auto-delete. Inline SQL count of memories
         // with no edges (incoming or outgoing), access_count=0, not pinned,
@@ -455,8 +665,9 @@ mod tests {
     fn phase_order() {
         let order = DreamPhase::all_in_order();
         assert_eq!(order[0], DreamPhase::Lint);
-        assert_eq!(order[5], DreamPhase::Verify);
-        assert_eq!(order.len(), 6);
+        assert_eq!(order[3], DreamPhase::Contradict);
+        assert_eq!(order[6], DreamPhase::Verify);
+        assert_eq!(order.len(), 7);
     }
 
     #[test]
@@ -464,7 +675,7 @@ mod tests {
         let uteke = crate::Uteke::open(":memory:").unwrap();
         let report = uteke.dream(None, true, &[]).unwrap();
         assert!(report.dry_run);
-        assert_eq!(report.phases.len(), 6);
+        assert_eq!(report.phases.len(), 7);
         // Dry run should make no changes.
         assert_eq!(report.total_changes, 0);
     }
@@ -510,5 +721,57 @@ mod tests {
             )
             .unwrap();
         assert_eq!(report.phases.len(), 1, "duplicate phases should be deduped");
+    }
+
+    #[test]
+    fn contradict_phase_dry_run_no_memories() {
+        // No memories = early exit with "nothing to scan"
+        let uteke = crate::Uteke::open(":memory:").unwrap();
+        let report = uteke.dream(None, true, &[DreamPhase::Contradict]).unwrap();
+        assert_eq!(report.phases.len(), 1);
+        assert_eq!(report.phases[0].phase, "contradict");
+        assert_eq!(report.total_changes, 0);
+        assert!(report.phases[0].summary.contains("nothing to scan"));
+    }
+
+    #[test]
+    fn contradict_phase_in_all_order() {
+        // Contradict should appear at index 3 in all_in_order
+        let order = DreamPhase::all_in_order();
+        assert!(order.contains(&DreamPhase::Contradict));
+        // Contradict comes after Dedup and before Orphans
+        let dedup_idx = order
+            .iter()
+            .position(|p| matches!(p, DreamPhase::Dedup))
+            .unwrap();
+        let contradict_idx = order
+            .iter()
+            .position(|p| matches!(p, DreamPhase::Contradict))
+            .unwrap();
+        let orphans_idx = order
+            .iter()
+            .position(|p| matches!(p, DreamPhase::Orphans))
+            .unwrap();
+        assert!(
+            dedup_idx < contradict_idx,
+            "Contradict must come after Dedup"
+        );
+        assert!(
+            contradict_idx < orphans_idx,
+            "Contradict must come before Orphans"
+        );
+    }
+
+    #[test]
+    fn contradict_from_str_roundtrip() {
+        assert_eq!(
+            DreamPhase::from_str_opt("contradict"),
+            Some(DreamPhase::Contradict)
+        );
+        assert_eq!(
+            DreamPhase::from_str_opt("CONTRADICT"),
+            Some(DreamPhase::Contradict)
+        );
+        assert_eq!(DreamPhase::Contradict.as_str(), "contradict");
     }
 }

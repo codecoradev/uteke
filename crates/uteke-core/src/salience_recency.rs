@@ -1,7 +1,6 @@
-//! Salience + recency dual-axis recall ranking (#352).
+//! Salience + recency dual-axis recall ranking (#352, #721).
 //!
-//! Two orthogonal boost functions that can be turned on per-query via
-//! `--salience` / `--recency` CLI flags (or the equivalent API params).
+//! Two orthogonal boost functions applied by default to every recall query.
 //! Both are computed from existing memory fields — **zero LLM**.
 //!
 //! ## Salience (mattering)
@@ -17,27 +16,32 @@
 //!
 //! Both axes are **additive boosts** capped to never dominate embedding
 //! similarity — they act as tie-breakers between otherwise similar results.
+//!
+//! ## Default behavior (#721)
+//!
+//! Both weights default to `0.1` (enabled by default). Use `--no-salience`
+//! / `--no-recency` CLI flags or pass weight 0.0 via API to opt out.
 
 use crate::memory::types::Memory;
 
-/// Per-query salience/recency boost weights (#352).
+/// Per-query salience/recency boost weights (#352, #721).
 ///
-/// All weights default to `0.0` so the feature is opt-in per query.
-/// `salience_weight` and `recency_weight` are applied additively to the
-/// final recall score after embedding similarity is computed.
+/// Both weights default to `0.1` (enabled by default). Set to `0.0` to
+/// disable. `salience_weight` and `recency_weight` are applied additively
+/// to the final recall score after embedding similarity is computed.
 #[derive(Debug, Clone, Copy)]
 pub struct SalienceRecencyConfig {
-    /// Weight for the salience boost (0.0 = off, 0.15 = default when enabled).
+    /// Weight for the salience boost (0.0 = off, 0.1 = default).
     pub salience_weight: f32,
-    /// Weight for the recency boost (0.0 = off, 0.15 = default when enabled).
+    /// Weight for the recency boost (0.0 = off, 0.1 = default).
     pub recency_weight: f32,
 }
 
 impl Default for SalienceRecencyConfig {
     fn default() -> Self {
         Self {
-            salience_weight: 0.0,
-            recency_weight: 0.0,
+            salience_weight: 0.1,
+            recency_weight: 0.1,
         }
     }
 }
@@ -238,9 +242,25 @@ mod tests {
     #[test]
     fn apply_boosts_noop_when_weights_zero() {
         let m = mem(0, 0.5, false, 0, "fact");
-        let cfg = SalienceRecencyConfig::default();
+        // Explicit zero weights → no-op regardless of default.
+        let cfg = SalienceRecencyConfig {
+            salience_weight: 0.0,
+            recency_weight: 0.0,
+        };
         assert!(cfg.is_noop());
         assert_eq!(apply_boosts(0.7, &m, chrono::Utc::now(), cfg), 0.7);
+    }
+
+    #[test]
+    fn apply_boosts_default_nonzero() {
+        let m = mem(100, 0.9, true, 0, "decision");
+        let cfg = SalienceRecencyConfig::default();
+        assert!(!cfg.is_noop(), "default should be non-zero (#721)");
+        let boosted = apply_boosts(0.5, &m, chrono::Utc::now(), cfg);
+        assert!(
+            boosted > 0.5,
+            "default boost should raise score, got {boosted}"
+        );
     }
 
     #[test]
@@ -267,7 +287,15 @@ mod tests {
 
     #[test]
     fn config_is_noop() {
-        assert!(SalienceRecencyConfig::default().is_noop());
+        // Default is now non-zero (#721)
+        assert!(!SalienceRecencyConfig::default().is_noop());
+        // Explicit zero weights are no-op
+        assert!(SalienceRecencyConfig {
+            salience_weight: 0.0,
+            recency_weight: 0.0,
+        }
+        .is_noop());
+        // One non-zero is not no-op
         assert!(!SalienceRecencyConfig {
             salience_weight: 0.1,
             recency_weight: 0.0,

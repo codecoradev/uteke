@@ -111,12 +111,14 @@ pub enum Commands {
         strategy: Option<String>,
         /// Enable salience boost (how much each result matters) (#352).
         /// Uses the configured `[recall].salience_weight` (default 0.15).
+        /// When absent, salience uses the default weight (0.1). Use --no-salience to disable (#721).
         #[arg(long)]
-        salience: bool,
+        salience: Option<bool>,
         /// Enable recency boost (how fresh each result is) (#352).
         /// Uses the configured `[recall].recency_weight` (default 0.15).
+        /// When absent, recency uses the default weight (0.1). Use --no-recency to disable (#721).
         #[arg(long)]
-        recency: bool,
+        recency: Option<bool>,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,
@@ -333,6 +335,16 @@ pub enum Commands {
     Unpin {
         /// Memory ID (UUID)
         id: String,
+    },
+    /// Record feedback on a memory's usefulness (#718)
+    ///
+    /// Boosts (helpful) or reduces (unhelpful) the memory's importance score.
+    /// Helpful: +0.05, Unhelpful: -0.10 (asymmetric — penalty > reward).
+    Feedback {
+        /// Memory ID (UUID)
+        id: String,
+        #[command(subcommand)]
+        action: FeedbackAction,
     },
     /// Recalculate importance scores for all memories
     Importance,
@@ -616,6 +628,15 @@ pub enum NamespaceCommands {
         /// Namespace name to set as default
         name: String,
     },
+}
+
+/// Feedback actions for trust scoring (#718).
+#[derive(Subcommand, Clone)]
+pub enum FeedbackAction {
+    /// Mark memory as helpful: importance += 0.05
+    Helpful,
+    /// Mark memory as unhelpful: importance -= 0.10
+    Unhelpful,
 }
 
 /// Subcommands for room management.

@@ -19,6 +19,7 @@ pub mod extraction;
 pub mod graph;
 pub mod graph_rerank;
 mod import_export;
+mod jaccard;
 mod maintenance;
 pub mod memory;
 mod operations;
@@ -324,6 +325,9 @@ pub struct Uteke {
     /// Salience + recency dual-axis boost config (#352). Defaults to all
     /// weights zero (opt-in per query via CLI flags / API params).
     salience_recency_config: salience_recency::SalienceRecencyConfig,
+    /// Jaccard token reranking weight (#719). Additive boost applied
+    /// post-RRF based on query-content token overlap. Default 0.0 (off).
+    jaccard_weight: f32,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
 }
@@ -476,6 +480,7 @@ impl Uteke {
             graph_rerank_config: graph_rerank_config.sanitized(),
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
+            jaccard_weight: 0.0,
         })
     }
 
@@ -498,6 +503,14 @@ impl Uteke {
     /// `Uteke` instance aren't affected.
     pub fn reset_salience_recency_config(&mut self) {
         self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
+    }
+
+    /// Set Jaccard token reranking weight (#719).
+    ///
+    /// When > 0.0, an additive Jaccard similarity boost is applied post-RRF
+    /// based on query-content token overlap. Recommended: 0.10-0.15.
+    pub fn set_jaccard_weight(&mut self, weight: f32) {
+        self.jaccard_weight = weight.clamp(0.0, 1.0);
     }
 
     /// Configure cloud embedding fallback.
@@ -646,6 +659,42 @@ impl Uteke {
     /// Set a memory's importance score directly (0.0-1.0).
     pub fn set_importance(&self, id: &str, importance: f64) -> Result<bool, Error> {
         self.store.set_importance(id, importance)
+    }
+
+    /// Record positive feedback: boost importance (#718).
+    ///
+    /// Increments importance by `delta` (clamped to 1.0).
+    /// Default delta: 0.05 (adopted from Hermes trust scoring).
+    /// Returns the new importance value.
+    pub fn feedback_helpful(&self, id: &str) -> Result<f64, Error> {
+        self.feedback_adjust(id, 0.05)
+    }
+
+    /// Record negative feedback: reduce importance (#718).
+    ///
+    /// Decrements importance by `delta` (clamped to 0.0).
+    /// Default delta: 0.10 (adopted from Hermes trust scoring).
+    /// Unhelpful feedback is penalized more than helpful is rewarded.
+    /// Returns the new importance value.
+    pub fn feedback_unhelpful(&self, id: &str) -> Result<f64, Error> {
+        self.feedback_adjust(id, -0.10)
+    }
+
+    /// Internal: adjust importance by delta, clamped to [0.0, 1.0].
+    fn feedback_adjust(&self, id: &str, delta: f64) -> Result<f64, Error> {
+        let current: f64 = self
+            .store
+            .conn
+            .query_row(
+                "SELECT importance FROM memories WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("feedback_adjust read", e))?;
+
+        let new_importance = (current + delta).clamp(0.0, 1.0);
+        self.store.set_importance(id, new_importance)?;
+        Ok(new_importance)
     }
 
     /// Set source provenance on a memory (#348).
