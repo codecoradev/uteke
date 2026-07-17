@@ -21,6 +21,7 @@ mod upgrade;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
+use crate::cli::FeedbackAction;
 use crate::resolve_namespace;
 use crate::Config;
 use uteke_core::Uteke;
