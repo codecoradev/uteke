@@ -240,6 +240,10 @@ pub struct RecallConfig {
     /// Weight for the recency boost applied when the `--recency` flag is
     /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
     pub recency_weight: f32,
+    /// Weight for the Jaccard token reranking boost (#719).
+    /// Applied post-RRF as an additive signal based on query-content token
+    /// overlap. 0.0 disables (default); 0.10-0.15 recommended.
+    pub jaccard_weight: f32,
 }
 
 impl Default for RecallConfig {
@@ -254,6 +258,7 @@ impl Default for RecallConfig {
             graph_rerank_enabled: true,
             salience_weight: 0.15,
             recency_weight: 0.15,
+            jaccard_weight: 0.0,
         }
     }
 }
@@ -515,6 +520,9 @@ impl Config {
             if recall.contains_key("graph_rerank_enabled") {
                 self.recall.graph_rerank_enabled = overlay.recall.graph_rerank_enabled;
             }
+            if recall.contains_key("jaccard_weight") {
+                self.recall.jaccard_weight = overlay.recall.jaccard_weight;
+            }
         }
 
         // Merge server section
@@ -769,6 +777,7 @@ impl Config {
 # graph_density_weight = 0.1
 # graph_authority_weight = 0.1
 # graph_rerank_enabled = true
+# jaccard_weight = 0.0  # Post-RRF token overlap boost (#719). 0=off, 0.10-0.15 recommended
 
 [server]
 # enabled = false

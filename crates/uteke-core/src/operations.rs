@@ -808,11 +808,19 @@ impl crate::Uteke {
                 .or_insert_with(|| memory.clone());
         }
 
-        // Sort by RRF score descending, take top `limit`
+        // NOTE: min_score is NOT applied here. RRF normalized scores are
+        // rank-based (0..1) and not directly comparable to cosine similarity.
+        // Applying a cosine threshold to RRF scores would incorrectly filter
+        // out valid results. The caller (recall_hybrid) handles threshold
+        // filtering at the appropriate level.
+
+        // #719: Jaccard token reranking boost (post-RRF, additive).
+        // Measures query-content token overlap as an orthogonal signal
+        // to BM25 (IDF-weighted) and vector cosine (semantic).
         let mut scored: Vec<(String, f64)> = rrf_scores.into_iter().collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        let results: Vec<SearchResult> = scored
+        let mut results: Vec<SearchResult> = scored
             .into_iter()
             .take(limit)
             .map(|(id, score)| {
@@ -831,11 +839,26 @@ impl crate::Uteke {
             })
             .collect();
 
-        // NOTE: min_score is NOT applied here. RRF normalized scores are
-        // rank-based (0..1) and not directly comparable to cosine similarity.
-        // Applying a cosine threshold to RRF scores would incorrectly filter
-        // out valid results. The caller (recall_hybrid) handles threshold
-        // filtering at the appropriate level.
+        if self.jaccard_weight > 0.0 {
+            let query_tokens = crate::jaccard::tokenize(query);
+            if !query_tokens.is_empty() {
+                for sr in &mut results {
+                    // Tokenize content + tags for a richer overlap signal
+                    let mut content_tokens = crate::jaccard::tokenize(&sr.memory.content);
+                    for tag in &sr.memory.tags {
+                        content_tokens.insert(tag.to_ascii_lowercase());
+                    }
+                    let j = crate::jaccard::jaccard_similarity(&query_tokens, &content_tokens);
+                    sr.score += j * self.jaccard_weight;
+                }
+                // Re-sort after Jaccard boost
+                results.sort_by(|a, b| {
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+        }
 
         // Touch access for returned results
         for r in &results {
