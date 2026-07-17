@@ -26,8 +26,8 @@ pub(crate) fn run_recall(
     at: Option<&str>,
     content_format: &str,
     where_filter: Option<&str>,
-    salience: bool,
-    recency: bool,
+    salience: Option<bool>,
+    recency: Option<bool>,
     search_type: Option<&str>,
     enrich: bool,
 ) -> Result<(), String> {
@@ -45,17 +45,15 @@ pub(crate) fn run_recall(
 
     // When --type is explicitly set (not default unified), route to recall_unified.
     // When unified (default), use existing recall path for backward compat with
-    // --strategy, --at, --related, --salience, --recency, --entity, --category, --where flags
-    // which only apply to memory recall. If --type=all and no memory-only flags are used,
-    // use the unified path.
+    // --strategy, --at, --related, --entity, --category, --where flags
+    // which only apply to memory recall.
+    // --salience/--recency/--no-salience/--no-recency work on both paths (#721).
     let use_unified = match resolved_search_type {
         SearchType::All => {
             // Use unified only when no memory-only flags are active.
-            // Memory-only flags: --at, --related, --salience, --recency, --entity, --category, --where
+            // Memory-only flags: --at, --related, --entity, --category, --where
             at.is_none()
                 && !related
-                && !salience
-                && !recency
                 && entity.is_none()
                 && category.is_none()
                 && where_filter.is_none()
@@ -93,19 +91,19 @@ pub(crate) fn run_recall(
         }
     };
 
-    // #352: dual-axis salience/recency boost. Opt-in per query via
-    // --salience / --recency flags. Weights come from config so users can
-    // tune the boost strength in uteke.toml.
+    // #352/#721: dual-axis salience/recency boost.
+    // Tri-state via Option<bool>: None (absent) = use default (0.1),
+    // Some(true) = use config weight (0.15), Some(false) / --no-* = 0.0.
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
-        salience_weight: if salience {
-            config.recall.salience_weight
-        } else {
-            0.0
+        salience_weight: match salience {
+            Some(true) => config.recall.salience_weight, // explicit --salience
+            Some(false) => 0.0,                          // explicit --no-salience
+            None => uteke_core::SalienceRecencyConfig::default().salience_weight, // default 0.1
         },
-        recency_weight: if recency {
-            config.recall.recency_weight
-        } else {
-            0.0
+        recency_weight: match recency {
+            Some(true) => config.recall.recency_weight, // explicit --recency
+            Some(false) => 0.0,                         // explicit --no-recency
+            None => uteke_core::SalienceRecencyConfig::default().recency_weight, // default 0.1
         },
     });
 
