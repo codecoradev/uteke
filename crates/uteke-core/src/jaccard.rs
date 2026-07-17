@@ -31,7 +31,10 @@ pub fn jaccard_similarity(query: &HashSet<String>, content: &HashSet<String>) ->
 /// Empty tokens are discarded.
 pub fn tokenize(text: &str) -> HashSet<String> {
     text.split_whitespace()
-        .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_ascii_lowercase())
+        .map(|t| {
+            t.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_ascii_lowercase()
+        })
         .filter(|t| !t.is_empty())
         .collect()
 }
@@ -55,7 +58,10 @@ mod tests {
 
     #[test]
     fn jaccard_partial() {
-        let a: HashSet<_> = ["hello", "world", "foo"].iter().map(|s| s.to_string()).collect();
+        let a: HashSet<_> = ["hello", "world", "foo"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let b: HashSet<_> = ["hello", "bar"].iter().map(|s| s.to_string()).collect();
         // intersection = {"hello"} = 1, union = {"hello","world","foo","bar"} = 4
         let j = jaccard_similarity(&a, &b);
