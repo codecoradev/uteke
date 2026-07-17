@@ -11,6 +11,7 @@ export default createConfig({
     ['meta', { property: 'og:description', content: 'Offline-first semantic memory. Single binary. Zero config. 30ms recall.' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
   ],
+  ignoreDeadLinks: true,
   srcExclude: ['**/launch/**', '**/plans/**'],
   sidebar: [
     {
