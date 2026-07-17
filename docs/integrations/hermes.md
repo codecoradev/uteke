@@ -251,6 +251,7 @@ This installs uteke as the agent's default memory provider — relevant memories
 >
 > The `--memory-provider` pattern remains supported for **pi**, **Claude Code**, and **Cursor**.
 > See [Memory-Provider for Other Agents](#memory-provider-for-other-agents).
+> The template source lives at [`extensions/hermes-memory-provider/`](../extensions/hermes-memory-provider/).
 >
 > Historical reference: Mode B made uteke Hermes's long-term memory backend via
 > `uteke init --agent hermes --memory-provider` + `memory.provider: uteke` config.
