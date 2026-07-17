@@ -19,6 +19,7 @@ pub mod extraction;
 pub mod graph;
 pub mod graph_rerank;
 mod import_export;
+mod jaccard;
 mod maintenance;
 pub mod memory;
 mod operations;
@@ -324,6 +325,9 @@ pub struct Uteke {
     /// Salience + recency dual-axis boost config (#352). Defaults to all
     /// weights zero (opt-in per query via CLI flags / API params).
     salience_recency_config: salience_recency::SalienceRecencyConfig,
+    /// Jaccard token reranking weight (#719). Additive boost applied
+    /// post-RRF based on query-content token overlap. Default 0.0 (off).
+    jaccard_weight: f32,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
 }
@@ -476,6 +480,7 @@ impl Uteke {
             graph_rerank_config: graph_rerank_config.sanitized(),
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
+            jaccard_weight: 0.0,
         })
     }
 
@@ -498,6 +503,14 @@ impl Uteke {
     /// `Uteke` instance aren't affected.
     pub fn reset_salience_recency_config(&mut self) {
         self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
+    }
+
+    /// Set Jaccard token reranking weight (#719).
+    ///
+    /// When > 0.0, an additive Jaccard similarity boost is applied post-RRF
+    /// based on query-content token overlap. Recommended: 0.10-0.15.
+    pub fn set_jaccard_weight(&mut self, weight: f32) {
+        self.jaccard_weight = weight.clamp(0.0, 1.0);
     }
 
     /// Configure cloud embedding fallback.
