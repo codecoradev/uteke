@@ -285,16 +285,17 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         }
 
         Commands::Feedback { id, action } => {
+            let id_str = id.as_str();
             let (label, delta_str, new_importance) = match action {
                 FeedbackAction::Helpful => {
                     let new_imp = uteke
-                        .feedback_helpful(&id)
+                        .feedback_helpful(id_str)
                         .map_err(|e| format!("Feedback failed: {e}"))?;
                     ("helpful", "+0.05", new_imp)
                 }
                 FeedbackAction::Unhelpful => {
                     let new_imp = uteke
-                        .feedback_unhelpful(&id)
+                        .feedback_unhelpful(id_str)
                         .map_err(|e| format!("Feedback failed: {e}"))?;
                     ("unhelpful", "-0.10", new_imp)
                 }
