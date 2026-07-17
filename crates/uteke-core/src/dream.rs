@@ -513,12 +513,18 @@ impl crate::Uteke {
 
         let rows = match namespace {
             Some(ns) => stmt
-                .query_map(rusqlite::params![ns, limit as i64], crate::memory::store::row_to_memory)
+                .query_map(
+                    rusqlite::params![ns, limit as i64],
+                    crate::memory::store::row_to_memory,
+                )
                 .map_err(|e| Error::db("dream contradict query", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("dream contradict fetch", e))?,
             None => stmt
-                .query_map(rusqlite::params![limit as i64], crate::memory::store::row_to_memory)
+                .query_map(
+                    rusqlite::params![limit as i64],
+                    crate::memory::store::row_to_memory,
+                )
                 .map_err(|e| Error::db("dream contradict query", e))?
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| Error::db("dream contradict fetch", e))?,
@@ -721,9 +727,7 @@ mod tests {
     fn contradict_phase_dry_run_no_memories() {
         // No memories = early exit with "nothing to scan"
         let uteke = crate::Uteke::open(":memory:").unwrap();
-        let report = uteke
-            .dream(None, true, &[DreamPhase::Contradict])
-            .unwrap();
+        let report = uteke.dream(None, true, &[DreamPhase::Contradict]).unwrap();
         assert_eq!(report.phases.len(), 1);
         assert_eq!(report.phases[0].phase, "contradict");
         assert_eq!(report.total_changes, 0);
@@ -736,17 +740,38 @@ mod tests {
         let order = DreamPhase::all_in_order();
         assert!(order.contains(&DreamPhase::Contradict));
         // Contradict comes after Dedup and before Orphans
-        let dedup_idx = order.iter().position(|p| matches!(p, DreamPhase::Dedup)).unwrap();
-        let contradict_idx = order.iter().position(|p| matches!(p, DreamPhase::Contradict)).unwrap();
-        let orphans_idx = order.iter().position(|p| matches!(p, DreamPhase::Orphans)).unwrap();
-        assert!(dedup_idx < contradict_idx, "Contradict must come after Dedup");
-        assert!(contradict_idx < orphans_idx, "Contradict must come before Orphans");
+        let dedup_idx = order
+            .iter()
+            .position(|p| matches!(p, DreamPhase::Dedup))
+            .unwrap();
+        let contradict_idx = order
+            .iter()
+            .position(|p| matches!(p, DreamPhase::Contradict))
+            .unwrap();
+        let orphans_idx = order
+            .iter()
+            .position(|p| matches!(p, DreamPhase::Orphans))
+            .unwrap();
+        assert!(
+            dedup_idx < contradict_idx,
+            "Contradict must come after Dedup"
+        );
+        assert!(
+            contradict_idx < orphans_idx,
+            "Contradict must come before Orphans"
+        );
     }
 
     #[test]
     fn contradict_from_str_roundtrip() {
-        assert_eq!(DreamPhase::from_str_opt("contradict"), Some(DreamPhase::Contradict));
-        assert_eq!(DreamPhase::from_str_opt("CONTRADICT"), Some(DreamPhase::Contradict));
+        assert_eq!(
+            DreamPhase::from_str_opt("contradict"),
+            Some(DreamPhase::Contradict)
+        );
+        assert_eq!(
+            DreamPhase::from_str_opt("CONTRADICT"),
+            Some(DreamPhase::Contradict)
+        );
         assert_eq!(DreamPhase::Contradict.as_str(), "contradict");
     }
 }
