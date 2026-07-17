@@ -6,21 +6,13 @@ title: Getting Started
 
 ## Install
 
-One-liner install (macOS, Linux, Windows):
-
 ```bash
-curl -sSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
-Or install from source (requires [Rust](https://rustup.rs)):
+See the [Installation guide](/install) for all methods (Cargo, binary, Docker).
 
-```bash
-cargo install --git https://github.com/codecoradev/uteke
-```
-
-Pre-built binaries and Docker image also available from [GitHub Releases](https://github.com/codecoradev/uteke/releases) and [GHCR](https://github.com/codecoradev/uteke/pkgs/container/uteke). First run downloads the embedding model (~188MB) — no API keys needed.
-
-> 💡 **Using Docker?** See the [Docker guide](docker.md) for `docker compose` setup, env vars, and persistence.
+> 💡 First run downloads the embedding model (~188MB). No API keys needed.
 
 ## Your First Memory
 
@@ -59,19 +51,6 @@ uteke tags rename old-name new-name
 uteke tags delete unused-tag
 ```
 
-## Memory Aging
-
-```bash
-# Show hot/warm/cold/never-accessed breakdown
-uteke aging status
-
-# Preview memories older than 90 days
-uteke aging preview --older-than-days 90
-
-# Delete stale memories older than 180 days
-uteke aging cleanup --older-than-days 180 --yes
-```
-
 ## Multi-Agent Isolation
 
 Each agent gets its own namespace. Memories never leak between agents:
@@ -88,68 +67,6 @@ uteke --namespace architect recall "database"
 uteke --namespace dev recall "database"
 ```
 
-## Rooms
-
-Group related memories by context (meetings, projects, discussions):
-
-```bash
-# Create a room
-uteke room create "project-kickoff" --title "Project Kickoff"
-
-# Add a memory to a room with author attribution
-uteke room add "project-kickoff" <memory-id> --author alice
-
-# Semantic recall within a room
-uteke room recall "project-kickoff" --query "database decision"
-
-# Generate a structured document from room memories
-uteke room document "project-kickoff"
-
-# Get a summary of room discussions
-uteke room summary "project-kickoff"
-```
-
-## Time-Travel Queries
-
-Query memories as they existed at a specific point in time:
-
-```bash
-# List memories that existed on a given date
-uteke list --at 2026-06-01T12:00:00Z
-
-# Semantic recall filtered to memories valid at a point in time
-uteke recall "deployment process" --at 2026-06-01T12:00:00Z
-```
-
-Timestamps use [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) format. Replace the example date with your actual target.
-
-## Memory Importance & Pinning
-
-Pin critical memories so they never decay:
-
-```bash
-# Pin a memory
-uteke pin <id>
-
-# Unpin a memory
-uteke unpin <id>
-
-# Recalculate importance scores
-uteke importance
-```
-
-## Relationship Graph
-
-Link related memories and traverse the graph:
-
-```bash
-# Store a memory that supersedes an old one
-uteke remember "API rate limit is now 2000/min" --meta "rel:supersedes:old-memory-id"
-
-# Recall with relationship traversal
-uteke recall "rate limit" --related --depth 2
-```
-
 ## Recall Cache
 
 The recall cache eliminates redundant embedding for repeated queries (~50ms savings). It's automatic — no configuration needed. Use `--context` for AI-prompt formatted output:
@@ -157,32 +74,6 @@ The recall cache eliminates redundant embedding for repeated queries (~50ms savi
 ```bash
 # AI-optimized context output
 uteke recall "api design" --context
-```
-
-## Benchmarking
-
-Test performance with synthetic data:
-
-```bash
-# Run full benchmark suite
-uteke bench
-
-# Custom counts + JSON output
-uteke bench --counts 100,1000 --json
-```
-
-See also: [LongMemEval retrieval harness](https://github.com/codecoradev/uteke/tree/develop/benchmarks/longmemeval) for accuracy evaluation.
-
-## Shell Hooks
-
-Auto-load project-scoped memory when you cd into a project directory:
-
-```bash
-# Install hook for your shell
-uteke hook install bash   # or zsh, fish
-
-# Now when you cd into a project with .uteke/uteke.db,
-# uteke auto-discovers it
 ```
 
 ## Export & Import
@@ -218,9 +109,8 @@ Add uteke as an MCP server to your AI coding agent in seconds:
 
 See [MCP Server](/mcp) for all supported clients and tools.
 
-
 > 💡 **Hermes users?** Three integration modes available:
-> - **Mode C (shell hook):** Lightest — automatic recall via `pre_llm_call` hook, no plugin/daemon needed. See [Hermes integration](integrations/hermes.md).
+> - **Mode C (shell hook):** Lightest — automatic recall via `pre_llm_call` hook, no plugin/daemon needed. See [Hermes integration](/integrations/hermes).
 > - **Mode B (memory-provider):** Full auto — `uteke init --agent hermes --memory-provider`. Automatic recall + LLM fact extraction.
 > - **Mode A (uteke-tool):** Manual — `uteke init --agent hermes`. Explicit `uteke(action="...")` calls with multi-agent room support.
 >
@@ -241,7 +131,7 @@ uteke verify
 uteke repair
 ```
 
-## Where is data stored?
+## Where is Data Stored?
 
 All data lives in `~/.uteke/`:
 
@@ -258,3 +148,16 @@ All data lives in `~/.uteke/`:
 ```
 
 Copy the entire folder to back up or transfer to another machine.
+
+## Next Steps
+
+- [Installation](/install) — all install methods
+- [Rooms](/rooms) — group memories by context
+- [Time-Travel Queries](/time-travel) — recall memories at any point in time
+- [Smart Decay](/smart-decay) — pinning, importance scoring, aging
+- [Relationship Graph](/relationship-graph) — link and traverse memories
+- [Benchmarks](/benchmarks) — performance numbers
+- [Shell Hooks](/shell-hooks) — auto-load project context
+- [MCP Server](/mcp) — AI agent integration
+- [CLI Reference](/cli-reference) — complete command reference
+- [Configuration](/configuration) — config file and options
