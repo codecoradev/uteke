@@ -487,7 +487,7 @@ impl crate::Uteke {
         limit: usize,
     ) -> Result<Vec<crate::memory::Memory>, Error> {
         let sql = match namespace {
-            Some(ns) => {
+            Some(_ns) => {
                 "SELECT id, content, embedding, tags, metadata, \
                  created_at, updated_at, namespace, access_count, \
                  last_accessed, deprecated, valid_from, valid_until, \
