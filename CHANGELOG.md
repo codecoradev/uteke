@@ -6,10 +6,15 @@
 - **Room ↔ Document junction table — schema v15 (#689, #692)** — New `room_documents` table links rooms to documents bidirectionally. Endpoints: `POST /room/document/list`, `PUT /room/document/add`, `DELETE /room/document/remove`, `POST /doc/room/list`.
 - **memory↔document cross-entity linking via [[doc-slug]] wikilinks (#691)** — Memories containing `[[doc-slug]]` patterns are auto-wired to document references. Query endpoints: `POST /memory/doc-refs` (doc slugs for a memory) and `POST /doc/mem-refs` (memory IDs referencing a doc).
 - **Schema v14: memory_type added to FTS5 index (#662)** — FTS5 full-text search now indexes `memory_type`, enabling keyword search by type. Migration rebuilds the FTS5 index from existing memories.
+- **Trust scoring with feedback API (#718, PR #725)** — `uteke feedback helpful <id>` (+0.05 importance) and `uteke feedback unhelpful <id>` (-0.10 importance). HTTP endpoint: `POST /memory/feedback` with `{ id, feedback: 'helpful'|'unhelpful' }`. Importance clamped to [0.0, 1.0]. Adopted from Hermes holographic memory trust scoring.
+- **Jaccard token similarity as post-RRF reranking signal (#719, PR #723)** — Token-level Jaccard similarity applied after RRF score normalization in `recall_rrf`. Configurable via `jaccard_weight` in config (default 0.0, opt-in). `set_jaccard_weight()` method on Uteke struct. Module: `jaccard.rs` with `tokenize()`, `jaccard_similarity()`, `rerank_by_jaccard()`.
+- **Auto-contradiction scan as Dream pipeline phase (#720, PR #726)** — New Phase 4 (Contradict) in Dream maintenance pipeline. Scans top-200 recently updated memories for pairs with high tag overlap (Jaccard ≥ 0.3) + low embedding cosine similarity (≤ 0.6). Creates `contradicts` graph edges (older → newer). Supports `--dry-run` and `--phases contradict`. Pipeline order now: lint → backlinks → dedup → contradict → orphans → compact → verify.
 
 ### Changed
 - **Entity/category filter pushed into core recall (#667)** — Entity and category metadata filters now run inside the core recall candidate loop instead of post-fetch amplification. Eliminates the 10x fetch overhead for filtered queries.
 - **Full memory detail fields in UnifiedSearchResult (#688)** — Unified search results now include complete memory metadata (tags, importance, pinned, namespace, memory_type, source info) directly in the response, eliminating secondary lookups.
+- **Salience/recency boosts enabled by default (#721, PR #722)** — Default weights changed from 0.0 to 0.1 for both salience and recency. CLI flags now tri-state: `--salience`/`--recency` (explicit, use config weight), `--no-salience`/`--no-recency` (disable), omit (use default 0.1). No longer opt-in — users must explicitly disable to get neutral scoring.
+- **Dream pipeline expanded to 7 phases** — Added Contradict phase between Dedup and Orphans. `all_in_order()` returns 7 phases. CLI `--phases` filter accepts `contradict`.
 
 ### Fixed
 - **Search access count tracking** — Search operations now correctly increment the access count on recalled memories, improving tier scoring accuracy.

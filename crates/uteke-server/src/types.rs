@@ -391,6 +391,14 @@ pub struct MemoryImportanceRequest {
     pub importance: f64,
 }
 
+/// Request for memory feedback / trust scoring (#718).
+#[derive(Deserialize)]
+pub struct MemoryFeedbackRequest {
+    pub id: String,
+    /// "helpful" or "unhelpful"
+    pub feedback: String,
+}
+
 // ── Graph Types ────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
