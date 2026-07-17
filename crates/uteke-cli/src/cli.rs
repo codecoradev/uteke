@@ -691,7 +691,7 @@ pub enum RoomCommands {
         /// Room ID
         room_id: String,
     },
-    /// Generate a structured document from room memories
+    /// Generate a structured document from room memories (API: POST /room/summary)
     Document {
         /// Room ID
         room_id: String,

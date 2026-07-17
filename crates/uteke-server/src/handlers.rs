@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use serde::Deserialize;
 use tiny_http::{Header, Method, Request, Response, StatusCode};
-use tracing::error;
+use tracing::{error, warn};
 
 use uteke_core::Uteke;
 
@@ -57,7 +57,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/stats",
             "/room/recall",
             "/room/summary",
-            "/room/document",
+            "/room/summary-document",
             "/room/stats",
             "/room/document/list",
             "/doc/get",
@@ -646,14 +646,38 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
-        // ── Room Document ────────────────────────────────────────────────
+        // ── Room Summary Document ────────────────────────────────────────
+        (Method::Post, "/room/summary-document") => {
+            #[derive(Deserialize)]
+            struct RoomSummaryDocumentRequest {
+                room_id: String,
+            }
+            match read_body::<RoomSummaryDocumentRequest>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_summary_document(&req_data.room_id) {
+                    Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
+                    Ok(None) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Room not found: {}", req_data.room_id),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
         (Method::Post, "/room/document") => {
+            warn!("DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)");
             #[derive(Deserialize)]
             struct RoomDocumentRequest {
                 room_id: String,
             }
             match read_body::<RoomDocumentRequest>(req.as_reader()) {
-                Ok(req_data) => match uteke.room_document(&req_data.room_id) {
+                Ok(req_data) => match uteke.room_summary_document(&req_data.room_id) {
                     Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
                     Ok(None) => ctx.error_response_for(
                         req,

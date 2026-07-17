@@ -265,7 +265,7 @@ Both transports expose the same tools (MCP protocol version `2025-06-18`):
 | `uteke_room_delete` | Delete a room |
 | `uteke_room_stats` | Room statistics |
 | `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
-| `uteke_room_document` | Generate structured document from room |
+| `uteke_room_document` | Generate summary document from room (→ `POST /room/summary-document`) |
 | `uteke_tags_list` | List all tags with counts (#566) |
 | `uteke_tags_rename` | Rename a tag across all memories (#566) |
 | `uteke_tags_delete` | Delete a tag from all memories (#566) |
