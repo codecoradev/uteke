@@ -4,7 +4,7 @@ title: CLI Reference
 
 # CLI Reference
 
-Complete reference for all uteke commands. Version **0.7.3**.
+Complete reference for all uteke commands. Version **0.8.0**.
 
 ## Global Flags
 
@@ -607,7 +607,7 @@ uteke dream --phases contradict
 
 ## uteke feedback
 
-Record feedback on a memory's usefulness (v0.7.4, #718). Adjusts importance score: +0.05 for helpful, -0.10 for unhelpful.
+Record feedback on a memory's usefulness (v0.8.0, #718). Adjusts importance score: +0.05 for helpful, -0.10 for unhelpful.
 
 ```bash
 uteke feedback helpful <memory-id>

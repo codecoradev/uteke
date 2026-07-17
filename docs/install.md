@@ -21,7 +21,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 Pin a specific version:
 
 ```bash
-UTEKE_VERSION=v0.7.3 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.8.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ## Install via Cargo
@@ -77,7 +77,7 @@ uteke --version
 
 ```bash
 $ uteke --version
-uteke 0.7.3
+uteke 0.8.0
 
 $ uteke doctor
 ✓ Database     OK
