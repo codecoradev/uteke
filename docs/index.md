@@ -10,6 +10,9 @@ hero:
       text: Get Started
       link: /getting-started
     - theme: alt
+      text: Install
+      link: /install
+    - theme: alt
       text: GitHub
       link: https://github.com/codecoradev/uteke
 
@@ -57,19 +60,9 @@ features:
 | Feature | uteke | Mem0 | Letta | Cognee |
 |---------|-------|------|-------|--------|
 | Install | 1 binary | pip + Docker + Qdrant | pip + Docker + Postgres | pip + Docker + Neo4j |
-| API Keys | ✅ None needed | ❌ OpenAI/LLM key | ❌ LLM key | ❌ LLM + vector DB |
+| API Keys | ✅ None | ❌ OpenAI/LLM key | ❌ LLM key | ❌ LLM + vector DB |
 | Offline | ✅ Fully | ❌ Cloud embedding | ❌ Needs server | ❌ Needs LLM + DB |
-| Semantic Search | ✅ Local ONNX | ✅ Cloud embedding | ⚠️ Keyword + archival | ✅ GraphRAG |
-| Rooms | ✅ Built-in | ❌ | ❌ | ❌ |
-| Time-travel | ✅ --at flag | ❌ | ❌ | ❌ |
-| MCP Server | ✅ Built-in | ❌ | ❌ | ❌ |
-| Relationship Graph | ✅ --related | ❌ | ❌ | ✅ GraphRAG |
-| Smart Decay | ✅ Pin + importance | ✅ | ✅ Core memory | ✅ TTL-based |
-| Recall Cache | ✅ LRU + TTL | ❌ | ❌ | ❌ |
-| Benchmarks | ✅ Built-in | ❌ | ❌ | ❌ |
-| Privacy | ✅ Data stays local | ⚠️ Sent to LLM | ⚠️ Sent to LLM | ⚠️ Sent to LLM |
 | Recall Speed | ~30ms | Network RTT | Network RTT | Network RTT |
-| Tag Management | ✅ list/rename/delete | ⚠️ Basic | ❌ | ⚠️ Basic |
-| Memory Aging | ✅ Auto-cleanup | ✅ | ✅ Core memory | ✅ TTL-based |
-| Shell Hooks | ✅ bash/zsh/fish | ❌ | ❌ | ❌ |
-| License | Apache-2.0 | Apache-2.0 | Apache-2.0 | Apache-2.0 |
+| Privacy | ✅ Local | ⚠️ Sent to LLM | ⚠️ Sent to LLM | ⚠️ Sent to LLM |
+
+[See full comparison →](/comparison)

@@ -1,7 +1,11 @@
-# Uteke Performance Benchmarks
+---
+title: Benchmarks
+---
 
-> Real numbers from `uteke bench` on Oracle Cloud ARM (Ampere A1, 4 vCPU, 24GB RAM).
-> Embedding model: EmbeddingGemma Q4 (768d, ONNX Runtime, CPU-only).
+# Benchmarks
+
+Real numbers from `uteke bench` on Oracle Cloud ARM (Ampere A1, 4 vCPU, 24GB RAM).
+Embedding model: EmbeddingGemma Q4 (768d, ONNX Runtime, CPU-only).
 
 ## Results
 
@@ -14,6 +18,7 @@
 ## Key Takeaways
 
 ### Recall Latency: Flat ~40-45ms from 100 to 10K memories
+
 The killer stat: recall latency barely changes as the store grows.
 
 - 100 memories → **40ms**
@@ -22,7 +27,8 @@ The killer stat: recall latency barely changes as the store grows.
 
 HNSW search is O(log N), so even at 10K memories, the vector index adds <1ms.
 The ~40ms floor is dominated by ONNX embedding inference, not search.
-This is the full pipeline:
+
+The full pipeline:
 1. Query → ONNX embedding generation
 2. HNSW vector search
 3. FTS5 full-text search
@@ -31,17 +37,17 @@ This is the full pipeline:
 No network round-trip. No API call. Everything in-process.
 
 ### Insert Throughput: 6-22 ops/s (CPU-bound)
-Each insert requires an ONNX embedding pass (CPU inference). Throughput drops at scale
-because HNSW graph traversal grows as the index expands:
+
+Each insert requires an ONNX embedding pass (CPU inference). Throughput drops at scale because HNSW graph traversal grows as the index expands:
 
 - 100 memories → **18.5 ops/s**
 - 1,000 memories → **21.8 ops/s**
 - 10,000 memories → **6.0 ops/s**
 
-At 6 ops/s, inserting 10K memories takes ~28 minutes. For bulk ingestion, use
-`uteke import` (batch mode) which pipelines embeddings.
+At 6 ops/s, inserting 10K memories takes ~28 minutes. For bulk ingestion, use `uteke import` (batch mode) which pipelines embeddings.
 
 ### Storage Efficiency
+
 - 100 memories → 708KB DB + 319KB index = **~10KB per memory**
 - 1,000 memories → 5.3MB DB + 3.2MB index = **~8.5KB per memory**
 - 10,000 memories → 81.3MB DB + 30.3MB index = **~11.2KB per memory**
@@ -60,13 +66,19 @@ Or with a custom store path:
 uteke bench --counts 100,1000 --store /tmp/bench --json
 ```
 
+## External Evaluation
+
+See [LongMemEval retrieval harness](https://github.com/codecoradev/uteke/tree/develop/benchmarks/longmemeval) for accuracy evaluation against standard benchmarks.
+
 ## Environment
 
-- **Hardware:** Oracle Cloud ARM (Ampere A1, 4 vCPU, 24GB RAM)
-- **OS:** Linux 6.8.0 (aarch64)
-- **Rust:** 1.75+
-- **Embedding:** EmbeddingGemma Q4, 768d, ONNX Runtime CPU
-- **Uteke:** v0.7.2
+| Component | Details |
+|-----------|---------|
+| Hardware | Oracle Cloud ARM (Ampere A1, 4 vCPU, 24GB RAM) |
+| OS | Linux 6.8.0 (aarch64) |
+| Rust | 1.75+ |
+| Embedding | EmbeddingGemma Q4, 768d, ONNX Runtime CPU |
+| Uteke | v0.7.2 |
 
 ## Methodology
 
