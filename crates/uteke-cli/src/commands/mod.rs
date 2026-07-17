@@ -283,6 +283,37 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             Ok(())
         }
 
+        Commands::Feedback { id, action } => {
+            let (label, delta_str, new_importance) = match action {
+                FeedbackAction::Helpful => {
+                    let new_imp = uteke
+                        .feedback_helpful(&id)
+                        .map_err(|e| format!("Feedback failed: {e}"))?;
+                    ("helpful", "+0.05", new_imp)
+                }
+                FeedbackAction::Unhelpful => {
+                    let new_imp = uteke
+                        .feedback_unhelpful(&id)
+                        .map_err(|e| format!("Feedback failed: {e}"))?;
+                    ("unhelpful", "-0.10", new_imp)
+                }
+            };
+            if cli.json {
+                println!(
+                    r#"{{"id": "{id}", "feedback": "{label}", "delta": "{delta_str}", "importance": {new_importance:.4}}}"#
+                );
+            } else {
+                println!(
+                    "Feedback recorded for {}: {} {}. New importance: {:.4}",
+                    &id[..8.min(id.len())],
+                    label,
+                    delta_str,
+                    new_importance
+                );
+            }
+            Ok(())
+        }
+
         Commands::Importance => {
             let updated = uteke
                 .recompute_importance()
