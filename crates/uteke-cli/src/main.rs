@@ -121,7 +121,11 @@ fn main() {
             enabled: config.recall.graph_rerank_enabled,
         },
     ) {
-        Ok(u) => u,
+        Ok(mut u) => {
+            // #719: apply Jaccard weight from config
+            u.set_jaccard_weight(config.recall.jaccard_weight);
+            u
+        }
         Err(e) => {
             eprintln!("Error: Failed to open memory store: {e}");
             std::process::exit(1);
