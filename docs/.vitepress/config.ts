@@ -17,8 +17,8 @@ export default createConfig({
     {
       text: 'Getting Started',
       items: [
-        { text: 'Installation', link: '/getting-started' },
-        { text: 'CLI Reference', link: '/cli-reference' },
+        { text: 'Installation', link: '/install' },
+        { text: 'Quick Start', link: '/getting-started' },
         { text: 'Configuration', link: '/configuration' },
         { text: 'Docker', link: '/docker' },
       ],
@@ -26,20 +26,21 @@ export default createConfig({
     {
       text: 'Features',
       items: [
-        { text: 'Rooms', link: '/getting-started#rooms' },
-        { text: 'Time-Travel', link: '/getting-started#time-travel-queries' },
+        { text: 'Rooms', link: '/rooms' },
+        { text: 'Time-Travel', link: '/time-travel' },
         { text: 'Multi-Agent', link: '/multi-agent' },
-        { text: 'Smart Decay', link: '/getting-started#memory-importance-pinning' },
-        { text: 'Relationship Graph', link: '/getting-started#relationship-graph' },
-        { text: 'Benchmarks', link: '/getting-started#benchmarking' },
+        { text: 'Smart Decay', link: '/smart-decay' },
+        { text: 'Relationship Graph', link: '/relationship-graph' },
+        { text: 'Benchmarks', link: '/benchmarks' },
+        { text: 'Shell Hooks', link: '/shell-hooks' },
         { text: 'MCP Server', link: '/mcp' },
-        { text: 'Document Commands', link: '/cli-reference#document-commands-406-411-438-440' },
-        { text: 'Graph API', link: '/cli-reference#graph-api-408-542' },
       ],
     },
     {
       text: 'Reference',
       items: [
+        { text: 'CLI Reference', link: '/cli-reference' },
+        { text: 'Comparison', link: '/comparison' },
         { text: 'Architecture', link: '/architecture' },
         { text: 'Hermes Integration', link: '/integrations/hermes' },
         { text: 'Pi Extension', link: '/extensions' },
