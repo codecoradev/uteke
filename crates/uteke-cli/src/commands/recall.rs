@@ -96,13 +96,13 @@ pub(crate) fn run_recall(
     // Some(true) = use config weight (0.15), Some(false) / --no-* = 0.0.
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
         salience_weight: match salience {
-            Some(true) => config.recall.salience_weight,   // explicit --salience
-            Some(false) => 0.0,                           // explicit --no-salience
+            Some(true) => config.recall.salience_weight, // explicit --salience
+            Some(false) => 0.0,                          // explicit --no-salience
             None => uteke_core::SalienceRecencyConfig::default().salience_weight, // default 0.1
         },
         recency_weight: match recency {
-            Some(true) => config.recall.recency_weight,   // explicit --recency
-            Some(false) => 0.0,                           // explicit --no-recency
+            Some(true) => config.recall.recency_weight, // explicit --recency
+            Some(false) => 0.0,                         // explicit --no-recency
             None => uteke_core::SalienceRecencyConfig::default().recency_weight, // default 0.1
         },
     });

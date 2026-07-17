@@ -257,7 +257,10 @@ mod tests {
         let cfg = SalienceRecencyConfig::default();
         assert!(!cfg.is_noop(), "default should be non-zero (#721)");
         let boosted = apply_boosts(0.5, &m, chrono::Utc::now(), cfg);
-        assert!(boosted > 0.5, "default boost should raise score, got {boosted}");
+        assert!(
+            boosted > 0.5,
+            "default boost should raise score, got {boosted}"
+        );
     }
 
     #[test]
