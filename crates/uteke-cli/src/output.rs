@@ -304,7 +304,7 @@ pub(crate) fn print_aging_preview_human(memories: &[uteke_core::Memory]) {
     }
 }
 
-/// Print a room document in human-readable format.
+/// Print a room summary document in human-readable format.
 pub(crate) fn print_room_document_human(doc: &uteke_core::RoomDocument) {
     // Header
     let title = doc.title.as_deref().unwrap_or(&doc.room_id);

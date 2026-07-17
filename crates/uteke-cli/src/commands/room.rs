@@ -236,8 +236,8 @@ pub(crate) fn run(
 
         RoomCommands::Document { room_id } => {
             let doc = uteke
-                .room_document(room_id)
-                .map_err(|e| format!("Failed to generate room document: {e}"))?
+                .room_summary_document(room_id)
+                .map_err(|e| format!("Failed to generate room summary document: {e}"))?
                 .ok_or_else(|| format!("Room not found: {room_id}"))?;
 
             if cli.json {

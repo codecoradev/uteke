@@ -730,7 +730,7 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | GET | `/room/list` | List rooms (supports `?namespace=`) |
 | POST | `/room/recall` | Recall from a room |
 | POST | `/room/summary` | Room summary |
-| POST | `/room/document` | Generate document from room |
+| POST | `/room/summary` | Generate summary document from room (#735) |
 | POST | `/room/stats` | Room statistics |
 | DELETE | `/room/delete` | Delete a room |
 | POST | `/room/document/list` | List documents linked to a room (#689) |

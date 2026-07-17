@@ -28,6 +28,8 @@ uteke room recall "project-kickoff" --query "database decision"
 
 Combine room memories into a cohesive document:
 
+> **Note:** The CLI command remains `uteke room document`, but the underlying HTTP API route has been renamed from `POST /room/document` to `POST /room/summary`.
+
 ```bash
 uteke room document "project-kickoff"
 ```
