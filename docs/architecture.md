@@ -136,7 +136,7 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 |----------|--------|------|-------------|
 | `/doc/update` | POST | Write | Partial document update with chunk rebuild |
 
-### Memory Mutation (v0.7.4)
+### Memory Mutation (v0.8.0)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -144,7 +144,7 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 | `/memory/pin` | POST | Write | Pin or unpin a memory by ID |
 | `/memory/importance` | POST | Write | Set importance score (0.0–1.0) for a memory |
 
-### Room ↔ Document Junction (v0.7.4)
+### Room ↔ Document Junction (v0.8.0)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
@@ -153,7 +153,7 @@ Index lock acquired **before** SQLite delete — narrows the inconsistency windo
 | `/room/document/remove` | DELETE | Write | Unlink a document from a room |
 | `/doc/room/list` | POST | Read | List rooms linked to a document |
 
-### Cross-Entity References (v0.7.4)
+### Cross-Entity References (v0.8.0)
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
