@@ -283,8 +283,9 @@ uteke recall "api design" --context
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |
-| `--salience` | Enable salience boost (higher score for decision/insight types) |
-| `--recency` | Enable recency boost (higher score for recently created memories) |
+| `--salience` | Enable salience boost (default: on, weight 0.1). Use `--no-salience` to disable |
+| `--recency` | Enable recency boost (default: on, weight 0.1). Use `--no-recency` to disable |
+| `--jaccard` | Enable Jaccard token reranking signal (default: off, requires `jaccard_weight` > 0 in config) |
 
 ## uteke list (enhanced)
 
@@ -565,7 +566,7 @@ uteke rebuild-backlinks --json
 
 Run the full maintenance pipeline in one command (v0.2.1, #353).
 
-Executes phases in dependency order: lint → backlinks → dedup → orphans → compact → verify.
+Executes phases in dependency order: lint → backlinks → dedup → contradict → orphans → compact → verify.
 Each phase records its status. Errors in individual phases are recorded but do not abort the pipeline.
 
 ```bash
@@ -580,11 +581,14 @@ uteke dream --dry-run
 
 # Scoped to a namespace
 uteke dream --namespace my-agent
+
+# Run only contradiction detection
+uteke dream --phases contradict
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--phases <list>` | Comma-separated subset: lint, backlinks, dedup, orphans, compact, verify |
+| `--phases <list>` | Comma-separated subset: lint, backlinks, dedup, contradict, orphans, compact, verify |
 | `--dry-run` | Preview without making changes |
 | `--namespace <ns>` | Run scoped to a specific namespace (backlinks and verify are global) |
 | `--json` | JSON output |
@@ -596,9 +600,21 @@ uteke dream --namespace my-agent
 | `lint` | Check for invalid memory types, missing slugs, stale deprecated flags |
 | `backlinks` | Rebuild `referenced_by` edges (same as `rebuild-backlinks`) |
 | `dedup` | Find and merge near-duplicate memories (cosine ≥ 0.90) |
+| `contradict` | Detect contradictory memories (threshold 0.65) and flag for review |
 | `orphans` | Find disconnected, low-importance memories |
 | `compact` | Apply auto-prune to cold-tier and deprecated memories |
 | `verify` | Verify DB and index consistency |
+
+## uteke feedback
+
+Record feedback on a memory's usefulness (v0.7.4, #718). Adjusts importance score: +0.05 for helpful, -0.10 for unhelpful.
+
+```bash
+uteke feedback helpful <memory-id>
+uteke feedback unhelpful <memory-id>
+```
+
+With `--json` flag, outputs structured JSON with id, feedback type, delta, and new importance value.
 
 ## uteke orphans
 
@@ -752,6 +768,7 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | POST | `/graph/edge` | Create a typed edge between two memories (#542) |
 | DELETE | `/graph/edge` | Remove an edge by ID (#542) |
 | POST | `/mcp` | MCP JSON-RPC endpoint (#381) |
+| POST | `/memory/feedback` | Record helpful/unhelpful feedback on a memory. Body: `{ id, feedback: 'helpful'|'unhelpful' }`. Returns updated importance. (#718) |
 
 ### MCP Server
 
