@@ -111,12 +111,14 @@ pub enum Commands {
         strategy: Option<String>,
         /// Enable salience boost (how much each result matters) (#352).
         /// Uses the configured `[recall].salience_weight` (default 0.15).
+        /// When absent, salience uses the default weight (0.1). Use --no-salience to disable (#721).
         #[arg(long)]
-        salience: bool,
+        salience: Option<bool>,
         /// Enable recency boost (how fresh each result is) (#352).
         /// Uses the configured `[recall].recency_weight` (default 0.15).
+        /// When absent, recency uses the default weight (0.1). Use --no-recency to disable (#721).
         #[arg(long)]
-        recency: bool,
+        recency: Option<bool>,
         /// Follow relationship edges in memory metadata
         #[arg(long)]
         related: bool,
