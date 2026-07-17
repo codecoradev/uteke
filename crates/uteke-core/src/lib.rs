@@ -669,12 +669,17 @@ impl Uteke {
 
     /// Internal: adjust importance by delta, clamped to [0.0, 1.0].
     fn feedback_adjust(&self, id: &str, delta: f64) -> Result<f64, Error> {
-        let memory = self
+        let current: f64 = self
             .store
-            .get(id)
-            .ok_or_else(|| Error::db_msg(format!("Memory not found: {id}")))?
-            .ok_or_else(|| Error::db_msg(format!("Memory not found: {id}")))?;
-        let new_importance = (memory.importance + delta).clamp(0.0, 1.0);
+            .conn
+            .query_row(
+                "SELECT importance FROM memories WHERE id = ?1",
+                rusqlite::params![id],
+                |row| row.get(0),
+            )
+            .map_err(|e| Error::db("feedback_adjust read", e))?;
+
+        let new_importance = (current + delta).clamp(0.0, 1.0);
         self.store.set_importance(id, new_importance)?;
         Ok(new_importance)
     }
