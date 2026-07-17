@@ -57,6 +57,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/stats",
             "/room/recall",
             "/room/summary",
+            "/room/summary-document",
             "/room/stats",
             "/room/document/list",
             "/doc/get",
@@ -646,7 +647,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── Room Summary Document ────────────────────────────────────────
-        (Method::Post, "/room/summary") => {
+        (Method::Post, "/room/summary-document") => {
             #[derive(Deserialize)]
             struct RoomSummaryDocumentRequest {
                 room_id: String,
@@ -668,9 +669,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
-        // ── DEPRECATED: POST /room/document → /room/summary (#735) ───────
+        // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
         (Method::Post, "/room/document") => {
-            warn!("DEPRECATED: POST /room/document is renamed to POST /room/summary (see #735)");
+            warn!("DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)");
             #[derive(Deserialize)]
             struct RoomDocumentRequest {
                 room_id: String,
