@@ -16,9 +16,19 @@ use uteke_core::Uteke;
 use crate::context::{self, ApiRole, AuthResult, ReqCtx};
 use crate::types::*;
 
+/// Current API version constant — used by health and versioned routes.
+const API_LATEST: &str = "v2";
+const API_VERSIONS: &[&str] = &["v1", "v2"];
+
 pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
     let method = req.method().clone();
-    let path = req.url().to_string();
+    let raw_path = req.url().to_string();
+
+    // ── API Versioning (#737): parse /api/vN/ prefix ────────────────────
+    let (api_version, path) = match ApiVersion::from_path(&raw_path) {
+        Some((ver, stripped)) => (Some(ver), stripped.to_string()),
+        None => (None, raw_path.clone()),
+    };
 
     // CORS preflight — no auth required
     if method == Method::Options {
@@ -100,6 +110,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     version: env!("CARGO_PKG_VERSION"),
                     memories: total,
                     namespaces,
+                    api_versions: Some(API_VERSIONS.to_vec()),
+                    api_latest: Some(API_LATEST),
                 },
             )
         }
@@ -292,7 +304,16 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
                 // Prefer unified results when available (#531)
                 match unified_result {
-                    Some(Ok(results)) => ctx.ok_response_for(req, &results),
+                    Some(Ok(results)) => {
+                        if api_version == Some(ApiVersion::V1) {
+                            // v1: flat format [{id, content, score, ...}]
+                            let v1_results: Vec<serde_json::Value> =
+                                results.iter().map(to_v1_flat).collect();
+                            ctx.ok_response_for(req, &v1_results)
+                        } else {
+                            ctx.ok_response_for(req, &results)
+                        }
+                    }
                     Some(Err(e)) => {
                         error!("Unified search error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
