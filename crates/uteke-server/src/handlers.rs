@@ -9,16 +9,26 @@ use std::sync::Mutex;
 
 use serde::Deserialize;
 use tiny_http::{Header, Method, Request, Response, StatusCode};
-use tracing::error;
+use tracing::{error, warn};
 
 use uteke_core::Uteke;
 
 use crate::context::{self, ApiRole, AuthResult, ReqCtx};
 use crate::types::*;
 
+/// Current API version constant — used by health and versioned routes.
+const API_LATEST: &str = "v2";
+const API_VERSIONS: &[&str] = &["v1", "v2"];
+
 pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
     let method = req.method().clone();
-    let path = req.url().to_string();
+    let raw_path = req.url().to_string();
+
+    // ── API Versioning (#737): parse /api/vN/ prefix ────────────────────
+    let (api_version, path) = match ApiVersion::from_path(&raw_path) {
+        Some((ver, stripped)) => (Some(ver), stripped.to_string()),
+        None => (None, raw_path.clone()),
+    };
 
     // CORS preflight — no auth required
     if method == Method::Options {
@@ -57,7 +67,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             "/stats",
             "/room/recall",
             "/room/summary",
-            "/room/document",
+            "/room/summary-document",
             "/room/stats",
             "/room/document/list",
             "/doc/get",
@@ -100,6 +110,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     version: env!("CARGO_PKG_VERSION"),
                     memories: total,
                     namespaces,
+                    api_versions: Some(API_VERSIONS.to_vec()),
+                    api_latest: Some(API_LATEST),
                 },
             )
         }
@@ -284,6 +296,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         search_type,
                         entity_filter,
                         category_filter,
+                        req_data.enrich,
                     ))
                 } else {
                     None
@@ -291,7 +304,16 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
                 // Prefer unified results when available (#531)
                 match unified_result {
-                    Some(Ok(results)) => ctx.ok_response_for(req, &results),
+                    Some(Ok(results)) => {
+                        if api_version == Some(ApiVersion::V1) {
+                            // v1: flat format [{id, content, score, ...}]
+                            let v1_results: Vec<serde_json::Value> =
+                                results.iter().map(to_v1_flat).collect();
+                            ctx.ok_response_for(req, &v1_results)
+                        } else {
+                            ctx.ok_response_for(req, &results)
+                        }
+                    }
                     Some(Err(e)) => {
                         error!("Unified search error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
@@ -645,14 +667,38 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
-        // ── Room Document ────────────────────────────────────────────────
+        // ── Room Summary Document ────────────────────────────────────────
+        (Method::Post, "/room/summary-document") => {
+            #[derive(Deserialize)]
+            struct RoomSummaryDocumentRequest {
+                room_id: String,
+            }
+            match read_body::<RoomSummaryDocumentRequest>(req.as_reader()) {
+                Ok(req_data) => match uteke.room_summary_document(&req_data.room_id) {
+                    Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
+                    Ok(None) => ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Room not found: {}", req_data.room_id),
+                    ),
+                    Err(e) => {
+                        error!("Internal error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
         (Method::Post, "/room/document") => {
+            warn!("DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)");
             #[derive(Deserialize)]
             struct RoomDocumentRequest {
                 room_id: String,
             }
             match read_body::<RoomDocumentRequest>(req.as_reader()) {
-                Ok(req_data) => match uteke.room_document(&req_data.room_id) {
+                Ok(req_data) => match uteke.room_summary_document(&req_data.room_id) {
                     Ok(Some(doc)) => ctx.ok_response_for(req, &doc),
                     Ok(None) => ctx.error_response_for(
                         req,
@@ -765,6 +811,54 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 ctx.error_response_for(req, 500, "Internal server error")
                             }
                         },
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // ── Memory Feedback (Trust Scoring) (#718) ────────────────────
+        (Method::Post, "/memory/feedback") => {
+            match read_body::<MemoryFeedbackRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    if uuid::Uuid::parse_str(&req_data.id).is_err() {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            format!("Invalid UUID format: {}", req_data.id),
+                        );
+                    }
+                    let result = match req_data.feedback.as_str() {
+                        "helpful" => uteke.feedback_helpful(&req_data.id).map(|imp| {
+                            serde_json::json!({
+                                "id": req_data.id,
+                                "feedback": "helpful",
+                                "delta": 0.05,
+                                "importance": imp,
+                            })
+                        }),
+                        "unhelpful" => uteke.feedback_unhelpful(&req_data.id).map(|imp| {
+                            serde_json::json!({
+                                "id": req_data.id,
+                                "feedback": "unhelpful",
+                                "delta": -0.10,
+                                "importance": imp,
+                            })
+                        }),
+                        _ => {
+                            return ctx.error_response_for(
+                                req,
+                                400,
+                                "Invalid feedback value. Use 'helpful' or 'unhelpful'.".to_string(),
+                            );
+                        }
+                    };
+                    match result {
+                        Ok(data) => ctx.ok_response_for(req, &data),
+                        Err(e) => {
+                            error!("Feedback error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 }
                 Err(e) => ctx.error_response_for(req, 400, e),

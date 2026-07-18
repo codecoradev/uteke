@@ -21,6 +21,7 @@ mod upgrade;
 
 use crate::cli::Cli;
 use crate::cli::Commands;
+use crate::cli::FeedbackAction;
 use crate::resolve_namespace;
 use crate::Config;
 use uteke_core::Uteke;
@@ -81,6 +82,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             content_format,
             r#where,
             r#type,
+            enrich,
         } => recall::run_recall(
             cli,
             uteke,
@@ -103,6 +105,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             *salience,
             *recency,
             r#type.as_deref(),
+            *enrich,
         ),
 
         Commands::Search { query, limit, tags } => {
@@ -277,6 +280,38 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 }
             } else {
                 return Err(format!("Memory not found: {id}"));
+            }
+            Ok(())
+        }
+
+        Commands::Feedback { id, action } => {
+            let id_str = id.as_str();
+            let (label, delta_str, new_importance) = match action {
+                FeedbackAction::Helpful => {
+                    let new_imp = uteke
+                        .feedback_helpful(id_str)
+                        .map_err(|e| format!("Feedback failed: {e}"))?;
+                    ("helpful", "+0.05", new_imp)
+                }
+                FeedbackAction::Unhelpful => {
+                    let new_imp = uteke
+                        .feedback_unhelpful(id_str)
+                        .map_err(|e| format!("Feedback failed: {e}"))?;
+                    ("unhelpful", "-0.10", new_imp)
+                }
+            };
+            if cli.json {
+                println!(
+                    r#"{{"id": "{id}", "feedback": "{label}", "delta": "{delta_str}", "importance": {new_importance:.4}}}"#
+                );
+            } else {
+                println!(
+                    "Feedback recorded for {}: {} {}. New importance: {:.4}",
+                    &id[..8.min(id.len())],
+                    label,
+                    delta_str,
+                    new_importance
+                );
             }
             Ok(())
         }

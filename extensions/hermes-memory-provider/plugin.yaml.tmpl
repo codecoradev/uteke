@@ -1,9 +1,11 @@
 name: uteke
-version: 1.0.0
+version: 1.1.0
 description: "Uteke — offline-first local memory. Vector recall via local ONNX embeddings; opt-in LLM fact extraction on session end. Single-binary, no SaaS."
-# No pip deps: uteke is a native binary invoked via subprocess.
+# No pip deps: uteke is a native binary invoked via subprocess or HTTP.
 pip_dependencies: []
 requires_env: []
 hooks:
   - on_session_end
   - on_pre_compress
+# Note: deprecated for Hermes Agent (removed 2026-06-29).
+# Still supported for pi, claude-code, and cursor agents.

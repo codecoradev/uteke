@@ -1,18 +1,23 @@
 """Uteke memory plugin — MemoryProvider interface.
 
-Offline-first local memory backed by the `uteke` CLI (single Rust binary).
-Recall uses local ONNX embeddings (no network). Fact extraction on session
-end / pre-compress uses uteke's opt-in `import --extract` against an
-OpenAI-compatible endpoint.
+Offline-first local memory backed by the `uteke` CLI (single Rust binary) or
+`uteke-serve` HTTP daemon. Recall uses local ONNX embeddings (no network).
+Fact extraction on session end / pre-compress uses uteke's opt-in
+`import --extract` against an OpenAI-compatible endpoint.
 
-Why subprocess and not an SDK: uteke ships as a native binary, not a Python
-package. We shell out to it. The binary path, namespace, and extraction
-endpoint are all configurable.
+Transport:
+  - subprocess (default): talks to the `uteke` binary directly via subprocess.
+    Requires the binary on PATH or set UTEKE_BIN.
+  - HTTP (optional): talks to `uteke-serve` via HTTP. Set UTEKE_SERVER_URL
+    to enable. Useful when the binary is unavailable, hangs, or runs as a
+    container (e.g., http://uteke:8767).
 
 Config via $HERMES_HOME/uteke.json (preferred) or environment variables:
   UTEKE_BIN           — path to the uteke binary (default: search PATH)
   UTEKE_HOME          — HOME dir uteke runs under (holds ~/.uteke store)
   UTEKE_NAMESPACE     — memory namespace (default: "default")
+  UTEKE_SERVER_URL    — uteke-serve HTTP URL (default: http://127.0.0.1:8767)
+  UTEKE_TOKEN         — auth token for uteke-serve (Bearer token)
   UTEKE_EXTRACT       — "true"/"false": run LLM extraction on session end
   UTEKE_EXTRACT_MODEL — chat model for extraction
   UTEKE_EXTRACT_BASE_URL — OpenAI-compatible base URL
@@ -31,6 +36,8 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
@@ -47,6 +54,10 @@ _BREAKER_COOLDOWN_SECS = 120
 _RECALL_TIMEOUT = 20
 _REMEMBER_TIMEOUT = 20
 _EXTRACT_TIMEOUT = 240
+
+# HTTP timeouts (seconds)
+_HTTP_RECALL_TIMEOUT = 10
+_HTTP_REMEMBER_TIMEOUT = 10
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +78,8 @@ def _load_config() -> dict:
         "bin": os.environ.get("UTEKE_BIN", ""),
         "uteke_home": os.environ.get("UTEKE_HOME", ""),
         "namespace": os.environ.get("UTEKE_NAMESPACE", "default"),
+        "server_url": os.environ.get("UTEKE_SERVER_URL", ""),
+        "token": os.environ.get("UTEKE_TOKEN", ""),
         "extract": _envbool("UTEKE_EXTRACT", True),
         "extract_model": os.environ.get("UTEKE_EXTRACT_MODEL", ""),
         "extract_base_url": os.environ.get("UTEKE_EXTRACT_BASE_URL", ""),
@@ -126,17 +139,41 @@ REMEMBER_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
+# HTTP transport helpers
+# ---------------------------------------------------------------------------
+
+def _http_request(url: str, method: str = "GET", data: dict = None,
+                  token: str = "", timeout: int = 10) -> dict:
+    """Make an HTTP request to uteke-serve. Returns parsed JSON or error dict."""
+    body = json.dumps(data).encode() if data else None
+    req = urllib.request.Request(url, data=body, method=method)
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"error": e.read().decode()[:200], "status": e.code}
+    except urllib.error.URLError as e:
+        return {"error": f"uteke-serve not reachable: {e.reason}"}
+
+
+# ---------------------------------------------------------------------------
 # MemoryProvider implementation
 # ---------------------------------------------------------------------------
 
 class UtekeMemoryProvider(MemoryProvider):
-    """Offline-first local memory via the uteke CLI."""
+    """Offline-first local memory via the uteke CLI or uteke-serve HTTP."""
 
     def __init__(self):
         self._config: dict = {}
         self._bin = ""
         self._env = dict(os.environ)
         self._namespace = "default"
+        self._server_url = ""
+        self._token = ""
+        self._use_http = False
         self._extract = True
         self._extract_model = ""
         self._extract_base_url = ""
@@ -172,6 +209,16 @@ class UtekeMemoryProvider(MemoryProvider):
 
     def is_available(self) -> bool:
         cfg = _load_config()
+        server_url = cfg.get("server_url", "")
+        if server_url:
+            # HTTP mode: check uteke-serve is reachable
+            try:
+                result = _http_request(
+                    f"{server_url}/health", timeout=5, token=cfg.get("token", ""))
+                return "error" not in result
+            except Exception:
+                return False
+        # Subprocess mode: check binary exists
         return bool(self._resolve_bin(cfg))
 
     def save_config(self, values, hermes_home):
@@ -191,6 +238,8 @@ class UtekeMemoryProvider(MemoryProvider):
             {"key": "bin", "description": "Path to the uteke binary (blank = search PATH)", "env_var": "UTEKE_BIN"},
             {"key": "uteke_home", "description": "HOME dir uteke runs under (holds ~/.uteke store)", "env_var": "UTEKE_HOME"},
             {"key": "namespace", "description": "Memory namespace", "default": "default", "env_var": "UTEKE_NAMESPACE"},
+            {"key": "server_url", "description": "uteke-serve HTTP URL (enables HTTP transport)", "default": "", "env_var": "UTEKE_SERVER_URL"},
+            {"key": "token", "description": "Auth token for uteke-serve (Bearer token)", "secret": True, "env_var": "UTEKE_TOKEN"},
             {"key": "extract", "description": "Run LLM fact extraction on session end", "default": "true", "choices": ["true", "false"], "env_var": "UTEKE_EXTRACT"},
             {"key": "extract_model", "description": "Chat model for extraction", "env_var": "UTEKE_EXTRACT_MODEL"},
             {"key": "extract_base_url", "description": "OpenAI-compatible base URL for extraction", "env_var": "UTEKE_EXTRACT_BASE_URL"},
@@ -203,6 +252,9 @@ class UtekeMemoryProvider(MemoryProvider):
         self._config = cfg
         self._bin = self._resolve_bin(cfg)
         self._namespace = cfg.get("namespace", "default")
+        self._server_url = cfg.get("server_url", "").rstrip("/")
+        self._token = cfg.get("token", "")
+        self._use_http = bool(self._server_url)
         self._extract = bool(cfg.get("extract", True))
         self._extract_model = cfg.get("extract_model", "")
         self._extract_base_url = cfg.get("extract_base_url", "")
@@ -220,8 +272,9 @@ class UtekeMemoryProvider(MemoryProvider):
         if uteke_home:
             self._env["HOME"] = uteke_home
 
-        logger.debug("Uteke initialized: bin=%s ns=%s extract=%s home=%s",
-                     self._bin, self._namespace, self._extract, self._env.get("HOME"))
+        transport = "HTTP" if self._use_http else "subprocess"
+        logger.debug("Uteke initialized: transport=%s bin=%s ns=%s server=%s extract=%s",
+                     transport, self._bin, self._namespace, self._server_url, self._extract)
 
     # -- circuit breaker -----------------------------------------------------
 
@@ -252,8 +305,10 @@ class UtekeMemoryProvider(MemoryProvider):
             timeout=timeout, env=self._env,
         )
 
-    def _recall(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Return [{content, score, tags}] above min_score."""
+    # -- recall (dual transport) ----------------------------------------------
+
+    def _recall_subprocess(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Recall via subprocess (uteke binary)."""
         proc = self._run(
             ["recall", query, "--namespace", self._namespace,
              "--limit", str(limit), "--json"],
@@ -261,22 +316,86 @@ class UtekeMemoryProvider(MemoryProvider):
         )
         if proc.returncode != 0:
             raise RuntimeError(f"recall exit {proc.returncode}: {proc.stderr.strip()[:200]}")
-        data = json.loads(proc.stdout or "[]")
+        return self._parse_recall_results(json.loads(proc.stdout or "[]"))
+
+    def _recall_http(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Recall via HTTP (uteke-serve)."""
+        result = _http_request(
+            f"{self._server_url}/recall",
+            method="POST",
+            data={"query": query, "namespace": self._namespace, "limit": limit},
+            token=self._token,
+            timeout=_HTTP_RECALL_TIMEOUT,
+        )
+        if "error" in result:
+            raise RuntimeError(f"recall HTTP error: {result['error']}")
+        if not isinstance(result, list):
+            return []
+        return self._parse_recall_results(result)
+
+    def _recall(self, query: str, limit: int) -> List[Dict[str, Any]]:
+        """Return [{content, score, tags}] above min_score."""
+        if self._use_http:
+            return self._recall_http(query, limit)
+        return self._recall_subprocess(query, limit)
+
+    @staticmethod
+    def _parse_recall_results(data: list) -> List[Dict[str, Any]]:
+        """Parse recall results from both subprocess JSON and HTTP API."""
         out = []
         for item in data:
-            mem = item.get("memory", {}) if isinstance(item, dict) else {}
-            score = item.get("score", 0.0) if isinstance(item, dict) else 0.0
+            if not isinstance(item, dict):
+                continue
+            mem = item.get("memory", {})
+            score = item.get("score", 0.0)
             content = mem.get("content", "")
-            if content and score >= self._recall_min_score:
+            if content and score >= 0:  # score filtering done by caller
                 out.append({"content": content, "score": score, "tags": mem.get("tags", [])})
         return out
+
+    # -- remember (dual transport) -------------------------------------------
+
+    def _remember_subprocess(self, content: str, tags: str = "") -> None:
+        """Store memory via subprocess."""
+        cmd = ["remember", content, "--namespace", self._namespace]
+        if tags:
+            cmd += ["--tags", tags]
+        proc = self._run(cmd, timeout=_REMEMBER_TIMEOUT)
+        if proc.returncode != 0:
+            raise RuntimeError(f"remember exit {proc.returncode}: {proc.stderr.strip()[:200]}")
+
+    def _remember_http(self, content: str, tags: str = "") -> None:
+        """Store memory via HTTP."""
+        data: Dict[str, Any] = {
+            "content": content,
+            "namespace": self._namespace,
+        }
+        if tags:
+            data["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
+        result = _http_request(
+            f"{self._server_url}/remember",
+            method="POST",
+            data=data,
+            token=self._token,
+            timeout=_HTTP_REMEMBER_TIMEOUT,
+        )
+        if "error" in result:
+            raise RuntimeError(f"remember HTTP error: {result['error']}")
+
+    def _remember(self, content: str, tags: str = "") -> None:
+        """Store a memory using configured transport."""
+        if self._use_http:
+            self._remember_http(content, tags)
+        else:
+            self._remember_subprocess(content, tags)
 
     # -- context recall (prefetch) ------------------------------------------
 
     def system_prompt_block(self) -> str:
+        transport = "HTTP" if self._use_http else "local"
         return (
             "# Uteke Memory (offline-first, persistent)\n"
-            f"Active. Namespace: {self._namespace}. Local vector recall.\n"
+            f"Active ({transport}). Namespace: {self._namespace}.\n"
             "Relevant memories are injected automatically before each turn. "
             "Use uteke_recall to search more, uteke_remember to store a fact."
         )
@@ -298,6 +417,8 @@ class UtekeMemoryProvider(MemoryProvider):
         def _bg():
             try:
                 hits = self._recall(query, self._recall_limit)
+                # Apply min_score filtering here (not in parser, so HTTP can return all)
+                hits = [h for h in hits if h.get("score", 0) >= self._recall_min_score]
                 if hits:
                     lines = "\n".join(f"- {h['content']}" for h in hits)
                     with self._prefetch_lock:
@@ -313,8 +434,13 @@ class UtekeMemoryProvider(MemoryProvider):
     # -- extraction on session boundaries -----------------------------------
 
     def _extract_messages(self, messages: List[Dict[str, Any]]) -> None:
-        """Convert messages to clean text and run `import --extract` (blocking)."""
-        if not self._extract:
+        """Convert messages to clean text and run `import --extract` (blocking).
+
+        Extraction always uses subprocess because uteke-serve does not expose
+        an extraction endpoint. Falls back to subprocess regardless of transport
+        mode.
+        """
+        if not self._extract or not self._bin:
             return
         text = _messages_to_text(messages)
         if len(text) < 50:
@@ -386,6 +512,8 @@ class UtekeMemoryProvider(MemoryProvider):
             limit = min(int(args.get("limit", 8) or 8), 25)
             try:
                 hits = self._recall(query, limit)
+                # Apply min_score filtering
+                hits = [h for h in hits if h.get("score", 0) >= self._recall_min_score]
                 self._record_success()
                 if not hits:
                     return json.dumps({"result": "No relevant memories found."})
@@ -398,14 +526,9 @@ class UtekeMemoryProvider(MemoryProvider):
             content = args.get("content", "")
             if not content:
                 return tool_error("Missing required parameter: content")
-            cmd = ["remember", content, "--namespace", self._namespace]
             tags = args.get("tags", "")
-            if tags:
-                cmd += ["--tags", tags]
             try:
-                proc = self._run(cmd, timeout=_REMEMBER_TIMEOUT)
-                if proc.returncode != 0:
-                    raise RuntimeError(proc.stderr.strip()[:200])
+                self._remember(content, tags)
                 self._record_success()
                 return json.dumps({"result": "Fact stored."})
             except Exception as e:

@@ -771,6 +771,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             search_type,
             None,
             None,
+            false,
         )
         .map_err(|e| format!("Failed: {e}"))?;
 
@@ -1557,7 +1558,7 @@ fn exec_room_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
     let doc = uteke
-        .room_document(room_id)
+        .room_summary_document(room_id)
         .map_err(|e| format!("Failed: {e}"))?;
 
     let doc = match doc {

@@ -94,6 +94,9 @@ pub(crate) fn print_unified_human(results: &[uteke_core::UnifiedSearchResult]) {
                 if let Some(count) = r.access_count {
                     println!("     Accessed: {}x", count);
                 }
+                if let Some(ref doc_slugs) = r.linked_doc_slugs {
+                    println!("     📄 Docs: {}", doc_slugs.join(", "));
+                }
             }
             uteke_core::SearchResultType::Document => {
                 if let Some(slug) = &r.doc_slug {
@@ -104,6 +107,9 @@ pub(crate) fn print_unified_human(results: &[uteke_core::UnifiedSearchResult]) {
                 }
                 if let Some(heading) = &r.chunk_heading {
                     println!("     ↳ {}", heading);
+                }
+                if let Some(ref mem_ids) = r.linked_memory_ids {
+                    println!("     🔗 Memories: {}", mem_ids.len());
                 }
             }
         }
@@ -298,7 +304,7 @@ pub(crate) fn print_aging_preview_human(memories: &[uteke_core::Memory]) {
     }
 }
 
-/// Print a room document in human-readable format.
+/// Print a room summary document in human-readable format.
 pub(crate) fn print_room_document_human(doc: &uteke_core::RoomDocument) {
     // Header
     let title = doc.title.as_deref().unwrap_or(&doc.room_id);

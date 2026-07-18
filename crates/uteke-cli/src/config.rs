@@ -240,6 +240,10 @@ pub struct RecallConfig {
     /// Weight for the recency boost applied when the `--recency` flag is
     /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
     pub recency_weight: f32,
+    /// Weight for the Jaccard token reranking boost (#719).
+    /// Applied post-RRF as an additive signal based on query-content token
+    /// overlap. 0.0 disables (default); 0.10-0.15 recommended.
+    pub jaccard_weight: f32,
 }
 
 impl Default for RecallConfig {
@@ -254,6 +258,7 @@ impl Default for RecallConfig {
             graph_rerank_enabled: true,
             salience_weight: 0.15,
             recency_weight: 0.15,
+            jaccard_weight: 0.0,
         }
     }
 }
@@ -289,21 +294,55 @@ impl Default for ServerConfig {
 pub struct MaintenanceConfig {
     /// Enable auto-aging: periodically clean up cold, stale memories.
     pub auto_aging_enabled: bool,
-    /// Auto-aging interval in hours (default: 6).
+    /// Auto-aging interval in hours (default: 24).
     pub auto_aging_interval_hours: u64,
     /// Enable auto-dream: periodically run dream cycle (lint → dedup → orphans).
     pub auto_dream_enabled: bool,
-    /// Auto-dream interval in days (default: 3).
+    /// Auto-dream interval in days (default: 7).
     pub auto_dream_interval_days: u64,
 }
 
 impl Default for MaintenanceConfig {
     fn default() -> Self {
         Self {
-            auto_aging_enabled: true,
-            auto_aging_interval_hours: 6,
+            auto_aging_enabled: false,
+            auto_aging_interval_hours: 24,
             auto_dream_enabled: true,
-            auto_dream_interval_days: 3,
+            auto_dream_interval_days: 7,
+        }
+    }
+}
+
+/// Dream pipeline thresholds (#731). All phases in the dream cycle
+/// (contradiction scan, dedup/consolidate, orphan detection) read from
+/// these values instead of hardcoded constants.
+#[derive(serde::Deserialize, Clone, Copy)]
+#[serde(default)]
+pub struct DreamConfig {
+    /// Cosine similarity threshold for contradiction scan. Memories with
+    /// similarity ABOVE this value are NOT contradictions. Default: 0.6.
+    pub contradict_similarity_threshold: f32,
+    /// Minimum Jaccard index for tag overlap to consider contradiction.
+    /// Default: 0.4 (up from original 0.3 to reduce false positives).
+    pub contradict_tag_jaccard_min: f32,
+    /// Maximum memories loaded for O(n²) contradiction scan. Default: 200.
+    pub contradict_max_memories: usize,
+    /// Cosine similarity threshold for dedup/consolidate. Memories with
+    /// similarity ABOVE this value are merge candidates. Default: 0.92.
+    pub dedup_threshold: f32,
+    /// Importance threshold for orphan detection. Memories below this AND
+    /// with no edges are flagged as orphans. Default: 0.15 (safer than 0.3).
+    pub orphan_importance_threshold: f64,
+}
+
+impl Default for DreamConfig {
+    fn default() -> Self {
+        Self {
+            contradict_similarity_threshold: 0.6,
+            contradict_tag_jaccard_min: 0.4,
+            contradict_max_memories: 200,
+            dedup_threshold: 0.92,
+            orphan_importance_threshold: 0.15,
         }
     }
 }
@@ -323,6 +362,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub limits: LimitsConfig,
     pub maintenance: MaintenanceConfig,
+    pub dream: DreamConfig,
 }
 
 /// Configurable limits (#404).
@@ -514,6 +554,9 @@ impl Config {
             }
             if recall.contains_key("graph_rerank_enabled") {
                 self.recall.graph_rerank_enabled = overlay.recall.graph_rerank_enabled;
+            }
+            if recall.contains_key("jaccard_weight") {
+                self.recall.jaccard_weight = overlay.recall.jaccard_weight;
             }
         }
 
@@ -769,6 +812,7 @@ impl Config {
 # graph_density_weight = 0.1
 # graph_authority_weight = 0.1
 # graph_rerank_enabled = true
+# jaccard_weight = 0.0  # Post-RRF token overlap boost (#719). 0=off, 0.10-0.15 recommended
 
 [server]
 # enabled = false
@@ -786,10 +830,18 @@ impl Config {
 
 [maintenance]
 # Auto-maintenance daemon (runs in server background)
-# auto_aging_enabled = true       # Clean up stale memories
-# auto_aging_interval_hours = 6   # Every 6 hours
-# auto_dream_enabled = true       # Run dream cycle (lint → dedup → orphans)
-# auto_dream_interval_days = 3    # Every 3 days
+# auto_aging_enabled = false      # Opt-in — auto-delete should be explicit
+# auto_aging_interval_hours = 24   # Daily (not every 6h)
+# auto_dream_enabled = true        # Run dream cycle (lint → dedup → orphans)
+# auto_dream_interval_days = 7     # Weekly (not every 3d)
+
+[dream]
+# Dream pipeline thresholds — all phases read from these values
+# contradict_similarity_threshold = 0.6   # Cosine > this → NOT contradiction
+# contradict_tag_jaccard_min = 0.4       # Tag overlap ≥ this → consider contradict
+# contradict_max_memories = 200          # O(n²) scan limit
+# dedup_threshold = 0.92                # Cosine > this → merge candidate
+# orphan_importance_threshold = 0.15     # Importance < this → orphan candidate
 "#;
         std::fs::write(&config_path, default).ok();
     }
