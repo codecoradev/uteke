@@ -592,21 +592,9 @@ mod tests {
 
     #[test]
     fn test_write_config_generates_valid_toml() {
-        let toggles = vec![
-            ("Aging", false),
-            ("Auto-maintenance", true),
-            ("Graph rerank", true),
-            ("Salience boost", true),
-            ("Recency boost", false),
-            ("Server mode", false),
-        ];
-        // Use a tempdir-like approach: write to a temp path by overriding HOME
-        // is hard in a unit test. Instead, call write_config and verify it
-        // produces a parseable TOML string by checking the format output.
-        // Since write_config writes to ~/.uteke/uteke.toml, we test the TOML
-        // content indirectly by checking the format string it builds.
-        let toml = format!(
-            r#"[store]
+        // Verify that the TOML structure produced by write_config is valid.
+        // We test the format string inline since write_config writes to disk.
+        let toml = r#"[store]
 namespace = "test-ns"
 
 [recall]
@@ -622,8 +610,7 @@ auto_aging_enabled = true
 
 [server]
 enabled = false
-"#
-        );
+"#;
         // Verify it parses as valid TOML (basic structural check).
         assert!(toml.contains("[store]"));
         assert!(toml.contains("namespace = \"test-ns\""));
