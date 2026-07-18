@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 /// Default importance threshold below which a memory can be considered an
 /// orphan candidate (#351).
-pub const DEFAULT_ORPHAN_THRESHOLD: f64 = 0.3;
+pub const DEFAULT_ORPHAN_THRESHOLD: f64 = 0.15;
 
 /// A memory flagged as an orphan candidate (#351).
 #[derive(Debug, Clone, Serialize, Deserialize)]
