@@ -176,6 +176,39 @@ impl Default for RecallConfig {
     }
 }
 
+/// Dream pipeline thresholds (#731). All phases in the dream cycle
+/// (contradiction scan, dedup/consolidate, orphan detection) read from
+/// these values instead of hardcoded constants.
+#[derive(Clone, Copy, Debug)]
+pub struct DreamConfig {
+    /// Cosine similarity threshold for contradiction scan. Memories with
+    /// similarity ABOVE this value are NOT contradictions. Default: 0.6.
+    pub contradict_similarity_threshold: f32,
+    /// Minimum Jaccard index for tag overlap to consider contradiction.
+    /// Default: 0.4 (up from original 0.3 to reduce false positives).
+    pub contradict_tag_jaccard_min: f32,
+    /// Maximum memories loaded for O(n²) contradiction scan. Default: 200.
+    pub contradict_max_memories: usize,
+    /// Cosine similarity threshold for dedup/consolidate. Memories with
+    /// similarity ABOVE this value are merge candidates. Default: 0.92.
+    pub dedup_threshold: f32,
+    /// Importance threshold for orphan detection. Memories below this AND
+    /// with no edges are flagged as orphans. Default: 0.15 (safer than 0.3).
+    pub orphan_importance_threshold: f64,
+}
+
+impl Default for DreamConfig {
+    fn default() -> Self {
+        Self {
+            contradict_similarity_threshold: 0.6,
+            contradict_tag_jaccard_min: 0.4,
+            contradict_max_memories: 200,
+            dedup_threshold: 0.92,
+            orphan_importance_threshold: 0.15,
+        }
+    }
+}
+
 /// Resolve uteke data directory.
 ///
 /// Uses `UTEKE_HOME` environment variable when set, otherwise falls back to
@@ -328,6 +361,9 @@ pub struct Uteke {
     /// Jaccard token reranking weight (#719). Additive boost applied
     /// post-RRF based on query-content token overlap. Default 0.0 (off).
     jaccard_weight: f32,
+    /// Dream pipeline thresholds (#731). Used by contradiction scan,
+    /// dedup/consolidate, and orphan detection phases.
+    dream_config: DreamConfig,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
 }
@@ -481,6 +517,7 @@ impl Uteke {
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
             jaccard_weight: 0.0,
+            dream_config: DreamConfig::default(),
         })
     }
 
@@ -511,6 +548,15 @@ impl Uteke {
     /// based on query-content token overlap. Recommended: 0.10-0.15.
     pub fn set_jaccard_weight(&mut self, weight: f32) {
         self.jaccard_weight = weight.clamp(0.0, 1.0);
+    }
+
+    /// Set dream pipeline thresholds (#731).
+    ///
+    /// Overrides the default hardcoded values for contradiction scan,
+    /// dedup/consolidate, and orphan detection phases. Called once at
+    /// startup from CLI/server config.
+    pub fn set_dream_config(&mut self, config: DreamConfig) {
+        self.dream_config = config;
     }
 
     /// Configure cloud embedding fallback.

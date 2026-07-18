@@ -207,8 +207,35 @@ fn main() {
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
+    let defaults = uteke_core::DreamConfig::default();
     let uteke = match Uteke::open(&db_path) {
-        Ok(u) => Arc::new(Mutex::new(u)),
+        Ok(mut u) => {
+            // Apply dream pipeline thresholds from config (#731)
+            if let Some(ref dc) = config.dream {
+                u.set_dream_config(uteke_core::DreamConfig {
+                    contradict_similarity_threshold: dc
+                        .contradict_similarity_threshold
+                        .unwrap_or(defaults.contradict_similarity_threshold),
+                    contradict_tag_jaccard_min: dc
+                        .contradict_tag_jaccard_min
+                        .unwrap_or(defaults.contradict_tag_jaccard_min),
+                    contradict_max_memories: dc
+                        .contradict_max_memories
+                        .unwrap_or(defaults.contradict_max_memories),
+                    dedup_threshold: dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
+                    orphan_importance_threshold: dc
+                        .orphan_importance_threshold
+                        .unwrap_or(defaults.orphan_importance_threshold),
+                });
+                info!(
+                    "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
+                    dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
+                    dc.orphan_importance_threshold
+                        .unwrap_or(defaults.orphan_importance_threshold),
+                );
+            }
+            Arc::new(Mutex::new(u))
+        }
         Err(e) => {
             error!("Failed to open store: {e}");
             std::process::exit(1);
@@ -419,6 +446,7 @@ struct ServerFileConfig {
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
     maintenance: Option<MaintenanceFileSection>,
     aging: Option<AgingFileSection>,
+    dream: Option<DreamFileSection>,
 }
 
 #[derive(serde::Deserialize, Default, Clone)]
@@ -433,6 +461,16 @@ struct MaintenanceFileSection {
     auto_aging_interval_hours: Option<u64>,
     auto_dream_enabled: Option<bool>,
     auto_dream_interval_days: Option<u64>,
+}
+
+/// Dream pipeline thresholds from uteke.toml [dream] section (#731).
+#[derive(serde::Deserialize, Default, Clone)]
+struct DreamFileSection {
+    contradict_similarity_threshold: Option<f32>,
+    contradict_tag_jaccard_min: Option<f32>,
+    contradict_max_memories: Option<usize>,
+    dedup_threshold: Option<f32>,
+    orphan_importance_threshold: Option<f64>,
 }
 
 #[derive(serde::Deserialize, Default)]

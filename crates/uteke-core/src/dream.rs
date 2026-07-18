@@ -301,8 +301,8 @@ impl crate::Uteke {
     }
 
     fn phase_dedup(&self, namespace: Option<&str>, dry_run: bool) -> Result<PhaseResult, Error> {
-        // Threshold 0.92 = very similar; tune down for more aggressive merges.
-        let result = self.consolidate(namespace, 0.92, dry_run)?;
+        // Threshold from config (#731) — very similar; tune down for more aggressive merges.
+        let result = self.consolidate(namespace, self.dream_config.dedup_threshold, dry_run)?;
         let summary = if result.merged == 0 {
             format!(
                 "✓ {} duplicate pairs found, 0 merged{}",
@@ -342,13 +342,13 @@ impl crate::Uteke {
         namespace: Option<&str>,
         dry_run: bool,
     ) -> Result<PhaseResult, Error> {
-        const SIMILARITY_THRESHOLD: f32 = 0.6;
-        const TAG_OVERLAP_MIN: usize = 1;
-        const TAG_JACCARD_MIN: f32 = 0.3;
-        const MAX_MEMORIES: usize = 200;
+        let similarity_threshold = self.dream_config.contradict_similarity_threshold;
+        let tag_overlap_min: usize = 1;
+        let tag_jaccard_min = self.dream_config.contradict_tag_jaccard_min;
+        let max_memories = self.dream_config.contradict_max_memories;
 
         // Load top-N memories ordered by updated_at DESC
-        let memories = self.load_recent_memories(namespace, MAX_MEMORIES)?;
+        let memories = self.load_recent_memories(namespace, max_memories)?;
 
         if memories.len() < 2 {
             return Ok(PhaseResult {
@@ -388,14 +388,14 @@ impl crate::Uteke {
                     continue;
                 }
                 let intersection = tags1.intersection(tags2).count();
-                if intersection < TAG_OVERLAP_MIN {
+                if intersection < tag_overlap_min {
                     continue;
                 }
 
                 // Tag Jaccard must be above minimum
                 let union = tags1.union(tags2).count();
                 let tag_jaccard = intersection as f32 / union as f32;
-                if tag_jaccard < TAG_JACCARD_MIN {
+                if tag_jaccard < tag_jaccard_min {
                     continue;
                 }
 
@@ -408,7 +408,7 @@ impl crate::Uteke {
                 let cosine = crate::consolidate::cosine_similarity(&m1.embedding, &m2.embedding);
 
                 // Low similarity = potential contradiction
-                if cosine > SIMILARITY_THRESHOLD {
+                if cosine > similarity_threshold {
                     continue;
                 }
 
@@ -536,8 +536,8 @@ impl crate::Uteke {
     fn phase_orphans(&self, namespace: Option<&str>) -> Result<PhaseResult, Error> {
         // Detection only — never auto-delete. Inline SQL count of memories
         // with no edges (incoming or outgoing), access_count=0, not pinned,
-        // and below the default threshold (#351 provides a richer API).
-        const THRESHOLD: f64 = 0.3;
+        // and below the configured threshold (#731).
+        let threshold = self.dream_config.orphan_importance_threshold;
         // Namespace-aware query: when a namespace is specified, only count
         // orphans in that namespace (CodeCora #390).
         let count: i64 = if let Some(ns) = namespace {
@@ -553,7 +553,7 @@ impl crate::Uteke {
                    AND m.deprecated = 0
                    AND m.importance < ?1
                    AND m.namespace = ?2",
-                rusqlite::params![THRESHOLD, ns],
+                rusqlite::params![threshold, ns],
                 |r| r.get(0),
             )
         } else {
@@ -568,7 +568,7 @@ impl crate::Uteke {
                    AND m.pinned = 0
                    AND m.deprecated = 0
                    AND m.importance < ?1",
-                rusqlite::params![THRESHOLD],
+                rusqlite::params![threshold],
                 |r| r.get(0),
             )
         }
