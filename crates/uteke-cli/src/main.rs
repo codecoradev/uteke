@@ -129,7 +129,19 @@ fn main() {
             enabled: config.recall.graph_rerank_enabled,
         },
     ) {
-        Ok(u) => u,
+        Ok(mut u) => {
+            // #719: apply Jaccard weight from config
+            u.set_jaccard_weight(config.recall.jaccard_weight);
+            // #731: apply dream pipeline thresholds from config
+            u.set_dream_config(uteke_core::DreamConfig {
+                contradict_similarity_threshold: config.dream.contradict_similarity_threshold,
+                contradict_tag_jaccard_min: config.dream.contradict_tag_jaccard_min,
+                contradict_max_memories: config.dream.contradict_max_memories,
+                dedup_threshold: config.dream.dedup_threshold,
+                orphan_importance_threshold: config.dream.orphan_importance_threshold,
+            });
+            u
+        }
         Err(e) => {
             eprintln!("Error: Failed to open memory store: {e}");
             std::process::exit(1);
