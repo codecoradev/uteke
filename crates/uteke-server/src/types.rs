@@ -95,6 +95,69 @@ pub fn resolve_doc_id_update(req: &DocUpdateRequest) -> Result<&str, &'static st
     }
 }
 
+// ── API Versioning (#737) ────────────────────────────────────────────────────
+
+/// Supported API versions. Routes prefixed with `/api/vN/` are dispatched
+/// according to this version. Unversioned routes alias to `Latest`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiVersion {
+    /// v0.7.x compatible format (flat recall results).
+    V1,
+    /// Current format (v0.8.x+, wrapped UnifiedSearchResult).
+    V2,
+}
+
+impl ApiVersion {
+    /// Parse `/api/vN/` prefix from a path. Returns `(version, stripped_path)` on match,
+    /// or `None` if the path is not versioned.
+    pub fn from_path(path: &str) -> Option<(Self, &str)> {
+        if let Some(rest) = path.strip_prefix("/api/v1/") {
+            Some((Self::V1, rest))
+        } else if let Some(rest) = path.strip_prefix("/api/v2/") {
+            Some((Self::V2, rest))
+        } else {
+            None
+        }
+    }
+}
+
+/// Convert a `UnifiedSearchResult` (v2) to the v1 flat format.
+/// v1 consumers expect: `[{id, content, score, namespace, tags, ...}]`
+/// instead of the v2 wrapped structure.
+pub fn to_v1_flat(result: &uteke_core::memory::types::UnifiedSearchResult) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "content".into(),
+        serde_json::Value::String(result.content.clone()),
+    );
+    map.insert("score".into(), serde_json::json!(result.score));
+    if let Some(id) = &result.memory_id {
+        map.insert("id".into(), serde_json::Value::String(id.clone()));
+    }
+    if let Some(ns) = &result.namespace {
+        map.insert("namespace".into(), serde_json::Value::String(ns.clone()));
+    }
+    if let Some(source) = &result.source {
+        map.insert("source".into(), serde_json::Value::String(source.clone()));
+    }
+    if !result.tags.is_empty() {
+        map.insert("tags".into(), serde_json::json!(result.tags));
+    }
+    if let Some(meta) = &result.metadata {
+        map.insert("metadata".into(), meta.clone());
+    }
+    if let Some(mt) = &result.memory_type {
+        map.insert("type".into(), serde_json::Value::String(mt.clone()));
+    }
+    if let Some(imp) = result.importance {
+        map.insert("importance".into(), serde_json::json!(imp));
+    }
+    if let Some(pin) = result.pinned {
+        map.insert("pinned".into(), serde_json::json!(pin));
+    }
+    serde_json::Value::Object(map)
+}
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -198,6 +261,12 @@ pub struct HealthResponse {
     pub version: &'static str,
     pub memories: usize,
     pub namespaces: usize,
+    /// Supported API versions (#737).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_versions: Option<Vec<&'static str>>,
+    /// Latest API version (#737).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_latest: Option<&'static str>,
 }
 
 #[derive(Serialize)]
