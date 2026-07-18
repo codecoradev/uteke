@@ -302,7 +302,8 @@ impl crate::Uteke {
 
     fn phase_dedup(&self, namespace: Option<&str>, dry_run: bool) -> Result<PhaseResult, Error> {
         // Threshold from config (#731) — very similar; tune down for more aggressive merges.
-        let result = self.consolidate(namespace, self.dream_config.dedup_threshold as f64, dry_run)?;
+        let result =
+            self.consolidate(namespace, self.dream_config.dedup_threshold, dry_run)?;
         let summary = if result.merged == 0 {
             format!(
                 "✓ {} duplicate pairs found, 0 merged{}",

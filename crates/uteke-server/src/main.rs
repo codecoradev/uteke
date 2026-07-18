@@ -207,35 +207,31 @@ fn main() {
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
+    let defaults = uteke_core::DreamConfig::default();
     let uteke = match Uteke::open(&db_path) {
         Ok(mut u) => {
             // Apply dream pipeline thresholds from config (#731)
-            if let Some(dream_section) = &config.dream {
+            if let Some(ref dc) = config.dream {
                 u.set_dream_config(uteke_core::DreamConfig {
-                    contradict_similarity_threshold: dream_section
+                    contradict_similarity_threshold: dc
                         .contradict_similarity_threshold
-                        .unwrap_or_default(),
-                    contradict_tag_jaccard_min: dream_section
+                        .unwrap_or(defaults.contradict_similarity_threshold),
+                    contradict_tag_jaccard_min: dc
                         .contradict_tag_jaccard_min
-                        .unwrap_or_default(),
-                    contradict_max_memories: dream_section
+                        .unwrap_or(defaults.contradict_tag_jaccard_min),
+                    contradict_max_memories: dc
                         .contradict_max_memories
-                        .unwrap_or_default(),
-                    dedup_threshold: dream_section
-                        .dedup_threshold
-                        .unwrap_or_default(),
-                    orphan_importance_threshold: dream_section
+                        .unwrap_or(defaults.contradict_max_memories),
+                    dedup_threshold: dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
+                    orphan_importance_threshold: dc
                         .orphan_importance_threshold
-                        .unwrap_or_default(),
+                        .unwrap_or(defaults.orphan_importance_threshold),
                 });
                 info!(
                     "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
-                    dream_section
-                        .dedup_threshold
-                        .unwrap_or(uteke_core::DreamConfig::default().dedup_threshold),
-                    dream_section
-                        .orphan_importance_threshold
-                        .unwrap_or(uteke_core::DreamConfig::default().orphan_importance_threshold),
+                    dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
+                    dc.orphan_importance_threshold
+                        .unwrap_or(defaults.orphan_importance_threshold),
                 );
             }
             Arc::new(Mutex::new(u))
