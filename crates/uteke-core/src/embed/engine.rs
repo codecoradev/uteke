@@ -324,13 +324,18 @@ fn download_hf_file_once(
 
         // Print progress every 10% for large files.
         if total_size > 0 {
-            let pct = ((downloaded * 100) / total_size) as u8;
-            if pct != last_pct && pct % 10 == 0 {
-                eprintln!(
-                    "  {file_name}: {pct}% ({}/{} bytes)",
-                    downloaded, total_size
-                );
-                last_pct = pct;
+            if let Some(pct) = downloaded
+                .checked_mul(100)
+                .and_then(|v| v.checked_div(total_size))
+            {
+                let pct = pct as u8;
+                if pct != last_pct && pct % 10 == 0 {
+                    eprintln!(
+                        "  {file_name}: {pct}% ({}/{} bytes)",
+                        downloaded, total_size
+                    );
+                    last_pct = pct;
+                }
             }
         }
     }
