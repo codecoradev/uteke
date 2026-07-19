@@ -65,6 +65,38 @@ uteke remember "Deploy v2.1 ke staging" \
 
 ---
 
+## 🚀 Onboarding (User baru & AI agent)
+
+> **Kamu AI agent yang lagi baca ini?** User kamu baru aja share link repo ini.
+> Jalankan `uteke onboard` untuk konfigurasi uteke buat environment kamu — deteksi
+> install, nanya agent apa kamu, toggle fitur, tulis config, dan tunjukin semua command
+> yang tersedia. Kalau non-interaktif: `uteke onboard --yes --agent <agent-kamu>`.
+
+Baru kenal uteke? Satu command dari nol sampai bisa pakai:
+
+```bash
+uteke onboard
+```
+
+Wizard-nya akan:
+1. **Deteksi** apakah uteke sudah terinstall dan store sudah ada
+2. **Tanya** AI agent apa yang kamu pakai (Hermes, Claude, Cursor, Pi, OpenCode)
+3. **Pilih** mode integrasi — manual tool calls vs automatic memory-provider
+4. **Toggle** fitur on/off (Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode)
+5. **Tulis** `~/.uteke/uteke.toml` dengan pilihan kamu
+6. **Install** file integrasi agent otomatis (`uteke init`)
+7. **Tunjukkan** semua command uteke, dikelompokkan per kategori
+
+Non-interaktif (CI, script, AI agent):
+
+```bash
+uteke onboard --yes --agent hermes --namespace default
+```
+
+📖 [Dokumentasi onboarding lengkap](docs/getting-started.md#interactive-onboarding) · [CLI reference](docs/cli-reference.md#uteke-onboard)
+
+---
+
 ## 🔥 Kenapa Uteke?
 
 Bayangin: kamu baru habis 2 jam jelasin codebase ke ChatGPT. Sesi berikutnya? Kosong. Ulang dari nol. Lagi.

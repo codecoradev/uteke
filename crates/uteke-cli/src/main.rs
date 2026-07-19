@@ -6,6 +6,7 @@ mod config;
 mod extract;
 mod init;
 mod logging;
+mod onboard;
 mod output;
 
 use clap::{CommandFactory, Parser};
@@ -34,6 +35,13 @@ fn main() {
         }
         Commands::Init { .. } => {
             if let Err(e) = init::run_init_command(&cli) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::Onboard { .. } => {
+            if let Err(e) = onboard::run(&cli) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

@@ -3,6 +3,7 @@
 ## [0.8.0] — 2026-07-17
 
 ### Added
+- **`uteke onboard` — interactive onboarding wizard** — guides new users from zero to productive in one command. Detects install, asks which AI agent they use (Hermes/Claude/Cursor/Pi/OpenCode), picks integration mode (tool vs memory-provider), toggles features on/off (Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode), writes `uteke.toml`, runs `uteke init`, and prints a full feature showcase. Non-interactive mode: `uteke onboard --yes --agent hermes --namespace default`.
 - **PUT /memory — partial memory updates (#676)** — Update any combination of content, tags, metadata, importance, pinned state, or memory_type on an existing memory. Content changes trigger embedding regeneration. Replaces the old pattern of forget+remember.
 - **POST /memory/pin and POST /memory/importance endpoints (#660)** — Dedicated endpoints for pin/unpin toggle (accepts `pinned` boolean) and importance score setting (0.0–1.0). Both return the updated memory on success.
 - **Room ↔ Document junction table — schema v15 (#689, #692)** — New `room_documents` table links rooms to documents bidirectionally. Endpoints: `POST /room/document/list`, `PUT /room/document/add`, `DELETE /room/document/remove`, `POST /doc/room/list`.

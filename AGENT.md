@@ -89,8 +89,37 @@ crates/uteke-server/src/
 ### Schema Versioning
 
 - `schema_version` table with integer counter
-- Current: **v12** (document engine + knowledge graph + timeline + citations + hierarchy)
+- Current: **v15** (room↔document junction table — #689)
 - Auto-migration on upgrade, zero data loss
+
+---
+
+## Onboarding Flow (`uteke onboard`)
+
+The `onboard` command is the front door for new users. It lives in
+`crates/uteke-cli/src/onboard.rs` and is dispatched early in `main.rs` (like
+`init` and `completions` — no store open needed).
+
+### Flow Steps
+
+1. **Detect install** — `which::which("uteke")` checks PATH
+2. **Check store** — looks for `~/.uteke/uteke.db`
+3. **Pick agent** — hermes, claude, cursor, pi, opencode (or custom name)
+4. **Pick integration mode** — tool (manual) vs memory-provider (auto recall + extraction)
+5. **Pick namespace** — for multi-agent isolation
+6. **Feature toggles** — ON/OFF for: Aging, Auto-maintenance, Graph rerank, Salience boost, Recency boost, Server mode
+7. **Write config** — generates `~/.uteke/uteke.toml` with selections
+8. **Run `uteke init`** — calls `crate::init::run_init()` directly (no subprocess)
+9. **Feature showcase** — prints all uteke commands grouped by category
+
+### Non-interactive mode
+
+`uteke onboard --yes --agent hermes --namespace default` skips all prompts.
+
+### Adding new toggleable features
+
+Add an entry to `FEATURE_TOGGLES` in `onboard.rs` and a matching line in
+`write_config()` that maps the toggle to a TOML key.
 
 ---
 

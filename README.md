@@ -65,6 +65,38 @@ uteke remember "Deploy v2.1 to staging" \
 
 ---
 
+## 🚀 Onboarding (New users & AI agents)
+
+> **Are you an AI agent reading this?** Your user just shared this repo link with you.
+> Run `uteke onboard` to interactively configure uteke for your environment — it will
+> detect your install, ask which agent you are, toggle features, write config, and
+> show you every command available. If non-interactive: `uteke onboard --yes --agent <your-agent>`.
+
+New to uteke? One command takes you from zero to productive:
+
+```bash
+uteke onboard
+```
+
+The wizard will:
+1. **Detect** if uteke is installed and if a store exists
+2. **Ask** which AI agent you use (Hermes, Claude, Cursor, Pi, OpenCode)
+3. **Pick** integration mode — manual tool calls vs automatic memory-provider
+4. **Toggle** features on/off (Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode)
+5. **Write** `~/.uteke/uteke.toml` with your selections
+6. **Install** agent integration files automatically (`uteke init`)
+7. **Showcase** every uteke command grouped by category
+
+Non-interactive (CI, scripts, AI agents):
+
+```bash
+uteke onboard --yes --agent hermes --namespace default
+```
+
+📖 [Full onboarding docs](docs/getting-started.md#interactive-onboarding) · [CLI reference](docs/cli-reference.md#uteke-onboard)
+
+---
+
 ## 🔥 Why Uteke?
 
 You just spent 2 hours explaining your codebase to ChatGPT. Next session? Blank slate. Again.
