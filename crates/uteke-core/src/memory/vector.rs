@@ -88,7 +88,12 @@ impl VectorIndex {
 
         let mut lock_file = acquire_file_lock(path)?;
 
-        let mut idx = if lock_file.metadata().map_err(|e| Error::embed("read file metadata", e))?.len() == 0 {
+        let mut idx = if lock_file
+            .metadata()
+            .map_err(|e| Error::embed("read file metadata", e))?
+            .len()
+            == 0
+        {
             Self::new(dims)?
         } else {
             Self::load_from_file(&mut lock_file, path)?
@@ -105,10 +110,10 @@ impl VectorIndex {
     /// directly from the locked handle instead of opening a second one.
     pub fn load_from_file(file: &mut File, path: &Path) -> Result<Self, Error> {
         use std::io::{Read, Seek, SeekFrom};
-        
+
         file.seek(SeekFrom::Start(0))
             .map_err(|e| Error::embed("seek usearch file", e))?;
-            
+
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)
             .map_err(|e| Error::embed("read usearch file from locked handle", e))?;
