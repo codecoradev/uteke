@@ -16,16 +16,14 @@ If you discover a security vulnerability in Uteke, please report it responsibly.
 
 ### How to Report
 
-1. Open a new issue with the title prefix `[SECURITY]`
-2. Use the label `security`
-3. Include as much detail as possible:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if any)
-4. The issue will be restricted to maintainers only
+Use [GitHub Private Vulnerability Reporting](https://github.com/codecoradev/uteke/security/advisories/new) — this ensures the report is confidential and only visible to maintainers.
 
-Alternatively, contact the maintainer directly via [GitHub Security Advisories](https://github.com/codecoradev/uteke/security/advisories/new).
+Include as much detail as possible:
+
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if any)
 
 ### What to Expect
 
