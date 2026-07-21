@@ -1964,10 +1964,14 @@ mod tests {
 
     #[test]
     fn test_uteke_home_with_env() {
-        std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
+        unsafe {
+            std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
+        }
         let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.uteke"));
         assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
-        std::env::remove_var("UTEKE_HOME");
+        unsafe {
+            std::env::remove_var("UTEKE_HOME");
+        }
     }
 
     #[test]
@@ -2158,8 +2162,12 @@ mod tests {
     #[serial]
     fn embedding_settings_env_overrides_caller_config() {
         // Env vars win over caller-supplied settings.
-        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-wins");
-        std::env::set_var("UTEKE_EMBEDDING_MODEL", "env-model");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-wins");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_MODEL", "env-model");
+        }
         let input = EmbeddingSettings {
             api_key: "sk-config".to_string(),
             base_url: "https://config.example.com".to_string(),
@@ -2168,8 +2176,12 @@ mod tests {
             dims: 1024,
         };
         let merged = EmbeddingSettings::resolve_with_defaults(&input);
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
         // Env overrides
         assert_eq!(merged.api_key, "sk-env-wins");
         assert_eq!(merged.model, "env-model");
@@ -2183,8 +2195,12 @@ mod tests {
     fn embedding_settings_empty_env_does_not_overwrite_config() {
         // Explicitly empty env var must NOT clobber a non-empty config value
         // (CodeCora finding: std::env::var returns Ok("") for empty vars).
-        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
-        std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
+        }
         let input = EmbeddingSettings {
             api_key: "sk-from-config".to_string(),
             base_url: "https://config.example.com".to_string(),
@@ -2193,8 +2209,12 @@ mod tests {
             dims: 1536,
         };
         let merged = EmbeddingSettings::resolve_with_defaults(&input);
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
         assert_eq!(
             merged.api_key, "sk-from-config",
             "empty env must not clobber config"
@@ -2208,11 +2228,21 @@ mod tests {
     #[test]
     #[serial]
     fn embedding_settings_config_used_when_env_absent() {
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("OPENAI_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_BASE_URL");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
-        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_BASE_URL");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        }
         let input = EmbeddingSettings {
             api_key: "sk-config-only".to_string(),
             base_url: "https://from-toml.example.com".to_string(),
