@@ -678,12 +678,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
-name = "env_home"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
-
-[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2911,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2937,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2960,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-mcp"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "dirs",
  "serde",
@@ -2970,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "ctrlc",
@@ -3195,14 +3189,11 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "7.0.3"
+version = "8.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24d643ce3fd3e5b54854602a080f34fb10ab75e0b813ee32d00ca2b44fa74762"
+checksum = "8f3ef584124b911bcc3875c2f1472e80f24361ceb789bd1c62b3e9a3df9ff43c"
 dependencies = [
- "either",
- "env_home",
- "rustix",
- "winsafe",
+ "libc",
 ]
 
 [[package]]
@@ -3382,12 +3373,6 @@ name = "winnow"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
-
-[[package]]
-name = "winsafe"
-version = "0.0.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"
