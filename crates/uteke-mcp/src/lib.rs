@@ -755,7 +755,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         Some(other) => {
             return Err(format!(
                 "Invalid search type: '{other}'. Use 'all', 'memory', or 'doc'."
-            ))
+            ));
         }
     };
 

@@ -8,7 +8,7 @@
 //! Uses hybrid adjacency list + materialized path for O(1) subtree queries.
 
 use crate::Error;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 /// Maximum depth for document hierarchy.

@@ -8,8 +8,8 @@
 //! Dimensions are model-specific (nomic-embed-text = 768, mxbai-embed-large
 //! = 1024). The caller supplies dims so we don't need a probe request.
 
-use crate::embed::Embedder;
 use crate::Error;
+use crate::embed::Embedder;
 
 /// Default Ollama endpoint.
 pub const DEFAULT_BASE_URL: &str = "http://localhost:11434";

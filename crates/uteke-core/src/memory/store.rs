@@ -1,7 +1,7 @@
 //! SQLite-backed persistence for memories.
 
-use crate::memory::types::Memory;
 use crate::Error;
+use crate::memory::types::Memory;
 use rusqlite::Connection;
 
 /// Schema SQL for initial table creation.
@@ -1676,9 +1676,11 @@ mod tests {
         store.insert(&m).unwrap();
 
         // Set source.
-        assert!(store
-            .set_source("src1", Some("https://rust-lang.org"), "url")
-            .unwrap());
+        assert!(
+            store
+                .set_source("src1", Some("https://rust-lang.org"), "url")
+                .unwrap()
+        );
 
         // Verify via direct SQL.
         let (source, source_type): (Option<String>, String) = store

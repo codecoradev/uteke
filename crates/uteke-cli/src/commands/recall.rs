@@ -39,7 +39,7 @@ pub(crate) fn run_recall(
         Some(other) => {
             return Err(format!(
                 "Invalid --type: '{other}'. Use 'all', 'memory', or 'doc'."
-            ))
+            ));
         }
     };
 

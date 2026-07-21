@@ -3,9 +3,9 @@
 //! Uses the `memory_tags` junction table (schema v5) for O(log n) lookups.
 //! The JSON `tags` column in `memories` is kept in sync for backward compat.
 
-use crate::memory::types::TagInfo;
 use crate::Error;
-use rusqlite::{params, OptionalExtension};
+use crate::memory::types::TagInfo;
+use rusqlite::{OptionalExtension, params};
 
 impl super::Store {
     /// Get all unique tags, optionally filtered by namespace.

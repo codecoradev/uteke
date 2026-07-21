@@ -80,7 +80,9 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     if !installed {
         println!("⚠  uteke is not on your PATH.");
         println!("  Install it first:");
-        println!("    curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/develop/install.sh | sh");
+        println!(
+            "    curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/develop/install.sh | sh"
+        );
         println!();
         if !*yes {
             print!("  Continue onboarding anyway? [y/N] ");

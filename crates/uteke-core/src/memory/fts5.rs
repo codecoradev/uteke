@@ -1,7 +1,7 @@
 //! FTS5 full-text search for memories.
 
-use crate::memory::types::Memory;
 use crate::Error;
+use crate::memory::types::Memory;
 use rusqlite::params;
 
 use super::store::row_to_memory;
@@ -233,8 +233,8 @@ impl super::Store {
 
 #[cfg(test)]
 mod tests {
-    use crate::memory::types::Memory;
     use crate::memory::Store;
+    use crate::memory::types::Memory;
     use chrono::Utc;
 
     fn make_test_memory(id: &str, content: &str, tags: &[&str]) -> Memory {

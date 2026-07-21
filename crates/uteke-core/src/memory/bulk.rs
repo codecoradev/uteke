@@ -1,7 +1,7 @@
 //! Bulk operations — bulk delete, deprecation, TTL pruning, similarity search.
 
-use crate::memory::types::{Memory, DEFAULT_NAMESPACE};
 use crate::Error;
+use crate::memory::types::{DEFAULT_NAMESPACE, Memory};
 use rusqlite::params;
 
 use super::store::row_to_memory;

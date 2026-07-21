@@ -210,7 +210,7 @@ pub(crate) fn run_import(
         other => {
             return Err(format!(
                 "Unknown import format: '{other}'. Use: jsonl, markdown, text"
-            ))
+            ));
         }
     };
 
@@ -814,15 +814,15 @@ fn determine_strategy(
 /// "skills/system-audit/SKILL.md" → "skills-system-audit-skill"
 fn slug_from_path(base: &std::path::Path, file: &std::path::Path) -> String {
     let relative = file.strip_prefix(base).unwrap_or(file);
-    let slug = relative.to_string_lossy().replace(['/', '\\'], "-");
-    let slug = slug
+    relative
+        .to_string_lossy()
+        .replace(['/', '\\'], "-")
         .trim_end_matches(".md")
         .trim_end_matches(".markdown")
         .trim_end_matches(".txt")
         .trim_end_matches(".jsonl")
         .trim_end_matches('-')
-        .to_lowercase();
-    slug
+        .to_lowercase()
 }
 
 /// Generate a title from slug (human-readable).

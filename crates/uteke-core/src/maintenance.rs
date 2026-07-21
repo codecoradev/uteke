@@ -1,6 +1,6 @@
 //! Maintenance operations: doctor, verify, repair, stats, aging, prune, shutdown.
 
-use crate::error::{format_bytes, Error};
+use crate::error::{Error, format_bytes};
 use crate::memory::types::{AgingStatus, CleanupResult, Memory, PruneResult, StoreStats};
 use crate::types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 use crate::uteke_home;

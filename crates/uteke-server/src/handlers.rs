@@ -283,7 +283,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             return ctx.error_response_for(
                                 req,
                                 400,
-                                format!("Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."),
+                                format!(
+                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
+                                ),
                             );
                         }
                     };
@@ -692,7 +694,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
         (Method::Post, "/room/document") => {
-            warn!("DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)");
+            warn!(
+                "DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)"
+            );
             #[derive(Deserialize)]
             struct RoomDocumentRequest {
                 room_id: String,
@@ -1155,7 +1159,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     match read_body::<RoomDeleteRequest>(req.as_reader()) {
                         Ok(data) => data.room_id,
                         Err(_) => {
-                            return ctx.error_response_for(req, 400, "Missing 'room_id' parameter")
+                            return ctx.error_response_for(req, 400, "Missing 'room_id' parameter");
                         }
                     }
                 }
@@ -1797,7 +1801,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             req,
                             400,
                             format!("Unknown action: {other}. Use: status, preview, cleanup"),
-                        )
+                        );
                     }
                 };
                 match result {

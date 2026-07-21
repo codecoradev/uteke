@@ -5,6 +5,6 @@
 
 #[allow(unused_imports)] // re-exports for crate::extract::* consumers
 pub use uteke_core::extraction::{
-    ExtractionConfig, Extractor, DEFAULT_BASE_URL, DEFAULT_ENDPOINT_PATH, DEFAULT_MAX_FACTS,
-    DEFAULT_MODEL,
+    DEFAULT_BASE_URL, DEFAULT_ENDPOINT_PATH, DEFAULT_MAX_FACTS, DEFAULT_MODEL, ExtractionConfig,
+    Extractor,
 };

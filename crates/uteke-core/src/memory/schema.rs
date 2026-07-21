@@ -1,7 +1,7 @@
 //! Schema management — initialization, migrations, versioning.
 
 use crate::Error;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 
 use super::store::{CURRENT_SCHEMA_VERSION, SCHEMA, SCHEMA_INDEXES};
 

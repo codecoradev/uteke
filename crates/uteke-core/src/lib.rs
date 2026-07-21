@@ -31,38 +31,38 @@ mod timeline;
 mod types;
 
 pub use chunker::{
-    chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language, extract_imports,
-    CodeChunk, TextChunk,
+    CodeChunk, TextChunk, chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language,
+    extract_imports,
 };
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
-    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES,
-    EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS,
+    EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES,
+    EDGE_TAGGED_AS, EdgeList, MemoryEdge, backlink_type_for,
 };
-pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
-pub use graph_rerank::{compute_graph_signals, rerank_with_graph, GraphRerankConfig, GraphSignals};
+pub use graph::{Relationship, VALID_REL_TYPES, build_meta_relationship, is_relationship_meta};
+pub use graph_rerank::{GraphRerankConfig, GraphSignals, compute_graph_signals, rerank_with_graph};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
-    ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
-    SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
-    UnifiedSearchResult, DEFAULT_NAMESPACE,
+    DEFAULT_NAMESPACE, ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult,
+    RecallStrategy, SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
+    UnifiedSearchResult,
 };
 pub use memory::{
-    documents::{Document, DocumentChunk, DocumentSearchResult, DocumentSummary},
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
+    documents::{Document, DocumentChunk, DocumentSearchResult, DocumentSummary},
 };
-pub use orphans::{compute_orphan_score, OrphanMemory, DEFAULT_ORPHAN_THRESHOLD};
+pub use orphans::{DEFAULT_ORPHAN_THRESHOLD, OrphanMemory, compute_orphan_score};
 pub use salience_recency::{
-    apply_boosts, recency_score, salience_score, type_half_life_days, SalienceRecencyConfig,
+    SalienceRecencyConfig, apply_boosts, recency_score, salience_score, type_half_life_days,
 };
 pub use timeline::{TimelineEvent, TimelineEventType};
 
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]
 pub use embed::OnnxEmbedder;
-pub use error::{format_bytes, Error};
+pub use error::{Error, format_bytes};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
 /// Maximum memory content length (characters) — default, overridable via config (#404).
@@ -128,8 +128,8 @@ pub fn validate_input_with_limits(
     Ok(())
 }
 
-use memory::store::Store;
 use memory::VectorIndex;
+use memory::store::Store;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};
@@ -781,7 +781,7 @@ impl Uteke {
                 .filter(|n| {
                     // Memory-linked nodes: check memory namespace.
                     // Entity nodes: always include (shared across namespaces).
-                    n.memory_id.as_deref().map_or(true, |_| true)
+                    n.memory_id.as_deref().is_none_or(|_| true)
                 })
                 .collect();
             let _ = ns_string; // namespace filter applied at memory level
@@ -1964,10 +1964,14 @@ mod tests {
 
     #[test]
     fn test_uteke_home_with_env() {
-        std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
+        unsafe {
+            std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
+        }
         let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.uteke"));
         assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
-        std::env::remove_var("UTEKE_HOME");
+        unsafe {
+            std::env::remove_var("UTEKE_HOME");
+        }
     }
 
     #[test]
@@ -2158,8 +2162,12 @@ mod tests {
     #[serial]
     fn embedding_settings_env_overrides_caller_config() {
         // Env vars win over caller-supplied settings.
-        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-wins");
-        std::env::set_var("UTEKE_EMBEDDING_MODEL", "env-model");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-wins");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_MODEL", "env-model");
+        }
         let input = EmbeddingSettings {
             api_key: "sk-config".to_string(),
             base_url: "https://config.example.com".to_string(),
@@ -2168,8 +2176,12 @@ mod tests {
             dims: 1024,
         };
         let merged = EmbeddingSettings::resolve_with_defaults(&input);
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
         // Env overrides
         assert_eq!(merged.api_key, "sk-env-wins");
         assert_eq!(merged.model, "env-model");
@@ -2183,8 +2195,12 @@ mod tests {
     fn embedding_settings_empty_env_does_not_overwrite_config() {
         // Explicitly empty env var must NOT clobber a non-empty config value
         // (CodeCora finding: std::env::var returns Ok("") for empty vars).
-        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
-        std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_MODEL", "");
+        }
         let input = EmbeddingSettings {
             api_key: "sk-from-config".to_string(),
             base_url: "https://config.example.com".to_string(),
@@ -2193,8 +2209,12 @@ mod tests {
             dims: 1536,
         };
         let merged = EmbeddingSettings::resolve_with_defaults(&input);
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
         assert_eq!(
             merged.api_key, "sk-from-config",
             "empty env must not clobber config"
@@ -2208,11 +2228,21 @@ mod tests {
     #[test]
     #[serial]
     fn embedding_settings_config_used_when_env_absent() {
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("OPENAI_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_BASE_URL");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
-        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_BASE_URL");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        }
         let input = EmbeddingSettings {
             api_key: "sk-config-only".to_string(),
             base_url: "https://from-toml.example.com".to_string(),
