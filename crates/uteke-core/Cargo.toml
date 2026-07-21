@@ -12,7 +12,18 @@ readme = "../../README.md"
 
 [features]
 default = ["onnx"]
-onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers", "dep:sha2"]
+onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers"]
+treesitter = [
+    "dep:tree-sitter",
+    "dep:tree-sitter-rust",
+    "dep:tree-sitter-go",
+    "dep:tree-sitter-python",
+    "dep:tree-sitter-typescript",
+    "dep:tree-sitter-javascript",
+    "dep:tree-sitter-java",
+    "dep:tree-sitter-c",
+    "dep:tree-sitter-cpp",
+]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -30,7 +41,19 @@ fs2 = "0.4"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"], optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.23", optional = true }
-sha2 = { version = "0.11", optional = true }
+sha2 = { version = "0.11" }
+
+# Tree-sitter AST chunking (gated behind `treesitter` feature). The `unsafe`
+# code lives inside the grammar crates; consumer code here stays safe.
+tree-sitter = { version = "0.25", optional = true }
+tree-sitter-rust = { version = "0.24", optional = true }
+tree-sitter-go = { version = "0.25", optional = true }
+tree-sitter-python = { version = "0.25", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-javascript = { version = "0.25", optional = true }
+tree-sitter-java = { version = "0.23", optional = true }
+tree-sitter-c = { version = "0.24", optional = true }
+tree-sitter-cpp = { version = "0.23", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

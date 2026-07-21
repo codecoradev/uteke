@@ -95,11 +95,10 @@ impl OpenAiEmbedder {
     }
 }
 
-impl Embedder for OpenAiEmbedder {
-    fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
-        // OpenAI rejects empty input with 400; send a single space so the
-        // call is always valid (matches ONNX backend's non-empty contract).
-        let input = if text.is_empty() { " " } else { text };
+impl OpenAiEmbedder {
+    /// Single embedding request for pre-truncated `input`. The retry/shrink
+    /// loop lives in [`Embedder::embed`].
+    fn embed_once(&self, input: &str) -> Result<Vec<f32>, Error> {
         // Include `dimensions` when explicitly configured. This keeps the
         // API response size in sync with the configured index dims
         // (CodeCora finding #146) for models that support the field.
@@ -145,6 +144,58 @@ impl Embedder for OpenAiEmbedder {
             .map(|d| d.embedding)
             .ok_or_else(|| Error::generic("OpenAI response had no embedding data"))
     }
+}
+
+/// Conservative char budget for a given token limit. Code is denser than
+/// prose (short identifiers, punctuation), so we use ~3.5 chars/token and
+/// leave headroom below the hard limit.
+fn char_budget_for(max_tokens: usize) -> usize {
+    (max_tokens.saturating_mul(7) / 2).max(512)
+}
+
+/// Truncate on a UTF-8 char boundary to at most `max` chars.
+fn truncate_chars(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+impl Embedder for OpenAiEmbedder {
+    fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
+        // OpenAI rejects empty input with 400; send a single space so the
+        // call is always valid (matches ONNX backend's non-empty contract).
+        let base = if text.is_empty() { " " } else { text };
+
+        // Guard against the model's 8192-token context limit. We have no
+        // tokenizer here, so cap by chars with a conservative code-safe ratio
+        // (~3.5 chars/token; code is denser than prose) and, if the API still
+        // reports a context-length 400, halve and retry a few times. Long AST
+        // chunks (whole functions/files) otherwise fail outright — local
+        // backends tolerated them, OpenAI does not.
+        let mut budget = char_budget_for(MAX_SEQ_LEN);
+        let mut input = truncate_chars(base, budget);
+        loop {
+            match self.embed_once(input) {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    let msg = e.to_string();
+                    let is_ctx_len = msg.contains("maximum context length")
+                        || msg.contains("'input'");
+                    if is_ctx_len && budget > 512 {
+                        budget /= 2;
+                        input = truncate_chars(base, budget);
+                        continue;
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
 
     fn dims(&self) -> usize {
         self.dims
@@ -172,6 +223,30 @@ struct EmbeddingData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_chars_respects_utf8_boundary() {
+        // Multi-byte chars must not be split mid-sequence.
+        let s = "aéééé"; // 'a' + 4x 2-byte chars
+        let t = truncate_chars(s, 4);
+        assert!(s.starts_with(t));
+        assert!(t.len() <= 4);
+        // Valid UTF-8 by construction (would panic otherwise).
+        assert!(t.chars().count() >= 1);
+    }
+
+    #[test]
+    fn truncate_chars_noop_when_short() {
+        assert_eq!(truncate_chars("hello", 100), "hello");
+    }
+
+    #[test]
+    fn char_budget_below_hard_limit_but_generous() {
+        let b = char_budget_for(MAX_SEQ_LEN);
+        assert!(b >= 512);
+        // ~3.5 chars/token → well above the token count, well within reason.
+        assert!(b > MAX_SEQ_LEN);
+    }
 
     #[test]
     fn rejects_empty_api_key() {

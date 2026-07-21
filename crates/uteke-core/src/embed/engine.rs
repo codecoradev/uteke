@@ -19,6 +19,85 @@ const MAX_SEQ_LEN: usize = 2048;
 
 const HF_REPO: &str = "onnx-community/embeddinggemma-300m-ONNX";
 
+/// How to turn ONNX outputs into a single embedding vector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pooling {
+    /// Model emits a pre-pooled sentence embedding at `outputs[1]`
+    /// (EmbeddingGemma). Use it directly.
+    PrePooledOutput1,
+    /// Model emits only `last_hidden_state` at `outputs[0]`; mean-pool over
+    /// the sequence using the attention mask (Qwen3-style, e.g. voyage-4-nano).
+    MeanPoolOutput0,
+}
+
+/// Descriptor for a downloadable ONNX embedding model.
+#[derive(Debug, Clone)]
+pub struct ModelSpec {
+    /// Local directory name under `~/.uteke/models/`.
+    pub dir_name: &'static str,
+    /// Hugging Face repo id.
+    pub hf_repo: &'static str,
+    /// Embedding dimension.
+    pub dims: usize,
+    /// Max input sequence length (tokens).
+    pub max_seq_len: usize,
+    /// Output pooling strategy.
+    pub pooling: Pooling,
+    /// (filename, sha256) checksums for model.onnx, model.onnx_data, tokenizer.json.
+    pub checksums: &'static [(&'static str, &'static str)],
+}
+
+/// EmbeddingGemma Q4 (768d) — the default local model.
+pub const EMBEDDINGGEMMA_Q4: ModelSpec = ModelSpec {
+    dir_name: MODEL_DIR_NAME,
+    hf_repo: HF_REPO,
+    dims: MODEL_DIMS,
+    max_seq_len: MAX_SEQ_LEN,
+    pooling: Pooling::PrePooledOutput1,
+    checksums: MODEL_CHECKSUMS,
+};
+
+/// Voyage-4-nano Q4 (2048d, qwen3) — open-weight, code-friendly local model.
+///
+/// The ONNX export emits `last_hidden_state (…, 2048)` and a pre-pooled
+/// `pooler_output (…, 2048)` at index 1, so it uses the same pooling path as
+/// EmbeddingGemma. Native dim is 2048 (config.json's 1024 is the stale base
+/// hidden size before the embedding projection).
+pub const VOYAGE_4_NANO_Q4: ModelSpec = ModelSpec {
+    dir_name: "voyage-4-nano-q4",
+    hf_repo: "onnx-community/voyage-4-nano-ONNX",
+    dims: 2048,
+    max_seq_len: 32_000,
+    pooling: Pooling::PrePooledOutput1,
+    checksums: VOYAGE_4_NANO_CHECKSUMS,
+};
+
+/// SHA256 checksums for voyage-4-nano Q4 ONNX files.
+const VOYAGE_4_NANO_CHECKSUMS: &[(&str, &str)] = &[
+    (
+        "model_q4.onnx",
+        "2a2f390055b2ab4f17e9e57ee8a8f948f905ea33e9111af0b297c9d8d372b99a",
+    ),
+    (
+        "model_q4.onnx_data",
+        "38e29a9146c9f94bacee268002d453d146fb21805826b0dd26074e2f0e886abf",
+    ),
+    (
+        "tokenizer.json",
+        "c40c3736449ad0f4084a187dfe16f6850b2a2933dfe041394f850608b2890140",
+    ),
+];
+
+/// Resolve a model spec by name. Accepts the config `model` value.
+/// Recognized: "embeddinggemma-q4" (default), "voyage-4-nano".
+#[allow(dead_code)]
+pub fn model_spec_for(name: &str) -> ModelSpec {
+    match name {
+        "voyage" | "voyage-4-nano" | "voyage-4-nano-q4" => VOYAGE_4_NANO_Q4,
+        _ => EMBEDDINGGEMMA_Q4,
+    }
+}
+
 /// Expected SHA256 checksums for model files.
 /// Pin these to prevent corrupted/tampered downloads from causing cryptic ONNX failures.
 const MODEL_CHECKSUMS: &[(&str, &str)] = &[
@@ -43,12 +122,20 @@ const MODEL_CHECKSUMS: &[(&str, &str)] = &[
 pub struct OnnxEmbedder {
     session: Mutex<ort::session::Session>,
     tokenizer: Mutex<tokenizers::Tokenizer>,
+    spec: ModelSpec,
 }
 
 impl OnnxEmbedder {
-    /// Create a new embedding engine. Downloads model if not cached.
+    /// Create the default embedding engine (EmbeddingGemma Q4).
+    /// Downloads model if not cached.
     pub fn new() -> Result<Self, Error> {
-        let model_dir = Self::model_dir()?;
+        Self::with_spec(EMBEDDINGGEMMA_Q4)
+    }
+
+    /// Create an embedding engine for a specific model spec.
+    /// Downloads model files if not cached.
+    pub fn with_spec(spec: ModelSpec) -> Result<Self, Error> {
+        let model_dir = Self::model_dir_for(&spec)?;
         std::fs::create_dir_all(&model_dir)
             .map_err(|e| Error::embed("create model directory", e))?;
 
@@ -74,19 +161,19 @@ impl OnnxEmbedder {
         let needs_download =
             !model_path.exists() || !model_data_path.exists() || !tokenizer_path.exists();
         if needs_download {
-            eprintln!("Downloading embedding model (first run)...");
+            eprintln!("Downloading embedding model '{}' (first run)...", spec.dir_name);
         }
         if !model_path.exists() {
-            download_hf_file(HF_REPO, "onnx/model_q4.onnx", &model_path)?;
-            verify_checksum(&model_path, "model_q4.onnx")?;
+            download_hf_file(spec.hf_repo, "onnx/model_q4.onnx", &model_path)?;
+            verify_checksum_with(&model_path, "model_q4.onnx", spec.checksums)?;
         }
         if !model_data_path.exists() {
-            download_hf_file(HF_REPO, "onnx/model_q4.onnx_data", &model_data_path)?;
-            verify_checksum(&model_data_path, "model_q4.onnx_data")?;
+            download_hf_file(spec.hf_repo, "onnx/model_q4.onnx_data", &model_data_path)?;
+            verify_checksum_with(&model_data_path, "model_q4.onnx_data", spec.checksums)?;
         }
         if !tokenizer_path.exists() {
-            download_hf_file(HF_REPO, "tokenizer.json", &tokenizer_path)?;
-            verify_checksum(&tokenizer_path, "tokenizer.json")?;
+            download_hf_file(spec.hf_repo, "tokenizer.json", &tokenizer_path)?;
+            verify_checksum_with(&tokenizer_path, "tokenizer.json", spec.checksums)?;
         }
 
         // Load ONNX session
@@ -101,10 +188,11 @@ impl OnnxEmbedder {
         Ok(Self {
             session: Mutex::new(session),
             tokenizer: Mutex::new(tokenizer),
+            spec,
         })
     }
 
-    /// Embed a text string, returning a 768-dimensional f32 vector.
+    /// Embed a text string, returning a spec-dimensional f32 vector.
     ///
     /// Takes `&self` — the tokenizer mutex is locked internally.
     pub fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
@@ -122,7 +210,7 @@ impl OnnxEmbedder {
         let attention_mask = encoding.get_attention_mask();
 
         // Truncate to max sequence length
-        let seq_len = input_ids.len().min(MAX_SEQ_LEN);
+        let seq_len = input_ids.len().min(self.spec.max_seq_len);
 
         // Prepare input arrays as i64
         let input_ids_i64: Vec<i64> = input_ids[..seq_len].iter().map(|&v| v as i64).collect();
@@ -140,13 +228,10 @@ impl OnnxEmbedder {
 
         let attention_mask_tensor = ort::value::Tensor::<i64>::from_array((
             vec![1i64, seq_len as i64],
-            attention_mask_i64.into_boxed_slice(),
+            attention_mask_i64.clone().into_boxed_slice(),
         ))
         .map_err(|e| Error::embed("create attention_mask tensor", e))?;
 
-        // Run ONNX inference — EmbeddingGemma has 2 outputs:
-        //   output[0] = last_hidden_state (1, seq_len, 768)
-        //   output[1] = sentence_embedding (1, 768) — already mean-pooled
         let mut session = self
             .session
             .lock()
@@ -155,14 +240,25 @@ impl OnnxEmbedder {
             .run(ort::inputs![input_ids_tensor, attention_mask_tensor])
             .map_err(|e| Error::embed("ONNX inference", e))?;
 
-        // Use output[1] (sentence_embedding) — already pooled by the model
-        let sentence_emb = &outputs[1];
-
-        let emb_view = sentence_emb
-            .try_extract_tensor::<f32>()
-            .map_err(|e| Error::embed("extract sentence embedding", e))?;
-
-        let mut embedding: Vec<f32> = emb_view.1.to_vec();
+        let mut embedding: Vec<f32> = match self.spec.pooling {
+            Pooling::PrePooledOutput1 => {
+                // outputs[1] = sentence_embedding (1, dims) — already pooled.
+                let sentence_emb = &outputs[1];
+                let emb_view = sentence_emb
+                    .try_extract_tensor::<f32>()
+                    .map_err(|e| Error::embed("extract sentence embedding", e))?;
+                emb_view.1.to_vec()
+            }
+            Pooling::MeanPoolOutput0 => {
+                // outputs[0] = last_hidden_state (1, seq_len, hidden). Mean-pool
+                // over non-masked tokens.
+                let hidden = &outputs[0];
+                let (shape, data) = hidden
+                    .try_extract_tensor::<f32>()
+                    .map_err(|e| Error::embed("extract last_hidden_state", e))?;
+                mean_pool(shape, data, &attention_mask_i64, self.spec.dims)?
+            }
+        };
 
         // L2 normalize
         let norm = embedding.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -176,13 +272,57 @@ impl OnnxEmbedder {
     }
 
     /// Get the embedding dimension (associated function for backward compat).
+    /// Returns the default model's dims.
     pub fn dims() -> usize {
         MODEL_DIMS
     }
 
-    fn model_dir() -> Result<PathBuf, Error> {
-        crate::uteke_home().map(|p| p.join("models").join(MODEL_DIR_NAME))
+    fn model_dir_for(spec: &ModelSpec) -> Result<PathBuf, Error> {
+        crate::uteke_home().map(|p| p.join("models").join(spec.dir_name))
     }
+}
+
+/// Mean-pool a `last_hidden_state` tensor `(1, seq_len, hidden)` over tokens
+/// whose attention mask is non-zero. Returns a `hidden`-length vector.
+fn mean_pool(
+    shape: &[i64],
+    data: &[f32],
+    attention_mask: &[i64],
+    expected_dims: usize,
+) -> Result<Vec<f32>, Error> {
+    // shape = [batch=1, seq_len, hidden]
+    if shape.len() != 3 {
+        return Err(Error::embed_msg(format!(
+            "unexpected last_hidden_state rank {} (expected 3)",
+            shape.len()
+        )));
+    }
+    let seq_len = shape[1] as usize;
+    let hidden = shape[2] as usize;
+    if hidden != expected_dims {
+        return Err(Error::embed_msg(format!(
+            "model hidden size {hidden} != expected dims {expected_dims}"
+        )));
+    }
+    let mut acc = vec![0f32; hidden];
+    let mut count = 0f32;
+    for t in 0..seq_len {
+        let masked = attention_mask.get(t).copied().unwrap_or(1) != 0;
+        if !masked {
+            continue;
+        }
+        let base = t * hidden;
+        for h in 0..hidden {
+            acc[h] += data[base + h];
+        }
+        count += 1.0;
+    }
+    if count > 0.0 {
+        for v in acc.iter_mut() {
+            *v /= count;
+        }
+    }
+    Ok(acc)
 }
 
 impl Embedder for OnnxEmbedder {
@@ -192,15 +332,15 @@ impl Embedder for OnnxEmbedder {
     }
 
     fn dims(&self) -> usize {
-        MODEL_DIMS
+        self.spec.dims
     }
 
     fn max_seq_len(&self) -> usize {
-        MAX_SEQ_LEN
+        self.spec.max_seq_len
     }
 
     fn name(&self) -> &str {
-        "embeddinggemma-q4"
+        self.spec.dir_name
     }
 }
 
@@ -374,8 +514,18 @@ fn human_bytes(bytes: u64) -> String {
 }
 
 /// Verify SHA256 checksum of a downloaded model file.
+#[allow(dead_code)]
 fn verify_checksum(path: &std::path::Path, filename: &str) -> Result<(), Error> {
-    let expected = MODEL_CHECKSUMS
+    verify_checksum_with(path, filename, MODEL_CHECKSUMS)
+}
+
+/// Verify a downloaded file against a supplied checksum table.
+fn verify_checksum_with(
+    path: &std::path::Path,
+    filename: &str,
+    checksums: &[(&str, &str)],
+) -> Result<(), Error> {
+    let expected = checksums
         .iter()
         .find(|(name, _)| name == &filename)
         .map(|(_, hash)| *hash)
@@ -410,5 +560,53 @@ fn set_owner_only_permissions(path: &std::path::Path) {
         if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
             tracing::warn!("Failed to set permissions on {}: {e}", path.display());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_spec_for_resolves_voyage_and_default() {
+        assert_eq!(model_spec_for("voyage-4-nano").dir_name, "voyage-4-nano-q4");
+        assert_eq!(model_spec_for("voyage").dir_name, "voyage-4-nano-q4");
+        assert_eq!(model_spec_for("anything-else").dir_name, MODEL_DIR_NAME);
+        assert_eq!(model_spec_for("").dir_name, MODEL_DIR_NAME);
+    }
+
+    #[test]
+    fn voyage_spec_is_2048d_prepooled() {
+        assert_eq!(VOYAGE_4_NANO_Q4.dims, 2048);
+        assert_eq!(VOYAGE_4_NANO_Q4.pooling, Pooling::PrePooledOutput1);
+        assert_eq!(VOYAGE_4_NANO_Q4.max_seq_len, 32_000);
+    }
+
+    #[test]
+    fn mean_pool_averages_unmasked_tokens() {
+        // shape (1, 2, 2), tokens: [1,2] and [3,4], both unmasked -> mean [2,3]
+        let shape = [1i64, 2, 2];
+        let data = [1.0f32, 2.0, 3.0, 4.0];
+        let mask = [1i64, 1];
+        let out = mean_pool(&shape, &data, &mask, 2).unwrap();
+        assert_eq!(out, vec![2.0, 3.0]);
+    }
+
+    #[test]
+    fn mean_pool_skips_masked_tokens() {
+        // second token masked -> mean = first token [1,2]
+        let shape = [1i64, 2, 2];
+        let data = [1.0f32, 2.0, 100.0, 100.0];
+        let mask = [1i64, 0];
+        let out = mean_pool(&shape, &data, &mask, 2).unwrap();
+        assert_eq!(out, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn mean_pool_rejects_dim_mismatch() {
+        let shape = [1i64, 1, 3];
+        let data = [1.0f32, 2.0, 3.0];
+        let mask = [1i64];
+        assert!(mean_pool(&shape, &data, &mask, 2).is_err());
     }
 }
