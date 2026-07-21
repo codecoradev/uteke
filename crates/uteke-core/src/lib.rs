@@ -781,7 +781,7 @@ impl Uteke {
                 .filter(|n| {
                     // Memory-linked nodes: check memory namespace.
                     // Entity nodes: always include (shared across namespaces).
-                    n.memory_id.as_deref().map_or(true, |_| true)
+                    n.memory_id.as_deref().is_none_or(|_| true)
                 })
                 .collect();
             let _ = ns_string; // namespace filter applied at memory level

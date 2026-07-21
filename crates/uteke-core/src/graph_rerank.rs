@@ -114,8 +114,7 @@ pub fn compute_graph_signals(
     // Build `IN (?, ?, ...)` placeholder list. We bind each id twice (once for
     // the source_id IN clause, once for target_id) so a single scan over
     // memory_edges suffices — no UNION, no second query.
-    let placeholders = std::iter::repeat("?")
-        .take(unique_ids.len())
+    let placeholders = std::iter::repeat_n("?", unique_ids.len())
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
