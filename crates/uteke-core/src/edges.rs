@@ -387,11 +387,18 @@ impl Store {
             .map_err(|e| Error::db("begin batch edge tx", e))?;
         let mut inserted = 0usize;
         for (target_id, edge_type) in edges {
+            // Guard against ghost endpoints: the usearch index can transiently
+            // hold ids that are not in `memories` (orphaned vectors after a
+            // failed forget/save, cross-run desync). Inserting such an edge
+            // trips the FK constraint and aborts the whole batch. Insert only
+            // when BOTH endpoints exist so a stale target is skipped, not fatal.
             let changed = tx
                 .execute(
                     "INSERT OR IGNORE INTO memory_edges
                         (source_id, target_id, edge_type, created_at)
-                     VALUES (?1, ?2, ?3, ?4)",
+                     SELECT ?1, ?2, ?3, ?4
+                     WHERE EXISTS (SELECT 1 FROM memories WHERE id = ?1)
+                       AND EXISTS (SELECT 1 FROM memories WHERE id = ?2)",
                     params![source_id, target_id, edge_type, now],
                 )
                 .map_err(|e| Error::db("batch insert memory edge", e))?;
@@ -403,7 +410,9 @@ impl Store {
                     tx.execute(
                         "INSERT OR IGNORE INTO memory_edges
                             (source_id, target_id, edge_type, created_at)
-                         VALUES (?1, ?2, ?3, ?4)",
+                         SELECT ?1, ?2, ?3, ?4
+                         WHERE EXISTS (SELECT 1 FROM memories WHERE id = ?1)
+                           AND EXISTS (SELECT 1 FROM memories WHERE id = ?2)",
                         params![target_id, source_id, backlink_type, now],
                     )
                     .map_err(|e| Error::db("batch ensure backlink", e))?;
@@ -1343,7 +1352,7 @@ mod tests {
     fn migration_dispatcher_reaches_v8() {
         let store = Store::open(":memory:").unwrap();
         let v = store.schema_version().unwrap();
-        assert_eq!(v, 15, "fresh store must reach CURRENT_SCHEMA_VERSION=15");
+        assert_eq!(v, 16, "fresh store must reach CURRENT_SCHEMA_VERSION=16");
 
         // memory_edges table must exist and be queryable after migration.
         let n = store.count_memory_edges().unwrap();

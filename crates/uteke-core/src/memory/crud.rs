@@ -158,6 +158,33 @@ impl super::Store {
         Ok(deleted > 0)
     }
 
+    /// Return IDs of code-index memories whose `metadata.file` equals `file`
+    /// within a namespace. Used by the code indexer to replace/prune the
+    /// chunks that belong to a given source file.
+    pub fn memory_ids_by_indexed_file(
+        &self,
+        namespace: &str,
+        file: &str,
+    ) -> Result<Vec<String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id FROM memories \
+                 WHERE namespace = ?1 \
+                   AND json_extract(metadata, '$.source_type') = 'code' \
+                   AND json_extract(metadata, '$.file') = ?2",
+            )
+            .map_err(|e| Error::db("prepare memory_ids_by_indexed_file", e))?;
+        let rows = stmt
+            .query_map(params![namespace, file], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::db("query memory_ids_by_indexed_file", e))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| Error::db("read indexed memory id", e))?);
+        }
+        Ok(out)
+    }
+
     /// Update an existing memory.
     ///
     /// Note: Only updates content, embedding, tags, metadata, updated_at, and namespace.
@@ -812,6 +839,6 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 15); // v15 = room_documents junction (#689); v14 = FTS5 memory_type column (#662); v13 = global docs no namespace (#614); v12 = hierarchical docs (#438); v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
+        assert_eq!(version, 16); // v16 = indexed_files (code indexer); v15 = room_documents junction (#689); v14 = FTS5 memory_type column (#662); v13 = global docs no namespace (#614); v12 = hierarchical docs (#438); v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
     }
 }

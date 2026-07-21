@@ -374,6 +374,8 @@ impl super::Store {
                 14 => self.migrate_v13_to_v14()?,
                 // v15: room_documents junction table (#689)
                 15 => self.migrate_v14_to_v15()?,
+                // v16: indexed_files table (code indexer, DB-per-repo)
+                16 => self.migrate_v15_to_v16()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -992,6 +994,33 @@ impl super::Store {
             .map_err(|e| Error::db("create room_documents table", e))?;
 
         tracing::info!("Migration v14 to v15 complete: room_documents table created");
+        Ok(())
+    }
+
+    /// v16: indexed_files table for the code indexer (DB-per-repo).
+    ///
+    /// Tracks content hash + mtime per source file so `uteke index` can skip
+    /// unchanged files and prune memories for deleted files. Table is also in
+    /// the SCHEMA constant for fresh stores; this migration upgrades existing
+    /// v15 stores. No backfill — tracking starts from first index run.
+    fn migrate_v15_to_v16(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v15 to v16: indexed_files table");
+        self.conn
+            .execute_batch(
+                r#"
+                CREATE TABLE IF NOT EXISTS indexed_files (
+                    namespace    TEXT NOT NULL DEFAULT 'default',
+                    path         TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    mtime        INTEGER NOT NULL DEFAULT 0,
+                    chunk_count  INTEGER NOT NULL DEFAULT 0,
+                    indexed_at   TEXT NOT NULL,
+                    PRIMARY KEY (namespace, path)
+                );
+                CREATE INDEX IF NOT EXISTS idx_indexed_files_ns ON indexed_files(namespace);
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v15 to v16", e))?;
         Ok(())
     }
 }

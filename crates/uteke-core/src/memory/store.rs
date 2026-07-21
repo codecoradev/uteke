@@ -161,6 +161,20 @@ CREATE TABLE IF NOT EXISTS room_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_room_documents_room ON room_documents(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_documents_slug ON room_documents(doc_slug);
+
+-- v16: Code indexer file tracking (DB-per-repo). Records the content hash and
+-- mtime of each indexed source file so re-index can skip unchanged files and
+-- prune memories for files that were deleted. Keyed by (namespace, path).
+CREATE TABLE IF NOT EXISTS indexed_files (
+    namespace   TEXT NOT NULL DEFAULT 'default',
+    path        TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    mtime       INTEGER NOT NULL DEFAULT 0,
+    chunk_count INTEGER NOT NULL DEFAULT 0,
+    indexed_at  TEXT NOT NULL,
+    PRIMARY KEY (namespace, path)
+);
+CREATE INDEX IF NOT EXISTS idx_indexed_files_ns ON indexed_files(namespace);
 "#;
 
 /// Indexes that depend on migration-added columns.
@@ -173,7 +187,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const CURRENT_SCHEMA_VERSION: i32 = 15;
+pub(super) const CURRENT_SCHEMA_VERSION: i32 = 16;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -1788,7 +1802,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, 15, "schema_version should be 15 after migration");
+        assert_eq!(version, 16, "schema_version should be 16 after migration");
 
         // 7. Verify hierarchy columns now exist (in documents table).
         let cols = ["parent_id", "path", "depth", "sort_order", "has_children"];
