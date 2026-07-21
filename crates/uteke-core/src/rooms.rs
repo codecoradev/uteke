@@ -145,9 +145,10 @@ impl crate::Uteke {
         self.store.room_summary_with_docs(room_id)
     }
 
-    /// Generate a structured document from room memories.
-    pub fn room_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
-        self.store.room_document(room_id)
+    /// Generate a structured summary document from room memories.
+    /// API endpoint: POST /room/summary (#735)
+    pub fn room_summary_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
+        self.store.room_summary_document(room_id)
     }
 
     // ── Room ↔ Document junction (v15, #689) ─────────────────────────────
@@ -275,7 +276,7 @@ mod tests {
             .unwrap();
 
         // Empty room → no sections
-        let doc = uteke.room_document("doc-room").unwrap().unwrap();
+        let doc = uteke.room_summary_document("doc-room").unwrap().unwrap();
         assert!(doc.sections.is_empty());
     }
 
@@ -287,14 +288,14 @@ mod tests {
             .remember_in_room("Some fact", &[], None, None, "fact", "doc-room", "bob")
             .unwrap();
 
-        let doc = uteke.room_document("doc-room").unwrap().unwrap();
+        let doc = uteke.room_summary_document("doc-room").unwrap().unwrap();
         assert_eq!(doc.room_id, "doc-room");
         assert_eq!(doc.sections.len(), 1); // Research & Facts
     }
     #[test]
     fn room_document_nonexistent_returns_none() {
         let uteke = open_in_memory();
-        assert!(uteke.room_document("nope").unwrap().is_none());
+        assert!(uteke.room_summary_document("nope").unwrap().is_none());
     }
 
     // ── Room ↔ Document junction ──────────────────────────────────

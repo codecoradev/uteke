@@ -17,6 +17,38 @@ Complete reference for all uteke commands. Version **0.8.0**.
 
 Config file path is auto-resolved (`~/.uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
 
+## uteke onboard
+
+Interactive onboarding wizard — guides new users from zero to productive. Detects install, picks agent, toggles features, writes config, installs agent integration, and shows a feature showcase.
+
+```bash
+# Interactive (recommended for first-time users)
+uteke onboard
+
+# Non-interactive (defaults: agent=hermes, namespace=default, tool mode)
+uteke onboard --yes
+
+# Pre-select agent and namespace
+uteke onboard --yes --agent claude --namespace work
+```
+
+| Flag | Description |
+|------|-------------|
+| `--yes` | Skip interactive prompts, use defaults |
+| `--agent <name>` | Pre-select agent (hermes, claude, cursor, pi, opencode) |
+| `--namespace <name>` | Pre-select namespace |
+
+The wizard steps:
+
+1. **Install detection** — checks if `uteke` is on PATH and if a store exists
+2. **Agent selection** — Hermes, Claude, Cursor, Pi, or OpenCode
+3. **Integration mode** — manual tool vs memory-provider (auto recall + extraction)
+4. **Namespace** — for multi-agent isolation
+5. **Feature toggles** — toggle ON/OFF for: Aging, Auto-maintenance, Graph rerank, Salience boost, Recency boost, Server mode
+6. **Config write** — generates `~/.uteke/uteke.toml`
+7. **Agent init** — runs `uteke init` with your selections
+8. **Feature showcase** — prints all commands grouped by category
+
 ## uteke upgrade
 
 Check for updates and upgrade to the latest Uteke release.
@@ -730,7 +762,7 @@ When `[server] enabled = true` is set in config, the CLI auto-routes commands th
 | GET | `/room/list` | List rooms (supports `?namespace=`) |
 | POST | `/room/recall` | Recall from a room |
 | POST | `/room/summary` | Room summary |
-| POST | `/room/document` | Generate document from room |
+| POST | `/room/summary-document` | Generate summary document from room (#735) |
 | POST | `/room/stats` | Room statistics |
 | DELETE | `/room/delete` | Delete a room |
 | POST | `/room/document/list` | List documents linked to a room (#689) |

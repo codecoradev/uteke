@@ -745,7 +745,7 @@ impl super::Store {
     /// Returns `None` if the room does not exist.
     /// Sections: pinned first, then grouped by type (decision, fact, procedure, preference, context).
     /// Empty sections are omitted.
-    pub fn room_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
+    pub fn room_summary_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
         let room = match self.get_room(room_id)? {
             Some(r) => r,
             None => return Ok(None),
@@ -1493,22 +1493,22 @@ mod tests {
         assert!(summary.is_none());
     }
 
-    // ── room_document ───────────────────────────────────────────
+    // ── room_summary_document ───────────────────────────────────────────
 
     #[test]
-    fn room_document_empty_room() {
+    fn room_summary_document_empty_room() {
         let store = Store::open(":memory:").unwrap();
         store
             .create_room("doc-empty", Some("Doc Empty"), "default")
             .unwrap();
 
-        let doc = store.room_document("doc-empty").unwrap().unwrap();
+        let doc = store.room_summary_document("doc-empty").unwrap().unwrap();
         assert_eq!(doc.room_id, "doc-empty");
         assert!(doc.sections.is_empty());
     }
 
     #[test]
-    fn room_document_with_memories() {
+    fn room_summary_document_with_memories() {
         let store = Store::open(":memory:").unwrap();
         store
             .create_room("doc-room", Some("Doc Room"), "default")
@@ -1533,7 +1533,7 @@ mod tests {
             .link_memory_to_room("doc-room", "mem-doc3", "alice", "lead")
             .unwrap();
 
-        let doc = store.room_document("doc-room").unwrap().unwrap();
+        let doc = store.room_summary_document("doc-room").unwrap().unwrap();
         assert_eq!(doc.room_id, "doc-room");
         assert!(doc.sections.len() >= 2);
 
@@ -1543,9 +1543,9 @@ mod tests {
     }
 
     #[test]
-    fn room_document_nonexistent_returns_none() {
+    fn room_summary_document_nonexistent_returns_none() {
         let store = Store::open(":memory:").unwrap();
-        let doc = store.room_document("nope").unwrap();
+        let doc = store.room_summary_document("nope").unwrap();
         assert!(doc.is_none());
     }
 

@@ -6,6 +6,7 @@ mod config;
 mod extract;
 mod init;
 mod logging;
+mod onboard;
 mod output;
 
 use clap::{CommandFactory, Parser};
@@ -34,6 +35,13 @@ fn main() {
         }
         Commands::Init { .. } => {
             if let Err(e) = init::run_init_command(&cli) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::Onboard { .. } => {
+            if let Err(e) = onboard::run(&cli) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
@@ -124,6 +132,14 @@ fn main() {
         Ok(mut u) => {
             // #719: apply Jaccard weight from config
             u.set_jaccard_weight(config.recall.jaccard_weight);
+            // #731: apply dream pipeline thresholds from config
+            u.set_dream_config(uteke_core::DreamConfig {
+                contradict_similarity_threshold: config.dream.contradict_similarity_threshold,
+                contradict_tag_jaccard_min: config.dream.contradict_tag_jaccard_min,
+                contradict_max_memories: config.dream.contradict_max_memories,
+                dedup_threshold: config.dream.dedup_threshold,
+                orphan_importance_threshold: config.dream.orphan_importance_threshold,
+            });
             u
         }
         Err(e) => {

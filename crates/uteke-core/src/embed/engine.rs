@@ -3,6 +3,7 @@
 use crate::embed::Embedder;
 use crate::Error;
 use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -70,6 +71,11 @@ impl OnnxEmbedder {
         clean_tmp_files(&model_dir);
 
         // Download model files if not present
+        let needs_download =
+            !model_path.exists() || !model_data_path.exists() || !tokenizer_path.exists();
+        if needs_download {
+            eprintln!("Downloading embedding model (first run)...");
+        }
         if !model_path.exists() {
             download_hf_file(HF_REPO, "onnx/model_q4.onnx", &model_path)?;
             verify_checksum(&model_path, "model_q4.onnx")?;
@@ -211,18 +217,74 @@ fn clean_tmp_files(dir: &std::path::Path) {
     }
 }
 
+/// Maximum number of download retries.
+const MAX_RETRIES: u32 = 3;
+
+/// Connect timeout for HTTP downloads (seconds).
+const CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Read timeout for HTTP downloads (seconds) — generous for the 187MB data file.
+const READ_TIMEOUT_SECS: u64 = 300;
+
 /// Download a file from HuggingFace repo to local path.
-/// Uses atomic write (.tmp + rename) to prevent corrupt files on crash.
+///
+/// Uses streaming write to a `.tmp` file + atomic rename to prevent corrupt
+/// files on crash. Includes connect/read timeouts, retry on transient errors,
+/// and a progress indicator for large files.
 fn download_hf_file(
     repo: &str,
     path_in_repo: &str,
     local_path: &std::path::Path,
 ) -> Result<(), Error> {
     let url = format!("https://huggingface.co/{repo}/resolve/main/{path_in_repo}");
-    eprintln!("Downloading {url}...");
+    let file_name = local_path
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| path_in_repo.to_string());
 
-    let response = reqwest::blocking::Client::new()
-        .get(&url)
+    let tmp_path = local_path.with_file_name(format!("{file_name}.tmp"));
+
+    let mut last_err: Option<String> = None;
+    for attempt in 1..=MAX_RETRIES {
+        if attempt > 1 {
+            eprintln!("  Retry {attempt}/{MAX_RETRIES}...");
+        }
+
+        match download_hf_file_once(&url, &file_name, &tmp_path) {
+            Ok(()) => {
+                std::fs::rename(&tmp_path, local_path)
+                    .map_err(|e| Error::embed("rename temp to final path", e))?;
+                set_owner_only_permissions(local_path);
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = Some(format!("{e}"));
+                // Clean up partial download so retry starts fresh.
+                std::fs::remove_file(&tmp_path).ok();
+            }
+        }
+    }
+
+    Err(Error::embed_msg(format!(
+        "Download failed after {MAX_RETRIES} attempts: {}",
+        last_err.unwrap_or_default()
+    )))
+}
+
+/// Single download attempt: stream the response body to a temp file.
+fn download_hf_file_once(
+    url: &str,
+    file_name: &str,
+    tmp_path: &std::path::Path,
+) -> Result<(), Error> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(std::time::Duration::from_secs(READ_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| Error::embed("build HTTP client", e))?;
+
+    let response = client
+        .get(url)
         .send()
         .map_err(|e| Error::embed("download model file", e))?;
 
@@ -233,27 +295,82 @@ fn download_hf_file(
         )));
     }
 
-    let bytes = response
-        .bytes()
-        .map_err(|e| Error::embed("read download response", e))?;
+    let total_size = response.content_length().unwrap_or(0);
 
-    // Atomic write: write to .tmp then rename — prevents corrupt files on crash.
-    let tmp_path = local_path.with_file_name(format!(
-        "{}.tmp",
-        local_path
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_default()
-    ));
-    std::fs::write(&tmp_path, bytes.as_ref())
-        .map_err(|e| Error::embed("write temporary file", e))?;
-    std::fs::rename(&tmp_path, local_path)
-        .map_err(|e| Error::embed("rename temp to final path", e))?;
+    eprintln!(
+        "  {file_name} ({total_human})",
+        total_human = human_bytes(total_size)
+    );
 
-    // Set file permissions to owner-only (0600) on Unix
-    set_owner_only_permissions(local_path);
+    // Stream the response body to disk — avoids buffering the entire 187MB in RAM.
+    let mut tmp_file =
+        std::fs::File::create(tmp_path).map_err(|e| Error::embed("create temp file", e))?;
+    let mut downloaded: u64 = 0;
+    let mut last_pct: u8 = 0;
+
+    let mut reader = response;
+    let mut buf = vec![0u8; 64 * 1024]; // 64KB chunks
+    loop {
+        let bytes_read = reader
+            .read(&mut buf)
+            .map_err(|e| Error::embed("read download stream", e))?;
+        if bytes_read == 0 {
+            break;
+        }
+        tmp_file
+            .write_all(&buf[..bytes_read])
+            .map_err(|e| Error::embed("write temp file", e))?;
+        downloaded += bytes_read as u64;
+
+        // Print progress every 10% for large files.
+        if total_size > 0 {
+            if let Some(pct) = downloaded
+                .checked_mul(100)
+                .and_then(|v| v.checked_div(total_size))
+            {
+                let pct = pct as u8;
+                if pct != last_pct && pct % 10 == 0 {
+                    eprintln!(
+                        "  {file_name}: {pct}% ({}/{} bytes)",
+                        downloaded, total_size
+                    );
+                    last_pct = pct;
+                }
+            }
+        }
+    }
+    tmp_file
+        .sync_all()
+        .map_err(|e| Error::embed("flush temp file", e))?;
+    drop(tmp_file);
+
+    eprintln!("  ✓ {file_name} downloaded ({})", human_bytes(downloaded));
+
+    // Verify we got the expected bytes when content-length was known.
+    if total_size > 0 && downloaded != total_size {
+        return Err(Error::embed_msg(format!(
+            "Incomplete download: expected {} bytes, got {}",
+            total_size, downloaded
+        )));
+    }
 
     Ok(())
+}
+
+/// Format a byte count as a human-readable string (e.g. "187.0 MB").
+fn human_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} bytes")
+    }
 }
 
 /// Verify SHA256 checksum of a downloaded model file.
