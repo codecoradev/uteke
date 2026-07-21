@@ -226,9 +226,11 @@ mod tests {
         }];
 
         // Miss first
-        assert!(cache
-            .get("test query", "default", 5, None, RecallStrategy::Vector)
-            .is_none());
+        assert!(
+            cache
+                .get("test query", "default", 5, None, RecallStrategy::Vector)
+                .is_none()
+        );
 
         // Put then hit (same strategy)
         cache.put(
@@ -244,9 +246,11 @@ mod tests {
         assert_eq!(cached.unwrap().len(), 1);
 
         // Different strategy = miss
-        assert!(cache
-            .get("test query", "default", 5, None, RecallStrategy::Hybrid)
-            .is_none());
+        assert!(
+            cache
+                .get("test query", "default", 5, None, RecallStrategy::Hybrid)
+                .is_none()
+        );
 
         let (hits, misses) = cache.metrics();
         assert_eq!(hits, 1);
@@ -279,12 +283,16 @@ mod tests {
         );
 
         cache.invalidate_namespace("ns1");
-        assert!(cache
-            .get("query", "ns1", 5, None, RecallStrategy::Vector)
-            .is_none());
-        assert!(cache
-            .get("query", "ns2", 5, None, RecallStrategy::Vector)
-            .is_some());
+        assert!(
+            cache
+                .get("query", "ns1", 5, None, RecallStrategy::Vector)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get("query", "ns2", 5, None, RecallStrategy::Vector)
+                .is_some()
+        );
     }
 
     #[test]
@@ -296,8 +304,10 @@ mod tests {
 
         cache.put("query", "default", 5, None, RecallStrategy::Vector, vec![]);
         cache.clear();
-        assert!(cache
-            .get("query", "default", 5, None, RecallStrategy::Vector)
-            .is_none());
+        assert!(
+            cache
+                .get("query", "default", 5, None, RecallStrategy::Vector)
+                .is_none()
+        );
     }
 }

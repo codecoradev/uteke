@@ -1,8 +1,8 @@
 //! Document CLI commands (#411, #438).
 
+use crate::Config;
 use crate::cli::{Cli, DocCommands};
 use crate::output;
-use crate::Config;
 use uteke_core::Uteke;
 
 /// Run document subcommands.
@@ -345,7 +345,7 @@ pub(crate) fn run(
 
             // Parse metadata JSON if provided.
             let meta_value: Option<serde_json::Value> = match metadata {
-                Some(ref json_str) => Some(
+                Some(json_str) => Some(
                     serde_json::from_str(json_str)
                         .map_err(|e| format!("Invalid metadata JSON: {e}"))?,
                 ),

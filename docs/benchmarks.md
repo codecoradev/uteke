@@ -76,7 +76,7 @@ See [LongMemEval retrieval harness](https://github.com/codecoradev/uteke/tree/de
 |-----------|---------|
 | Hardware | Oracle Cloud ARM (Ampere A1, 4 vCPU, 24GB RAM) |
 | OS | Linux 6.8.0 (aarch64) |
-| Rust | 1.75+ |
+| Rust | 1.85+ |
 | Embedding | EmbeddingGemma Q4, 768d, ONNX Runtime CPU |
 | Uteke | v0.7.2 |
 

@@ -1,8 +1,8 @@
 //! Core CRUD operations — insert, get, delete, update, list, search, count.
 
-use crate::memory::types::{Memory, DEFAULT_NAMESPACE};
 use crate::Error;
-use rusqlite::{params, OptionalExtension};
+use crate::memory::types::{DEFAULT_NAMESPACE, Memory};
+use rusqlite::{OptionalExtension, params};
 
 use super::store::{row_to_memory, serialize_embedding};
 
@@ -452,8 +452,12 @@ impl super::Store {
     /// Load all memories for index rebuilding, optionally filtered by namespace.
     pub fn load_all(&self, namespace: Option<&str>) -> Result<Vec<Memory>, Error> {
         let sql = match namespace {
-            Some(_) => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 ORDER BY created_at",
-            None => "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories ORDER BY created_at",
+            Some(_) => {
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 ORDER BY created_at"
+            }
+            None => {
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories ORDER BY created_at"
+            }
         };
 
         let mut memories = Vec::new();

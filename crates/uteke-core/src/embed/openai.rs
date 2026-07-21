@@ -11,8 +11,8 @@
 //! 3072 for text-embedding-3-large). The caller supplies dims so we don't
 //! burn a probe request at startup.
 
-use crate::embed::Embedder;
 use crate::Error;
+use crate::embed::Embedder;
 
 /// Default OpenAI API endpoint.
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";

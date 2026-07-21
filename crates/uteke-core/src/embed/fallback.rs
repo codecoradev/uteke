@@ -7,8 +7,8 @@
 //! Dim validation: if primary and fallback have different dims, the fallback
 //! is rejected at construction time to prevent silent index corruption.
 
-use crate::embed::Embedder;
 use crate::Error;
+use crate::embed::Embedder;
 
 /// Fallback embedder that tries a primary backend first, then a cloud fallback.
 ///

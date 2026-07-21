@@ -1350,15 +1350,31 @@ max_seq_length = 8191
     #[test]
     #[serial_test::serial]
     fn env_overrides_embedding_backend() {
-        std::env::set_var("UTEKE_EMBEDDING_BACKEND", "openai");
-        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-test");
-        std::env::set_var("UTEKE_EMBEDDING_MODEL", "text-embedding-3-small");
-        std::env::set_var("UTEKE_EMBEDDING_DIMS", "1536");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_BACKEND", "openai");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-test");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_MODEL", "text-embedding-3-small");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_DIMS", "1536");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_EMBEDDING_BACKEND");
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("UTEKE_EMBEDDING_MODEL");
-        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_BACKEND");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        }
         assert_eq!(cfg.embedding.backend, "openai");
         assert_eq!(cfg.embedding.api_key, "sk-env-test");
         assert_eq!(cfg.embedding.model, "text-embedding-3-small");
@@ -1368,30 +1384,48 @@ max_seq_length = 8191
     #[test]
     #[serial_test::serial]
     fn env_openai_api_key_fallback() {
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::set_var("OPENAI_API_KEY", "sk-fallback");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "sk-fallback");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("OPENAI_API_KEY");
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
         assert_eq!(cfg.embedding.api_key, "sk-fallback");
     }
 
     #[test]
     #[serial_test::serial]
     fn env_uteke_api_key_wins_over_openai() {
-        std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-uteke");
-        std::env::set_var("OPENAI_API_KEY", "sk-openai");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-uteke");
+        }
+        unsafe {
+            std::env::set_var("OPENAI_API_KEY", "sk-openai");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        std::env::remove_var("OPENAI_API_KEY");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
+        }
+        unsafe {
+            std::env::remove_var("OPENAI_API_KEY");
+        }
         assert_eq!(cfg.embedding.api_key, "sk-uteke");
     }
 
     #[test]
     #[serial_test::serial]
     fn env_invalid_dims_ignored() {
-        std::env::set_var("UTEKE_EMBEDDING_DIMS", "not-a-number");
+        unsafe {
+            std::env::set_var("UTEKE_EMBEDDING_DIMS", "not-a-number");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        unsafe {
+            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
+        }
         assert_eq!(cfg.embedding.dims, 0, "invalid dims should keep default 0");
     }
 
@@ -1417,20 +1451,32 @@ max_seq_length = 128
     #[test]
     #[serial_test::serial]
     fn env_override_log_level() {
-        std::env::set_var("UTEKE_LOG_LEVEL", "debug");
+        unsafe {
+            std::env::set_var("UTEKE_LOG_LEVEL", "debug");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_LOG_LEVEL");
+        unsafe {
+            std::env::remove_var("UTEKE_LOG_LEVEL");
+        }
         assert_eq!(cfg.logging.level, "debug");
     }
 
     #[test]
     #[serial_test::serial]
     fn env_override_server() {
-        std::env::set_var("UTEKE_SERVER_HOST", "0.0.0.0");
-        std::env::set_var("UTEKE_SERVER_PORT", "9999");
+        unsafe {
+            std::env::set_var("UTEKE_SERVER_HOST", "0.0.0.0");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_SERVER_PORT", "9999");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_SERVER_HOST");
-        std::env::remove_var("UTEKE_SERVER_PORT");
+        unsafe {
+            std::env::remove_var("UTEKE_SERVER_HOST");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_SERVER_PORT");
+        }
         assert_eq!(cfg.server.host, "0.0.0.0");
         assert_eq!(cfg.server.port, 9999);
     }
@@ -1438,11 +1484,19 @@ max_seq_length = 128
     #[test]
     #[serial_test::serial]
     fn env_override_recall() {
-        std::env::set_var("UTEKE_RECALL_MIN_SCORE", "0.7");
-        std::env::set_var("UTEKE_RECALL_MIN_SCORE_STRICT", "0.85");
+        unsafe {
+            std::env::set_var("UTEKE_RECALL_MIN_SCORE", "0.7");
+        }
+        unsafe {
+            std::env::set_var("UTEKE_RECALL_MIN_SCORE_STRICT", "0.85");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
-        std::env::remove_var("UTEKE_RECALL_MIN_SCORE_STRICT");
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_MIN_SCORE_STRICT");
+        }
         assert!((cfg.recall.min_score - 0.7).abs() < f64::EPSILON);
         assert!((cfg.recall.min_score_strict - 0.85).abs() < f64::EPSILON);
     }
@@ -1450,9 +1504,13 @@ max_seq_length = 128
     #[test]
     #[serial_test::serial]
     fn env_override_invalid_port_ignored() {
-        std::env::set_var("UTEKE_SERVER_PORT", "not-a-number");
+        unsafe {
+            std::env::set_var("UTEKE_SERVER_PORT", "not-a-number");
+        }
         let cfg = Config::default().apply_env_overrides();
-        std::env::remove_var("UTEKE_SERVER_PORT");
+        unsafe {
+            std::env::remove_var("UTEKE_SERVER_PORT");
+        }
         // Invalid value should be ignored — keeps default
         assert_eq!(cfg.server.port, 8767);
     }
@@ -1461,10 +1519,18 @@ max_seq_length = 128
     #[serial_test::serial]
     fn env_override_no_vars_uses_defaults() {
         // Ensure no env vars are set
-        std::env::remove_var("UTEKE_LOG_LEVEL");
-        std::env::remove_var("UTEKE_SERVER_HOST");
-        std::env::remove_var("UTEKE_SERVER_PORT");
-        std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        unsafe {
+            std::env::remove_var("UTEKE_LOG_LEVEL");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_SERVER_HOST");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_SERVER_PORT");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        }
         let cfg = Config::default().apply_env_overrides();
         assert_eq!(cfg.logging.level, "warn");
         assert_eq!(cfg.server.host, "127.0.0.1");

@@ -109,7 +109,9 @@ fn main() {
                 println!("Security:");
                 println!("  If --auth-token or UTEKE_AUTH_TOKEN is set, all endpoints");
                 println!("  (except GET /health) require Authorization: Bearer ***");
-                println!("  --read-only-token grants GET-only access (recall, search, list, stats, graph).");
+                println!(
+                    "  --read-only-token grants GET-only access (recall, search, list, stats, graph)."
+                );
                 println!("  Configure CORS origins in uteke.toml [server].cors_origins.");
                 println!();
                 println!("API:");
@@ -127,12 +129,18 @@ fn main() {
                 println!("  GET  /memory?id=UUID       -> {{ memory }}");
                 println!("  POST /memory/pin           -> {{ id, pinned }} -> {{ memory }}");
                 println!("  POST /memory/importance    -> {{ id, importance }} -> {{ memory }}");
-                println!("  POST /memory/feedback      -> {{ id, feedback }} -> {{ id, delta, importance }} (#718)");
+                println!(
+                    "  POST /memory/feedback      -> {{ id, feedback }} -> {{ id, delta, importance }} (#718)"
+                );
                 println!("  GET  /stats               → {{ stats }}");
                 println!("  GET  /namespaces           → {{ namespaces }}");
-                println!("  POST /room/create          → {{ room_id, title, namespace }} → {{ created }}");
+                println!(
+                    "  POST /room/create          → {{ room_id, title, namespace }} → {{ created }}"
+                );
                 println!("  GET  /room/list            → [?namespace=] → [rooms]");
-                println!("  GET  /room/memories       → ?room_id=<id>[&author=&limit=] → chronological memories");
+                println!(
+                    "  GET  /room/memories       → ?room_id=<id>[&author=&limit=] → chronological memories"
+                );
                 println!("  POST /room/recall          → {{ room_id, query }} → ranked memories");
                 println!("  POST /room/summary         → {{ room_id }} → {{ summary }}");
                 println!("  POST /room/document        → {{ room_id }} → {{ document }}");
@@ -140,10 +148,16 @@ fn main() {
                 println!("  DEL  /room/delete          → {{ room_id }} → {{ deleted }}");
                 println!();
                 println!("  Document endpoints:");
-                println!("  POST /doc/create          → {{ slug, content, title?, tags?, parent? }} → {{ id, slug }}");
+                println!(
+                    "  POST /doc/create          → {{ slug, content, title?, tags?, parent? }} → {{ id, slug }}"
+                );
                 println!("  POST /doc/get              → {{ id | slug }} → {{ document }}");
-                println!("  POST /doc/list             → {{ namespace?, limit?, roots_only?, parent? }} → [documents]");
-                println!("  POST /doc/search            → {{ query, mode?, namespace?, limit? }} → [results]");
+                println!(
+                    "  POST /doc/list             → {{ namespace?, limit?, roots_only?, parent? }} → [documents]"
+                );
+                println!(
+                    "  POST /doc/search            → {{ query, mode?, namespace?, limit? }} → [results]"
+                );
                 println!(
                     "  POST /doc/move              → {{ id | slug, new_parent? }} → {{ moved }}"
                 );
@@ -328,7 +342,10 @@ fn main() {
                         match u.aging_cleanup(age_days, max_access, None) {
                             Ok(result) => {
                                 if result.deleted > 0 {
-                                    info!("Auto-aging: cleaned up {} stale memories (age>{age_days}d, access<{max_access})", result.deleted);
+                                    info!(
+                                        "Auto-aging: cleaned up {} stale memories (age>{age_days}d, access<{max_access})",
+                                        result.deleted
+                                    );
                                 }
                             }
                             Err(e) => {

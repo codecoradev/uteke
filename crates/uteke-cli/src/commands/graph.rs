@@ -1,7 +1,7 @@
 //! Graph command handlers.
 
-use crate::cli::GraphCommands;
 use crate::Cli;
+use crate::cli::GraphCommands;
 use uteke_core::GraphStore;
 
 /// Run graph command.

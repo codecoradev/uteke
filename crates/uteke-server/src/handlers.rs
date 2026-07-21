@@ -283,7 +283,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             return ctx.error_response_for(
                                 req,
                                 400,
-                                format!("Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."),
+                                format!(
+                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
+                                ),
                             );
                         }
                     };
@@ -432,6 +434,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 // Validate UUID format
                 if uuid::Uuid::parse_str(id).is_err() {
                     return ctx.error_response_for(req, 400, format!("Invalid UUID format: {id}"));
+                }
+                // Check existence before deleting (#762) — forget() silently
+                // returns Ok(()) even when the ID doesn't exist.
+                if uteke.get_by_id(id).ok().flatten().is_none() {
+                    return ctx.error_response_for(req, 404, format!("Memory not found: {id}"));
                 }
                 match uteke.forget(id) {
                     Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"forgotten": id})),
@@ -692,7 +699,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
         (Method::Post, "/room/document") => {
-            warn!("DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)");
+            warn!(
+                "DEPRECATED: POST /room/document is renamed to POST /room/summary-document (see #735)"
+            );
             #[derive(Deserialize)]
             struct RoomDocumentRequest {
                 room_id: String,
@@ -1018,6 +1027,42 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // POST /room/remember — store memory and link to room (#762)
+        (Method::Post, "/room/remember") => {
+            match read_body::<RoomRememberRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
+                        return ctx.error_response_for(req, 400, e.to_string());
+                    }
+                    let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
+                    let memory_type = req_data.r#type.as_deref().unwrap_or("fact");
+                    let author = req_data.author.as_deref().unwrap_or("user");
+                    match uteke.remember_in_room(
+                        &req_data.content,
+                        &tag_refs,
+                        req_data.metadata.clone(),
+                        ns(&req_data.namespace),
+                        memory_type,
+                        &req_data.room_id,
+                        author,
+                    ) {
+                        Ok(id) => ctx.ok_response_for(
+                            req,
+                            &serde_json::json!({
+                                "id": id,
+                                "room_id": req_data.room_id,
+                            }),
+                        ),
+                        Err(e) => {
+                            error!("room/remember error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
         (Method::Get, "/room/list") => {
             let ns_param = parse_query_namespace(&path);
             match uteke.list_rooms(ns_param.as_deref()) {
@@ -1155,7 +1200,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     match read_body::<RoomDeleteRequest>(req.as_reader()) {
                         Ok(data) => data.room_id,
                         Err(_) => {
-                            return ctx.error_response_for(req, 400, "Missing 'room_id' parameter")
+                            return ctx.error_response_for(req, 400, "Missing 'room_id' parameter");
                         }
                     }
                 }
@@ -1797,7 +1842,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             req,
                             400,
                             format!("Unknown action: {other}. Use: status, preview, cleanup"),
-                        )
+                        );
                     }
                 };
                 match result {

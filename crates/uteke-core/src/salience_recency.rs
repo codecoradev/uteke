@@ -290,16 +290,20 @@ mod tests {
         // Default is now non-zero (#721)
         assert!(!SalienceRecencyConfig::default().is_noop());
         // Explicit zero weights are no-op
-        assert!(SalienceRecencyConfig {
-            salience_weight: 0.0,
-            recency_weight: 0.0,
-        }
-        .is_noop());
+        assert!(
+            SalienceRecencyConfig {
+                salience_weight: 0.0,
+                recency_weight: 0.0,
+            }
+            .is_noop()
+        );
         // One non-zero is not no-op
-        assert!(!SalienceRecencyConfig {
-            salience_weight: 0.1,
-            recency_weight: 0.0,
-        }
-        .is_noop());
+        assert!(
+            !SalienceRecencyConfig {
+                salience_weight: 0.1,
+                recency_weight: 0.0,
+            }
+            .is_noop()
+        );
     }
 }

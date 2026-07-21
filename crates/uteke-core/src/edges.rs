@@ -15,7 +15,7 @@
 
 use crate::error::Error;
 use crate::memory::types::Memory;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::memory::store::Store;
