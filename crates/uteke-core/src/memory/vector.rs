@@ -86,26 +86,38 @@ impl VectorIndex {
             std::fs::write(path, []).map_err(|e| Error::embed("create usearch file", e))?;
         }
 
-        let lock_file = acquire_file_lock(path)?;
+        let mut lock_file = acquire_file_lock(path)?;
 
-        let mut idx = if path.metadata().map_or(true, |m| m.len() == 0) {
+        let mut idx = if lock_file
+            .metadata()
+            .map_err(|e| Error::embed("read file metadata", e))?
+            .len()
+            == 0
+        {
             Self::new(dims)?
         } else {
-            Self::load(path)?
+            Self::load_from_file(&mut lock_file, path)?
         };
         idx.path = Some(path.to_path_buf());
         idx._lock_file = Some(lock_file);
         Ok(idx)
     }
 
-    /// Load an existing index from disk.
+    /// Load an existing index from an already-open file handle.
     ///
-    /// Uses buffer-based deserialization (#684): reads the file into memory via
-    /// Rust's `std::fs::read()`, then deserializes via `restore_from_buffer()`.
-    /// This bypasses usearch's C++ `fopen("rb")` + `mmap()` which causes
-    /// "Permission denied" errors on Windows (#684).
-    pub fn load(path: &Path) -> Result<Self, Error> {
-        let buffer = std::fs::read(path).map_err(|e| Error::embed("read usearch file", e))?;
+    /// This prevents `ERROR_LOCK_VIOLATION` (os error 33) on Windows when the
+    /// file is locked exclusively by the same process (#732), since we read
+    /// directly from the locked handle instead of opening a second one.
+    pub fn load_from_file(file: &mut File, path: &Path) -> Result<Self, Error> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        file.seek(SeekFrom::Start(0))
+            .map_err(|e| Error::embed("seek usearch file", e))?;
+
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)
+            .map_err(|e| Error::embed("read usearch file from locked handle", e))?;
+
         let index = Index::restore_from_buffer(&buffer)
             .map_err(|e| Error::embed("load vector index", e))?;
 
@@ -140,10 +152,21 @@ impl VectorIndex {
             key_to_id,
             id_to_key,
             next_key,
-            path: Some(path.to_path_buf()),
+            path: None,
             dirty: false,
-            _lock_file: None, // Set by caller (load_or_create)
+            _lock_file: None,
         })
+    }
+
+    /// Load an existing index from disk.
+    ///
+    /// Uses buffer-based deserialization (#684): reads the file into memory via
+    /// Rust's `std::fs::read()`, then deserializes via `restore_from_buffer()`.
+    /// This bypasses usearch's C++ `fopen("rb")` + `mmap()` which causes
+    /// "Permission denied" errors on Windows (#684).
+    pub fn load(path: &Path) -> Result<Self, Error> {
+        let mut file = File::open(path).map_err(|e| Error::embed("open usearch file", e))?;
+        Self::load_from_file(&mut file, path)
     }
 
     /// Save index and key mappings to disk.
