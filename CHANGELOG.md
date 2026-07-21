@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-22
+
+### Changed
+- **Rust edition 2021 → 2024 (#755)** — Project-wide edition upgrade. Enables `gen` blocks, `let` chains, `unsafe` `extern` blocks, improved `if let`/`while let` chains, and `ref` pattern simplification. Minimum Rust version raised from 1.75 to 1.85.
+
+### Added
+- **`POST /room/remember` HTTP endpoint (#762)** — Store a memory and link it to a room in a single API call. Accepts `room_id`, `content`, `tags`, `namespace`, `type`, `metadata`, and `author`. Previously `remember_in_room()` existed in uteke-core but was never exposed via HTTP.
+
+### Fixed
+- **`DELETE /forget` returned 200 for non-existent memory IDs (#762)** — Now checks memory existence before calling `forget()` and returns proper 404 when the ID doesn't exist. Previously silently returned success.
+- **Clippy lints after edition 2024 upgrade (#755)** — Fixed `repeat("?").take(n)` → `repeat_n("?", n)`, `.map_or(true, |_| true)` → `.is_none_or(|_| true)`, and `let_binding_from_block` in `slug_from_path`.
+
 ## [0.9.1] — 2026-07-21
 
 ### Fixed
