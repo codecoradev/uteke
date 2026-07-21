@@ -111,10 +111,30 @@ impl ApiVersion {
     /// Parse `/api/vN/` prefix from a path. Returns `(version, stripped_path)` on match,
     /// or `None` if the path is not versioned.
     pub fn from_path(path: &str) -> Option<(Self, &str)> {
-        if let Some(rest) = path.strip_prefix("/api/v1/") {
-            Some((Self::V1, rest))
-        } else if let Some(rest) = path.strip_prefix("/api/v2/") {
-            Some((Self::V2, rest))
+        // Strip "/api/v1" prefix, then ensure leading "/" for route matching.
+        // Before fix: strip_prefix("/api/v1/") produced "recall" (no leading /),
+        // causing all /api/vN/* routes to 404 against patterns like "/recall".
+        if path.starts_with("/api/v1") {
+            let rest = &path["/api/v1".len()..];
+            let stripped = if rest.is_empty() {
+                "/"
+            } else if rest.starts_with('/') {
+                rest
+            } else {
+                // Edge case — shouldn't occur in practice.
+                rest
+            };
+            Some((Self::V1, stripped))
+        } else if path.starts_with("/api/v2") {
+            let rest = &path["/api/v2".len()..];
+            let stripped = if rest.is_empty() {
+                "/"
+            } else if rest.starts_with('/') {
+                rest
+            } else {
+                rest
+            };
+            Some((Self::V2, stripped))
         } else {
             None
         }
