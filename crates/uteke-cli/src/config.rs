@@ -30,7 +30,7 @@ impl Default for StoreConfig {
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
 pub struct EmbeddingConfig {
-    /// Embedding backend: "onnx" (default), "openai", "ollama".
+    /// Embedding backend: "onnx" (default), "voyage" (local ONNX), "openai", "ollama".
     pub backend: String,
     /// Embedding model name.
     pub model: String,
@@ -69,7 +69,8 @@ impl Default for EmbeddingConfig {
 
 impl EmbeddingConfig {
     /// Supported embedding backends.
-    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx", "openai", "ollama"];
+    pub const SUPPORTED_BACKENDS: &'static [&'static str] =
+        &["onnx", "openai", "ollama", "voyage"];
 
     /// Validate the backend field.
     ///
@@ -414,16 +415,38 @@ impl Config {
             config = config.merge_from_file(&global_path);
         }
 
-        // Layer 2: project .uteke/uteke.toml
-        if let Ok(cwd) = std::env::current_dir() {
-            let project_path = cwd.join(".uteke").join("uteke.toml");
+        // Layer 2: project .uteke/uteke.toml — discovered by walking up from
+        // cwd (DB-per-repo). Falls back to cwd/.uteke when no project marker
+        // is found, preserving prior behavior.
+        let project_root = find_project_root();
+        if let Some(ref root) = project_root {
+            let project_path = root.join(".uteke").join("uteke.toml");
             config = config.merge_from_file(&project_path);
+            // Resolve a relative store.path against the project root so a
+            // project config can say `path = ".uteke"` and get a DB inside
+            // the repo, independent of the current working directory.
+            config.resolve_store_path(root);
         }
 
         // Layer 3: environment variables (override config file)
         config = config.apply_env_overrides();
 
         config
+    }
+
+    /// Resolve a relative `store.path` against `root` (the project root).
+    /// Absolute paths and `~`-prefixed paths are left untouched.
+    fn resolve_store_path(&mut self, root: &std::path::Path) {
+        let p = &self.store.path;
+        // Leave global/home/default and absolute paths alone.
+        if p.starts_with('~') || std::path::Path::new(p).is_absolute() {
+            return;
+        }
+        // Only rewrite when the project config actually set a relative path.
+        // Default "~/.uteke" is handled above; a bare relative path here means
+        // the project opted into a repo-local store.
+        let resolved = root.join(p);
+        self.store.path = resolved.to_string_lossy().to_string();
     }
 
     /// Merge values from a TOML file on top of this config.
@@ -981,6 +1004,38 @@ fn global_config_path() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".uteke").join("uteke.toml"))
 }
 
+/// Discover the project root by walking up from the current directory.
+///
+/// Resolution order at each ancestor:
+///   1. `.uteke/uteke.toml` present → that directory is the project root.
+///   2. `.git` present (dir or file) → that directory is the project root.
+/// Stops at the first match; returns `None` if neither is found up to the
+/// filesystem root (callers then fall back to the global store).
+///
+/// A `.uteke/` marker wins over `.git/` at the *same* level, but a closer
+/// `.git/` ancestor wins over a farther `.uteke/` — nearest marker wins.
+pub fn find_project_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    find_project_root_from(&cwd)
+}
+
+/// Walk up from `start` looking for a project marker. Split out from
+/// [`find_project_root`] so tests can supply an explicit start dir without
+/// mutating the process-global current directory.
+fn find_project_root_from(start: &std::path::Path) -> Option<PathBuf> {
+    let mut dir: Option<&std::path::Path> = Some(start);
+    while let Some(d) = dir {
+        if d.join(".uteke").join("uteke.toml").is_file() {
+            return Some(d.to_path_buf());
+        }
+        if d.join(".git").exists() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
 /// Update or insert the namespace value in a TOML config string.
 /// Preserves all other content.
 fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
@@ -1024,6 +1079,80 @@ fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_root_by_uteke_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".uteke")).unwrap();
+        std::fs::write(root.join(".uteke").join("uteke.toml"), "[store]\n").unwrap();
+        let sub = root.join("a").join("b");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let found = find_project_root_from(&sub).unwrap();
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            root.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn find_root_by_git_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let sub = root.join("src").join("deep");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let found = find_project_root_from(&sub).unwrap();
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            root.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn nearest_marker_wins() {
+        // Outer .git, inner .uteke/uteke.toml between it and cwd → inner wins.
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = tmp.path();
+        std::fs::create_dir_all(outer.join(".git")).unwrap();
+        let inner = outer.join("pkg");
+        std::fs::create_dir_all(inner.join(".uteke")).unwrap();
+        std::fs::write(inner.join(".uteke").join("uteke.toml"), "[store]\n").unwrap();
+        let sub = inner.join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let found = find_project_root_from(&sub).unwrap();
+        assert_eq!(
+            found.canonicalize().unwrap(),
+            inner.canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn resolve_relative_store_path_against_root() {
+        let mut cfg = Config::default();
+        cfg.store.path = ".uteke".to_string();
+        let root = std::path::Path::new("/tmp/myrepo");
+        cfg.resolve_store_path(root);
+        assert_eq!(cfg.store.path, "/tmp/myrepo/.uteke");
+    }
+
+    #[test]
+    fn resolve_leaves_home_and_absolute_paths() {
+        let root = std::path::Path::new("/tmp/myrepo");
+
+        let mut home = Config::default();
+        home.store.path = "~/.uteke".to_string();
+        home.resolve_store_path(root);
+        assert_eq!(home.store.path, "~/.uteke");
+
+        let mut abs = Config::default();
+        abs.store.path = "/data/uteke".to_string();
+        abs.resolve_store_path(root);
+        assert_eq!(abs.store.path, "/data/uteke");
+    }
 
     #[test]
     fn default_config_values() {

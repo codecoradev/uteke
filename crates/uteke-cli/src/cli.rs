@@ -287,6 +287,11 @@ pub enum Commands {
         /// uteke-tool plugin (manual HTTP-backed actions).
         #[arg(long, default_value_t = false)]
         memory_provider: bool,
+        /// Initialize a repo-local store: write `.uteke/uteke.toml` (DB inside
+        /// the repo) and add the DB to `.gitignore`. Use for per-project
+        /// code memory before `uteke index`.
+        #[arg(long, default_value_t = false)]
+        project: bool,
     },
     /// Memory aging: status, preview cleanup, cleanup
     Aging {
@@ -429,6 +434,41 @@ pub enum Commands {
         /// Skip confirmation prompt
         #[arg(long, short)]
         yes: bool,
+    },
+    /// Index source code in a repo into recallable memories (DB-per-repo).
+    ///
+    /// Walks the project (respecting .gitignore + include/exclude globs),
+    /// chunks each file by symbol, and stores chunks with file:line metadata.
+    /// Incremental: unchanged files (by content hash) are skipped.
+    Index {
+        /// Path to index (file or directory). Defaults to the project root.
+        path: Option<String>,
+        /// Re-index all files even if unchanged.
+        #[arg(long)]
+        force: bool,
+        /// Report what would be indexed without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Show current index status (file/chunk counts) without indexing.
+        #[arg(long)]
+        status: bool,
+    },
+    /// Launch the graph + live-index web UI in a local browser.
+    Ui {
+        /// Path to index (file or directory). Defaults to the project root.
+        path: Option<String>,
+        /// Port to bind the UI server to.
+        #[arg(long, default_value = "7749")]
+        port: u16,
+        /// Re-index all files even if unchanged before serving the graph.
+        #[arg(long)]
+        force: bool,
+        /// Serve the existing graph without re-indexing on launch.
+        #[arg(long)]
+        no_index: bool,
+        /// Do not attempt to open a browser automatically.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Interactive onboarding — detect install, pick agent, toggle features, showcase
     Onboard {

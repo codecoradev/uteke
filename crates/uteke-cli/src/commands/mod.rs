@@ -7,6 +7,7 @@ mod dream;
 mod edges;
 mod forget;
 pub(crate) mod graph;
+mod index;
 mod list;
 mod maintenance;
 mod namespace;
@@ -230,6 +231,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         Commands::Init {
             agent,
             memory_provider,
+            ..
         } => crate::init::run_init(agent, *memory_provider, cli.json),
 
         Commands::Namespace { command } => namespace::run(cli, uteke, command),
@@ -354,10 +356,18 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         Commands::Timeline { id, limit } => timeline::run(cli, uteke, id, *limit),
 
         Commands::Doc { command } => crate::commands::doc::run(cli, uteke, command, config),
-
         Commands::Upgrade { yes } => upgrade::run(*yes),
+
+        Commands::Index {
+            path,
+            force,
+            dry_run,
+            status,
+        } => index::run(cli, uteke, ns, path, *force, *dry_run, *status),
 
         // Onboard is handled in main.rs (early exit, no store needed).
         Commands::Onboard { .. } => Ok(()),
+        // Ui is handled in main.rs (early exit, owns its own store).
+        Commands::Ui { .. } => Ok(()),
     }
 }

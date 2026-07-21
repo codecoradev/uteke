@@ -105,7 +105,23 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     }
     println!();
 
-    // ── Step 3: Pick agent ──────────────────────────────────────
+    // ── Step 3: Pick usage mode (coding vs general) ────────────
+    let coding_mode = if *yes {
+        false
+    } else {
+        prompt_usage_mode()?
+    };
+    println!(
+        "→ Usage: {}",
+        if coding_mode {
+            "coding (per-project store + code indexing)"
+        } else {
+            "general memory (global store)"
+        }
+    );
+    println!();
+
+    // ── Step 4: Pick agent ──────────────────────────────────────
     let agent_choice = if let Some(a) = agent {
         validate_agent(a)?
     } else if *yes {
@@ -141,6 +157,21 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     println!("→ Namespace: {}", ns);
     println!();
 
+    // ── Step 5b: Pick embedding model ──────────────────────────
+    // Coding mode defaults to voyage (code-friendly, 2048d); general mode
+    // defaults to embeddinggemma.
+    let backend = if *yes {
+        if coding_mode { "voyage" } else { "onnx" }
+    } else {
+        prompt_embedding_backend(coding_mode)?
+    };
+    let backend_label = match backend {
+        "voyage" => "voyage-4-nano (2048d, code-friendly)",
+        _ => "embeddinggemma-q4 (768d, general)",
+    };
+    println!("→ Embedding model: {}", backend_label);
+    println!();
+
     // ── Step 6: Feature toggles ────────────────────────────────
     let toggles = if *yes {
         FEATURE_TOGGLES
@@ -159,7 +190,7 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     println!();
 
     // ── Step 7: Write config ───────────────────────────────────
-    let config_path = write_config(&ns, &toggles, *yes)?;
+    let config_path = write_config(&ns, backend, &toggles, *yes)?;
     println!("✓ Config written: {}", config_path.display());
 
     // ── Step 8: Run `uteke init` for the agent ─────────────────────────
@@ -181,6 +212,11 @@ pub fn run(cli: &Cli) -> Result<(), String> {
     }
     println!();
 
+    // ── Step 8b: Coding mode setup (project store + index) ──────────
+    if coding_mode {
+        setup_coding_project(backend, *yes)?;
+    }
+
     // ── Step 9: Feature showcase ───────────────────────────────
     showcase();
 
@@ -197,6 +233,61 @@ pub fn run(cli: &Cli) -> Result<(), String> {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// Coding-mode setup: init a per-project store in the current directory, then
+/// offer to index the repo now (which downloads the embedding model on first
+/// use). Delegates indexing to the installed `uteke index` binary so config
+/// layering + live streaming come for free.
+fn setup_coding_project(backend: &str, yes: bool) -> Result<(), String> {
+    print_banner("Coding Project Setup");
+    println!();
+
+    // 1. Init the per-project store (.uteke/uteke.toml + .gitignore), pinning
+    //    the chosen backend. Idempotent — existing config left unchanged.
+    let init = crate::init::init_project_store(Some(backend))?;
+    println!("✓ Project store ready: {}", init.uteke_dir().display());
+    println!("  namespace: {}", init.namespace);
+    if !init.wrote_config {
+        println!("  (config already existed — backend not overwritten)");
+    }
+    println!();
+
+    // 2. Offer to index now. First run downloads the model + embeds all source.
+    let do_index = if yes {
+        false
+    } else {
+        let model = match backend {
+            "voyage" => "voyage-4-nano (~250MB)",
+            _ => "embeddinggemma-q4 (~190MB)",
+        };
+        println!("Index this repo now? First run downloads {model} and embeds all source.");
+        print!("  Index now? [y/N] ");
+        io::stdout().flush().ok();
+        let resp = read_line()?;
+        resp.eq_ignore_ascii_case("y")
+    };
+
+    if !do_index {
+        println!("→ Skipped. Run `uteke index` when ready.");
+        println!();
+        return Ok(());
+    }
+
+    // 3. Shell out to the installed binary so the project config (with the
+    //    backend we just wrote) is loaded fresh and streaming works.
+    println!("Indexing… (downloads model on first use, please wait)");
+    let exe = std::env::current_exe().map_err(|e| format!("cannot find uteke binary: {e}"))?;
+    let status = std::process::Command::new(exe)
+        .arg("index")
+        .current_dir(&init.root)
+        .status()
+        .map_err(|e| format!("failed to run `uteke index`: {e}"))?;
+    if !status.success() {
+        println!("⚠ Indexing exited with {status}. Run `uteke index` manually to retry.");
+    }
+    println!();
+    Ok(())
+}
 
 /// Print a centered banner box around the given title.
 fn print_banner(title: &str) {
@@ -300,6 +391,50 @@ fn prompt_namespace() -> Result<String, String> {
     }
 }
 
+/// Prompt the user to select a local embedding model. Both options are
+/// offline ONNX models downloaded to `~/.uteke/models/` on first use. When
+/// `coding_mode` is set, voyage (code-friendly) is the default.
+fn prompt_embedding_backend(coding_mode: bool) -> Result<&'static str, String> {
+    println!("Local embedding model (offline, downloaded on first use):");
+    if coding_mode {
+        println!("  1) voyage-4-nano     — 2048d, code-friendly, open-weight (~250MB) [default]");
+        println!("  2) embeddinggemma-q4 — 768d, general purpose (~190MB)");
+        print!("\n  Select [1-2]: ");
+        io::stdout().flush().ok();
+        let resp = read_line()?;
+        match resp.trim() {
+            "2" | "gemma" | "embeddinggemma" => Ok("onnx"),
+            _ => Ok("voyage"),
+        }
+    } else {
+        println!("  1) embeddinggemma-q4 — 768d, general purpose (~190MB) [default]");
+        println!("  2) voyage-4-nano     — 2048d, code-friendly, open-weight (~250MB)");
+        print!("\n  Select [1-2]: ");
+        io::stdout().flush().ok();
+        let resp = read_line()?;
+        match resp.trim() {
+            "2" | "voyage" | "voyage-4-nano" => Ok("voyage"),
+            _ => Ok("onnx"),
+        }
+    }
+}
+
+/// Prompt whether uteke will be used mainly for coding (per-project store +
+/// code indexing) or general memory (global store). Coding mode triggers
+/// `.uteke/uteke.toml` project init, voyage default, and an offer to index.
+fn prompt_usage_mode() -> Result<bool, String> {
+    println!("How will you use uteke?");
+    println!("  1) General memory — global store at ~/.uteke, notes/facts across projects [default]");
+    println!("  2) Coding — per-project store (.uteke/ like .git), index source into recall");
+    print!("\n  Select [1-2]: ");
+    io::stdout().flush().ok();
+    let resp = read_line()?;
+    match resp.trim() {
+        "2" | "coding" | "code" => Ok(true),
+        _ => Ok(false),
+    }
+}
+
 /// Prompt for feature toggles. Returns vec of (name, enabled).
 fn prompt_feature_toggles() -> Result<Vec<(&'static str, bool)>, String> {
     println!("Feature toggles — toggle ON/OFF (press Enter to accept defaults):");
@@ -328,6 +463,7 @@ fn prompt_feature_toggles() -> Result<Vec<(&'static str, bool)>, String> {
 /// before overwriting. In interactive mode, the user is prompted to confirm.
 fn write_config(
     namespace: &str,
+    backend: &str,
     toggles: &[(&str, bool)],
     yes: bool,
 ) -> Result<std::path::PathBuf, String> {
@@ -373,6 +509,9 @@ fn write_config(
 [store]
 namespace = "{namespace}"
 
+[embedding]
+backend = "{backend}"
+
 [recall]
 graph_rerank_enabled = {graph_rerank}
 salience_weight = {salience_weight}
@@ -388,6 +527,7 @@ auto_aging_enabled = {auto_maint}
 enabled = {server_enabled}
 "#,
         namespace = namespace,
+        backend = backend,
         graph_rerank = graph_rerank,
         salience_weight = if salience { 0.15 } else { 0.0 },
         recency_weight = if recency { 0.15 } else { 0.0 },

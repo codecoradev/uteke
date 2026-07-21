@@ -8,11 +8,131 @@ pub(crate) fn run_init_command(cli: &Cli) -> Result<(), String> {
     if let Commands::Init {
         agent,
         memory_provider,
+        project,
     } = &cli.command
     {
+        if *project {
+            return init_project(cli.json);
+        }
         return run_init(agent, *memory_provider, cli.json);
     }
     Ok(())
+}
+
+/// Initialize a repo-local uteke store for per-project code memory.
+///
+/// Writes `<repo>/.uteke/uteke.toml` (store path relative to repo root so the
+/// DB lives inside the repo) and appends the DB glob to `<repo>/.gitignore`.
+/// Idempotent: existing files are preserved, entries not duplicated.
+fn init_project(json: bool) -> Result<(), String> {
+    let outcome = init_project_store(None)?;
+    if json {
+        let out = serde_json::json!({
+            "root": outcome.root.display().to_string(),
+            "namespace": outcome.namespace,
+            "config": outcome.config_path.display().to_string(),
+            "wrote_config": outcome.wrote_config,
+            "updated_gitignore": outcome.updated_gitignore,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else {
+        println!("Initialized project store at {}", outcome.uteke_dir().display());
+        println!("  namespace: {}", outcome.namespace);
+        if !outcome.wrote_config {
+            println!("  (config already existed, left unchanged)");
+        }
+        println!("Next: run `uteke index` to index this repo's source.");
+    }
+    Ok(())
+}
+
+/// Result of initializing a per-project store.
+pub(crate) struct ProjectInit {
+    pub root: std::path::PathBuf,
+    pub config_path: std::path::PathBuf,
+    pub namespace: String,
+    pub wrote_config: bool,
+    pub updated_gitignore: bool,
+}
+
+impl ProjectInit {
+    pub fn uteke_dir(&self) -> std::path::PathBuf {
+        self.root.join(".uteke")
+    }
+}
+
+/// Initialize a repo-local uteke store, optionally pinning an embedding
+/// `backend` in the generated config. Idempotent: an existing config is left
+/// unchanged (backend not overwritten). Reused by `uteke init --project` and
+/// the coding path of `uteke onboard`.
+pub(crate) fn init_project_store(backend: Option<&str>) -> Result<ProjectInit, String> {
+    let root = crate::config::find_project_root()
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| "Cannot determine project root".to_string())?;
+
+    let uteke_dir = root.join(".uteke");
+    std::fs::create_dir_all(&uteke_dir)
+        .map_err(|e| format!("Failed to create {}: {e}", uteke_dir.display()))?;
+
+    // Derive a namespace from the repo directory name.
+    let ns = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "default".to_string());
+
+    let config_path = uteke_dir.join("uteke.toml");
+    let mut wrote_config = false;
+    if !config_path.exists() {
+        // Include an [embedding] section only when a backend was chosen.
+        let embedding_section = match backend {
+            Some(b) => format!("\n[embedding]\nbackend = \"{b}\"\n"),
+            None => String::new(),
+        };
+        let body = format!(
+            "# Uteke project store (DB-per-repo)\n\
+             # DB lives at ./.uteke and is git-ignored; models stay global (~/.uteke/models).\n\
+             [store]\n\
+             path = \".uteke\"\n\
+             namespace = \"{ns}\"\n{embedding_section}"
+        );
+        std::fs::write(&config_path, body)
+            .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
+        wrote_config = true;
+    }
+
+    // Add DB artifacts to .gitignore (keep the toml tracked).
+    let gitignore = root.join(".gitignore");
+    let ignore_entries = [".uteke/*.db", ".uteke/*.db-*", ".uteke/*.keys"];
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    let mut to_add: Vec<&str> = Vec::new();
+    for e in ignore_entries {
+        if !existing.lines().any(|l| l.trim() == e) {
+            to_add.push(e);
+        }
+    }
+    let mut added_gitignore = false;
+    if !to_add.is_empty() {
+        let mut out = existing.clone();
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("\n# uteke project store\n");
+        for e in &to_add {
+            out.push_str(e);
+            out.push('\n');
+        }
+        std::fs::write(&gitignore, out)
+            .map_err(|e| format!("Failed to write {}: {e}", gitignore.display()))?;
+        added_gitignore = true;
+    }
+
+    Ok(ProjectInit {
+        root,
+        config_path,
+        namespace: ns,
+        wrote_config,
+        updated_gitignore: added_gitignore,
+    })
 }
 
 /// Dispatch init to the appropriate agent type.

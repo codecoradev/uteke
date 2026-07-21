@@ -8,6 +8,7 @@ mod init;
 mod logging;
 mod onboard;
 mod output;
+mod ui;
 
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Commands};
@@ -50,6 +51,20 @@ fn main() {
         Commands::Bench { counts, json } => {
             // Bench creates its own temp stores — skip opening the user store.
             if let Err(e) = commands::bench::run_bench(*json, counts.clone()) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::Ui {
+            path,
+            port,
+            force,
+            no_index,
+            no_open,
+        } => {
+            // UI owns its own store + background indexer; no shared store open.
+            if let Err(e) = ui::run(&cli, path.as_deref(), *port, *force, *no_index, *no_open) {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
