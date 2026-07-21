@@ -18,6 +18,10 @@ pub struct CodeChunk {
     pub symbol_type: String,
     /// Symbol name (function/class/struct name).
     pub symbol_name: String,
+    /// 1-based line number where this chunk starts in the source file.
+    pub line_start: usize,
+    /// 1-based line number where this chunk ends (inclusive).
+    pub line_end: usize,
 }
 
 /// A text chunk from markdown/prose splitting (#405).
@@ -292,9 +296,27 @@ pub fn detect_language(filename: &str) -> &str {
 
 /// Chunk source code by semantic boundaries.
 ///
-/// Detects function, struct, class, impl, and interface definitions.
-/// Falls back to line-based splitting if no patterns match.
+/// When the `treesitter` feature is enabled, tries precise AST chunking first
+/// and falls back to the regex chunker on parse failure or unsupported
+/// languages. Detects function, struct, class, impl, and interface
+/// definitions.
 pub fn chunk_code(content: &str, language: &str) -> Vec<CodeChunk> {
+    #[cfg(feature = "treesitter")]
+    {
+        // AST path: Some(non-empty) = use it; Some(empty) = parsed but no
+        // defs (fall through to regex, which yields a whole-file chunk);
+        // None = no grammar / parse error (fall through to regex).
+        if let Some(chunks) = crate::chunker_ts::chunk_code_ts(content, language) {
+            if !chunks.is_empty() {
+                return chunks;
+            }
+        }
+    }
+    chunk_code_regex(content, language)
+}
+
+/// Regex-based chunker (the pre-tree-sitter implementation, always available).
+fn chunk_code_regex(content: &str, language: &str) -> Vec<CodeChunk> {
     match language {
         "rust" => chunk_rust(content),
         "go" => chunk_go(content),
@@ -306,8 +328,16 @@ pub fn chunk_code(content: &str, language: &str) -> Vec<CodeChunk> {
             language: language.to_string(),
             symbol_type: "file".to_string(),
             symbol_name: "full".to_string(),
+            line_start: 1,
+            line_end: whole_file_line_end(content),
         }],
     }
+}
+
+/// Line count for a whole-file chunk (1-based inclusive end).
+/// Empty content spans a single (empty) line.
+fn whole_file_line_end(content: &str) -> usize {
+    content.lines().count().max(1)
 }
 
 /// Extract import/use statements from source code.
@@ -362,9 +392,13 @@ fn chunk_python(content: &str) -> Vec<CodeChunk> {
     let mut current_name = String::new();
     let mut current_type = String::new();
     let mut current_lines: Vec<&str> = Vec::new();
+    let mut current_start: usize = 0;
+    let mut last_line: usize = 0;
     let mut in_block = false;
 
-    for line in content.lines() {
+    for (idx, line) in content.lines().enumerate() {
+        let line_no = idx + 1; // 1-based
+        last_line = line_no;
         let trimmed = line.trim();
 
         // Detect new definitions
@@ -401,11 +435,14 @@ fn chunk_python(content: &str) -> Vec<CodeChunk> {
                     language: "python".to_string(),
                     symbol_type: current_type,
                     symbol_name: current_name,
+                    line_start: current_start,
+                    line_end: line_no - 1,
                 });
             }
             current_name = new_name;
             current_type = new_type;
             current_lines = vec![line];
+            current_start = line_no;
             in_block = true;
         } else if in_block {
             current_lines.push(line);
@@ -419,6 +456,8 @@ fn chunk_python(content: &str) -> Vec<CodeChunk> {
             language: "python".to_string(),
             symbol_type: current_type,
             symbol_name: current_name,
+            line_start: current_start,
+            line_end: last_line,
         });
     }
 
@@ -429,6 +468,8 @@ fn chunk_python(content: &str) -> Vec<CodeChunk> {
             language: "python".to_string(),
             symbol_type: "file".to_string(),
             symbol_name: "full".to_string(),
+            line_start: 1,
+            line_end: whole_file_line_end(content),
         });
     }
 
@@ -462,6 +503,8 @@ fn chunk_typescript(content: &str) -> Vec<CodeChunk> {
             language: "typescript".to_string(),
             symbol_type: "file".to_string(),
             symbol_name: "full".to_string(),
+            line_start: 1,
+            line_end: whole_file_line_end(content),
         });
     }
 
@@ -515,7 +558,7 @@ fn chunk_by_patterns(
                 }
 
                 // Find the body by matching braces
-                let body = match extract_block(&lines, i, open, close) {
+                let (body, span) = match extract_block(&lines, i, open, close) {
                     Some(b) => b,
                     None => continue,
                 };
@@ -525,6 +568,8 @@ fn chunk_by_patterns(
                     language: language.to_string(),
                     symbol_type: sym_type.to_string(),
                     symbol_name: name,
+                    line_start: i + 1,        // 1-based
+                    line_end: i + span,       // start line + span-1
                 });
                 break; // Don't match same line twice
             }
@@ -537,6 +582,8 @@ fn chunk_by_patterns(
             language: language.to_string(),
             symbol_type: "file".to_string(),
             symbol_name: "full".to_string(),
+            line_start: 1,
+            line_end: whole_file_line_end(content),
         });
     }
 
@@ -544,8 +591,9 @@ fn chunk_by_patterns(
 }
 
 /// Extract a brace-delimited block starting from `start_line`.
-/// Returns the full text from the definition line to the closing brace.
-fn extract_block(lines: &[&str], start: usize, open: char, close: char) -> Option<String> {
+/// Returns `(text, line_span)` from the definition line to the closing brace,
+/// where `line_span` is the number of lines the block covers (>= 1).
+fn extract_block(lines: &[&str], start: usize, open: char, close: char) -> Option<(String, usize)> {
     let mut depth = 0i32;
     let mut found_open = false;
     let mut block_lines: Vec<&str> = Vec::new();
@@ -563,14 +611,16 @@ fn extract_block(lines: &[&str], start: usize, open: char, close: char) -> Optio
         }
 
         if found_open && depth <= 0 {
-            return Some(block_lines.join("\n"));
+            let span = block_lines.len();
+            return Some((block_lines.join("\n"), span));
         }
     }
 
     // If no braces found but we have content, return a few lines
     if !block_lines.is_empty() && !found_open {
         let end = (start + 5).min(lines.len());
-        return Some(lines[start..end].join("\n"));
+        let span = end - start;
+        return Some((lines[start..end].join("\n"), span.max(1)));
     }
 
     None
@@ -606,6 +656,28 @@ fn world(x: i32) -> i32 {
         assert_eq!(chunks[0].symbol_type, "function");
         assert_eq!(chunks[0].symbol_name, "hello");
         assert_eq!(chunks[1].symbol_name, "world");
+        // Line 1 is empty (raw string leading newline); `fn hello` starts line 2.
+        assert_eq!(chunks[0].line_start, 2);
+        assert_eq!(chunks[0].line_end, 4);
+        assert_eq!(chunks[1].line_start, 6);
+        assert_eq!(chunks[1].line_end, 8);
+    }
+
+    #[test]
+    fn test_chunk_line_numbers_map_to_source() {
+        // Reconstruct a chunk's source region from line_start/line_end and
+        // confirm it matches the original file lines (Cursor-style file:line recall).
+        let code = "fn a() {\n    1\n}\nfn b() {\n    2\n}\n";
+        let chunks = chunk_code(code, "rust");
+        assert_eq!(chunks.len(), 2);
+        let src_lines: Vec<&str> = code.lines().collect();
+        for c in &chunks {
+            assert!(c.line_start >= 1 && c.line_end >= c.line_start);
+            let region = src_lines[c.line_start - 1..c.line_end].join("\n");
+            assert_eq!(region, c.content);
+        }
+        assert_eq!(chunks[0].line_start, 1);
+        assert_eq!(chunks[1].line_start, 4);
     }
 
     #[test]

@@ -10,6 +10,10 @@
 //! ```
 
 pub mod chunker;
+#[cfg(feature = "treesitter")]
+pub mod chunker_ts;
+mod code_index;
+pub use code_index::{content_hash, IndexOutcome, IndexProgress, IndexSummary};
 mod consolidate;
 pub mod dream;
 mod edges;
@@ -50,8 +54,8 @@ pub use memory::types::{
 };
 pub use memory::{
     documents::{Document, DocumentChunk, DocumentSearchResult, DocumentSummary},
-    DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
-    TimeRange, TopicCluster,
+    DocumentEntry, DocumentSection, IndexedFile, Room, RoomDocument, RoomMemory, RoomStats,
+    RoomSummary, TimeRange, TopicCluster,
 };
 pub use orphans::{compute_orphan_score, OrphanMemory, DEFAULT_ORPHAN_THRESHOLD};
 pub use salience_recency::{
@@ -478,9 +482,14 @@ impl Uteke {
                         cfg.dims
                     }
                 }
+                #[cfg(feature = "onnx")]
+                "voyage" => {
+                    // Local voyage-4-nano ONNX: dims fixed by the model spec.
+                    crate::embed::engine::VOYAGE_4_NANO_Q4.dims
+                }
                 other => {
                     return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
+                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama, voyage."
                     )));
                 }
             },
@@ -633,9 +642,16 @@ impl Uteke {
                     };
                     Box::new(crate::embed::OllamaEmbedder::new(&base_url, &model, dims)?)
                 }
+                #[cfg(feature = "onnx")]
+                "voyage" => {
+                    // Local, open-weight voyage-4-nano via ONNX (offline).
+                    Box::new(crate::embed::OnnxEmbedder::with_spec(
+                        crate::embed::engine::VOYAGE_4_NANO_Q4,
+                    )?)
+                }
                 other => {
                     return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
+                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama, voyage."
                     )));
                 }
             };
