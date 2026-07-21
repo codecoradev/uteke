@@ -1,5 +1,21 @@
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-20
+
+### Added
+- **`uteke onboard` — interactive onboarding wizard (#743)** — guides new users from zero to productive in one command. Detects install, picks AI agent (Hermes/Claude/Cursor/Pi/OpenCode), integration mode (tool vs memory-provider), feature toggles (Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode), writes `uteke.toml`, runs `uteke init`, feature showcase. Non-interactive: `uteke onboard --yes --agent hermes`.
+- **API URL versioning /api/v1 and /api/v2 (#741)** — prefix-based API versioning on uteke-server for backward compatibility.
+- **Configurable dream pipeline thresholds (#742)** — dedup threshold, contradiction similarity, tag jaccard, max memories, orphan importance now configurable via config (previously hardcoded).
+- **SECURITY.md and PR template (#746)** — security policy with private vulnerability reporting, SLA by severity. GitHub PR template with type checklist and CI verification steps.
+
+### Changed
+- **POST /room/document renamed to POST /room/summary-document (#735, #739)** — avoids collision with /room/summary. Old endpoint logs deprecation warning.
+
+### Fixed
+- **Deprecated memories appearing in vector search results (#748, #749)** — `recall()` was missing deprecated filter, causing 61.7% deprecated memories to leak into all vector-based search paths (Vector, Hybrid RRF, Graph). FTS5 was already filtered at SQL level.
+- **Windows ERROR_LOCK_VIOLATION (OS error 33) (#747)** — usearch index now reads from the locked file handle directly instead of opening a second handle, preventing exclusive lock conflicts on Windows.
+- **Embedding model download robustness (#740, #744)** — streaming download (no more buffering 187MB in RAM), retry with 3 attempts, connect/read timeouts, progress indicator, integrity verification.
+
 ## [0.8.0] — 2026-07-17
 
 ### Added
