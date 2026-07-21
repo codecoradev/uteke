@@ -16,6 +16,9 @@
 - **Windows ERROR_LOCK_VIOLATION (OS error 33) (#747)** — usearch index now reads from the locked file handle directly instead of opening a second handle, preventing exclusive lock conflicts on Windows.
 - **Embedding model download robustness (#740, #744)** — streaming download (no more buffering 187MB in RAM), retry with 3 attempts, connect/read timeouts, progress indicator, integrity verification.
 
+### Contributors
+- [@webhop123](https://github.com/webhop123) — Windows OS error 33 fix (#747)
+
 ## [0.8.0] — 2026-07-17
 
 ### Added
