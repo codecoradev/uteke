@@ -516,6 +516,25 @@ pub struct ImportRequest {
     pub tags: Vec<String>,
 }
 
+// ── Room Remember Types (#762) ────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct RoomRememberRequest {
+    pub room_id: String,
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+    /// Author — stored as participant role in room link.
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
 // ── Maintenance Types (#607) ──────────────────────────────────────────────
 
 #[derive(Deserialize)]
