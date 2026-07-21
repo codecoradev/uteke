@@ -18,6 +18,7 @@
 
 ### Contributors
 - [@webhop123](https://github.com/webhop123) — Windows OS error 33 fix (#747)
+- [@gnoviawan](https://github.com/gnoviawan) — uteke onboard wizard implementation (#743)
 
 ## [0.8.0] — 2026-07-17
 

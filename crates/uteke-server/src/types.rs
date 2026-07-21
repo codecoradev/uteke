@@ -111,9 +111,13 @@ impl ApiVersion {
     /// Parse `/api/vN/` prefix from a path. Returns `(version, stripped_path)` on match,
     /// or `None` if the path is not versioned.
     pub fn from_path(path: &str) -> Option<(Self, &str)> {
-        if let Some(rest) = path.strip_prefix("/api/v1/") {
+        // The original strip_prefix("/api/v1/") removed the trailing slash,
+        // producing "recall" (no leading /) which never matched route patterns
+        // like "/recall". Fix: strip "/api/v1" without trailing slash, keeping
+        // the "/" in the remainder: "/api/v1/recall" → rest = "/recall" ✅.
+        if let Some(rest) = path.strip_prefix("/api/v1") {
             Some((Self::V1, rest))
-        } else if let Some(rest) = path.strip_prefix("/api/v2/") {
+        } else if let Some(rest) = path.strip_prefix("/api/v2") {
             Some((Self::V2, rest))
         } else {
             None
