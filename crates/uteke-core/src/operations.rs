@@ -465,6 +465,11 @@ impl crate::Uteke {
                     }
                 }
 
+                // Filter deprecated memories (#748)
+                if memory.deprecated {
+                    continue;
+                }
+
                 let score = cosine_distance_to_similarity(*distance);
 
                 // Boost hot memories (configurable boost)
