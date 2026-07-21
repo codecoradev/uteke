@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [0.9.1] — 2026-07-21
+
+### Fixed
+- **API versioning routes return 404** — `ApiVersion::from_path()` stripped `/api/v1/` prefix removing the trailing slash, producing `"recall"` instead of `"/recall"`. All versioned routes (`/api/v1/*`, `/api/v2/*`) returned 404. Fix: strip `/api/v1` without trailing slash, preserving leading `/` in remainder. (#754)
+
+### Contributors
+- [@gnoviawan](https://github.com/gnoviawan) — uteke onboard wizard implementation (#743)
+
 ## [0.9.0] — 2026-07-20
 
 ### Added
@@ -18,6 +26,7 @@
 
 ### Contributors
 - [@webhop123](https://github.com/webhop123) — Windows OS error 33 fix (#747)
+- [@gnoviawan](https://github.com/gnoviawan) — uteke onboard wizard implementation (#743)
 
 ## [0.8.0] — 2026-07-17
 
