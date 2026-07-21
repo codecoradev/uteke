@@ -16,3 +16,8 @@ uteke_index.usearch
 progress.md
 .cora/
 scripts/demo-record.sh
+
+# uteke project store
+.uteke/*.db
+.uteke/*.db-*
+.uteke/*.keys

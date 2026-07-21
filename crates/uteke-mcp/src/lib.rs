@@ -170,6 +170,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_tags_delete(),
                 tool_pin(),
                 tool_unpin(),
+                tool_index(),
+                tool_index_status(),
             ]
         })),
 
@@ -213,6 +215,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_tags_delete" => exec_tags_delete(uteke, &arguments)?,
                 "uteke_pin" => exec_pin(uteke, &arguments)?,
                 "uteke_unpin" => exec_unpin(uteke, &arguments)?,
+                "uteke_index" => exec_index(uteke, &arguments)?,
+                "uteke_index_status" => exec_index_status(uteke, &arguments)?,
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
@@ -660,6 +664,35 @@ fn tool_unpin() -> Value {
                 "id": { "type": "string", "description": "The memory ID (UUID)" }
             },
             "required": ["id"]
+        }
+    })
+}
+
+fn tool_index() -> Value {
+    serde_json::json!({
+        "name": "uteke_index",
+        "description": "Index source code in a directory into recallable memories. Walks the tree (skipping VCS/build dirs), chunks each file by symbol (function/struct/class), and stores chunks with file:line metadata. Incremental: unchanged files (by content hash) are skipped; deleted files are pruned. Recall the results with uteke_recall — code results carry file, line_start, line_end, symbol_name, and symbol_type in metadata.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Directory or file to index. Defaults to the current working directory." },
+                "namespace": { "type": "string", "description": "Namespace to index into (default: 'default')" },
+                "force": { "type": "boolean", "description": "Re-index all files even if unchanged (default: false)" },
+                "dry_run": { "type": "boolean", "description": "Report what would be indexed without writing (default: false)" }
+            }
+        }
+    })
+}
+
+fn tool_index_status() -> Value {
+    serde_json::json!({
+        "name": "uteke_index_status",
+        "description": "Report the code index status for a namespace: number of tracked source files and total indexed chunks.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "namespace": { "type": "string", "description": "Namespace to report (default: 'default')" }
+            }
         }
     })
 }
@@ -1738,4 +1771,57 @@ fn exec_unpin(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         }),
         Err(e) => Err(format!("Failed: {e}")),
     }
+}
+
+fn exec_index(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let ns = args["namespace"].as_str().unwrap_or("default");
+    let force = args["force"].as_bool().unwrap_or(false);
+    let dry_run = args["dry_run"].as_bool().unwrap_or(false);
+
+    let root = match args["path"].as_str() {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::env::current_dir().map_err(|e| format!("cannot resolve cwd: {e}"))?,
+    };
+    if !root.exists() {
+        return Err(format!("Path does not exist: {}", root.display()));
+    }
+
+    let s = uteke
+        .index_tree(ns, &root, force, dry_run)
+        .map_err(|e| format!("index failed: {e}"))?;
+
+    let text = if dry_run {
+        format!(
+            "Dry run: would index {} file(s) under {} (namespace: {ns})",
+            s.indexed,
+            root.display()
+        )
+    } else {
+        format!(
+            "Indexed {} file(s), {} chunk(s); {} unchanged; {} pruned (namespace: {ns})",
+            s.indexed, s.chunks, s.skipped, s.pruned
+        )
+    };
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_index_status(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let ns = args["namespace"].as_str().unwrap_or("default");
+    let (files, chunks) = uteke
+        .code_index_status(ns)
+        .map_err(|e| format!("Failed: {e}"))?;
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("Code index (namespace {ns}): {files} file(s), {chunks} chunk(s)"),
+        }],
+        is_error: false,
+    })
 }

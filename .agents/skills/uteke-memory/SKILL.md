@@ -29,6 +29,40 @@ Version: **0.7.3** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Ze
 | `uteke get <ID>` | Get single memory by UUID | |
 | `uteke forget <ID>` | Delete memory by ID, tag, tier, or all | `--tag`, `--cold`, `--all`, `--confirm` |
 
+### Code Indexing (per-project code memory)
+
+DB-per-repo model: a project store lives in `.uteke/` beside `.git`, so code
+memory travels with the repo and is auto-scoped by cwd. Source files are
+chunked by symbol (tree-sitter AST when available, regex fallback) and stored
+as recallable memories carrying `file:line` metadata under the `code` tag.
+
+| Command | Description | Key Options |
+|---------|-------------|-------------|
+| `uteke init --project` | Create repo-local store: `.uteke/uteke.toml` + `.gitignore` entry | `--namespace` |
+| `uteke index [PATH]` | Walk repo, chunk by symbol, embed as recallable memories (incremental by content hash). Streams per-file progress. | `--force`, `--dry-run`, `--status`, `--namespace` |
+| `uteke index --status` | Show current index coverage (file/chunk counts) without indexing | `--namespace`, `--json` |
+| `uteke ui` | Launch a local web UI: live chunking feed + interactive code graph | `--port` (7749), `--force`, `--no-index`, `--no-open` |
+
+- **Setup:** `uteke onboard` → choose "coding" to init the project store, pick a
+  code-friendly embedding model, and optionally index immediately. Or run
+  `uteke init --project` then `uteke index` manually.
+- **Embedding for code:** `voyage-4-nano` (2048d, code-friendly, local ONNX,
+  ~250MB) is the recommended backend; set `[embedding] backend = "voyage"` in
+  `.uteke/uteke.toml`. Default `embeddinggemma-q4` (768d) also works.
+- **Recall code by meaning:** `uteke recall "where is auth token validated"`
+  returns chunks with `symbol_type`, `symbol_name`, and `line_start`/`line_end`
+  in metadata. Filter to code only with `--tags code`.
+- **Incremental:** unchanged files (by content hash) are skipped; deleted files
+  are pruned. Re-run `uteke index` after edits; use `--force` to rebuild all.
+- **Languages with AST chunking:** rust, go, python, typescript, javascript,
+  java, c, cpp (others fall back to regex/whole-file).
+- **MCP:** the same capability is exposed as the `uteke_index` and
+  `uteke_index_status` tools for agents.
+- **Web UI:** `uteke ui` opens a local browser view (default `localhost:7749`)
+  that streams the live chunking feed while indexing, then renders an
+  interactive force-directed graph of files and their symbols (colored by
+  symbol type, hover for `file:line`). Single embedded page, no npm/network.
+
 ### Documents (Wiki / Knowledge Base)
 
 | Command | Description | Key Options |
