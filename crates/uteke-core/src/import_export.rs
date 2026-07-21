@@ -1,7 +1,7 @@
 //! Import and export memories in JSONL format.
 
 use crate::error::Error;
-use crate::memory::types::{ExportEntry, ImportResult, Memory, DEFAULT_NAMESPACE};
+use crate::memory::types::{DEFAULT_NAMESPACE, ExportEntry, ImportResult, Memory};
 
 impl crate::Uteke {
     /// Export all memories to JSONL format (one JSON object per line).

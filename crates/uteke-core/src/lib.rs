@@ -31,38 +31,38 @@ mod timeline;
 mod types;
 
 pub use chunker::{
-    chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language, extract_imports,
-    CodeChunk, TextChunk,
+    CodeChunk, TextChunk, chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language,
+    extract_imports,
 };
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
-    backlink_type_for, EdgeList, MemoryEdge, EDGE_REFERENCED_BY, EDGE_REFERENCES,
-    EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS,
+    EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES,
+    EDGE_TAGGED_AS, EdgeList, MemoryEdge, backlink_type_for,
 };
-pub use graph::{build_meta_relationship, is_relationship_meta, Relationship, VALID_REL_TYPES};
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
-pub use graph_rerank::{compute_graph_signals, rerank_with_graph, GraphRerankConfig, GraphSignals};
+pub use graph::{Relationship, VALID_REL_TYPES, build_meta_relationship, is_relationship_meta};
+pub use graph_rerank::{GraphRerankConfig, GraphSignals, compute_graph_signals, rerank_with_graph};
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
-    ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult, RecallStrategy,
-    SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
-    UnifiedSearchResult, DEFAULT_NAMESPACE,
+    DEFAULT_NAMESPACE, ExportEntry, ImportResult, Memory, MemoryTier, MemoryType, PruneResult,
+    RecallStrategy, SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
+    UnifiedSearchResult,
 };
 pub use memory::{
-    documents::{Document, DocumentChunk, DocumentSearchResult, DocumentSummary},
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
     TimeRange, TopicCluster,
+    documents::{Document, DocumentChunk, DocumentSearchResult, DocumentSummary},
 };
-pub use orphans::{compute_orphan_score, OrphanMemory, DEFAULT_ORPHAN_THRESHOLD};
+pub use orphans::{DEFAULT_ORPHAN_THRESHOLD, OrphanMemory, compute_orphan_score};
 pub use salience_recency::{
-    apply_boosts, recency_score, salience_score, type_half_life_days, SalienceRecencyConfig,
+    SalienceRecencyConfig, apply_boosts, recency_score, salience_score, type_half_life_days,
 };
 pub use timeline::{TimelineEvent, TimelineEventType};
 
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]
 pub use embed::OnnxEmbedder;
-pub use error::{format_bytes, Error};
+pub use error::{Error, format_bytes};
 pub use types::{DoctorCheck, DoctorReport, DoctorStatus, RepairReport, VerifyReport};
 
 /// Maximum memory content length (characters) — default, overridable via config (#404).
@@ -128,8 +128,8 @@ pub fn validate_input_with_limits(
     Ok(())
 }
 
-use memory::store::Store;
 use memory::VectorIndex;
+use memory::store::Store;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, RwLock};

@@ -1,8 +1,8 @@
 //! Room operations — collaborative memory spaces for multi-agent discussions.
 
 use crate::Error;
-use rusqlite::params;
 use rusqlite::OptionalExtension;
+use rusqlite::params;
 
 /// A shared collaboration context identified by an external ID.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1671,10 +1671,12 @@ mod tests {
     #[test]
     fn room_summary_with_docs_nonexistent_returns_none() {
         let store = Store::open(":memory:").unwrap();
-        assert!(store
-            .room_summary_with_docs("nonexistent-room")
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .room_summary_with_docs("nonexistent-room")
+                .unwrap()
+                .is_none()
+        );
     }
 
     // ── Cross-entity room↔document integration tests (#689 PR6) ─────────

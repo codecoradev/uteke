@@ -92,7 +92,7 @@ pub(crate) fn run(
             limit,
             min,
         } => {
-            if let Some(ref q) = query {
+            if let Some(q) = query {
                 // Semantic recall — rank by relevance
                 let min_score = min.unwrap_or(config.recall.min_score as f32);
                 let results = uteke

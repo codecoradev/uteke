@@ -132,7 +132,9 @@ uteke remember "Auth uses JWT with 24h expiry" --tags auth,security
         let existing = std::fs::read_to_string(&claude_md)
             .map_err(|e| format!("Failed to read CLAUDE.md: {e}"))?;
         if !existing.contains("UTEKE.md") {
-            let updated = format!("{existing}\n\n## Uteke Memory\n\nSee [UTEKE.md](UTEKE.md) for uteke memory commands.\n");
+            let updated = format!(
+                "{existing}\n\n## Uteke Memory\n\nSee [UTEKE.md](UTEKE.md) for uteke memory commands.\n"
+            );
             std::fs::write(&claude_md, updated)
                 .map_err(|e| format!("Failed to update CLAUDE.md: {e}"))?;
         }
@@ -609,7 +611,9 @@ fn init_hermes(json: bool) -> Result<(), String> {
             println!("  Copy to your Hermes plugins directory to activate.");
         }
         println!("\n  Memory actions: remember, recall, search, list, forget, stats");
-        println!("  Room actions:   room_create, room_remember, room_recall, room_list, room_summary, room_stats, room_delete");
+        println!(
+            "  Room actions:   room_create, room_remember, room_recall, room_list, room_summary, room_stats, room_delete"
+        );
         println!("\n  Make sure uteke-serve is running: uteke-serve --port 8767");
         println!("  Or use MCP: hermes mcp add uteke --command uteke-mcp");
     }

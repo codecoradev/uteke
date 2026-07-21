@@ -1,7 +1,7 @@
 //! ONNX-based embedding engine using EmbeddingGemma Q4 (768d).
 
-use crate::embed::Embedder;
 use crate::Error;
+use crate::embed::Embedder;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::PathBuf;

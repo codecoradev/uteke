@@ -5,7 +5,7 @@ use std::io::Cursor;
 use sha2::{Digest, Sha256};
 use tiny_http::{Header, Request, Response, StatusCode};
 
-use crate::types::{json_header, ErrorResponse, RecallFileSection};
+use crate::types::{ErrorResponse, RecallFileSection, json_header};
 
 /// Build a 401 Unauthorized response with CORS and WWW-Authenticate headers.
 pub fn unauthorized_response(

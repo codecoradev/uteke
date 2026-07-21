@@ -2,7 +2,7 @@
 
 use crate::error::Error;
 use crate::memory::types::{
-    BulkDeleteResult, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo, DEFAULT_NAMESPACE,
+    BulkDeleteResult, DEFAULT_NAMESPACE, Memory, MemoryTier, RecallStrategy, SearchResult, TagInfo,
 };
 use crate::memory::vector::cosine_distance_to_similarity;
 use std::sync::Mutex;

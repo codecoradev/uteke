@@ -10,7 +10,7 @@
 
 use crate::error::Error;
 use crate::memory::types::{Memory, SearchResult};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 

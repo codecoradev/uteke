@@ -19,11 +19,11 @@ mod tags;
 mod timeline;
 mod upgrade;
 
+use crate::Config;
 use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::cli::FeedbackAction;
 use crate::resolve_namespace;
-use crate::Config;
 use uteke_core::Uteke;
 
 pub(crate) use server::{is_server_running, run_via_server};

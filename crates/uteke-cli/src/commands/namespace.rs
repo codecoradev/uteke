@@ -1,9 +1,9 @@
 //! Namespace subcommands — list, stats, switch.
 
+use crate::Config;
 use crate::cli::Cli;
 use crate::cli::NamespaceCommands;
 use crate::output;
-use crate::Config;
 use uteke_core::Uteke;
 
 pub(crate) fn run(cli: &Cli, uteke: &Uteke, command: &NamespaceCommands) -> Result<(), String> {

@@ -210,7 +210,7 @@ pub(crate) fn run_import(
         other => {
             return Err(format!(
                 "Unknown import format: '{other}'. Use: jsonl, markdown, text"
-            ))
+            ));
         }
     };
 

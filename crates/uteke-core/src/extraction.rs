@@ -323,10 +323,12 @@ mod tests {
     #[test]
     fn rejects_empty_api_key() {
         let cfg = ExtractionConfig::default();
-        assert!(Extractor::new(&cfg)
-            .unwrap_err()
-            .to_string()
-            .contains("API key"));
+        assert!(
+            Extractor::new(&cfg)
+                .unwrap_err()
+                .to_string()
+                .contains("API key")
+        );
     }
 
     #[test]

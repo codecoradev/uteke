@@ -4,7 +4,7 @@
 //! File always captures DEBUG to `~/.uteke/uteke.log` with daily rotation.
 
 use tracing::Level;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize logging. Returns a guard that must stay alive for the
 /// file writer to continue flushing.
