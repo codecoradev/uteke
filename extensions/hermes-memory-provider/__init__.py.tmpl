@@ -1,12 +1,15 @@
-"""Uteke memory plugin — MemoryProvider interface.
+"""Uteke memory plugin — pre_llm_call auto-recall hook.
 
 Offline-first local memory backed by the `uteke` CLI (single Rust binary) or
-`uteke-serve` HTTP daemon. Recall uses local ONNX embeddings (no network).
-Fact extraction on session end / pre-compress uses uteke's opt-in
-`import --extract` against an OpenAI-compatible endpoint.
+`uteke-serve` HTTP daemon. Every turn, before the LLM call, this plugin
+recalls relevant memories via semantic search and injects them into the
+user message.
+
+This replaces the old Mode B (MemoryProvider, removed 2026-06-29) and the
+Mode C (shell hook). Both are now unified into a single Python plugin.
 
 Transport:
-  - subprocess (default): talks to the `uteke` binary directly via subprocess.
+  - subprocess (default): talks to the `uteke` binary directly.
     Requires the binary on PATH or set UTEKE_BIN.
   - HTTP (optional): talks to `uteke-serve` via HTTP. Set UTEKE_SERVER_URL
     to enable. Useful when the binary is unavailable, hangs, or runs as a
@@ -15,15 +18,12 @@ Transport:
 Config via $HERMES_HOME/uteke.json (preferred) or environment variables:
   UTEKE_BIN           — path to the uteke binary (default: search PATH)
   UTEKE_HOME          — HOME dir uteke runs under (holds ~/.uteke store)
-  UTEKE_NAMESPACE     — memory namespace (default: "default")
+  UTEKE_NAMESPACE     — memory namespace (default: agent profile name)
   UTEKE_SERVER_URL    — uteke-serve HTTP URL (default: http://127.0.0.1:8767)
   UTEKE_TOKEN         — auth token for uteke-serve (Bearer token)
-  UTEKE_EXTRACT       — "true"/"false": run LLM extraction on session end
-  UTEKE_EXTRACT_MODEL — chat model for extraction
-  UTEKE_EXTRACT_BASE_URL — OpenAI-compatible base URL
-  UTEKE_EXTRACT_API_KEY  — API key for extraction (secret)
-  UTEKE_RECALL_LIMIT  — number of memories to prefetch (default: 6)
-  UTEKE_RECALL_MIN_SCORE — drop recall hits below this score (default: 0.45)
+  UTEKE_RECALL_LIMIT  — number of memories to prefetch (default: 5)
+  UTEKE_RECALL_MIN_SCORE — drop recall hits below this score (default: 0.40)
+  UTEKE_RECALL_TIMEOUT — max seconds for recall per turn (default: 15)
 """
 
 from __future__ import annotations
@@ -33,15 +33,11 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List
-
-from agent.memory_provider import MemoryProvider
-from tools.registry import tool_error
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +46,11 @@ logger = logging.getLogger(__name__)
 _BREAKER_THRESHOLD = 5
 _BREAKER_COOLDOWN_SECS = 120
 
-# Subprocess timeouts (seconds)
-_RECALL_TIMEOUT = 20
-_REMEMBER_TIMEOUT = 20
-_EXTRACT_TIMEOUT = 240
+# Subprocess timeout (seconds)
+_DEFAULT_RECALL_TIMEOUT = 15
 
-# HTTP timeouts (seconds)
+# HTTP timeout (seconds)
 _HTTP_RECALL_TIMEOUT = 10
-_HTTP_REMEMBER_TIMEOUT = 10
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +59,12 @@ _HTTP_REMEMBER_TIMEOUT = 10
 
 def _load_config() -> dict:
     """Load config from env vars, overridden by $HERMES_HOME/uteke.json."""
-    from hermes_constants import get_hermes_home
+    try:
+        from hermes_constants import get_hermes_home
+    except ImportError:
+        get_hermes_home = lambda: None  # type: ignore[assignment]
+
+    hermes_home = get_hermes_home() if get_hermes_home else os.environ.get("HERMES_HOME", "")
 
     def _envbool(key: str, default: bool) -> bool:
         v = os.environ.get(key)
@@ -74,72 +72,77 @@ def _load_config() -> dict:
             return default
         return v.strip().lower() in ("1", "true", "yes", "on")
 
+    def _envfloat(key: str, default: float) -> float:
+        v = os.environ.get(key)
+        if v is None:
+            return default
+        try:
+            return float(v)
+        except ValueError:
+            return default
+
+    def _envint(key: str, default: int) -> int:
+        v = os.environ.get(key)
+        if v is None:
+            return default
+        try:
+            return int(v)
+        except ValueError:
+            return default
+
     config = {
         "bin": os.environ.get("UTEKE_BIN", ""),
         "uteke_home": os.environ.get("UTEKE_HOME", ""),
-        "namespace": os.environ.get("UTEKE_NAMESPACE", "default"),
+        "namespace": os.environ.get("UTEKE_NAMESPACE", ""),
         "server_url": os.environ.get("UTEKE_SERVER_URL", ""),
         "token": os.environ.get("UTEKE_TOKEN", ""),
-        "extract": _envbool("UTEKE_EXTRACT", True),
-        "extract_model": os.environ.get("UTEKE_EXTRACT_MODEL", ""),
-        "extract_base_url": os.environ.get("UTEKE_EXTRACT_BASE_URL", ""),
-        "extract_api_key": os.environ.get("UTEKE_EXTRACT_API_KEY", ""),
-        "recall_limit": int(os.environ.get("UTEKE_RECALL_LIMIT", "6") or 6),
-        "recall_min_score": float(os.environ.get("UTEKE_RECALL_MIN_SCORE", "0.45") or 0.45),
+        "recall_limit": _envint("UTEKE_RECALL_LIMIT", 5),
+        "recall_min_score": _envfloat("UTEKE_RECALL_MIN_SCORE", 0.40),
+        "recall_timeout": _envint("UTEKE_RECALL_TIMEOUT", _DEFAULT_RECALL_TIMEOUT),
     }
 
-    config_path = get_hermes_home() / "uteke.json"
-    if config_path.exists():
-        try:
-            file_cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            config.update({k: v for k, v in file_cfg.items()
-                           if v is not None and v != ""})
-        except Exception:
-            pass
+    if hermes_home:
+        config_path = os.path.join(hermes_home, "uteke.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    file_cfg = json.loads(f.read())
+                config.update({k: v for k, v in file_cfg.items()
+                               if v is not None and v != ""})
+            except Exception:
+                pass
 
     return config
 
 
-# ---------------------------------------------------------------------------
-# Tool schemas
-# ---------------------------------------------------------------------------
+def _resolve_agent_name() -> str:
+    """Determine the calling agent's name from environment.
 
-RECALL_SCHEMA = {
-    "name": "uteke_recall",
-    "description": (
-        "Search long-term memory by meaning. Returns facts from prior sessions "
-        "ranked by similarity. Use when you need context about the user, past "
-        "decisions, or project details not already in this conversation."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "What to search for."},
-            "limit": {"type": "integer", "description": "Max results (default: 8, max: 25)."},
-        },
-        "required": ["query"],
-    },
-}
+    Tries HERMES_HOME path basename (profile name), falls back to
+    HERMES_AGENT_NAME, then "default".
+    """
+    try:
+        home = os.environ.get("HERMES_HOME", "")
+        if home:
+            basename = os.path.basename(home)
+            if basename and basename != "data":
+                return basename.lower()
+        return os.environ.get("HERMES_AGENT_NAME", "default")
+    except Exception:
+        return "default"
 
-REMEMBER_SCHEMA = {
-    "name": "uteke_remember",
-    "description": (
-        "Store a durable fact verbatim (no LLM extraction). Use for explicit "
-        "preferences, corrections, or decisions worth keeping across sessions."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "content": {"type": "string", "description": "The fact to store."},
-            "tags": {"type": "string", "description": "Optional comma-separated tags."},
-        },
-        "required": ["content"],
-    },
-}
+
+def _resolve_bin(config: dict) -> str:
+    """Find the uteke binary."""
+    b = config.get("bin") or ""
+    if b and os.path.exists(b):
+        return b
+    found = shutil.which("uteke")
+    return found or ""
 
 
 # ---------------------------------------------------------------------------
-# HTTP transport helpers
+# HTTP transport
 # ---------------------------------------------------------------------------
 
 def _http_request(url: str, method: str = "GET", data: dict = None,
@@ -160,11 +163,57 @@ def _http_request(url: str, method: str = "GET", data: dict = None,
 
 
 # ---------------------------------------------------------------------------
-# MemoryProvider implementation
+# Recall (dual transport)
 # ---------------------------------------------------------------------------
 
-class UtekeMemoryProvider(MemoryProvider):
-    """Offline-first local memory via the uteke CLI or uteke-serve HTTP."""
+def _recall_subprocess(bin_path: str, env: dict, query: str,
+                        namespace: str, limit: int, timeout: int) -> List[Dict[str, Any]]:
+    """Recall via subprocess (uteke binary)."""
+    cmd = [bin_path, "recall", query, "--namespace", namespace,
+           "--limit", str(limit), "--json"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    if proc.returncode != 0:
+        raise RuntimeError(f"recall exit {proc.returncode}: {proc.stderr.strip()[:200]}")
+    return _parse_recall_results(json.loads(proc.stdout or "[]"))
+
+
+def _recall_http(server_url: str, token: str, query: str,
+                 namespace: str, limit: int) -> List[Dict[str, Any]]:
+    """Recall via HTTP (uteke-serve)."""
+    result = _http_request(
+        f"{server_url}/recall",
+        method="POST",
+        data={"query": query, "namespace": namespace, "limit": limit},
+        token=token,
+        timeout=_HTTP_RECALL_TIMEOUT,
+    )
+    if "error" in result:
+        raise RuntimeError(f"recall HTTP error: {result['error']}")
+    if not isinstance(result, list):
+        return []
+    return _parse_recall_results(result)
+
+
+def _parse_recall_results(data: list) -> List[Dict[str, Any]]:
+    """Parse recall results from both subprocess JSON and HTTP API."""
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        mem = item.get("memory", {})
+        score = item.get("score", 0.0)
+        content = mem.get("content", "")
+        if content and score >= 0:
+            out.append({"content": content, "score": score, "tags": mem.get("tags", [])})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Recall manager (thread-safe, circuit breaker)
+# ---------------------------------------------------------------------------
+
+class _RecallManager:
+    """Manages recall state with circuit breaker and thread safety."""
 
     def __init__(self):
         self._config: dict = {}
@@ -174,97 +223,26 @@ class UtekeMemoryProvider(MemoryProvider):
         self._server_url = ""
         self._token = ""
         self._use_http = False
-        self._extract = True
-        self._extract_model = ""
-        self._extract_base_url = ""
-        self._extract_api_key = ""
-        self._recall_limit = 6
-        self._recall_min_score = 0.45
-
-        self._session_id = ""
-        self._platform = ""
-        self._agent_identity = ""
-
-        self._prefetch_result = ""
-        self._prefetch_lock = threading.Lock()
-        self._prefetch_thread = None
-        self._sync_thread = None
-        self._shutting_down = threading.Event()
+        self._recall_limit = 5
+        self._recall_min_score = 0.40
+        self._recall_timeout = _DEFAULT_RECALL_TIMEOUT
 
         self._consecutive_failures = 0
         self._breaker_open_until = 0.0
+        self._lock = threading.Lock()
 
-    @property
-    def name(self) -> str:
-        return "uteke"
-
-    # -- availability + config ----------------------------------------------
-
-    def _resolve_bin(self, cfg: dict) -> str:
-        b = cfg.get("bin") or ""
-        if b and os.path.exists(b):
-            return b
-        found = shutil.which("uteke")
-        return found or ""
-
-    def is_available(self) -> bool:
-        cfg = _load_config()
-        server_url = cfg.get("server_url", "")
-        if server_url:
-            # HTTP mode: check uteke-serve is reachable
-            try:
-                result = _http_request(
-                    f"{server_url}/health", timeout=5, token=cfg.get("token", ""))
-                return "error" not in result
-            except Exception:
-                return False
-        # Subprocess mode: check binary exists
-        return bool(self._resolve_bin(cfg))
-
-    def save_config(self, values, hermes_home):
-        from pathlib import Path
-        config_path = Path(hermes_home) / "uteke.json"
-        existing = {}
-        if config_path.exists():
-            try:
-                existing = json.loads(config_path.read_text())
-            except Exception:
-                pass
-        existing.update(values)
-        config_path.write_text(json.dumps(existing, indent=2))
-
-    def get_config_schema(self):
-        return [
-            {"key": "bin", "description": "Path to the uteke binary (blank = search PATH)", "env_var": "UTEKE_BIN"},
-            {"key": "uteke_home", "description": "HOME dir uteke runs under (holds ~/.uteke store)", "env_var": "UTEKE_HOME"},
-            {"key": "namespace", "description": "Memory namespace", "default": "default", "env_var": "UTEKE_NAMESPACE"},
-            {"key": "server_url", "description": "uteke-serve HTTP URL (enables HTTP transport)", "default": "", "env_var": "UTEKE_SERVER_URL"},
-            {"key": "token", "description": "Auth token for uteke-serve (Bearer token)", "secret": True, "env_var": "UTEKE_TOKEN"},
-            {"key": "extract", "description": "Run LLM fact extraction on session end", "default": "true", "choices": ["true", "false"], "env_var": "UTEKE_EXTRACT"},
-            {"key": "extract_model", "description": "Chat model for extraction", "env_var": "UTEKE_EXTRACT_MODEL"},
-            {"key": "extract_base_url", "description": "OpenAI-compatible base URL for extraction", "env_var": "UTEKE_EXTRACT_BASE_URL"},
-            {"key": "extract_api_key", "description": "API key for extraction", "secret": True, "env_var": "UTEKE_EXTRACT_API_KEY"},
-            {"key": "recall_limit", "description": "Memories to prefetch per turn", "default": "6", "env_var": "UTEKE_RECALL_LIMIT"},
-        ]
-
-    def initialize(self, session_id: str, **kwargs) -> None:
+    def initialize(self) -> None:
+        """Load config and resolve transport. Called once at plugin load."""
         cfg = _load_config()
         self._config = cfg
-        self._bin = self._resolve_bin(cfg)
-        self._namespace = cfg.get("namespace", "default")
+        self._bin = _resolve_bin(cfg)
+        self._namespace = cfg.get("namespace", "") or _resolve_agent_name()
         self._server_url = cfg.get("server_url", "").rstrip("/")
         self._token = cfg.get("token", "")
         self._use_http = bool(self._server_url)
-        self._extract = bool(cfg.get("extract", True))
-        self._extract_model = cfg.get("extract_model", "")
-        self._extract_base_url = cfg.get("extract_base_url", "")
-        self._extract_api_key = cfg.get("extract_api_key", "")
-        self._recall_limit = int(cfg.get("recall_limit", 6) or 6)
-        self._recall_min_score = float(cfg.get("recall_min_score", 0.45) or 0.45)
-
-        self._session_id = str(session_id or "").strip()
-        self._platform = kwargs.get("platform", "")
-        self._agent_identity = kwargs.get("agent_identity", "")
+        self._recall_limit = int(cfg.get("recall_limit", 5) or 5)
+        self._recall_min_score = float(cfg.get("recall_min_score", 0.40) or 0.40)
+        self._recall_timeout = int(cfg.get("recall_timeout", _DEFAULT_RECALL_TIMEOUT) or _DEFAULT_RECALL_TIMEOUT)
 
         # uteke stores under $HOME/.uteke; let the user point it at a fixed home.
         self._env = dict(os.environ)
@@ -273,310 +251,114 @@ class UtekeMemoryProvider(MemoryProvider):
             self._env["HOME"] = uteke_home
 
         transport = "HTTP" if self._use_http else "subprocess"
-        logger.debug("Uteke initialized: transport=%s bin=%s ns=%s server=%s extract=%s",
-                     transport, self._bin, self._namespace, self._server_url, self._extract)
-
-    # -- circuit breaker -----------------------------------------------------
+        logger.info(
+            "uteke-memory plugin initialized: transport=%s bin=%s ns=%s server=%s limit=%d min_score=%.2f",
+            transport, self._bin or "(PATH)", self._namespace, self._server_url or "(none)",
+            self._recall_limit, self._recall_min_score,
+        )
 
     def _is_breaker_open(self) -> bool:
         if self._consecutive_failures < _BREAKER_THRESHOLD:
             return False
         if time.monotonic() >= self._breaker_open_until:
-            self._consecutive_failures = 0
+            with self._lock:
+                self._consecutive_failures = 0
             return False
         return True
 
     def _record_success(self):
-        self._consecutive_failures = 0
+        with self._lock:
+            self._consecutive_failures = 0
 
     def _record_failure(self):
-        self._consecutive_failures += 1
-        if self._consecutive_failures >= _BREAKER_THRESHOLD:
-            self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN_SECS
-            logger.warning("Uteke circuit breaker tripped after %d failures; pausing %ds.",
-                           self._consecutive_failures, _BREAKER_COOLDOWN_SECS)
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= _BREAKER_THRESHOLD:
+                self._breaker_open_until = time.monotonic() + _BREAKER_COOLDOWN_SECS
+                logger.warning("uteke circuit breaker tripped after %d failures; pausing %ds.",
+                               self._consecutive_failures, _BREAKER_COOLDOWN_SECS)
 
-    # -- subprocess helpers --------------------------------------------------
-
-    def _run(self, args: List[str], *, timeout: int, stdin: str = None) -> subprocess.CompletedProcess:
-        cmd = [self._bin] + args
-        return subprocess.run(
-            cmd, input=stdin, capture_output=True, text=True,
-            timeout=timeout, env=self._env,
-        )
-
-    # -- recall (dual transport) ----------------------------------------------
-
-    def _recall_subprocess(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Recall via subprocess (uteke binary)."""
-        proc = self._run(
-            ["recall", query, "--namespace", self._namespace,
-             "--limit", str(limit), "--json"],
-            timeout=_RECALL_TIMEOUT,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(f"recall exit {proc.returncode}: {proc.stderr.strip()[:200]}")
-        return self._parse_recall_results(json.loads(proc.stdout or "[]"))
-
-    def _recall_http(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Recall via HTTP (uteke-serve)."""
-        result = _http_request(
-            f"{self._server_url}/recall",
-            method="POST",
-            data={"query": query, "namespace": self._namespace, "limit": limit},
-            token=self._token,
-            timeout=_HTTP_RECALL_TIMEOUT,
-        )
-        if "error" in result:
-            raise RuntimeError(f"recall HTTP error: {result['error']}")
-        if not isinstance(result, list):
+    def recall(self, query: str) -> List[Dict[str, Any]]:
+        """Recall memories, applying circuit breaker and score filtering."""
+        if self._is_breaker_open():
             return []
-        return self._parse_recall_results(result)
 
-    def _recall(self, query: str, limit: int) -> List[Dict[str, Any]]:
-        """Return [{content, score, tags}] above min_score."""
-        if self._use_http:
-            return self._recall_http(query, limit)
-        return self._recall_subprocess(query, limit)
-
-    @staticmethod
-    def _parse_recall_results(data: list) -> List[Dict[str, Any]]:
-        """Parse recall results from both subprocess JSON and HTTP API."""
-        out = []
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            mem = item.get("memory", {})
-            score = item.get("score", 0.0)
-            content = mem.get("content", "")
-            if content and score >= 0:  # score filtering done by caller
-                out.append({"content": content, "score": score, "tags": mem.get("tags", [])})
-        return out
-
-    # -- remember (dual transport) -------------------------------------------
-
-    def _remember_subprocess(self, content: str, tags: str = "") -> None:
-        """Store memory via subprocess."""
-        cmd = ["remember", content, "--namespace", self._namespace]
-        if tags:
-            cmd += ["--tags", tags]
-        proc = self._run(cmd, timeout=_REMEMBER_TIMEOUT)
-        if proc.returncode != 0:
-            raise RuntimeError(f"remember exit {proc.returncode}: {proc.stderr.strip()[:200]}")
-
-    def _remember_http(self, content: str, tags: str = "") -> None:
-        """Store memory via HTTP."""
-        data: Dict[str, Any] = {
-            "content": content,
-            "namespace": self._namespace,
-        }
-        if tags:
-            data["tags"] = [t.strip() for t in tags.split(",") if t.strip()]
-        result = _http_request(
-            f"{self._server_url}/remember",
-            method="POST",
-            data=data,
-            token=self._token,
-            timeout=_HTTP_REMEMBER_TIMEOUT,
-        )
-        if "error" in result:
-            raise RuntimeError(f"remember HTTP error: {result['error']}")
-
-    def _remember(self, content: str, tags: str = "") -> None:
-        """Store a memory using configured transport."""
-        if self._use_http:
-            self._remember_http(content, tags)
-        else:
-            self._remember_subprocess(content, tags)
-
-    # -- context recall (prefetch) ------------------------------------------
-
-    def system_prompt_block(self) -> str:
-        transport = "HTTP" if self._use_http else "local"
-        return (
-            "# Uteke Memory (offline-first, persistent)\n"
-            f"Active ({transport}). Namespace: {self._namespace}.\n"
-            "Relevant memories are injected automatically before each turn. "
-            "Use uteke_recall to search more, uteke_remember to store a fact."
-        )
-
-    def prefetch(self, query: str, *, session_id: str = "") -> str:
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=3.0)
-        with self._prefetch_lock:
-            result = self._prefetch_result
-            self._prefetch_result = ""
-        if not result:
-            return ""
-        return f"## Uteke Memory\n{result}"
-
-    def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        if self._shutting_down.is_set() or self._is_breaker_open() or not query.strip():
-            return
-
-        def _bg():
-            try:
-                hits = self._recall(query, self._recall_limit)
-                # Apply min_score filtering here (not in parser, so HTTP can return all)
-                hits = [h for h in hits if h.get("score", 0) >= self._recall_min_score]
-                if hits:
-                    lines = "\n".join(f"- {h['content']}" for h in hits)
-                    with self._prefetch_lock:
-                        self._prefetch_result = lines
-                self._record_success()
-            except Exception as e:
-                self._record_failure()
-                logger.debug("Uteke prefetch failed: %s", e)
-
-        self._prefetch_thread = threading.Thread(target=_bg, daemon=True, name="uteke-prefetch")
-        self._prefetch_thread.start()
-
-    # -- extraction on session boundaries -----------------------------------
-
-    def _extract_messages(self, messages: List[Dict[str, Any]]) -> None:
-        """Convert messages to clean text and run `import --extract` (blocking).
-
-        Extraction always uses subprocess because uteke-serve does not expose
-        an extraction endpoint. Falls back to subprocess regardless of transport
-        mode.
-        """
-        if not self._extract or not self._bin:
-            return
-        text = _messages_to_text(messages)
-        if len(text) < 50:
-            return
-
-        tmp = None
         try:
-            with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as fh:
-                fh.write(text)
-                tmp = fh.name
-            args = [
-                "import", tmp,
-                "--namespace", self._namespace,
-                "--extract",
-                "--tags", f"hermes-session,{self._platform or 'cli'},session:{self._session_id}",
-            ]
-            if self._extract_model:
-                args += ["--extract-model", self._extract_model]
-            if self._extract_base_url:
-                args += ["--extract-base-url", self._extract_base_url]
-            if self._extract_api_key:
-                args += ["--extract-api-key", self._extract_api_key]
-            proc = self._run(args, timeout=_EXTRACT_TIMEOUT)
-            if proc.returncode == 0:
-                self._record_success()
-                logger.debug("Uteke extract on session end: %s", proc.stdout.strip()[:120])
+            if self._use_http:
+                hits = _recall_http(self._server_url, self._token, query,
+                                   self._namespace, self._recall_limit)
             else:
-                self._record_failure()
-                logger.warning("Uteke extract failed (%d): %s", proc.returncode, proc.stderr.strip()[:200])
+                if not self._bin:
+                    logger.warning("uteke binary not found on PATH and UTEKE_BIN not set.")
+                    return []
+                hits = _recall_subprocess(self._bin, self._env, query,
+                                          self._namespace, self._recall_limit,
+                                          self._recall_timeout)
+
+            # Apply min_score filtering
+            hits = [h for h in hits if h.get("score", 0) >= self._recall_min_score]
+            self._record_success()
+            return hits
         except Exception as e:
             self._record_failure()
-            logger.warning("Uteke extract error: %s", e)
-        finally:
-            if tmp and os.path.exists(tmp):
-                try:
-                    os.unlink(tmp)
-                except Exception:
-                    pass
-
-    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
-        if self._shutting_down.is_set() or self._is_breaker_open():
-            return
-        # Run on a background thread so session teardown isn't blocked.
-        t = threading.Thread(target=self._extract_messages, args=(messages,),
-                             daemon=True, name="uteke-session-end")
-        t.start()
-        # Give it a head start but don't hang teardown indefinitely.
-        t.join(timeout=_EXTRACT_TIMEOUT)
-
-    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
-        # Extract the about-to-be-discarded messages so they survive compaction.
-        if not self._shutting_down.is_set() and not self._is_breaker_open():
-            self._extract_messages(messages)
-        return ""
-
-    # -- manual tools --------------------------------------------------------
-
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [RECALL_SCHEMA, REMEMBER_SCHEMA]
-
-    def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
-        if self._is_breaker_open():
-            return tool_error("Uteke temporarily unavailable (consecutive failures). Will retry automatically.")
-
-        if tool_name == "uteke_recall":
-            query = args.get("query", "")
-            if not query:
-                return tool_error("Missing required parameter: query")
-            limit = min(int(args.get("limit", 8) or 8), 25)
-            try:
-                hits = self._recall(query, limit)
-                # Apply min_score filtering
-                hits = [h for h in hits if h.get("score", 0) >= self._recall_min_score]
-                self._record_success()
-                if not hits:
-                    return json.dumps({"result": "No relevant memories found."})
-                return json.dumps({"results": hits, "count": len(hits)})
-            except Exception as e:
-                self._record_failure()
-                return tool_error(f"Recall failed: {e}")
-
-        elif tool_name == "uteke_remember":
-            content = args.get("content", "")
-            if not content:
-                return tool_error("Missing required parameter: content")
-            tags = args.get("tags", "")
-            try:
-                self._remember(content, tags)
-                self._record_success()
-                return json.dumps({"result": "Fact stored."})
-            except Exception as e:
-                self._record_failure()
-                return tool_error(f"Failed to store: {e}")
-
-        return tool_error(f"Unknown tool: {tool_name}")
-
-    def shutdown(self) -> None:
-        self._shutting_down.set()
-        for t in (self._prefetch_thread, self._sync_thread):
-            if t and t.is_alive():
-                t.join(timeout=5.0)
+            logger.debug("uteke recall failed: %s", e)
+            return []
 
 
-# ---------------------------------------------------------------------------
-# Message -> clean text (mirrors hermes_session_to_text.py)
-# ---------------------------------------------------------------------------
-
-def _block_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict):
-                if block.get("type") in (None, "text") and "text" in block:
-                    parts.append(block["text"])
-            elif isinstance(block, str):
-                parts.append(block)
-        return "\n".join(p.strip() for p in parts if p and p.strip())
-    return ""
+# Process-wide singleton
+_manager = _RecallManager()
 
 
-def _messages_to_text(messages: List[Dict[str, Any]]) -> str:
-    out = []
-    for msg in messages:
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        text = _block_text(msg.get("content"))
-        if not text:
-            continue
-        label = "User" if role == "user" else "Assistant"
-        out.append(f"{label}: {text}")
-    return "\n\n".join(out)
+def _pre_llm_call(
+    session_id: str = "",
+    user_message: str = "",
+    conversation_history: list = None,
+    is_first_turn: bool = False,
+    model: str = "",
+    platform: str = "",
+    **kwargs,
+) -> dict:
+    """pre_llm_call plugin hook — auto-recall relevant memories.
+
+    Runs in-process (same Python runtime as the gateway). Has full access
+    to contextvars. Returns {"context": "..."} to inject into the user
+    message before the LLM call.
+
+    This runs synchronously in the turn prologue (turn_context.py). Keep it
+    fast — the recall is bounded by UTEKE_RECALL_TIMEOUT (default 15s).
+    """
+    if not user_message or not isinstance(user_message, str):
+        return {}
+    if len(user_message.strip()) < 5:
+        return {}
+
+    # Truncate long messages to save embedding time
+    query = user_message.strip()[:500]
+
+    hits = _manager.recall(query)
+    if not hits:
+        return {}
+
+    lines = []
+    for i, mem in enumerate(hits, 1):
+        content = mem["content"]
+        if len(content) > 200:
+            content = content[:200] + "..."
+        score_str = f"{mem['score']:.2f}"
+        tags = mem.get("tags", [])
+        tag_str = f" [{', '.join(tags)}]" if tags else ""
+        lines.append(f"{i}. [{score_str}]{tag_str} {content}")
+
+    return {"context": f"<recalled-memories>\n" + "\n".join(lines) + "\n</recalled-memories>"}
 
 
 def register(ctx) -> None:
-    """Register Uteke as a memory provider plugin."""
-    ctx.register_memory_provider(UtekeMemoryProvider())
+    """Register the uteke auto-recall plugin.
+
+    1. Initialize the recall manager (load config, resolve transport).
+    2. Register a pre_llm_call hook that runs uteke recall before every
+       LLM call and injects relevant memories into the user message.
+    """
+    _manager.initialize()
+    ctx.register_hook("pre_llm_call", _pre_llm_call)
+    logger.info("uteke-memory plugin registered: pre_llm_call hook active.")
