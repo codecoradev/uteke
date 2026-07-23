@@ -1,11 +1,8 @@
-name: uteke
-version: 1.1.0
-description: "Uteke — offline-first local memory. Vector recall via local ONNX embeddings; opt-in LLM fact extraction on session end. Single-binary, no SaaS."
-# No pip deps: uteke is a native binary invoked via subprocess or HTTP.
+name: uteke-memory
+version: 2.0.0
+description: "Uteke — offline-first local memory with auto-recall. Registers a pre_llm_call plugin hook for automatic memory injection every turn. Requires uteke binary on PATH or UTEKE_BIN env var."
+author: CodeCoraDev
 pip_dependencies: []
 requires_env: []
-hooks:
-  - on_session_end
-  - on_pre_compress
-# Note: deprecated for Hermes Agent (removed 2026-06-29).
-# Still supported for pi, claude-code, and cursor agents.
+provides_hooks:
+  - pre_llm_call

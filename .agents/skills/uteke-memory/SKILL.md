@@ -5,7 +5,13 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.7.3** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Zero unsafe code.
+Version: **0.10.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Zero unsafe code.
+
+> **Hermes integration:** Install the `uteke-memory` plugin for automatic recall
+> on every turn via the `pre_llm_call` hook. No shell hook or daemon needed.
+> See `extensions/hermes-memory-provider/` for the plugin source.
+> Manual tool calls via `uteke-tool` plugin remain available for explicit
+> remember/forget/room operations.
 
 ## Global Flags (all commands)
 
@@ -259,6 +265,28 @@ Without project tags, memories from all projects mix together. When you recall "
 | Memory feels stale | `uteke dream` or `uteke importance` |
 | Index feels corrupt | `uteke doctor` → `uteke repair` |
 
+## Hermes Auto-Recall Plugin
+
+The `uteke-memory` plugin registers a `pre_llm_call` hook that automatically
+recalls relevant memories on every turn and injects them into the user message.
+No shell hook, no daemon required (subprocess transport). Supports HTTP transport
+to `uteke-serve` for container deployments.
+
+```bash
+# Generate and install the plugin
+uteke init --agent hermes
+# → writes to ~/.hermes/plugins/uteke-memory/
+
+# Enable in config.yaml
+# plugins:
+#   enabled:
+#     - uteke-memory
+```
+
+Config via `~/.hermes/uteke.json` or env vars:
+`UTEKE_BIN`, `UTEKE_NAMESPACE`, `UTEKE_SERVER_URL`, `UTEKE_TOKEN`,
+`UTEKE_RECALL_LIMIT` (default 5), `UTEKE_RECALL_MIN_SCORE` (default 0.40).
+
 ## Server Mode (uteke-serve)
 
 HTTP daemon with REST API for all operations + monitoring/maintenance endpoints.
@@ -268,4 +296,4 @@ uteke-serve --port 8767
 # CLI auto-routes to server when running: ~42ms recall vs ~3s cold start
 ```
 
-Endpoints mirror CLI commands (e.g., `POST /remember`, `POST /recall`, `POST /doc/create`). Supports read-only API tokens for restricted access.
+Endpoints mirror CLI commands (e.g., `POST /remember`, `POST /recall`). Supports read-only API tokens for restricted access.
