@@ -707,21 +707,17 @@ mod tests {
             "plugin __init__.py must expose a register() entry point"
         );
         assert!(
-            INIT_PY.contains("MemoryProvider"),
-            "plugin must implement the MemoryProvider interface"
+            INIT_PY.contains("register_hook"),
+            "plugin must register a pre_llm_call hook via ctx.register_hook"
         );
     }
 
     #[test]
     fn memory_provider_manifest_declares_hooks() {
-        assert!(PLUGIN_YAML.contains("name: uteke"));
+        assert!(PLUGIN_YAML.contains("name: uteke-memory"));
         assert!(
-            PLUGIN_YAML.contains("on_session_end"),
-            "manifest must declare the on_session_end hook for extraction"
-        );
-        assert!(
-            PLUGIN_YAML.contains("on_pre_compress"),
-            "manifest must declare the on_pre_compress hook"
+            PLUGIN_YAML.contains("pre_llm_call"),
+            "manifest must declare the pre_llm_call hook for auto-recall"
         );
     }
 
