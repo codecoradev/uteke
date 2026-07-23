@@ -105,7 +105,8 @@ def _load_config() -> dict:
         config_path = os.path.join(hermes_home, "uteke.json")
         if os.path.exists(config_path):
             try:
-                file_cfg = json.loads(open(config_path, encoding="utf-8").read())
+                with open(config_path, encoding="utf-8") as f:
+                    file_cfg = json.loads(f.read())
                 config.update({k: v for k, v in file_cfg.items()
                                if v is not None and v != ""})
             except Exception:
@@ -193,7 +194,6 @@ def _recall_http(server_url: str, token: str, query: str,
     return _parse_recall_results(result)
 
 
-@staticmethod
 def _parse_recall_results(data: list) -> List[Dict[str, Any]]:
     """Parse recall results from both subprocess JSON and HTTP API."""
     out = []
