@@ -2034,14 +2034,22 @@ mod tests {
 
     #[test]
     fn test_uteke_home_default_no_migration() {
-        // Without UTEKE_HOME, should return ~/.codecora/uteke (no old dir = no migration).
+        // Ensure no side effects: use a temp dir as HOME so ~/.uteke can't exist.
+        let tmp = std::env::temp_dir().join("uteke_test_home_default");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
         unsafe {
+            std::env::set_var("HOME", &tmp);
             std::env::remove_var("UTEKE_HOME");
         }
-        let home = dirs::home_dir().expect("test requires HOME");
-        let expected = home.join(".codecora/uteke");
+        let expected = tmp.join(".codecora/uteke");
         let result = uteke_home().unwrap();
         assert_eq!(result, expected);
+        // Cleanup: restore original HOME
+        unsafe {
+            std::env::remove_var("HOME");
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
