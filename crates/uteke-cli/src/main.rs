@@ -55,6 +55,14 @@ fn main() {
             }
             std::process::exit(0);
         }
+        Commands::Upgrade { yes } => {
+            // Upgrade only needs network + filesystem — skip opening the store (#772).
+            if let Err(e) = commands::upgrade::run(*yes) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
         _ => {}
     }
 

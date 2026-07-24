@@ -17,7 +17,7 @@ mod room;
 mod server;
 mod tags;
 mod timeline;
-mod upgrade;
+pub(crate) mod upgrade;
 
 use crate::Config;
 use crate::cli::Cli;
