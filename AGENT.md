@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local clone
-- **Version:** 0.7.3
+- **Version:** 0.10.0
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -79,7 +79,7 @@ crates/uteke-server/src/
 | Vector Index | usearch v2.25.3 | Persistent HNSW, `RwLock` for concurrent reads |
 | Full-Text Search | SQLite FTS5 | Virtual table, phrase + token-OR fallback |
 | Hybrid Search | RRF (k=60) | Reciprocal Rank Fusion merges vector + FTS5 results |
-| Storage | SQLite (rusqlite) | WAL mode, schema v5 |
+| Storage | SQLite (rusqlite) | WAL mode, schema v15 |
 | Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, `Mutex` (ONNX tokenizer needs `&mut self`) |
 | CLI | clap v4 | Standard Rust CLI |
 | Server | actix-web | CORS enabled, ~42ms warm recall |
