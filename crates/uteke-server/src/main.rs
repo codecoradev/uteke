@@ -100,7 +100,7 @@ fn main() {
                 println!("  CLI args override config values.");
                 println!();
                 println!("Environment:");
-                println!("  UTEKE_HOME          Data directory (default: ~/.uteke)");
+                println!("  UTEKE_HOME          Data directory (default: ~/.codecora/uteke)");
                 println!("  UTEKE_AUTH_TOKEN     Bearer token (alternative to --auth-token)");
                 println!(
                     "  UTEKE_READ_ONLY_TOKEN  Read-only token (alternative to --read-only-token)"
@@ -504,7 +504,7 @@ struct ServerFileSection {
 }
 
 /// Find and parse the nearest uteke.toml, looking at:
-/// 1. $UTEKE_HOME/uteke.toml (or ~/.uteke/uteke.toml)
+/// 1. $UTEKE_HOME/uteke.toml (or ~/.codecora/uteke/uteke.toml)
 /// 2. $CWD/.uteke/uteke.toml
 fn load_uteke_toml() -> ServerFileConfig {
     let mut config = ServerFileConfig::default();

@@ -35,7 +35,7 @@ The wizard covers:
 3. **Integration mode** — manual tool (explicit calls) vs memory-provider (auto recall + extraction)
 4. **Namespace** — for multi-agent isolation
 5. **Feature toggles** — Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode
-6. **Config write** — generates `~/.uteke/uteke.toml` with your choices
+6. **Config write** — generates `~/.codecora/uteke/uteke.toml` with your choices
 7. **Agent init** — runs `uteke init --agent <your-choice>` automatically
 8. **Feature showcase** — prints all uteke commands grouped by category
 
@@ -158,10 +158,10 @@ uteke repair
 
 ## Where is Data Stored?
 
-All data lives in `~/.uteke/`:
+All data lives in `~/.codecora/uteke/`:
 
 ```
-~/.uteke/
+~/.codecora/uteke/
 ├── uteke.db                    # SQLite (memories + metadata + FTS5)
 ├── uteke_index.usearch         # Persistent HNSW vector index
 ├── uteke_index.keys            # Index key mapping

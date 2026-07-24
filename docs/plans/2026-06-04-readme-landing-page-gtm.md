@@ -160,7 +160,7 @@ AI agents forget everything between sessions. Uteke gives them persistent, searc
 | Team needing shared memory | Multi-user sync + collaboration | ❌ Not yet (Phase B) |
 | Enterprise needing graph RAG | Entity relationships, cross-agent knowledge | ❌ Use Mem0/Zep instead |
 
-> **Not sure?** Try it — `curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh` — uninstall is just `rm -rf ~/.uteke`.
+> **Not sure?** Try it — `curl -sSL https://raw.githubusercontent.com/ajianaz/uteke/main/install.sh | sh` — uninstall is just `rm -rf ~/.codecora/uteke`.
 ```
 
 ---

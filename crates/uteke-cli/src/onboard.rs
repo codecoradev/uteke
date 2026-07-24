@@ -224,13 +224,13 @@ fn get_version() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Check if the uteke store (~/.uteke/uteke.db) exists.
+/// Check if the uteke store exists.
 fn detect_store() -> bool {
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => return false,
     };
-    home.join(".uteke").join("uteke.db").exists()
+    home.join(".codecora/uteke").join("uteke.db").exists()
 }
 
 /// Prompt the user to select an agent.
@@ -324,7 +324,7 @@ fn prompt_feature_toggles() -> Result<Vec<(&'static str, bool)>, String> {
     Ok(results)
 }
 
-/// Write the config to `~/.uteke/uteke.toml`.
+/// Write the config to `{uteke_home}/uteke.toml`.
 ///
 /// If a config file already exists, it is backed up to `uteke.toml.bak`
 /// before overwriting. In interactive mode, the user is prompted to confirm.
@@ -333,9 +333,8 @@ fn write_config(
     toggles: &[(&str, bool)],
     yes: bool,
 ) -> Result<std::path::PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-    let uteke_dir = home.join(".uteke");
-    std::fs::create_dir_all(&uteke_dir).map_err(|e| format!("Failed to create ~/.uteke: {e}"))?;
+    let uteke_dir = uteke_core::uteke_home().map_err(|e| format!("{e}"))?;
+    std::fs::create_dir_all(&uteke_dir).map_err(|e| format!("Failed to create uteke home: {e}"))?;
 
     let config_path = uteke_dir.join("uteke.toml");
 

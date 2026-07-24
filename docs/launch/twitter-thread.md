@@ -48,7 +48,7 @@ Under the hood:
 🔹 ONNX — EmbeddingGemma Q4 embeddings (768d)
 🔹 Rust — memory safe, no unsafe code
 
-Everything lives in ~/.uteke/
+Everything lives in ~/.codecora/uteke/
 
 ---
 

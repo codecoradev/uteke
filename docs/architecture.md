@@ -24,7 +24,7 @@ title: Architecture
 │          │ (HNSW)   │ (virtual  │                    │
 │          │ RwLock   │   table)  │                    │
 ├──────────┴──────────┴───────────┴────────────────────┤
-│              ~/.uteke/ (local storage)               │
+│              ~/.codecora/uteke/ (local storage)               │
 │ uteke.db │ uteke_index.usearch │ embeddinggemma-q4/ │
 └─────────────────────────────────────────────────────┘
 ```
@@ -58,7 +58,7 @@ title: Architecture
 2. **`recall`** — Query is embedded → usearch finds nearest neighbors + FTS5 finds keyword matches → RRF merges both result sets → hot memories get +0.1 score boost → returns ranked results
 3. **`search`** — SQLite FTS5 keyword search (phrase match + token-OR fallback, scoped to namespace)
 4. **`forget`** — Incremental delete from usearch + SQLite (no rebuild)
-5. Everything lives in `~/.uteke/` — fully local, fully yours
+5. Everything lives in `~/.codecora/uteke/` — fully local, fully yours
 
 ## Data Flow
 
@@ -168,7 +168,7 @@ Read-heavy workload: recall/search operations far outnumber remember/forget. Mul
 
 ### Cross-Process File Lock (#543)
 
-The RwLock provides intra-process concurrency only (multiple threads within a single `uteke-serve` process). For cross-process safety (multiple `uteke-serve` instances or CLI + server sharing the same store), a file-based lock (`fs2` crate) guards the SQLite database and usearch index files. The lock is acquired on store open and held until the process exits or the store is dropped. This prevents concurrent writes from corrupting the index or database when multiple processes access the same `~/.uteke/` directory.
+The RwLock provides intra-process concurrency only (multiple threads within a single `uteke-serve` process). For cross-process safety (multiple `uteke-serve` instances or CLI + server sharing the same store), a file-based lock (`fs2` crate) guards the SQLite database and usearch index files. The lock is acquired on store open and held until the process exits or the store is dropped. This prevents concurrent writes from corrupting the index or database when multiple processes access the same `~/.codecora/uteke/` directory.
 
 ### FTS5 + Vector Hybrid via RRF
 
@@ -263,7 +263,7 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
 ## File Structure
 
 ```
-~/.uteke/
+~/.codecora/uteke/
 ├── uteke.db                    # SQLite (memories + metadata + FTS5)
 ├── uteke_index.usearch         # Persistent HNSW vector index
 ├── uteke_index.keys            # Index key mapping (atomic save)

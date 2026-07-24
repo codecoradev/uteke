@@ -19,7 +19,7 @@ uteke recall "what deployment is coming up?"
 
 - **Single binary** — `curl | sh` and you're done. No Python, no server, no Docker.
 - **Zero config** — First run downloads the embedding model (~188MB ONNX). That's it.
-- **Fully offline** — No API keys. No cloud. Data lives in `~/.uteke/`. SQLite + HNSW.
+- **Fully offline** — No API keys. No cloud. Data lives in `~/.codecora/uteke/`. SQLite + HNSW.
 - **Semantic search** — Uses EmbeddingGemma Q4 (768d) for vector similarity. ONNX runtime runs locally.
 - **~30ms recall** via library, ~42ms via HTTP server. CLI cold start ~3s (model load).
 - **JSON everywhere** — Every command supports `--json` output. Perfect for scripting and agent integration.

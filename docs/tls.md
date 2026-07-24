@@ -97,7 +97,7 @@ uteke-serve --host 0.0.0.0 --auth-token YOUR_TOKEN --cors-origin https://uteke.y
 | Variable | Purpose |
 |----------|---------|
 | `UTEKE_AUTH_TOKEN` | Bearer token for API authentication |
-| `UTEKE_HOME` | Data directory (default: `~/.uteke`) |
+| `UTEKE_HOME` | Data directory (default: `~/.codecora/uteke`) |
 
 ## Cloudflare Tunnel
 

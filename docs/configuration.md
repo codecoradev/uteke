@@ -11,7 +11,7 @@ Uteke supports `uteke.toml` configuration with layered resolution.
 Uteke searches for config in this order. Last match wins (highest priority):
 
 1. **(built-in defaults)** — Hardcoded defaults
-2. **`~/.uteke/uteke.toml`** — Global user-level config
+2. **`~/.codecora/uteke/uteke.toml`** — Global user-level config
 3. **`.uteke/uteke.toml`** — Project-level (in current working directory)
 
 Config file path is auto-resolved (no `--config` flag). Layered merge: each file overlays the previous, with field-level granularity (only keys explicitly present override).
@@ -22,8 +22,8 @@ Config file path is auto-resolved (no `--config` flag). Layered merge: each file
 # uteke.toml
 
 [store]
-# Store location (default: ~/.uteke)
-path = "~/.uteke"
+# Store location (default: ~/.codecora/uteke)
+path = "~/.codecora/uteke"
 
 # Default namespace (default: "default")
 namespace = "default"
@@ -250,7 +250,7 @@ Resolution order (highest priority first):
 
 | Env Var | Config Equivalent | Default | Description |
 |---------|-------------------|---------|-------------|
-| `UTEKE_HOME` | — | `~/.uteke` | Data directory |
+| `UTEKE_HOME` | — | `~/.codecora/uteke` | Data directory |
 | `UTEKE_NAMESPACE` | `[store] namespace` | `default` | Default namespace (applied in CLI) |
 | `UTEKE_AUTH_TOKEN` | — | — | Server auth token (applied in server) |
 | `UTEKE_LOG_LEVEL` | `[logging] level` | `warn` | Log level (trace/debug/info/warn/error) |
@@ -292,14 +292,14 @@ If you have an older flat-format config (pre-v0.0.4), uteke auto-migrates it on 
 
 ```toml
 # Old format (auto-detected and migrated)
-path = "~/.uteke"
+path = "~/.codecora/uteke"
 default_namespace = "default"
 log_level = "info"
 
 ↓ Auto-migrated to ↓
 
 [store]
-path = "~/.uteke"
+path = "~/.codecora/uteke"
 namespace = "default"
 
 [logging]
@@ -356,10 +356,10 @@ UTEKE_NAMESPACE=agent-1 uteke recall "context"
 
 ## File Logging
 
-Logs are written to `~/.uteke/logs/uteke.log` with daily rotation:
+Logs are written to `~/.codecora/uteke/logs/uteke.log` with daily rotation:
 
 ```
-~/.uteke/logs/
+~/.codecora/uteke/logs/
 ├── uteke.log              # Current log
 ├── uteke.log.2026-05-29   # Yesterday's log
 └── uteke.log.2026-05-28   # Two days ago

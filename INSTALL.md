@@ -108,7 +108,7 @@ uteke remember "My first memory" --tags test
 ```
 
 Model cached at:
-- **macOS/Linux:** `~/.uteke/models/embeddinggemma-q4/`
+- **macOS/Linux:** `~/.codecora/uteke/models/embeddinggemma-q4/`
 - **Windows:** `C:\Users\you\.uteke\models\embeddinggemma-q4\`
 
 ## Verify Installation
@@ -168,7 +168,7 @@ https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX
 Manual download:
 ```bash
 # macOS/Linux
-mkdir -p ~/.uteke/models/embeddinggemma-q4/onnx
+mkdir -p ~/.codecora/uteke/models/embeddinggemma-q4/onnx
 # Download model_q4.onnx and model_q4.onnx_data to above directory
 
 # Windows
@@ -194,7 +194,7 @@ cargo uninstall uteke
 
 # Remove all data (memories, models, config)
 # macOS/Linux
-rm -rf ~/.uteke
+rm -rf ~/.codecora/uteke
 
 # Windows
 Remove-Item -Recurse -Force "$env:USERPROFILE\.uteke"
