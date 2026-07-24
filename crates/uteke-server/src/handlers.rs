@@ -1455,7 +1455,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Delete, p) if p == "/doc/delete" || p.starts_with("/doc/delete?") => {
             // Extract query string only — req.url() returns full URL which
             // parse_query_param() cannot handle (#776).
-            let query = req.url().query().unwrap_or("");
+            let query = req.url().split('?').nth(1).unwrap_or("");
             let id = parse_query_param(query, "id");
             let slug = parse_query_param(query, "slug");
 
