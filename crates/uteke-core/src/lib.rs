@@ -2022,13 +2022,22 @@ mod tests {
 
     #[test]
     fn test_uteke_home_with_env() {
+        // Save originals to prevent test pollution across parallel test threads.
+        let orig_uteke = std::env::var("UTEKE_HOME").ok();
+        let orig_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
         }
         let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.codecora/uteke"));
         assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
-        unsafe {
-            std::env::remove_var("UTEKE_HOME");
+        // Restore originals
+        match orig_uteke {
+            Some(v) => unsafe { std::env::set_var("UTEKE_HOME", &v) },
+            None => unsafe { std::env::remove_var("UTEKE_HOME") },
+        }
+        match orig_home {
+            Some(v) => unsafe { std::env::set_var("HOME", &v) },
+            None => {} // don't remove HOME
         }
     }
 
@@ -2038,6 +2047,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("uteke_test_home_default");
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
+        let orig_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("HOME", &tmp);
             std::env::remove_var("UTEKE_HOME");
@@ -2046,8 +2056,10 @@ mod tests {
         let result = uteke_home().unwrap();
         assert_eq!(result, expected);
         // Cleanup: restore original HOME
-        unsafe {
-            std::env::remove_var("HOME");
+        if let Some(ref home) = orig_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
         }
         let _ = std::fs::remove_dir_all(&tmp);
     }
