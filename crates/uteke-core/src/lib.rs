@@ -217,9 +217,8 @@ impl Default for DreamConfig {
 /// Recursively copy a directory (std-only, no external deps).
 /// Used for cross-device migration fallback.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
-    std::fs::create_dir_all(dst).map_err(|e| {
-        Error::generic(&format!("Failed to create {}: {e}", dst.display()))
-    })?;
+    std::fs::create_dir_all(dst)
+        .map_err(|e| Error::generic(&format!("Failed to create {}: {e}", dst.display())))?;
     for entry in std::fs::read_dir(src)
         .map_err(|e| Error::generic(&format!("Failed to read dir {}: {e}", src.display())))?
     {
@@ -229,9 +228,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
         if from.is_dir() {
             copy_dir_recursive(&from, &to)?;
         } else {
-            std::fs::copy(&from, &to).map_err(|e| {
-                Error::generic(&format!("Failed to copy {}: {e}", from.display()))
-            })?;
+            std::fs::copy(&from, &to)
+                .map_err(|e| Error::generic(&format!("Failed to copy {}: {e}", from.display())))?;
         }
     }
     Ok(())
@@ -262,8 +260,9 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
             );
         } else {
             if let Some(parent) = new_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| Error::generic(&format!("Failed to create {}: {e}", parent.display())))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    Error::generic(&format!("Failed to create {}: {e}", parent.display()))
+                })?;
             }
             match std::fs::rename(&old_path, &new_path) {
                 Ok(()) => {
@@ -273,10 +272,11 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
                     // EXDEV — cross-device rename (home on different FS).
                     // Fallback: recursive copy + delete.
                     copy_dir_recursive(&old_path, &new_path)?;
-                    std::fs::remove_dir_all(&old_path)
-                        .map_err(|e| Error::generic(&format!(
+                    std::fs::remove_dir_all(&old_path).map_err(|e| {
+                        Error::generic(&format!(
                             "Failed to remove ~/.uteke after cross-device copy: {e}"
-                        )))?;
+                        ))
+                    })?;
                     eprintln!("Migrated ~/.uteke/ → ~/.codecora/uteke/ (cross-device copy)");
                 }
                 Err(e) => {
@@ -2054,7 +2054,10 @@ mod tests {
         let dst = tmp.join("dst");
         copy_dir_recursive(&tmp.join("src"), &dst).unwrap();
         assert!(dst.join("sub/file.txt").exists());
-        assert_eq!(std::fs::read_to_string(dst.join("sub/file.txt")).unwrap(), "hello");
+        assert_eq!(
+            std::fs::read_to_string(dst.join("sub/file.txt")).unwrap(),
+            "hello"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
