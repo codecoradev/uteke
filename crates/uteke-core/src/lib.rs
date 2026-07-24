@@ -218,18 +218,18 @@ impl Default for DreamConfig {
 /// Used for cross-device migration fallback.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
     std::fs::create_dir_all(dst)
-        .map_err(|e| Error::generic(&format!("Failed to create {}: {e}", dst.display())))?;
+        .map_err(|e| Error::generic(format!("Failed to create {}: {e}", dst.display())))?;
     for entry in std::fs::read_dir(src)
-        .map_err(|e| Error::generic(&format!("Failed to read dir {}: {e}", src.display())))?
+        .map_err(|e| Error::generic(format!("Failed to read dir {}: {e}", src.display())))?
     {
-        let entry = entry.map_err(|e| Error::generic(&format!("Failed to read entry: {e}")))?;
+        let entry = entry.map_err(|e| Error::generic(format!("Failed to read entry: {e}")))?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
         if from.is_dir() {
             copy_dir_recursive(&from, &to)?;
         } else {
             std::fs::copy(&from, &to)
-                .map_err(|e| Error::generic(&format!("Failed to copy {}: {e}", from.display())))?;
+                .map_err(|e| Error::generic(format!("Failed to copy {}: {e}", from.display())))?;
         }
     }
     Ok(())
@@ -261,7 +261,7 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
         } else {
             if let Some(parent) = new_path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    Error::generic(&format!("Failed to create {}: {e}", parent.display()))
+                    Error::generic(format!("Failed to create {}: {e}", parent.display()))
                 })?;
             }
             match std::fs::rename(&old_path, &new_path) {
@@ -273,14 +273,14 @@ pub fn uteke_home() -> Result<PathBuf, Error> {
                     // Fallback: recursive copy + delete.
                     copy_dir_recursive(&old_path, &new_path)?;
                     std::fs::remove_dir_all(&old_path).map_err(|e| {
-                        Error::generic(&format!(
+                        Error::generic(format!(
                             "Failed to remove ~/.uteke after cross-device copy: {e}"
                         ))
                     })?;
                     eprintln!("Migrated ~/.uteke/ → ~/.codecora/uteke/ (cross-device copy)");
                 }
                 Err(e) => {
-                    return Err(Error::generic(&format!("Failed to migrate ~/.uteke: {e}")));
+                    return Err(Error::generic(format!("Failed to migrate ~/.uteke: {e}")));
                 }
             }
         }
