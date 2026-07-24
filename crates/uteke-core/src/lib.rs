@@ -4,7 +4,7 @@
 //! ```ignore
 //! use uteke_core::Uteke;
 //!
-//! let uteke = Uteke::open("~/.uteke/db.sqlite")?;
+//! let uteke = Uteke::open("~/.codecora/uteke/db.sqlite")?;
 //! let id = uteke.remember("important context", &["tag1"], None)?;
 //! let results = uteke.recall("query", 5, None, None, 0.0, None, None)?;
 //! ```
@@ -212,23 +212,81 @@ impl Default for DreamConfig {
 /// Resolve uteke data directory.
 ///
 /// Uses `UTEKE_HOME` environment variable when set, otherwise falls back to
-/// `~/.uteke`. This allows Docker containers and custom deployments to
-/// override the default storage location.
+/// `~/.codecora/uteke` (auto-migrating from legacy `~/.uteke`).
 ///
+/// Recursively copy a directory (std-only, no external deps).
+/// Used for cross-device migration fallback.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
+    std::fs::create_dir_all(dst)
+        .map_err(|e| Error::generic(format!("Failed to create {}: {e}", dst.display())))?;
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| Error::generic(format!("Failed to read dir {}: {e}", src.display())))?
+    {
+        let entry = entry.map_err(|e| Error::generic(format!("Failed to read entry: {e}")))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_recursive(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)
+                .map_err(|e| Error::generic(format!("Failed to copy {}: {e}", from.display())))?;
+        }
+    }
+    Ok(())
+}
+
 /// ```text
 /// UTEKE_HOME=/data   → /data
-/// (not set)           → ~/.uteke
+/// (not set)           → ~/.codecora/uteke  (auto-migrates from ~/.uteke)
 /// ```
 pub fn uteke_home() -> Result<PathBuf, Error> {
+    // 1. Env override (Docker, custom) — always wins, zero change.
     if let Ok(home) = std::env::var("UTEKE_HOME") {
-        Ok(PathBuf::from(home))
-    } else {
-        dirs::home_dir()
-            .ok_or_else(|| {
-                Error::generic("Cannot determine home directory. Set UTEKE_HOME or HOME.")
-            })
-            .map(|p| p.join(".uteke"))
+        return Ok(PathBuf::from(home));
     }
+
+    let home = dirs::home_dir().ok_or_else(|| {
+        Error::generic("Cannot determine home directory. Set UTEKE_HOME or HOME.")
+    })?;
+
+    let new_path = home.join(".codecora/uteke");
+    let old_path = home.join(".uteke");
+
+    // 2. Auto-migrate: if old exists and new doesn't → move.
+    if !new_path.is_dir() && old_path.is_dir() {
+        if old_path.is_symlink() {
+            eprintln!(
+                "warning: ~/.uteke is a symlink, skipping auto-migration. Set UTEKE_HOME manually."
+            );
+        } else {
+            if let Some(parent) = new_path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    Error::generic(format!("Failed to create {}: {e}", parent.display()))
+                })?;
+            }
+            match std::fs::rename(&old_path, &new_path) {
+                Ok(()) => {
+                    eprintln!("Migrated ~/.uteke/ → ~/.codecora/uteke/");
+                }
+                Err(e) if e.raw_os_error() == Some(18) => {
+                    // EXDEV — cross-device rename (home on different FS).
+                    // Fallback: recursive copy + delete.
+                    copy_dir_recursive(&old_path, &new_path)?;
+                    std::fs::remove_dir_all(&old_path).map_err(|e| {
+                        Error::generic(format!(
+                            "Failed to remove ~/.uteke after cross-device copy: {e}"
+                        ))
+                    })?;
+                    eprintln!("Migrated ~/.uteke/ → ~/.codecora/uteke/ (cross-device copy)");
+                }
+                Err(e) => {
+                    return Err(Error::generic(format!("Failed to migrate ~/.uteke: {e}")));
+                }
+            }
+        }
+    }
+
+    Ok(new_path)
 }
 
 /// Resolved embedder configuration used by lazy backend dispatch.
@@ -1964,14 +2022,64 @@ mod tests {
 
     #[test]
     fn test_uteke_home_with_env() {
+        // Save originals to prevent test pollution across parallel test threads.
+        let orig_uteke = std::env::var("UTEKE_HOME").ok();
+        let orig_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("UTEKE_HOME", "/tmp/custom_home");
         }
-        let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.uteke"));
+        let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.codecora/uteke"));
         assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
+        // Restore originals
+        if let Some(ref v) = orig_uteke {
+            unsafe { std::env::set_var("UTEKE_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("UTEKE_HOME") };
+        }
+        if let Some(ref v) = orig_home {
+            unsafe { std::env::set_var("HOME", v) };
+        }
+    }
+
+    #[test]
+    fn test_uteke_home_default_no_migration() {
+        // Ensure no side effects: use a temp dir as HOME so ~/.uteke can't exist.
+        let tmp = std::env::temp_dir().join("uteke_test_home_default");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let orig_home = std::env::var("HOME").ok();
         unsafe {
+            std::env::set_var("HOME", &tmp);
             std::env::remove_var("UTEKE_HOME");
         }
+        let expected = tmp.join(".codecora/uteke");
+        let result = uteke_home().unwrap();
+        assert_eq!(result, expected);
+        // Cleanup: restore original HOME
+        if let Some(ref home) = orig_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_copy_dir_recursive() {
+        let tmp = std::env::temp_dir().join("uteke_test_copy_dir");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("src/sub")).unwrap();
+        std::fs::write(tmp.join("src/sub/file.txt"), "hello").unwrap();
+
+        let dst = tmp.join("dst");
+        copy_dir_recursive(&tmp.join("src"), &dst).unwrap();
+        assert!(dst.join("sub/file.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(dst.join("sub/file.txt")).unwrap(),
+            "hello"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

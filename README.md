@@ -83,7 +83,7 @@ The wizard will:
 2. **Ask** which AI agent you use (Hermes, Claude, Cursor, Pi, OpenCode)
 3. **Pick** integration mode — manual tool calls vs automatic memory-provider
 4. **Toggle** features on/off (Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode)
-5. **Write** `~/.uteke/uteke.toml` with your selections
+5. **Write** `~/.codecora/uteke/uteke.toml` with your selections
 6. **Install** agent integration files automatically (`uteke init`)
 7. **Showcase** every uteke command grouped by category
 

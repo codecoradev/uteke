@@ -14,7 +14,7 @@ use clap_complete::Shell;
     version
 )]
 pub struct Cli {
-    /// Store path override (default: ~/.uteke)
+    /// Store path override (default: ~/.codecora/uteke)
     #[arg(long, global = true)]
     pub store: Option<String>,
 

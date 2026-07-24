@@ -351,7 +351,7 @@ Config via `~/.hermes/uteke.json` (preferred) or environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UTEKE_BIN` | (search PATH) | Path to uteke binary |
-| `UTEKE_HOME` | (inherit) | HOME dir for uteke store (`~/.uteke`) |
+| `UTEKE_HOME` | (inherit) | HOME dir for uteke store (`~/.codecora/uteke`) |
 | `UTEKE_NAMESPACE` | (agent profile name) | Memory namespace |
 | `UTEKE_SERVER_URL` | (empty = subprocess) | uteke-serve HTTP URL |
 | `UTEKE_TOKEN` | (empty) | Auth token for uteke-serve |

@@ -1,6 +1,6 @@
 //! Configuration management for uteke CLI.
 //!
-//! Layered config resolution: CLI args > project `.uteke/uteke.toml` > global `~/.uteke/uteke.toml` > defaults.
+//! Layered config resolution: CLI args > project `.uteke/uteke.toml` > global `{uteke_home}/uteke.toml` > defaults.
 //! Migrates legacy `config.toml` → `uteke.toml` on load.
 
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ pub struct StoreConfig {
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
-            path: "~/.uteke".to_string(),
+            path: "~/.codecora/uteke".to_string(),
             namespace: "default".to_string(),
         }
     }
@@ -398,7 +398,7 @@ impl Default for LimitsConfig {
 impl Config {
     /// Load config with layered resolution:
     /// 1. Defaults
-    /// 2. Global `~/.uteke/uteke.toml`
+    /// 2. Global `{uteke_home}/uteke.toml`
     /// 3. Project `.uteke/uteke.toml`
     ///
     /// Each layer overrides the previous. Legacy `config.toml` is migrated
@@ -409,7 +409,7 @@ impl Config {
         // Migrate legacy config.toml → uteke.toml at global location
         migrate_legacy_global();
 
-        // Layer 1: global ~/.uteke/uteke.toml
+        // Layer 1: global config at uteke_home
         if let Some(global_path) = global_config_path() {
             config = config.merge_from_file(&global_path);
         }
@@ -775,7 +775,7 @@ impl Config {
 # See https://github.com/codecoradev/uteke for documentation
 
 [store]
-# path = "~/.uteke"
+# path = "~/.codecora/uteke"
 # namespace = "default"
 
 [embedding]
@@ -884,7 +884,7 @@ impl Config {
 
 // ── Legacy migration ────────────────────────────────────────────────────────
 
-/// Migrate legacy `~/.uteke/config.toml` → `~/.uteke/uteke.toml`.
+/// Migrate legacy `{uteke_home}/config.toml` → `{uteke_home}/uteke.toml`.
 /// Read an env var as a type T, falling back to default if unset or invalid.
 fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
     std::env::var(key)
@@ -976,9 +976,9 @@ fn migrate_content(old: &str) -> String {
     out
 }
 
-/// Return the global config path `~/.uteke/uteke.toml` if home dir is known.
+/// Return the global config path `{uteke_home}/uteke.toml`.
 fn global_config_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".uteke").join("uteke.toml"))
+    uteke_core::uteke_home().ok().map(|h| h.join("uteke.toml"))
 }
 
 /// Update or insert the namespace value in a TOML config string.
@@ -1028,7 +1028,7 @@ mod tests {
     #[test]
     fn default_config_values() {
         let cfg = Config::default();
-        assert_eq!(cfg.store.path, "~/.uteke");
+        assert_eq!(cfg.store.path, "~/.codecora/uteke");
         assert_eq!(cfg.store.namespace, "default");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
         assert_eq!(cfg.embedding.backend, "onnx");
@@ -1100,7 +1100,7 @@ level = "info"
         assert_eq!(cfg.store.namespace, "my-ns");
         assert_eq!(cfg.logging.level, "info");
         // Everything else is default
-        assert_eq!(cfg.store.path, "~/.uteke");
+        assert_eq!(cfg.store.path, "~/.codecora/uteke");
         assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
         assert_eq!(cfg.embedding.backend, "onnx");
         assert_eq!(cfg.embedding.max_seq_length, 2048);
@@ -1230,7 +1230,7 @@ min_score_strict = 0.8
         assert!((merged.recall.min_score - 0.6).abs() < f64::EPSILON);
         assert!((merged.recall.min_score_strict - 0.8).abs() < f64::EPSILON);
         // Other config untouched
-        assert_eq!(merged.store.path, "~/.uteke");
+        assert_eq!(merged.store.path, "~/.codecora/uteke");
         assert_eq!(merged.embedding.model, "embeddinggemma-q4");
         assert_eq!(merged.tier.hot_days, 7);
         assert_eq!(merged.logging.level, "warn");
@@ -1305,7 +1305,7 @@ port = 9999
         let merged = Config::default().merge_from_file(&tmp);
         std::fs::remove_file(&tmp).ok();
         // Should return defaults when file is invalid
-        assert_eq!(merged.store.path, "~/.uteke");
+        assert_eq!(merged.store.path, "~/.codecora/uteke");
     }
 
     #[test]

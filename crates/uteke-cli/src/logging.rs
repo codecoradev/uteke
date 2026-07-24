@@ -1,7 +1,7 @@
 //! Logging setup: console + daily rotating file.
 //!
 //! Console shows WARN by default (DEBUG with --verbose).
-//! File always captures DEBUG to `~/.uteke/uteke.log` with daily rotation.
+//! File always captures DEBUG to `{uteke_home}/uteke.log` with daily rotation.
 
 use tracing::Level;
 use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};

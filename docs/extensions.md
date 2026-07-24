@@ -59,6 +59,6 @@ cp -r extensions/uteke-status .pi/extensions/
 
 ## How It Works
 
-- **Stats query** — Reads `~/.uteke/uteke.db` via sqlite3 CLI for cross-namespace totals
+- **Stats query** — Reads `~/.codecora/uteke/uteke.db` via sqlite3 CLI for cross-namespace totals
 - **System prompt** — Injects uteke usage rules via `before_agent_start` event
 - **Status refresh** — Updates footer on `session_start` and `turn_end` events

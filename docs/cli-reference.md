@@ -10,12 +10,12 @@ Complete reference for all uteke commands. Version **0.8.0**.
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--store <path>` | Override store location | `~/.uteke` |
+| `--store <path>` | Override store location | `~/.codecora/uteke` |
 | `--namespace <name>` | Namespace for multi-agent isolation | `default` |
 | `--json` | Output as JSON | off |
 | `--verbose` | Enable debug logging | off |
 
-Config file path is auto-resolved (`~/.uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
+Config file path is auto-resolved (`~/.codecora/uteke/uteke.toml` + `.uteke/uteke.toml`); there is no `--config` flag.
 
 ## uteke onboard
 
@@ -45,7 +45,7 @@ The wizard steps:
 3. **Integration mode** — manual tool vs memory-provider (auto recall + extraction)
 4. **Namespace** — for multi-agent isolation
 5. **Feature toggles** — toggle ON/OFF for: Aging, Auto-maintenance, Graph rerank, Salience boost, Recency boost, Server mode
-6. **Config write** — generates `~/.uteke/uteke.toml`
+6. **Config write** — generates `~/.codecora/uteke/uteke.toml`
 7. **Agent init** — runs `uteke init` with your selections
 8. **Feature showcase** — prints all commands grouped by category
 

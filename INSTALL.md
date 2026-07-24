@@ -97,7 +97,7 @@ cargo build --release
 copy target\release\uteke.exe C:\Users\you\AppData\Local\bin\
 ```
 
-> **Note:** On Windows, data is stored at `C:\Users\you\.uteke\`.
+> **Note:** On Windows, data is stored at `C:\Users\you\.codecora\uteke\`.
 
 ## First Run
 
@@ -108,8 +108,8 @@ uteke remember "My first memory" --tags test
 ```
 
 Model cached at:
-- **macOS/Linux:** `~/.uteke/models/embeddinggemma-q4/`
-- **Windows:** `C:\Users\you\.uteke\models\embeddinggemma-q4\`
+- **macOS/Linux:** `~/.codecora/uteke/models/embeddinggemma-q4/`
+- **Windows:** `C:\Users\you\.codecora\uteke\models\embeddinggemma-q4\`
 
 ## Verify Installation
 
@@ -168,11 +168,11 @@ https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX
 Manual download:
 ```bash
 # macOS/Linux
-mkdir -p ~/.uteke/models/embeddinggemma-q4/onnx
+mkdir -p ~/.codecora/uteke/models/embeddinggemma-q4/onnx
 # Download model_q4.onnx and model_q4.onnx_data to above directory
 
 # Windows
-mkdir C:\Users\you\.uteke\models\embeddinggemma-q4\onnx
+mkdir C:\Users\you\.codecora\uteke\models\embeddinggemma-q4\onnx
 # Download model_q4.onnx and model_q4.onnx_data to above directory
 ```
 
@@ -194,8 +194,8 @@ cargo uninstall uteke
 
 # Remove all data (memories, models, config)
 # macOS/Linux
-rm -rf ~/.uteke
+rm -rf ~/.codecora/uteke
 
 # Windows
-Remove-Item -Recurse -Force "$env:USERPROFILE\.uteke"
+Remove-Item -Recurse -Force "$env:USERPROFILE\.codecora\uteke"
 ```
