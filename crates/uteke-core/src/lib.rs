@@ -2031,13 +2031,13 @@ mod tests {
         let home = uteke_home().unwrap_or_else(|_| PathBuf::from("/tmp/.codecora/uteke"));
         assert_eq!(home.to_string_lossy(), "/tmp/custom_home");
         // Restore originals
-        match orig_uteke {
-            Some(v) => unsafe { std::env::set_var("UTEKE_HOME", &v) },
-            None => unsafe { std::env::remove_var("UTEKE_HOME") },
+        if let Some(ref v) = orig_uteke {
+            unsafe { std::env::set_var("UTEKE_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("UTEKE_HOME") };
         }
-        match orig_home {
-            Some(v) => unsafe { std::env::set_var("HOME", &v) },
-            None => {} // don't remove HOME
+        if let Some(ref v) = orig_home {
+            unsafe { std::env::set_var("HOME", v) };
         }
     }
 
