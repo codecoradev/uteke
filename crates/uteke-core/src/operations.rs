@@ -301,6 +301,7 @@ impl crate::Uteke {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
 
         // Acquire index write lock BEFORE any writes so lock failures are detected early.

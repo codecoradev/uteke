@@ -414,6 +414,8 @@ impl super::Store {
                 14 => self.migrate_v13_to_v14()?,
                 // v15: room_documents junction table (#689)
                 15 => self.migrate_v14_to_v15()?,
+                // v16: author_type column (human|agent) (#1083)
+                16 => self.migrate_v15_to_v16()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1055,6 +1057,37 @@ impl super::Store {
             .map_err(|e| Error::db("create room_documents table", e))?;
 
         tracing::info!("Migration v14 to v15 complete: room_documents table created");
+        Ok(())
+    }
+
+    /// v16: Add author_type column (human|agent) to memories (#1083).
+    ///
+    /// Distinguishes memories authored by a human (direct user capture) from
+    /// memories authored by an agent (inference, consolidation, import).
+    /// Default 'agent' matches the dominant pre-v16 write path. Validation of
+    /// the human|agent domain happens at the application layer (SQLite CHECK
+    /// on ALTER TABLE ADD COLUMN is unsupported for existing rows).
+    ///
+    /// Index lives here (not in SCHEMA_INDEXES) per the #492 convention:
+    /// indexes on migration-added columns belong in the migration itself so
+    /// fresh and upgraded DBs converge identically.
+    fn migrate_v15_to_v16(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v15 to v16: author_type column");
+
+        if !self.column_exists("author_type") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN author_type TEXT NOT NULL DEFAULT 'agent';",
+                )
+                .map_err(|e| Error::db("schema migration v15 to v16", e))?;
+        }
+        self.conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_memories_author_type ON memories(author_type);",
+            )
+            .map_err(|e| Error::db("create idx_memories_author_type", e))?;
+
+        tracing::info!("Migration v15 to v16 complete: author_type column added");
         Ok(())
     }
 }

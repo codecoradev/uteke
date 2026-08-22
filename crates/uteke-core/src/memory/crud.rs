@@ -102,8 +102,8 @@ impl super::Store {
     ) -> Result<(), Error> {
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                 params![
                     memory.id,
                     memory.content,
@@ -125,6 +125,7 @@ impl super::Store {
                     memory.slug,
                     memory.source,
                     memory.source_type,
+                    memory.author_type,
                 ],
             )
             .map_err(|e| Error::db("Failed to insert memory", e))?;
@@ -159,7 +160,7 @@ impl super::Store {
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE id = ?1")
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type FROM memories WHERE id = ?1")
             .map_err(|e| Error::db("Failed to prepare statement for get_by_id", e))?;
 
         let result = stmt
@@ -186,7 +187,7 @@ impl super::Store {
         for chunk in ids.chunks(CHUNK_SIZE) {
             let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE id IN ({placeholders})"
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type FROM memories WHERE id IN ({placeholders})"
             );
             let mut stmt = self
                 .conn
@@ -248,7 +249,7 @@ impl super::Store {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE id = ?1 AND namespace = ?2")
+            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type FROM memories WHERE id = ?1 AND namespace = ?2")
             .map_err(|e| Error::db("Failed to prepare statement for get_by_id_in_namespace", e))?;
 
         let result = stmt
@@ -593,10 +594,10 @@ impl super::Store {
         // recall and must not re-enter the vector index on repair/verify (#1047).
         let sql = match namespace {
             Some(_) => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE namespace = ?1 AND embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type FROM memories WHERE namespace = ?1 AND embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
             }
             None => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug FROM memories WHERE embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
+                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type FROM memories WHERE embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
             }
         };
 
@@ -969,6 +970,7 @@ mod content_type_tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
         store.insert(&memory).unwrap();
 
@@ -1001,6 +1003,7 @@ mod content_type_tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
         store.insert(&memory).unwrap();
 
@@ -1015,7 +1018,7 @@ mod content_type_tests {
         let store = super::super::store::Store::open(":memory:").unwrap();
         assert!(store.column_exists("content_type"));
         let version = store.schema_version().unwrap();
-        assert_eq!(version, 15); // v15 = room_documents junction (#689); v14 = FTS5 memory_type column (#662); v13 = global docs no namespace (#614); v12 = hierarchical docs (#438); v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
+        assert_eq!(version, crate::memory::store::CURRENT_SCHEMA_VERSION); // v16 = author_type (#1083); v15 = room_documents junction (#689); v14 = FTS5 memory_type column (#662); v13 = global docs no namespace (#614); v12 = hierarchical docs (#438); v11 = document engine (#406); v10 = source columns (#348); v9 = timeline (#347); v8 = edges + slug; v7 = graph
     }
 
     #[test]
@@ -1048,6 +1051,7 @@ mod content_type_tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
         store.insert(&m1).unwrap();
 

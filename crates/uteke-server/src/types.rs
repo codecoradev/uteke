@@ -206,6 +206,9 @@ pub struct RememberRequest {
     /// Source type (defaults to "user").
     #[serde(default)]
     pub source_type: Option<String>,
+    /// Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted.
+    #[serde(default)]
+    pub author_type: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]

@@ -1141,6 +1141,12 @@ impl Uteke {
         self.store.set_source(id, source, source_type)
     }
 
+    /// Set author type on a memory (#1083): "human" | "agent".
+    /// Invalid values return a Validation error.
+    pub fn set_author_type(&self, id: &str, author_type: &str) -> Result<bool, Error> {
+        self.store.set_author_type(id, author_type)
+    }
+
     /// Recalculate importance scores for all memories.
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         let updated = self.store.recompute_importance()?;
@@ -2363,6 +2369,7 @@ mod tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -2411,6 +2418,7 @@ mod tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
 
         let sr = SearchResult {
@@ -3176,6 +3184,7 @@ mod tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+            author_type: "agent".to_string(),
         };
         uteke.store.insert(&m1).unwrap();
 

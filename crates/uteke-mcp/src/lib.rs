@@ -2307,6 +2307,8 @@ mod id_resolution_tests {
             slug: None,
             source: None,
             source_type: "user".to_string(),
+
+            author_type: "agent".to_string(),
         };
         uteke.store().insert(&m).unwrap();
         id
@@ -2447,6 +2449,8 @@ mod supersession_mcp_tests {
                 slug: None,
                 source: None,
                 source_type: "user".to_string(),
+
+                author_type: "agent".to_string(),
             };
             uteke.store().insert(&m).unwrap();
             id

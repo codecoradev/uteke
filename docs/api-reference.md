@@ -652,6 +652,7 @@ Invalid values return HTTP 400. |
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `author_type` | any | No | Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted. |
 | `category` | any | No | Category — stored as metadata key "category". |
 | `content` | `string` | Yes |  |
 | `detect_contradiction` | `boolean` | No |  |
