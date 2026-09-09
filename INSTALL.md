@@ -101,7 +101,7 @@ copy target\release\uteke.exe C:\Users\you\AppData\Local\bin\
 
 ## First Run
 
-On first `remember` command, Uteke automatically downloads the embedding model (~188MB):
+On first `remember` command, Uteke automatically downloads the embedding model (~200MB):
 
 ```bash
 uteke remember "My first memory" --tags test

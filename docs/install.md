@@ -21,7 +21,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 Pin a specific version:
 
 ```bash
-UTEKE_VERSION=v0.16.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.17.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ## Install via Cargo
@@ -40,19 +40,19 @@ Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases):
 
 ```bash
 # Linux (x86_64)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.16.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.17.0.tar.gz | tar xz
 mv uteke ~/.local/bin/
 
 # Linux (x86_64, legacy — no AVX2/SSE4.2)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.16.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.17.0.tar.gz | tar xz
 mv uteke ~/.local/bin/
 
 # Linux (aarch64 / ARM)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.16.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.17.0.tar.gz | tar xz
 mv uteke ~/.local/bin/
 
 # macOS (Apple Silicon)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.16.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.17.0.tar.gz | tar xz
 mv uteke ~/.local/bin/
 ```
 
@@ -86,7 +86,7 @@ docker pull ghcr.io/codecoradev/uteke:latest
 
 ## First Run
 
-On first run, uteke downloads the embedding model (~188MB). No API keys needed — fully offline.
+On first run, uteke downloads the embedding model (~200MB). No API keys needed — fully offline.
 
 ```bash
 uteke doctor   # Verify installation

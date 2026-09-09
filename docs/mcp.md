@@ -323,6 +323,6 @@ See [Docker guide — MCP](/docker#mcp-model-context-protocol) for full Docker-s
 | `Permission denied` | `chmod +x $(which uteke-mcp)` or ensure the binary is on your `PATH` |
 | `Connection refused` (HTTP) | Ensure `uteke-serve` is running: `uteke-serve` |
 | Client can't see tools | Verify the MCP config JSON is valid and the client has been restarted |
-| Slow first query | The embedding model (~188MB) downloads on first use — subsequent calls are ~45ms |
+| Slow first query | The embedding model (~200MB) downloads on first use — subsequent calls are ~45ms |
 
 See also: [Architecture — MCP Transport](/architecture#mcp-transport-381)

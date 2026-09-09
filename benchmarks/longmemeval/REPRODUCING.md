@@ -11,13 +11,15 @@ the computer tell you the truth yourself. Three budgets, pick one:
 | ~$10 | [Full 500-question run](#3-full-500-question-run-modal-or-any-linux-box) | ~3 h | ~$5-10 Modal credits |
 
 **What you need:** a machine with `cargo` (Rust 1.85+), Python 3.10+, and ~4 GB free
-disk. The embedding model (~188 MB) downloads once on first run. Everything else is
+disk. The embedding model (~200 MB) downloads once on first run. Everything else is
 in this repo.
 
 > **Published numbers (v0.17.0, 500 questions, LongMemEval-S):**
-> recall_any@5 **98.4%** · recall_any@10 98.8% · strict recall_all@5 88.3% ·
-> coverage R@5 94.7% (470 non-abstention questions; the 30 `_abs` abstention
-> questions are reported separately — they measure answering, not retrieval).
+> recall_any@5 **98.4%** · recall_any@10 98.8% · strict recall_all@5 88.0% ·
+> coverage@5 94.4% — all on the full 500-question basis. On the 470
+> non-abstention questions (the 30 `_abs` questions are reported separately:
+> they measure answering, not retrieval), strict recall_all@5 is 88.3% and
+> coverage@5 is 94.7%.
 > What these metric names mean: [docs/benchmarks.md](../../docs/benchmarks.md) and
 > [`RESULTS.md`](RESULTS.md#reading-the-metrics).
 
@@ -94,7 +96,7 @@ pip install -r scripts/requirements.txt
 #    never a uteke from your PATH)
 cd ../.. && cargo build --release -p uteke-cli && cd benchmarks/longmemeval
 
-# 4. Run 50 questions (first run downloads the 188 MB embedding model once)
+# 4. Run 50 questions (first run downloads the ~200 MB embedding model once)
 python3 scripts/run_eval.py \
     --data data/longmemeval_oracle.json \
     --output results_mine \
@@ -153,10 +155,12 @@ different questions:
   gold session in top-K). This is the metric competitor benchmarks publish;
   ours: **98.4% @ 5** (full 500-question set).
 - **recall_all@K (strict)** — "did it get *all* of them?" (every gold session in
-  top-K; 43% of questions need multiple sessions). The honest ceiling-capable
-  number: **88.3% @ 5** — mathematical ceiling is 99.4% (3 questions have 6 gold
+  top-K; 65% of the 500 questions have multiple gold sessions). The honest
+  ceiling-capable number: **88.0% @ 5** on the full 500 (88.3% on the 470
+  non-abstention) — mathematical ceiling is 99.4% (3 questions have 6 gold
   sessions; top-5 physically can't hold all).
-- **coverage R@K** — partial credit (fraction of gold sessions found). 94.7%.
+- **coverage R@K** — partial credit (fraction of gold sessions found). 94.4%
+  full-500 (94.7% on the 470 non-abstention).
 
 Per-category breakdown, the 30 abstention questions, contradiction segment, and
 the full v0.16.0 → v0.17.0 comparison: [`RESULTS.md`](RESULTS.md),

@@ -81,14 +81,14 @@ one CPU, deterministic.
 | Metric | uteke **v0.17.0** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
 | **recall_any@5** (evidence in top-5) | **98.4%** | 95.2% | 86.2% |
-| recall_any@10 | 98.9% | 98.6% | 94.6% |
-| **recall_all@5** (all evidence, strict) | **88.3%**² | 88.2% MRR³ | n/a |
+| recall_any@10 | 98.8% | 98.6% | 94.6% |
+| **recall_all@5** (all evidence, strict) | **88.0%**² | 88.2% MRR³ | n/a |
 | LLM tokens / query | **0** | 0 | 0 |
 
-<sub>¹ agentmemory's published numbers, same benchmark, same 500-question split (their recall_any@5 basis; verified apples-to-apples in our [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *every* gold session in top-5; 43% of questions need multiple sessions. Mathematical ceiling 99.4%. ³ MRR, not recall_all (not directly comparable; shown for completeness).</sub>
+<sub>¹ agentmemory's published numbers, same benchmark, same 500-question split (their recall_any@5 basis; verified apples-to-apples in our [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *every* gold session in top-5; 65% of questions have multiple gold sessions. Mathematical ceiling 99.4%. ³ MRR, not recall_all (not directly comparable; shown for completeness).</sub>
 
 <p align="center">
-  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidated v0.17.0) vs MemPalace 96.6% and agentmemory 95.2% — raw results committed in-repo" width="880" />
+  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidated v0.17.0) vs MemPalace 96.6% and agentmemory 95.2% (raw results committed in-repo)" width="880" />
 </p>
 
 **By question category** (recall_any@5: the category-level story most tools don't show):
@@ -99,7 +99,7 @@ one CPU, deterministic.
 
 The hard part isn't finding *a* needle; every question's evidence lands in the
 top-50 (**zero misses**). The residual gap is *ordering* when a question needs
-several sessions at once: strict recall_all@5 is 88.3% against a 99.4% ceiling.
+several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling.
 
 > **🎯 Don't trust our benchmark. Run it yourself.** The full harness is in this
 > repo: public dataset, committed raw outputs for both releases, deterministic
@@ -333,7 +333,7 @@ Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~200MB) on fi
 <details>
 <summary><strong>How fast is recall?</strong></summary>
 
-~45ms as a CLI (measurements: 31ms avg @10K on the published bench host) (measured at 100–10K memories, flat with store size). No network round-trip because everything is local. The LRU recall cache eliminates redundant embedding computation for repeated queries.
+~45ms as a CLI (measurements: 31ms avg @10K on the published bench host, 100–10K memories, flat with store size). No network round-trip because everything is local. The LRU recall cache eliminates redundant embedding computation for repeated queries.
 </details>
 
 <details>
