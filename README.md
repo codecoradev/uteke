@@ -87,6 +87,10 @@ one CPU, deterministic.
 
 <sub>¹ agentmemory's published numbers, same benchmark, same 500-question split (their recall_any@5 basis; verified apples-to-apples in our [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *every* gold session in top-5; 43% of questions need multiple sessions. Mathematical ceiling 99.4%. ³ MRR, not recall_all (not directly comparable; shown for completeness).</sub>
 
+<p align="center">
+  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidated v0.17.0) vs MemPalace 96.6% and agentmemory 95.2% — raw results committed in-repo" width="880" />
+</p>
+
 **By question category** (recall_any@5: the category-level story most tools don't show):
 
 | knowledge-update | single-session | temporal | multi-session |
