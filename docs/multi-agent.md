@@ -63,6 +63,35 @@ uteke recall "context"
 
 Resolution order: `--namespace` flag → `UTEKE_NAMESPACE` env → `uteke.toml` → `"default"`
 
+## Managing Namespaces (#1181)
+
+Namespaces are a derived view of where memories live, and v0.17.0 adds sanctioned
+ops to manage them directly:
+
+```bash
+# Move one memory to another namespace (plain column update, no re-embed)
+uteke namespace move <memory-id> other-ns
+
+# Rename a namespace. If the target already exists, this MERGES into it
+# (all memories move, the old name vanishes)
+uteke namespace rename old-ns new-ns
+
+# Delete a namespace with an explicit strategy for its memories:
+#   refuse    (default) refuses with 409 while any memory references the name
+#   merge     moves all memories to --target, the name vanishes
+#   deprecate soft-deletes them; restorable via promote, never hard-deleted
+uteke namespace delete temp-ns --strategy merge --target archive --confirm
+uteke namespace delete ghost-ns --strategy deprecate --confirm
+```
+
+The same operations are available over HTTP (`PUT /memory` with a `namespace`
+field, `POST /namespaces/rename`, `POST /namespaces/delete`) and MCP
+(`uteke_namespace_rename`, `uteke_namespace_delete`, plus the `namespace` field
+on `uteke_update`). `GET /namespaces?with_counts=true` reports `active` and
+`deprecated` breakdowns alongside the total count. Deleting a namespace never
+hard-deletes memories: `refuse` is the safe default, and `deprecate` keeps them
+recoverable.
+
 ## All Commands Are Scoped
 
 The `--namespace` flag works on every command:

@@ -849,6 +849,9 @@ uteke timeline <memory-id> --json
 | `uteke namespace list` | List all namespaces with memory counts |
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
+| `uteke namespace move <id> <ns>` | Move a memory to another namespace, no re-embed (#1181) |
+| `uteke namespace rename <old> <new>` | Rename a namespace; existing target = merge (#1181) |
+| `uteke namespace delete <ns> --confirm` | Delete a namespace (`--strategy refuse\|merge\|deprecate`, #1181) |
 | `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
 | `uteke init --agent <type>` | Initialize integration (opencode, pi, claude, cursor, hermes) |
 | `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md). **Note:** Hermes Mode B deprecated — see [integrations/hermes.md](integrations/hermes.md) for migration. |

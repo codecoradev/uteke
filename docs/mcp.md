@@ -132,17 +132,20 @@ uteke init --agent hermes  # Installs pre_llm_call hook
 
 ## Available Tools
 
-Both transports expose the same 35 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 46 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
 | `uteke_remember` | Store a memory (supports type, room, author, tags) |
-| `uteke_recall` | Semantic search (supports tags filter, min_score, strategy: fusion/vector/fts5/hybrid/graph — default `fusion` since 0.16.0) |
+| `uteke_recall` | Semantic search (supports tags filter, min_score, strategy: fusion/vector/fts5/hybrid/graph — default `fusion` since 0.16.0, and the `explain` flag showing why each result ranked where it did, #1160) |
 | `uteke_search` | Text search with optional tag filter |
-| `uteke_list` | List memories (supports pagination via offset) |
+| `uteke_list` | List memories (supports pagination via offset, or `include_meta: true` for the `{memories, total, has_more, next_offset}` envelope, #1188) |
 | `uteke_get` | Fetch a single memory's full record by id — no truncation (accepts UUID or unambiguous prefix) |
-| `uteke_update` | Partial update — only provided fields change; content changes re-embed |
+| `uteke_update` | Partial update — only provided fields change; content changes re-embed; accepts `namespace` to move a memory (#1181) |
 | `uteke_supersede` | Mark a memory superseded by a newer one — wires the edge pair, soft-deprecates the old row; recall flags stale results (⚠ superseded by …) |
+| `uteke_provenance` | Full provenance report for a memory (#1172): author/source fields, trust tier, source hash at write vs live-recomputed content hash, and the timeline event chain with actor + evidence |
+| `uteke_contradictions` | List the contradiction resolution ledger (#1172): superseded-but-not-restored memories with winner, reason, and timestamp |
+| `uteke_contradictions_undo` | Undo a contradiction resolution (#1172): restore the retired memory, remove the supersession edge pair, record `supersession_undone` events |
 | `uteke_forget` | Delete a memory (accepts UUID or unambiguous prefix) |
 | `uteke_stats` | Memory store statistics |
 | `uteke_context` | AI-optimized context output for prompts |
@@ -161,6 +164,12 @@ Both transports expose the same 35 tools (MCP protocol version `2025-06-18`):
 | `uteke_room_memories` | List memories in a room (#569) |
 | `uteke_room_create` | Create a room |
 | `uteke_room_delete` | Delete a room |
+| `uteke_room_rename` | Rename a room; rewrites the registry row and every reference in one transaction (#1202) |
+| `uteke_room_update` | Update a room's title/description (#1202) |
+| `uteke_room_memory_move` | Move a memory to another room, preserving link provenance (#1202) |
+| `uteke_room_list` | List all rooms |
+| `uteke_namespace_rename` | Rename a namespace (#1181); when the target exists this is a merge, returns `{from, to, moved, target_existed}` |
+| `uteke_namespace_delete` | Delete a namespace with an explicit strategy for its memories (#1181): `refuse` (default, 409 while referenced), `merge` into `target`, or `deprecate` (soft-delete, restorable) |
 | `uteke_room_stats` | Room statistics |
 | `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
 | `uteke_room_summary_document` | Generate summary document from room (→ `POST /room/summary-document`) |
