@@ -144,6 +144,14 @@ function Install-Uteke {
             Write-Warn "$binary not found in archive"
         }
     }
+
+    # Install bundled ONNX Runtime DLLs (required for embeddings).
+    # Release zips ship onnxruntime.dll + providers DLLs alongside the exes.
+    # Without these, `uteke remember` fails with "ONNX Runtime library not found".
+    Get-ChildItem $extractDir -Filter "onnxruntime*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $InstallDir $_.Name) -Force
+        Write-Info ("Installed {0}" -f $_.Name)
+    }
     
     # Cleanup
     Remove-Item $archivePath -Force -ErrorAction SilentlyContinue

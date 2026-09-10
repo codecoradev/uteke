@@ -145,6 +145,17 @@ install() {
         mv "${TEMP_DIR}/${MCP_BINARY_NAME}" "${INSTALL_DIR}/"
     fi
 
+    # Install bundled ONNX Runtime shared libs (required for embeddings).
+    # Release tarballs ship libonnxruntime.so* + providers_shared alongside the
+    # binaries (see release.yml Package step). Without these, `uteke remember`
+    # fails with "ONNX Runtime library not found" on distros with no system
+    # lib (e.g. Arch/CachyOS) — see resolve_ort_lib() in ort_init.rs which
+    # expects <exe_dir>/libonnxruntime.so on AVX2 CPUs.
+    # Mirrors build_from_source() which already copies ort-lib/*.so.
+    cp -a "${TEMP_DIR}"/libonnxruntime.so* "${INSTALL_DIR}/" 2>/dev/null || true
+    cp -a "${TEMP_DIR}"/libonnxruntime_providers_shared.so* "${INSTALL_DIR}/" 2>/dev/null || true
+    cp -a "${TEMP_DIR}"/libonnxruntime*.dylib "${INSTALL_DIR}/" 2>/dev/null || true
+
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     if [ -f "${INSTALL_DIR}/${SERVER_BINARY_NAME}" ]; then
         chmod +x "${INSTALL_DIR}/${SERVER_BINARY_NAME}"

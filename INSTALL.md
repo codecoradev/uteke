@@ -73,6 +73,10 @@ Expand-Archive -Path uteke.zip -DestinationPath uteke
 # Move to a directory in PATH (e.g. C:\Users\you\AppData\Local\bin)
 mkdir -p C:\Users\you\AppData\Local\bin
 move uteke\uteke.exe C:\Users\you\AppData\Local\bin\
+move uteke\uteke-serve.exe C:\Users\you\AppData\Local\bin\
+move uteke\uteke-mcp.exe C:\Users\you\AppData\Local\bin\
+# Required for embeddings — release zip ships ONNX Runtime DLLs alongside the exes
+move uteke\onnxruntime*.dll C:\Users\you\AppData\Local\bin\
 
 # Add to PATH (current session)
 $env:PATH += ";C:\Users\you\AppData\Local\bin"
@@ -164,6 +168,9 @@ Check internet connection. Model downloaded from HuggingFace:
 ```
 https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX
 ```
+
+### `ONNX Runtime library not found` on `uteke remember` (notably Arch/CachyOS fresh installs)
+The release tarball/zip ships `libonnxruntime.so*` / `onnxruntime.dll` next to the binaries — keep them in the same directory as `uteke` (`~/.local/bin/` on Linux/macOS). The quick-install script does this automatically; manual tarball installs must copy the `.so`/`.dylib`/`.dll` too. Fallbacks searched: `/usr/local/lib /usr/lib /lib`, pip `onnxruntime/capi/`, `~/.cache/ort.pyke.io/`, or set `ORT_LIB_PATH=/path/to/libonnxruntime.so`. Then `uteke doctor` should report `Embedding model: embeddinggemma-q4`.
 
 Manual download:
 ```bash
