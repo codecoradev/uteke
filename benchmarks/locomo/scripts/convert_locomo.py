@@ -26,7 +26,7 @@ import re
 import sys
 from pathlib import Path
 
-CATEGORY_NAMES = {1: "multi-hop", 2: "single-hop", 3: "temporal", 4: "open-domain", 5: "adversarial"}
+CATEGORY_NAMES = {1: "single-hop", 2: "temporal", 3: "multi-hop", 4: "open-domain", 5: "adversarial"}
 EV_RE = re.compile(r"D(\d+):")
 
 

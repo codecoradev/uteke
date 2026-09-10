@@ -34,27 +34,41 @@ Per-category any@5 shows the complementarity directly:
 
 | Category | n | vector | fts5-only | fusion |
 |---|---|---|---|---|
+| single-hop | 282 | 0.848 | 0.759 | **0.894** |
+| temporal | 321 | 0.779 | **0.841** | 0.816 |
+| multi-hop | 92 | 0.630 | 0.641 | 0.630 |
 | open-domain | 841 | 0.810 | **0.868** | 0.855 |
-| single-hop | 321 | 0.779 | **0.841** | 0.816 |
-| multi-hop | 282 | **0.848** | 0.759 | **0.894** |
-| temporal | 92 | 0.630 | 0.641 | 0.630 |
 
-Temporal is weakest under every strategy (consistent with LongMemEval-S). Multi-hop is
-where the vector channel earns its keep (0.848 vs lexical 0.759), lexical wins
-phrasing-heavy open-domain/single-hop QA, and fusion lands at-or-near the best arm per
-category while also taking the overall strict family.
+Multi-hop is the weakest category under every strategy (~0.63 any@5 across the board):
+connecting facts scattered across sessions is hard for pure session retrieval. Fusion
+wins single-hop outright (0.894 vs vector 0.848), where the vector channel earns its
+keep over lexical (0.848 vs 0.759); lexical wins phrasing-heavy temporal (0.841) and
+open-domain (0.868) QA, and fusion lands at-or-near the best arm per category while
+also taking the overall strict family.
+
+> **Correction (2026-09-10):** earlier revisions of this file used a rotated category
+> mapping (LoCoMo categories 1/2/3 were labeled multi-hop/single-hop/temporal instead
+> of the official single-hop/temporal/multi-hop). Overall numbers were never affected
+> (labels do not enter any metric); the tables above are recomputed from the same
+> committed retrieval results (`results/*.jsonl`) with `question_type` corrected in
+> place and `scripts/convert_locomo.py` fixed.
 
 ## Full fusion breakdown
 
 | Category | n | strict@5 | strict@10 | any@5 | NDCG@5 |
 |---|---|---|---|---|---|
+| single-hop | 282 | 0.604 | 0.810 | 0.894 | 0.544 |
+| temporal | 321 | 0.796 | 0.914 | 0.816 | 0.659 |
+| multi-hop | 92 | 0.519 | 0.682 | 0.630 | 0.434 |
 | open-domain | 841 | 0.854 | 0.944 | 0.855 | 0.709 |
-| single-hop | 321 | 0.796 | 0.914 | 0.816 | 0.659 |
-| multi-hop | 282 | 0.604 | 0.810 | 0.894 | 0.544 |
-| temporal | 92 | 0.519 | 0.682 | 0.630 | 0.434 |
 
-Multi-hop shows the strict-vs-any gap clearly (0.604 vs 0.894): questions average ~2.7
-gold sessions, so "all gold in top-5" is much harder than "at least one".
+Single-hop shows the strict-vs-any gap clearly (0.604 vs 0.894): these questions cite
+~2.7 gold sessions on average, so "all gold in top-5" is much harder than "at least
+one". Temporal QA cites almost exactly one evidence session (avg 1.1), which is why its
+strict and any@5 sit close together. The earlier "temporal is weakest, consistent with
+LongMemEval-S" reading was an artifact of the rotated labels: LoCoMo's temporal
+category is date-lookup over a single evidence turn and retrieves fine here (0.816
+any@5); the genuine weak spot is multi-hop.
 
 ## Scope notes (read before quoting)
 
