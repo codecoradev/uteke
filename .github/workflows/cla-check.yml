@@ -4,10 +4,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# pull-requests:write is only effective for SAME-REPO PRs (bot comment).
+# Fork PRs run with a read-only GITHUB_TOKEN no matter what is declared here
+# — that is exactly why the old commit-status approach could never work on
+# forks (verified: PR #1221, run 34481899319, POST statuses → 403).
 permissions:
   pull-requests: write
   contents: read
-  statuses: write
 
 jobs:
   cla-check:
@@ -46,8 +49,16 @@ jobs:
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
 
-      - name: Comment on PR (unsigned only)
-        if: steps.check.outputs.signed != 'true'
+      # FORK-SAFE GATE: this job's own Actions check run carries the CLA gate.
+      # It is created by GitHub itself and is NOT subject to the fork token
+      # restriction: signed → job success; unsigned → annotated failure below.
+      #
+      # The PR comment is a courtesy for same-repo contributors only — forks
+      # cannot comment at all (also 403), so the step is conditioned and
+      # best-effort. It never affects the gate outcome.
+      - name: Comment on PR (same-repo, best effort)
+        if: steps.check.outputs.signed != 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
         uses: actions/github-script@v9
         with:
           script: |
@@ -64,6 +75,7 @@ jobs:
                   '- 📋 **Individual?** → [Sign CLA Individual](https://codecoradev.github.io/cla/?type=individual)',
                   '- 🏢 **Corporate?** → [Sign CLA Corporate](https://codecoradev.github.io/cla/?type=corporate)',
                   '',
+                  'After signing, this check turns green automatically (within ~1 hour, or ask a maintainer to re-run it).',
                   '---',
                   '<sub>By signing, you agree to the terms in [CLA_INDIVIDUAL.md](https://github.com/codecoradev/.github/blob/main/CLA_INDIVIDUAL.md) or [CLA_CORPORATE.md](https://github.com/codecoradev/.github/blob/main/CLA_CORPORATE.md).</sub>',
                 ].join('\n');
@@ -96,27 +108,9 @@ jobs:
               });
             }
 
-      - name: Set commit status
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const signed = '${{ steps.check.outputs.signed }}' === 'true';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ github.event.pull_request.head.sha }}',
-              state: signed ? 'success' : 'failure',
-              context: 'CLA Check',
-              description: signed
-                ? '✅ CLA signed'
-                : '❌ CLA not signed — sign at https://codecoradev.github.io/cla',
-              target_url: signed
-                ? 'https://github.com/codecoradev/.github/blob/main/.cla/signatures.json'
-                : 'https://codecoradev.github.io/cla',
-            });
-
       - name: Fail if not signed
         if: steps.check.outputs.signed != 'true'
         run: |
+          echo "::error title=CLA not signed::Sign the CodeCoraDev CLA at https://codecoradev.github.io/cla — once the signature PR is merged, this check turns green automatically (re-run it or wait ~1 hour)."
           echo "❌ CLA not signed by ${{ github.event.pull_request.user.login }}"
           exit 1
