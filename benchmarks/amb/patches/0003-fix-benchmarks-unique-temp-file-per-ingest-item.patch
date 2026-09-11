@@ -1,0 +1,58 @@
+From 007511ea79defe9a193071d15a726c80f32f3b31 Mon Sep 17 00:00:00 2001
+From: ajianaz <ajianaz@users.noreply.github.com>
+Date: Thu, 10 Sep 2026 23:34:18 +0700
+Subject: [PATCH 3/4] fix(benchmarks): unique temp file per ingest item
+
+The fixed .ingest-item.txt path raced when ingest ran concurrently
+(async_ingest wraps sync ingest in a thread). Use tempfile.mkstemp inside
+the store dir instead; adapter test re-passed.
+---
+ src/memory_bench/memory/uteke.py | 21 ++++++++++++---------
+ 1 file changed, 12 insertions(+), 9 deletions(-)
+
+diff --git a/src/memory_bench/memory/uteke.py b/src/memory_bench/memory/uteke.py
+index ffcc859..86a7ed0 100644
+--- a/src/memory_bench/memory/uteke.py
++++ b/src/memory_bench/memory/uteke.py
+@@ -23,6 +23,7 @@ import json
+ import os
+ import shutil
+ import subprocess
++import tempfile
+ from pathlib import Path
+ 
+ from ..models import Document
+@@ -92,19 +93,21 @@ class UtekeMemoryProvider(MemoryProvider):
+     def ingest(self, documents: list[Document]) -> None:
+         # Route content through a temp file + `uteke import` instead of argv:
+         # sessions can exceed the OS per-argument limit (E2BIG), and the CLI
+-        # takes file paths, not stdin, for `remember`.
+-        tmp = self._store / ".ingest-item.txt"
+-        try:
+-            for doc in documents:
+-                content = _session_dialogue(doc.content)
+-                tmp.write_text(content, encoding="utf-8")
++        # takes file paths, not stdin, for `remember`. Unique per call so
++        # concurrent ingests (async_ingest runs in threads) never collide.
++        for doc in documents:
++            content = _session_dialogue(doc.content)
++            fd, tmp_path = tempfile.mkstemp(prefix="amb-ingest-", suffix=".txt", dir=str(self._store))
++            try:
++                with os.fdopen(fd, "w", encoding="utf-8") as f:
++                    f.write(content)
+                 self._run([
+-                    "import", str(tmp), "--format", "text",
++                    "import", tmp_path, "--format", "text",
+                     "--namespace", doc.user_id or "default",
+                     "--tags", f"amb,doc-{doc.id}",
+                 ])
+-        finally:
+-            tmp.unlink(missing_ok=True)
++            finally:
++                os.unlink(tmp_path)
+ 
+     def retrieve(
+         self,
+-- 
+2.47.3
+
