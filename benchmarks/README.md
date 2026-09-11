@@ -8,6 +8,7 @@ how, and what the numbers are.
 | [`internal/`](internal/) | Performance | Insert throughput, recall latency, storage footprint (`uteke bench`) | ✅ Maintained — re-verified on v0.17.0 (2026-09-09) |
 | [`longmemeval/`](longmemeval/) | External #1 | Retrieval quality on [LongMemEval-S](https://arxiv.org/abs/2410.10813) (500 questions, session-level) | ✅ Validated on v0.16.0 (pure-default run); -M variant **not** measured (transparent) |
 | [`locomo/`](locomo/) | External #2 | Retrieval quality on [LoCoMo](https://github.com/snap-research/locomo) (very long multi-session conversations) | 🚧 Planned — adapter + pilot |
+| [`amb/`](amb/) | External #3 | Retrieval + temporal QA on [AMB](https://github.com/vectorize-io/agent-memory-benchmark) (run kit: patches + provenance) | 🚧 Run in progress — RESULTS pending (#1226) |
 
 Friendly overview page: [docs/benchmarks.md](../docs/benchmarks.md).
 
@@ -23,7 +24,8 @@ benchmarks/
 │   ├── results/       ← canonical raw artifacts (committed — audit them!)
 │   ├── scripts/       ← harness, metrics, Modal fan-out infra
 │   └── data/          ← dataset (gitignored; scripts/download_data.sh)
-└── locomo/            ← LoCoMo (planned)
+├── locomo/            ← LoCoMo (planned)
+└── amb/               ← AMB run kit (patch series + provenance, no vendored code)
 ```
 
 ## Reproduce

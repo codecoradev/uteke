@@ -1,0 +1,51 @@
+From 920f4edc87fd5794932eb3fe8b758544293ba64a Mon Sep 17 00:00:00 2001
+From: ajianaz <ajianaz@users.noreply.github.com>
+Date: Thu, 10 Sep 2026 23:28:09 +0700
+Subject: [PATCH 2/4] fix(benchmarks): ingest via temp file + uteke import, not
+ argv
+
+Sessions can exceed the OS per-argument limit when passed as argv to
+`uteke remember` (E2BIG on long contexts; BEAM/LongMemEval-scale corpora).
+`import` accepts a file path and applies the same namespace/tags options,
+so content now routes through a per-item temp file. Round-trip verified:
+tags survive recall and doc-id mapping is unchanged.
+---
+ src/memory_bench/memory/uteke.py | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/src/memory_bench/memory/uteke.py b/src/memory_bench/memory/uteke.py
+index b176e5d..ffcc859 100644
+--- a/src/memory_bench/memory/uteke.py
++++ b/src/memory_bench/memory/uteke.py
+@@ -90,13 +90,21 @@ class UtekeMemoryProvider(MemoryProvider):
+ 
+     # -- interface ---------------------------------------------------------
+     def ingest(self, documents: list[Document]) -> None:
+-        for doc in documents:
+-            content = _session_dialogue(doc.content)
+-            self._run([
+-                "remember", content,
+-                "--namespace", doc.user_id or "default",
+-                "--tags", f"amb,doc-{doc.id}",
+-            ])
++        # Route content through a temp file + `uteke import` instead of argv:
++        # sessions can exceed the OS per-argument limit (E2BIG), and the CLI
++        # takes file paths, not stdin, for `remember`.
++        tmp = self._store / ".ingest-item.txt"
++        try:
++            for doc in documents:
++                content = _session_dialogue(doc.content)
++                tmp.write_text(content, encoding="utf-8")
++                self._run([
++                    "import", str(tmp), "--format", "text",
++                    "--namespace", doc.user_id or "default",
++                    "--tags", f"amb,doc-{doc.id}",
++                ])
++        finally:
++            tmp.unlink(missing_ok=True)
+ 
+     def retrieve(
+         self,
+-- 
+2.47.3
+

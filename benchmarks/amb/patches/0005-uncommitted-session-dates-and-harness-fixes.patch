@@ -1,0 +1,132 @@
+diff --git a/src/memory_bench/llm/openai.py b/src/memory_bench/llm/openai.py
+index a430e92..91e350c 100644
+--- a/src/memory_bench/llm/openai.py
++++ b/src/memory_bench/llm/openai.py
+@@ -1,6 +1,7 @@
+ import json
+ import os
+ import time
++from typing import Any, cast
+ 
+ from .base import LLM, Schema
+ 
+@@ -28,32 +29,71 @@ class OpenAILLM(LLM):
+         strict_mode = os.environ.get("AMB_OPENAI_STRICT_JSON") != "0"
+         max_tokens_env = os.environ.get("AMB_MAX_TOKENS")
+         max_tokens = int(max_tokens_env) if max_tokens_env else None
++        # GLM-family via Z.AI direct: thinking defaults ON and eats the token
++        # budget first; the flag works on the direct endpoint (unlike some
++        # gateways that silently drop it). Env-gated so other backends are
++        # unaffected.
++        extra: dict = {}
++        if os.environ.get("AMB_THINKING_DISABLED") == "1":
++            extra["extra_body"] = {"thinking": {"type": "disabled"}}
+         if strict_mode:
+             response_format: dict = {
+                 "type": "json_schema",
+                 "json_schema": {"name": "response", "schema": schema_json, "strict": True},
+             }
++            messages = [{"role": "user", "content": prompt}]
+         else:
+             # Some OpenAI-compatible backends (e.g. GLM via Bifrost) ignore json_schema
+             # and thinking-disable flags; they DO honor json_object + instructions.
++            # The JSON contract goes into a SYSTEM message, NOT prepended to the user
++            # content: with thinking disabled, GLM-5.3 (z.ai coding endpoint) degenerates
++            # on the combined single-user-message form — echoing the schema or mass-
++            # abstaining ("context does not contain ...") even when the answer is
++            # literally in the context (observed 2026-09-11: 8.6% full run, repro'd by
++            # canary; system-role form + thinking-off answers correctly).
+             schema_desc = json.dumps(schema_json, ensure_ascii=False)
+-            prompt = (
++            json_contract = (
+                 "You must respond with ONLY a JSON object — no markdown fences, no extra "
+                 "text — with EXACTLY this shape:\n"
+-                f"{schema_desc}\n\n{prompt}"
++                f"{schema_desc}"
+             )
+             response_format = {"type": "json_object"}
++            messages = [
++                {"role": "system", "content": json_contract},
++                {"role": "user", "content": prompt},
++            ]
+         delay = _RETRY_BASE_DELAY
+         last_exc = None
++        last_bad_text = ""
++        dump_path = os.environ.get("AMB_DEBUG_DUMP")
++        if dump_path:
++            with open(dump_path, "a", encoding="utf-8") as f:
++                f.write(json.dumps({"model": self._model, "messages": messages}) + "\n")
+         for attempt in range(_MAX_RETRIES):
++            if attempt >= 2 and len(messages) == 2:
++                # Still failing after two plain attempts: show the model its own
++                # bad output and ask for a repaired object — self-repair beats
++                # blind re-rolls against a degenerating generation pattern.
++                messages = [
++                    *messages,
++                    {"role": "assistant", "content": last_bad_text[:2000] or "(empty response)"},
++                    {"role": "user", "content": (
++                        "Your previous response was not the required JSON object. Respond again "
++                        f"with ONLY the JSON object with keys {schema.required} and string "
++                        "values — no other text."
++                    )},
++                ]
+             try:
+                 response = self._client.chat.completions.create(
+                     model=self._model,
+-                    messages=[{"role": "user", "content": prompt}],
++                    messages=cast(Any, messages),
+                     response_format=response_format,
++                    temperature=float(os.environ.get("AMB_TEMPERATURE", "0")),
+                     **({"max_tokens": max_tokens} if max_tokens else {}),
++                    **extra,
+                 )
+                 text = response.choices[0].message.content or ""
++                last_bad_text = text
+                 # tolerate ```json fences some backends add despite instructions
+                 stripped = text.strip()
+                 if stripped.startswith("```"):
+@@ -89,5 +129,14 @@ class OpenAILLM(LLM):
+                 if retryable and attempt < _MAX_RETRIES - 1:
+                     time.sleep(_RETRY_BASE_DELAY if "429" in msg or "rate" in msg.lower() else 2)
+                     continue
++                # Graceful degrade: one broken query must not kill a multi-hour
++                # benchmark run. Return a sentinel marked answer — the judge
++                # will score it incorrect, the row still lands in the output.
++                if isinstance(e, (json.JSONDecodeError, ValueError)):
++                    return {
++                        **{k: "" for k in schema.required},
++                        "reasoning": f"[format-error after {_MAX_RETRIES} retries] {last_exc}",
++                        "answer": "[unparseable model response]",
++                    }
+                 raise
+         raise RuntimeError(f"OpenAI request failed after {_MAX_RETRIES} retries: {last_exc}")
+diff --git a/src/memory_bench/memory/uteke.py b/src/memory_bench/memory/uteke.py
+index 86a7ed0..ca01b5f 100644
+--- a/src/memory_bench/memory/uteke.py
++++ b/src/memory_bench/memory/uteke.py
+@@ -96,7 +96,13 @@ class UtekeMemoryProvider(MemoryProvider):
+         # takes file paths, not stdin, for `remember`. Unique per call so
+         # concurrent ingests (async_ingest runs in threads) never collide.
+         for doc in documents:
+-            content = _session_dialogue(doc.content)
++            # LoCoMo's QA demands absolute dates ("convert relative time to
++            # specific dates") but session dates ride on Document.timestamp —
++            # dropping them makes temporal QA unanswerable (conv-30 temporal
++            # = 15% without the header). Prepend it so both the embedding and
++            # the answerer see the anchor.
++            header = f"[Session date/time: {doc.timestamp}]\n" if getattr(doc, "timestamp", None) else ""
++            content = header + _session_dialogue(doc.content)
+             fd, tmp_path = tempfile.mkstemp(prefix="amb-ingest-", suffix=".txt", dir=str(self._store))
+             try:
+                 with os.fdopen(fd, "w", encoding="utf-8") as f:
+@@ -133,4 +139,9 @@ class UtekeMemoryProvider(MemoryProvider):
+                 user_id=user_id,
+                 source_ids=[doc_id],
+             ))
+-        return docs, {"raw_hits": len(out)}
++        # Full recall payload (hits with content + metadata) as the raw response:
++        # locomo's prompt template json.dumps()es this INSTEAD of the assembled
++        # context ("matching the reference impl" = hindsight's full API dump).
++        # Returning only a hit-count stub here silently produced prompts whose
++        # entire context was {"raw_hits": N} (2026-09-11: 8.6% full run).
++        return docs, {"hits": out}
