@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- **Default recall `min_score` lowered 0.3 → 0.0 (#1223)** — since the fusion strategy (weighted RRF) became the recall default in 0.16.0, returned scores are rank-based (RRF contribution plus salience/recency boosts, typically ~0.0-0.2) rather than cosine similarity, so the CLI default threshold of 0.3 (a cosine-era value; HTTP/MCP already default 0.0) silently filtered out almost every result — measured on embeddinggemma-q4: all 20 paraphrase probes scored 0.169-0.186 rank-1 while a legacy-distribution 0.3 default expects ~0.5+, making default `uteke recall` return empty. Thresholds remain opt-in via `[recall] min_score`, `--min`, `--strict` (0.5), or HTTP `min_score`; docs now state the score scale per strategy.
 - **LongMemEval baseline mislabel** — RESULTS.md previously attributed the 0.854/0.885 (2026-08-13) full-500 baseline to "v0.15.0 hybrid"; those figures are the **vector-only** run (hybrid was validated at 50 questions only). Corrected, with both delta bases stated (+8.9pp full-500, +9.2pp 470-non-abstention).
 - **Full-dataset aggregates** — RESULTS.md now labels all three bases explicitly: Overall (470 non-abstention), Abstention (30), and Overall (full 500 = 0.982 recall_any@5 / 0.880 strict recall_all@5); no questions silently dropped from the aggregate rows.
 - Removed stale run logs and an outdated metrics snapshot from git tracking (values superseded by recomputation from committed raw artifacts).

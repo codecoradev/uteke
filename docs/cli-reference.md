@@ -368,6 +368,7 @@ Additional flags not shown in the basic example above:
 # Minimum similarity score filter
 uteke recall "database config" --min 0.7
 uteke recall "database config" --strict    # uses min_score_strict (default 0.5)
+uteke recall "database config" --min 0.25  # opt-in similarity threshold (default 0.0 since #1223: fusion scores are rank-based)
 
 # Time-travel: query memories at specific point in time
 uteke recall "deployment process" --at 2026-06-01T12:00:00Z
@@ -415,6 +416,7 @@ uteke recall "api design" --context
 |------|-------------|
 | `--min <score>` | Minimum similarity score (0.0-1.0) |
 | `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
+| `--min <score>` | Minimum similarity score threshold (default 0.0 since 0.17.x, #1223 — fusion scores are rank-based, not cosine) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
