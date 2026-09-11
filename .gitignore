@@ -34,3 +34,5 @@ mutants*.out.old/
 # embedder cache artifact from local test runs
 crates/uteke-core/embed_cache.db
 embed_cache.db
+
+# cla-e2e-probe: temporary marker for CLA gate validation (PR will be closed, never merged)
