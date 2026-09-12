@@ -85,6 +85,11 @@ pub enum Commands {
         /// Source type: user, url, file, import, derived, system, unknown (#348)
         #[arg(long)]
         source_type: Option<String>,
+        /// Timestamp anchor: prepend "[Session date/time: ...]" to the content
+        /// so recall can answer temporal questions (#1232). Accepts RFC 3339,
+        /// "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
+        #[arg(long)]
+        timestamp: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -330,6 +335,11 @@ pub enum Commands {
         /// Recurse into subdirectories
         #[arg(long, default_value_t = false)]
         recursive: bool,
+        /// Timestamp anchor: prepend "[Session date/time: ...]" to the imported
+        /// content (text format only) so recall can answer temporal questions
+        /// (#1232). Accepts RFC 3339, "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
+        #[arg(long)]
+        timestamp: Option<String>,
     },
     /// Generate shell completions
     Completions {
