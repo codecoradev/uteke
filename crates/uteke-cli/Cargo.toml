@@ -22,7 +22,7 @@ usearch = ["uteke-core/usearch"]
 vecq = ["uteke-core/vecq"]
 
 [dependencies]
-uteke-core = { path = "../uteke-core", version = "0.17.0", default-features = false, features = ["onnx"] }
+uteke-core = { path = "../uteke-core", version = "0.18.0", default-features = false, features = ["onnx"] }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
