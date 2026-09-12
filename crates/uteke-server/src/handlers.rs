@@ -3841,16 +3841,11 @@ mod payload_conformance_tests {
     fn recall_http_payload_conformance() {
         use uteke_core::Uteke;
 
-        let uteke = Uteke::open(":memory:").unwrap();
-        uteke
-            .remember(
-                "Payload conformance probe memory #1233 with distinctive tokens zebraquartz",
-                &[],
-                None,
-                Some("conf"),
-            )
-            .unwrap();
-
+        // No embedder: these tests are payload-shape conformance and must run
+        // in CI builds without the ONNX runtime lib (same pattern as the
+        // graph-edge tests). Keyword (fts5) recall needs no vectors.
+        let uteke = Uteke::open_with_backend(":memory:", None)
+            .expect("open in-memory uteke without embedder");
         let shared = std::sync::Mutex::new(uteke);
         let ctx = ReqCtx {
             auth_token_hash: None,
@@ -3860,10 +3855,24 @@ mod payload_conformance_tests {
             extraction_config: None,
         };
 
+        let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
+        let mut remember_req = tiny_http::TestRequest::new()
+            .with_method(tiny_http::Method::Post)
+            .with_path("/remember")
+            .with_body(remember_body)
+            .into();
+        let remember_resp = route(&shared, &ctx, &mut remember_req);
+        let mut rbuf = String::new();
+        remember_resp
+            .into_reader()
+            .read_to_string(&mut rbuf)
+            .unwrap();
+        assert!(rbuf.contains("\"id\""), "remember must succeed: {rbuf}");
+
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
             .with_path("/recall")
-            .with_body(r#"{"query":"zebraquartz","limit":5,"min_score":0.0,"namespace":"conf"}"#)
+            .with_body(r#"{"query":"zebraquartz","limit":5,"min_score":0.0,"namespace":"conf","strategy":"fts5"}"#)
             .into();
         let resp = route(&shared, &ctx, &mut req);
         let mut buf = String::new();
@@ -3909,7 +3918,11 @@ mod payload_conformance_tests {
     fn recall_http_empty_result_has_no_stub() {
         use uteke_core::Uteke;
 
-        let uteke = Uteke::open(":memory:").unwrap();
+        // No embedder: these tests are payload-shape conformance and must run
+        // in CI builds without the ONNX runtime lib (same pattern as the
+        // graph-edge tests). Keyword (fts5) recall needs no vectors.
+        let uteke = Uteke::open_with_backend(":memory:", None)
+            .expect("open in-memory uteke without embedder");
         let shared = std::sync::Mutex::new(uteke);
         let ctx = ReqCtx {
             auth_token_hash: None,
@@ -3921,7 +3934,7 @@ mod payload_conformance_tests {
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
             .with_path("/recall")
-            .with_body(r#"{"query":"totally-unique-missing-query-xyz","limit":5,"min_score":0.0,"namespace":"conf"}"#)
+            .with_body(r#"{"query":"totally-unique-missing-query-xyz","limit":5,"min_score":0.0,"namespace":"conf","strategy":"fts5"}"#)
             .into();
         let resp = route(&shared, &ctx, &mut req);
         let mut buf = String::new();
