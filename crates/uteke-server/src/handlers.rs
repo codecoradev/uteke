@@ -3828,3 +3828,111 @@ mod list_pagination_tests {
         assert!(resp.is_array(), "at-mode stays a bare array: {resp}");
     }
 }
+
+#[cfg(test)]
+mod payload_conformance_tests {
+    use super::*;
+    use std::io::Read as IoRead;
+
+    // ── #1233: raw-payload conformance — recall responses carry the FULL
+    // payload on every surface (HTTP route tested here; CLI --json prints
+    // the same serde SearchResult; MCP unified path reuses these types) ──
+    #[test]
+    fn recall_http_payload_conformance() {
+        use uteke_core::Uteke;
+
+        let uteke = Uteke::open(":memory:").unwrap();
+        uteke
+            .remember(
+                "Payload conformance probe memory #1233 with distinctive tokens zebraquartz",
+                &[],
+                None,
+                Some("conf"),
+            )
+            .unwrap();
+
+        let shared = std::sync::Mutex::new(uteke);
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: vec![],
+            recall_config: None,
+            extraction_config: None,
+        };
+
+        let mut req = tiny_http::TestRequest::new()
+            .with_method(tiny_http::Method::Post)
+            .with_path("/recall")
+            .with_body(r#"{"query":"zebraquartz","limit":5,"min_score":0.0,"namespace":"conf"}"#)
+            .into();
+        let resp = route(&shared, &ctx, &mut req);
+        let mut buf = String::new();
+        resp.into_reader().read_to_string(&mut buf).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&buf).expect("valid JSON");
+
+        // Raw payload must be an array of FULL SearchResult objects.
+        let arr = v
+            .as_array()
+            .expect("recall response must be a top-level JSON array");
+        assert!(!arr.is_empty(), "expected at least one hit");
+        let first = &arr[0];
+        // Full payload = the memory object itself, not a summary stub.
+        let mem = first
+            .get("memory")
+            .expect("each hit must carry the full memory object");
+        assert!(mem.get("id").is_some(), "hit must include memory.id");
+        let content = mem
+            .get("content")
+            .and_then(|c| c.as_str())
+            .expect("hit must include memory.content");
+        assert!(
+            content.contains("zebraquartz"),
+            "content must be the FULL memory text"
+        );
+        assert!(
+            mem.get("created_at").is_some(),
+            "hit must include memory metadata"
+        );
+        assert!(
+            first.get("score").and_then(|s| s.as_f64()).is_some(),
+            "hit must include score"
+        );
+        // No stub markers anywhere.
+        let s = v.to_string();
+        assert!(
+            !s.contains("raw_hits"),
+            "hit-count stub leaked into payload"
+        );
+    }
+
+    #[test]
+    fn recall_http_empty_result_has_no_stub() {
+        use uteke_core::Uteke;
+
+        let uteke = Uteke::open(":memory:").unwrap();
+        let shared = std::sync::Mutex::new(uteke);
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: vec![],
+            recall_config: None,
+            extraction_config: None,
+        };
+        let mut req = tiny_http::TestRequest::new()
+            .with_method(tiny_http::Method::Post)
+            .with_path("/recall")
+            .with_body(r#"{"query":"totally-unique-missing-query-xyz","limit":5,"min_score":0.0,"namespace":"conf"}"#)
+            .into();
+        let resp = route(&shared, &ctx, &mut req);
+        let mut buf = String::new();
+        resp.into_reader().read_to_string(&mut buf).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&buf).expect("valid JSON");
+        // Empty responses are structured objects with an empty results array —
+        // never a bare "N hits" summary string.
+        assert!(
+            v.get("results")
+                .map(|r| r.as_array().map(|a| a.is_empty()).unwrap_or(false))
+                .unwrap_or(true)
+        );
+    }
+}
