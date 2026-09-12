@@ -48,14 +48,17 @@ except ImportError:
         return x
 
 
-def session_to_text(session):
+def session_to_text(session, date=None):
     """Convert a chat session (list of turns) into plain text."""
     lines = []
+    anchor = ""
+    if date and os.environ.get("LMEVAL_DATE_ANCHOR") == "1":
+        anchor = f"[Session date/time: {date}]\n"
     for turn in session:
         role = turn.get("role", "unknown")
         content = turn.get("content", "")
         lines.append(f"{role}: {content}")
-    return "\n".join(lines)
+    return anchor + "\n".join(lines)
 
 
 def chunk_session_text(text, max_chars=2000):
@@ -158,8 +161,8 @@ def insert_sessions(args, store_path, entry):
     jsonl_lines = []
     sid_order = []  # track session_ids in import order for counting
     for i, (sid, session) in enumerate(zip(session_ids, sessions)):
-        text = session_to_text(session)
         date = dates[i] if i < len(dates) else None
+        text = session_to_text(session, date=date)
 
         # Chunk long sessions to reduce embedding dilution (#1009).
         if args.chunk_sessions:
