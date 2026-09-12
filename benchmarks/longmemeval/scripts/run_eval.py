@@ -135,7 +135,7 @@ def run_uteke(args, store_path, subcommand, extra_args=None):
     ] + subcommand
     if extra_args:
         cmd += extra_args
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=2400)
     if result.returncode != 0:
         raise RuntimeError(f"uteke failed: {' '.join(cmd)}\nstderr: {result.stderr}")
     return result.stdout.strip()
@@ -226,6 +226,53 @@ def insert_sessions(args, store_path, entry):
     return inserted_sids, answer_turns, mid_to_sid
 
 
+# ── Query decomposition (#1237) ─────────────────────────────────────────
+_DECOMP_CACHE = {}   # question_id -> [subqueries]
+_DECOMP_LOAD = False
+
+def _load_decompose_facets(path):
+    """Load optional pre-computed facets {question_id: [subqueries]}."""
+    global _DECOMP_CACHE, _DECOMP_LOAD
+    if not _DECOMP_LOAD:
+        if path and os.path.exists(path):
+            with open(path) as f:
+                _DECOMP_CACHE = json.load(f)
+        _DECOMP_LOAD = True
+    return _DECOMP_CACHE
+
+def glm_decompose_question(question, api_key, base_url, model="glm-5.3"):
+    """Split a question into atomic sub-queries via GLM. Returns list[str]."""
+    import urllib.request
+    body = json.dumps({
+        "model": model,
+        "messages": [{"role": "user", "content": (
+            "Break this user question into its atomic information needs (sub-queries) "
+            "for retrieval. Output ONLY a JSON array of short search queries, each phrased "
+            "as a keyword-style query (no filler). 2-6 queries.\n\nQuestion: " + question)}],
+        "temperature": 0,
+        "thinking": {"type": "disabled"},
+        "max_tokens": 500,
+    }).encode()
+    req = urllib.request.Request(base_url + "/chat/completions", data=body, method="POST")
+    req.add_header("Authorization", "Bearer " + api_key)
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        d = json.loads(resp.read().decode())
+    txt = d["choices"][0]["message"]["content"]
+    start, end = txt.find("["), txt.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    arr = json.loads(txt[start:end + 1])
+    return [str(x) for x in arr if str(x).strip()][:6]
+
+def rrf_merge(rankings, weights, k=60):
+    """Weighted RRF merge of multiple session-id rankings."""
+    scores = {}
+    for ranking, w in zip(rankings, weights):
+        for i, sid in enumerate(ranking):
+            scores[sid] = scores.get(sid, 0.0) + w / (k + i + 1)
+    return sorted(scores, key=lambda s: -scores[s])
+
 def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids, mid_to_sid):
     """
     Run uteke recall for the question, then evaluate retrieval accuracy.
@@ -268,8 +315,34 @@ def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids,
         fusion_cmds = [recall_cmd, alt_cmd]
     else:
         fusion_cmds = [recall_cmd]
+    # Query decomposition (#1237): per-sub-query recall (fts5 - keyword facet match),
+    # digabung berbobot rendah ke ranking utama. Pre-computed facets dipakai bila tersedia.
+    facet_extra = []
+    if getattr(args, "decompose", False):
+        entry_f = entry
+        facets_map = _load_decompose_facets(getattr(args, "decompose_facets", None))
+        subqs = facets_map.get(entry.get("question_id")) if facets_map else None
+        if not subqs:
+            api_key = os.environ.get("ZAI_API_KEY", "")
+            base_url = "https://api.z.ai/api/coding/paas/v4"
+            if api_key:
+                try:
+                    subqs = glm_decompose_question(question, api_key, base_url)
+                except Exception as e:
+                    print(f"  decompose failed: {e}", file=sys.stderr)
+                    subqs = []
+        for sq in (subqs or []):
+            facet_extra.append([
+                "recall", sq,
+                "--limit", "30",
+                "--tags", "longmemeval",
+                "--strategy", "fts5",
+                "--min", "0.0",
+            ])
+
     try:
         outputs = [run_uteke(args, store_path, cmd) for cmd in fusion_cmds]
+        facet_outputs = [run_uteke(args, store_path, cmd) for cmd in facet_extra]
     except RuntimeError as e:
         print(f"  Warning: recall failed: {e}", file=sys.stderr)
         return None
@@ -334,6 +407,33 @@ def recall_and_evaluate(args, store_path, entry, answer_sessions, inserted_sids,
                 if sid:
                     raw_session_ids.append(sid)
         retrieved_session_ids = _dedup_ranking(raw_session_ids)
+
+    # #1237: fuse sub-query facet rankings (low weight) into the final ranking.
+    # Applied to BOTH fusion and non-fusion paths - facets carry complementary
+    # atomic-match signal that the whole-question ranking can miss.
+    if getattr(args, "decompose", False) and facet_extra:
+        fw = getattr(args, "decompose_weight", 0.7)
+        k = 60
+        scores = {sid: (len(retrieved_session_ids) - i) for i, sid in enumerate(retrieved_session_ids)}
+        for out in facet_outputs:
+            try:
+                fr = json.loads(out)
+            except json.JSONDecodeError:
+                continue
+            fr_list = fr if isinstance(fr, list) else [fr]
+            raw = []
+            for rr in fr_list:
+                mid = rr.get("memory_id") or rr.get("id")
+                if mid and mid in mid_to_sid:
+                    raw.append(mid_to_sid[mid])
+                else:
+                    meta = rr.get("metadata", {})
+                    sid = meta.get("session_id")
+                    if sid:
+                        raw.append(sid)
+            for i, sid in enumerate(_dedup_ranking(raw)):
+                scores[sid] = scores.get(sid, 0.0) + fw / (k + i + 1)
+        retrieved_session_ids = sorted(scores, key=lambda s: -scores[s])
 
     # Temporal date-window boost (#1119): soft-boost sessions whose date falls
     # inside the question's temporal window ("last month", "in February",
@@ -434,6 +534,14 @@ def main():
     parser.add_argument("--fusion", action="store_true",
                         help="RRF-fuse two recall rankings: primary strategy ×1.7 + "
                              "complementary (vector↔hybrid) ×1, k=60 (#1123)")
+    parser.add_argument("--decompose", action="store_true",
+                        help="Query decomposition: split the question into atomic sub-queries (GLM), "
+                             "recall per sub-query, RRF-fuse sub-rankings into the final ranking (#1237)")
+    parser.add_argument("--decompose-facets", default=None,
+                        help="Optional JSON file of pre-computed facets {question_id: [subqueries]} "
+                             "(deterministic re-runs, saves GLM calls)")
+    parser.add_argument("--decompose-weight", type=float, default=0.7,
+                        help="RRF weight of each sub-query facet ranking (default 0.7)")
     parser.add_argument("--fusion-primary-weight", type=float, default=1.7,
                         help="RRF weight for the primary strategy ranking (default: 1.5)")
     parser.add_argument("--chunk-sessions", action="store_true",
