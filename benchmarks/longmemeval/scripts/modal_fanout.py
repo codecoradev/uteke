@@ -22,6 +22,10 @@ Usage:
     # Full 500Q vector run
     modal run modal_fanout.py --strategy vector --num-shards 10
 
+    # Full 500Q decompose experiment (#1237), binary built from UTEKE_GIT_REF:
+    #   LMEVAL_DECOMPOSE=1 UTEKE_GIT_REF=<sha> modal run modal_fanout.py \
+    #       --strategy default --decompose --anchor --num-shards 10 --tag dec500
+
 Results land in results_modal_<strategy>[_<limit>q]/retrieval_results.jsonl
 (merged from all shards), ready for: python print_metrics.py <file>
 
@@ -53,6 +57,10 @@ UTEKE_GIT_REF = os.environ.get("UTEKE_GIT_REF", "")
 DATA_FILE = os.environ.get("LMEVAL_DATA", "longmemeval_s_cleaned.json")
 # Local source of the embedding model (must contain onnx/ + tokenizer.json).
 MODEL_SOURCE = pathlib.Path("/opt/data/.codecora/uteke/models/embeddinggemma-q4")
+# Decompose experiment (#1237): set LMEVAL_DECOMPOSE=1 to bake the pre-computed
+# facets file into the image and pass --decompose to every shard's harness call.
+DECOMPOSE = os.environ.get("LMEVAL_DECOMPOSE", "") == "1"
+FACETS_SOURCE = os.environ.get("LMEVAL_FACETS", "/opt/data/tmp/lme_facets_500.json")
 
 app = modal.App("uteke-longmemeval")
 
@@ -108,6 +116,10 @@ image = (
     .add_local_file(str(SCRIPTS / "mmr.py"), "/root/harness/mmr.py")
     .add_local_file(str(REPO_DIR / "data" / DATA_FILE), "/root/harness/data.json")
 )
+if DECOMPOSE:
+    if not pathlib.Path(FACETS_SOURCE).exists():
+        sys.exit(f"FACETS source not found: {FACETS_SOURCE}")
+    image = image.add_local_file(FACETS_SOURCE, "/root/harness/facets.json")
 
 
 @app.function(image=image, timeout=14400, cpu=2, volumes={"/root/vol": vol})
@@ -157,17 +169,30 @@ def run_shard(spec: dict) -> dict:
     pathlib.Path("/tmp/shard.json").write_text(_json.dumps(shard))
     out_dir = f"/tmp/out_{shard_idx}"
 
+    # Date-anchor experiment (#1232): forward via process env (subprocess inherits).
+    if spec.get("anchor"):
+        os.environ["LMEVAL_DATE_ANCHOR"] = "1"
+
+    eval_args = [
+        sys.executable, "/root/harness/run_eval.py",
+        "--data", "/tmp/shard.json",
+        "--output", out_dir,
+        "--strategy", strategy,
+        "--namespace", "lmeval",
+        *resume_args,
+    ]
+    if spec.get("decompose"):
+        # Decompose experiment (#1237): fusion RRF + chunked sessions + facet
+        # decomposition -- exact flag set of the validated 50Q dry-run config.
+        eval_args += [
+            "--fusion", "--chunk-sessions", "--decompose",
+            "--decompose-facets", "/root/harness/facets.json",
+        ]
+
     t0 = time.time()
     try:
         proc = subprocess.run(
-            [
-                sys.executable, "/root/harness/run_eval.py",
-                "--data", "/tmp/shard.json",
-                "--output", out_dir,
-                "--strategy", strategy,
-                "--namespace", "lmeval",
-                *resume_args,
-            ],
+            eval_args,
             capture_output=True, text=True, timeout=14100,  # 14400 - buffer commit
         )
     except subprocess.TimeoutExpired as e:
@@ -226,7 +251,11 @@ def main(
     limit: int = 0,
     outdir: str = "",
     tag: str = "",
+    decompose: bool = False,
+    anchor: bool = False,
 ):
+    if decompose and not DECOMPOSE:
+        sys.exit("Pass LMEVAL_DECOMPOSE=1 (opt. LMEVAL_FACETS=<path>) so the image bakes the facets file.")
     # tag: isolates this run's shards on the volume under "{strategy}-{tag}",
     # so a re-run with a different binary (e.g. v0.17.0 re-validation) cannot
     # resume-skip shards left by an earlier binary's run under "{strategy}/".
@@ -256,7 +285,8 @@ def main(
 
     # Strided slicing means shard i covers data[i::num_shards].
     inputs = [
-        {"strategy": strategy, "shard_idx": i, "num_shards": num_shards, "limit": limit, "vol_dir": vol_dir}
+        {"strategy": strategy, "shard_idx": i, "num_shards": num_shards, "limit": limit, "vol_dir": vol_dir,
+         "decompose": decompose and DECOMPOSE, "anchor": anchor}
         for i in range(num_shards)
     ]
     merged, seen = [], set()
