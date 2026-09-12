@@ -3927,12 +3927,18 @@ mod payload_conformance_tests {
         let mut buf = String::new();
         resp.into_reader().read_to_string(&mut buf).unwrap();
         let v: serde_json::Value = serde_json::from_str(&buf).expect("valid JSON");
-        // Empty responses are structured objects with an empty results array —
-        // never a bare "N hits" summary string.
+        // Empty responses MUST be structured objects with an explicit empty
+        // "results" array — a bare string, a stub marker, or an object
+        // without "results" all fail this test.
+        let results = v
+            .get("results")
+            .and_then(|r| r.as_array())
+            .expect("empty recall must return an object with a results array");
+        assert!(results.is_empty(), "expected empty results array");
+        let s = v.to_string();
         assert!(
-            v.get("results")
-                .map(|r| r.as_array().map(|a| a.is_empty()).unwrap_or(false))
-                .unwrap_or(true)
+            !s.contains("raw_hits"),
+            "hit-count stub leaked into payload"
         );
     }
 }
