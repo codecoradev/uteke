@@ -6,6 +6,13 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
+## v0.18.0 - Agent-Operable Memory Plumbing `Released 2026-09-13`
+
+- **Ingest date anchors (#1232/#1238)** - `remember --timestamp` + import timestamps; time-travel and audit no longer depend on ingest order
+- **Room lifecycle management (#1202/#1203)** - rename/update/move-memory across HTTP, CLI, and MCP (schema v19)
+- **Recall payload conformance tests (#1233/#1239)** - full-payload contract pinned across all surfaces
+- Fixes: dedup live-check (#1211), default min_score 0.0 (#1228), install.sh ORT libs (#1221), LoCoMo label mapping (#1222)
+
 ## v0.17.0 — Inspectable, Trustworthy Memory `✓ Released 2026-09-06`
 
 - **Explain recall (#1160)** — see why each memory ranked where it did, on every recall surface (CLI `--explain`, HTTP `explain`, MCP flag)

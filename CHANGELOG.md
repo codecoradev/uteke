@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-13
+
+Minor release. Theme: **agent-operable memory plumbing** - ingest with explicit timestamps, full room lifecycle management, and a recall payload contract that keeps benchmark harnesses honest. Retrieval behavior is unchanged from 0.17.0 (revalidated at the published config: recall@5 non-abs 0.9457, identical per-question rankings).
+
+### Added (release highlights)
+
+- **Ingest date anchors: `uteke remember --timestamp` / `import` timestamps (#1232, #1238)** - attach an explicit timestamp at write time (CLI flag + batch import field) so time-travel recall (`at`), temporal boosts, and audit chains no longer depend on ingest order. The `LMEVAL_DATE_ANCHOR` env is benchmark-harness-only and never affects the binary.
+- **Room lifecycle management (#1202/#1203)** - `POST /room/rename|/room/update|/room/memory/move`, CLI `uteke room rename|update|move-memory`, MCP `uteke_room_rename|uteke_room_update|uteke_room_memory_move`; schema v19 adds additive `rooms.description` (backward-compatible exports); `Uteke::rename_room` rewrites registry + all room references in ONE transaction. Plus `uteke update <id>` for in-place memory edits.
+- **Recall payload conformance tests (#1233, #1239)** - contract tests pinning that recall responses carry the FULL payload (no hit-count stubs) across CLI/HTTP/MCP.
+
 ### Added
 
 - **Benchmarks directory restructure** — `benchmarks/` is now the single source of truth: `benchmarks/README.md` (index, policies, reproduction), `internal/` (uteke bench, re-verified on v0.17.0), `longmemeval/` (harness + committed canonical raw artifacts under `results/` + corrected baselines), `locomo/` (planned external benchmark #2). The old `benchmarks/RESULTS.md` stub (stale pre-embedding figures) is removed — real numbers live in `internal/RESULTS.md` and `docs/benchmarks.md`.
