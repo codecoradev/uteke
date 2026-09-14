@@ -54,12 +54,16 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             author,
             source,
             source_type,
+            timestamp,
         } => {
             let mut body = serde_json::json!({
                 "content": content,
                 "tags": tags,
                 "namespace": ns
             });
+            if let Some(ts) = timestamp {
+                body["timestamp"] = serde_json::json!(ts);
+            }
             if let Some(at) = author_type {
                 body["author_type"] = serde_json::json!(at);
             }

@@ -1,0 +1,5 @@
+# LoCoMo working data — converted harness files are large (haystack per QA)
+data/
+
+# Pilot / exploratory run outputs (canonical results get committed explicitly)
+results_*/

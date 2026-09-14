@@ -226,7 +226,11 @@ impl Default for AgingConfig {
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
 pub struct RecallConfig {
-    /// Minimum cosine similarity score for recall results. Results below are filtered out.
+    /// Minimum similarity score for recall results. Results below are filtered out.
+    /// Default 0.0 (#1223): since fusion RRF became the default strategy (0.16.0),
+    /// returned scores are rank-based (~0.0-0.2), so a legacy cosine-era default of
+    /// 0.3 silently emptied default recalls. Threshold remains opt-in via config,
+    /// `--min`, or `--strict` (0.5).
     pub min_score: f64,
     /// Strict mode threshold (higher, for critical queries).
     pub min_score_strict: f64,
@@ -259,7 +263,7 @@ pub struct RecallConfig {
 impl Default for RecallConfig {
     fn default() -> Self {
         Self {
-            min_score: 0.3,
+            min_score: 0.0,
             min_score_strict: 0.5,
             // Fusion (weighted RRF: vector×1.7 + hybrid×1) is the default
             // strategy since 0.16.0 (#1123). Benchmark: fast50 R@5 0.98 vs
@@ -1035,7 +1039,7 @@ impl Config {
 # max_cold_count = 1000
 
 [recall]
-# min_score = 0.3
+# min_score = 0.0  # default since 0.17.x (#1223): fusion scores are rank-based; 0.3 is a legacy cosine-era threshold
 # min_score_strict = 0.5
 # default_strategy = "fusion"  # vector | fts5 | hybrid | graph | fusion
 # graph_density_weight = 0.1
@@ -1498,7 +1502,7 @@ namespace = "agent1"
     #[test]
     fn default_recall_config() {
         let cfg = RecallConfig::default();
-        assert!((cfg.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.min_score - 0.0).abs() < f64::EPSILON);
         assert!((cfg.min_score_strict - 0.5).abs() < f64::EPSILON);
         // Fusion (vector×1.7 + hybrid×1 weighted RRF) is the default
         // strategy since 0.16.0 (#1123).
@@ -1837,7 +1841,7 @@ max_seq_length = 128
         assert_eq!(cfg.logging.level, "warn");
         assert_eq!(cfg.server.host, "127.0.0.1");
         assert_eq!(cfg.server.port, 8767);
-        assert!((cfg.recall.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
     }
 
     // ── #1078 P0 batch 3: score range guards, strategy validation, graph
@@ -1853,7 +1857,7 @@ max_seq_length = 128
         unsafe {
             std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
         }
-        assert!((cfg.recall.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1866,7 +1870,7 @@ max_seq_length = 128
         unsafe {
             std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
         }
-        assert!((cfg.recall.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

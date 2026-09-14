@@ -191,6 +191,39 @@ impl crate::Uteke {
         self.store.delete_room(room_id)
     }
 
+    /// Rename a room: the registry row and every member/document link move
+    /// in ONE transaction (#1202). Namespace, title, and description are
+    /// preserved. Errors when the room is missing or the target ID is taken.
+    pub fn rename_room(&self, old_id: &str, new_id: &str) -> Result<Room, Error> {
+        self.store.rename_room(old_id, new_id)
+    }
+
+    /// Update a room's title and/or description (#1202). `None` fields are
+    /// left unchanged. Returns the updated room, or `None` when the room
+    /// does not exist.
+    pub fn update_room(
+        &self,
+        room_id: &str,
+        title: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<Option<Room>, Error> {
+        self.store.update_room(room_id, title, description)
+    }
+
+    /// Move a memory from one room to another (#1202), preserving the link's
+    /// author/role/joined_at provenance. Returns `Ok(0)` when the memory is
+    /// not a member of `from_room`, `Ok(1)` on success. The target room must
+    /// exist; namespace stays untouched (no recall-cache impact).
+    pub fn move_memory_to_room(
+        &self,
+        memory_id: &str,
+        from_room: &str,
+        to_room: &str,
+    ) -> Result<usize, Error> {
+        self.store
+            .move_memory_to_room(memory_id, from_room, to_room)
+    }
+
     /// Generate a summary of room discussion (topic clustering, no LLM needed).
     /// Enriched with embedding-distance semantic segments (#1088) when
     /// embeddings exist — these are the batching units for future
@@ -443,6 +476,181 @@ mod tests {
             "small room must return semantic results (#894)"
         );
         assert!(results.iter().any(|r| r.memory.content.contains("Rust")));
+    }
+
+    // ── Room rename / update / memory room-move (#1202) ─────────────
+
+    /// Embedder-less engine — these ops never touch embeddings, and CI has
+    /// no ONNX runtime (same pattern as operations::namespace_management_tests).
+    fn open_no_embedder() -> crate::Uteke {
+        crate::Uteke::open_with_backend(":memory:", None).unwrap()
+    }
+
+    #[test]
+    fn rename_room_moves_registry_and_links() {
+        let uteke = open_no_embedder();
+        uteke
+            .create_room("old-room", Some("Old"), "default")
+            .unwrap();
+        let m1 = uteke.remember("m one", &[], None, Some("default")).unwrap();
+        let m2 = uteke.remember("m two", &[], None, Some("default")).unwrap();
+        uteke
+            .store
+            .link_memory_to_room("old-room", &m1, "alice", "participant")
+            .unwrap();
+        uteke
+            .store
+            .link_memory_to_room("old-room", &m2, "bob", "lead")
+            .unwrap();
+
+        let room = uteke.rename_room("old-room", "new-room").unwrap();
+        assert_eq!(room.id, "new-room");
+        assert_eq!(room.title, Some("Old".to_string()));
+        assert_eq!(room.namespace, "default");
+
+        // Old name is gone, members followed.
+        assert!(uteke.get_room("old-room").unwrap().is_none());
+        assert_eq!(uteke.recall_room("new-room", None, 0).unwrap().len(), 2);
+        // Cross-namespace room recall is author-filterable on the new ID.
+        assert_eq!(
+            uteke.recall_room("new-room", Some("bob"), 0).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn rename_room_preserves_document_links() {
+        let store = crate::memory::Store::open(":memory:").unwrap();
+        store.create_room("r-old", None, "default").unwrap();
+        let doc = crate::memory::documents::Document {
+            id: "doc-1".to_string(),
+            slug: "doc-1".to_string(),
+            title: "Doc One".to_string(),
+            content: "# Doc One\nContent".to_string(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: "/doc-1/".to_string(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+        store.room_add_document("r-old", "doc-1").unwrap();
+
+        store.rename_room("r-old", "r-new").unwrap();
+
+        assert_eq!(store.room_list_documents("r-new").unwrap(), vec!["doc-1"]);
+        assert!(store.room_list_documents("r-old").unwrap().is_empty());
+    }
+
+    #[test]
+    fn rename_room_rejects_missing_source_and_taken_target() {
+        let uteke = open_no_embedder();
+        uteke.create_room("a", None, "default").unwrap();
+        uteke.create_room("b", None, "default").unwrap();
+
+        let missing = uteke.rename_room("nope", "c");
+        assert!(matches!(missing, Err(crate::Error::Validation(_))));
+
+        let taken = uteke.rename_room("a", "b");
+        assert!(matches!(taken, Err(crate::Error::Validation(_))));
+
+        let same = uteke.rename_room("a", "a");
+        assert!(matches!(same, Err(crate::Error::Validation(_))));
+    }
+
+    #[test]
+    fn update_room_sets_title_and_description() {
+        let uteke = open_no_embedder();
+        uteke.create_room("r", Some("Title"), "default").unwrap();
+
+        // Description only — title must survive.
+        let room = uteke
+            .update_room("r", None, Some("First description"))
+            .unwrap();
+        let room = room.expect("room exists");
+        assert_eq!(room.title, Some("Title".to_string()));
+        assert_eq!(room.description, Some("First description".to_string()));
+
+        // Overwrite both.
+        let room = uteke
+            .update_room("r", Some("New title"), Some("Updated desc"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(room.title, Some("New title".to_string()));
+        assert_eq!(room.description, Some("Updated desc".to_string()));
+
+        // Missing room → None.
+        assert!(
+            uteke
+                .update_room("ghost", Some("x"), None)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn move_memory_between_rooms_preserves_link_provenance() {
+        let uteke = open_no_embedder();
+        uteke.create_room("src", None, "default").unwrap();
+        uteke.create_room("dst", None, "default").unwrap();
+        let mid = uteke
+            .remember("traveler", &[], None, Some("default"))
+            .unwrap();
+        uteke
+            .store
+            .link_memory_to_room("src", &mid, "carol", "moderator")
+            .unwrap();
+
+        let moved = uteke.move_memory_to_room(&mid, "src", "dst").unwrap();
+        assert_eq!(moved, 1);
+
+        // Out of source, present in target.
+        assert!(uteke.recall_room("src", None, 0).unwrap().is_empty());
+        let dst = uteke.recall_room("dst", None, 0).unwrap();
+        assert_eq!(dst.len(), 1);
+        assert_eq!(dst[0].id, mid);
+
+        // Link provenance (author/role) moved with the link.
+        let (author, role): (String, String) = uteke
+            .store()
+            .conn
+            .query_row(
+                "SELECT author, role FROM room_memories WHERE room_id = 'dst' AND memory_id = ?1",
+                [&mid],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((author.as_str(), role.as_str()), ("carol", "moderator"));
+
+        // Move again — nothing left in source → Ok(0), store untouched.
+        assert_eq!(uteke.move_memory_to_room(&mid, "src", "dst").unwrap(), 0);
+    }
+
+    #[test]
+    fn move_memory_rejects_bad_targets() {
+        let uteke = open_no_embedder();
+        uteke.create_room("s", None, "default").unwrap();
+        let mid = uteke.remember("x", &[], None, Some("default")).unwrap();
+        uteke
+            .store
+            .link_memory_to_room("s", &mid, "a", "participant")
+            .unwrap();
+
+        // Target room missing.
+        let missing_target = uteke.move_memory_to_room(&mid, "s", "nope");
+        assert!(matches!(missing_target, Err(crate::Error::Validation(_))));
+
+        // Same room.
+        let same = uteke.move_memory_to_room(&mid, "s", "s");
+        assert!(matches!(same, Err(crate::Error::Validation(_))));
     }
 
     // ── Room ↔ Document junction ──────────────────────────────────

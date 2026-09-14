@@ -19,6 +19,8 @@ scripts/demo-record.sh
 
 # Internal docs — never commit to public repo
 internal/
+!benchmarks/internal/
+!benchmarks/internal/**
 
 # Benchmark results (large, ephemeral — commit RESULTS.md summaries, not raw data)
 benchmarks/longmemeval/results_*/

@@ -140,7 +140,8 @@ impl crate::Uteke {
         let simple_tables: &[(&str, &str)] = &[
             (
                 "room",
-                "SELECT id, title, namespace, created_at, updated_at FROM rooms",
+                "SELECT id, title, namespace, created_at, updated_at, description \
+                 FROM rooms",
             ),
             (
                 "room_memory",
@@ -394,15 +395,20 @@ impl crate::Uteke {
             match tag {
                 "room" => {
                     let r = &v["row"];
+                    // Column-count aware: exports predating description
+                    // (#1202) carry 5 columns; new exports carry 6. Both
+                    // import cleanly (description defaults to NULL).
+                    let description = r.get(5).and_then(|v| v.as_str());
                     let n = conn
                         .execute(
-                            "INSERT OR IGNORE INTO rooms (id, title, namespace, created_at, updated_at) VALUES (?1,?2,?3,?4,?5)",
+                            "INSERT OR IGNORE INTO rooms (id, title, namespace, created_at, updated_at, description) VALUES (?1,?2,?3,?4,?5,?6)",
                             rusqlite::params![
                                 r[0].as_str().unwrap_or(""),
                                 r[1].as_str(),
                                 r[2].as_str().unwrap_or("default"),
                                 r[3].as_str().unwrap_or(""),
                                 r[4].as_str().unwrap_or(""),
+                                description,
                             ],
                         )
                         .map_err(|e| Error::db_msg(format!("import room: {e}")))?;

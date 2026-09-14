@@ -6,6 +6,21 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
+## v0.18.0 - Agent-Operable Memory Plumbing `Released 2026-09-13`
+
+- **Ingest date anchors (#1232/#1238)** - `remember --timestamp` + import timestamps; time-travel and audit no longer depend on ingest order
+- **Room lifecycle management (#1202/#1203)** - rename/update/move-memory across HTTP, CLI, and MCP (schema v19)
+- **Recall payload conformance tests (#1233/#1239)** - full-payload contract pinned across all surfaces
+- Fixes: dedup live-check (#1211), default min_score 0.0 (#1228), install.sh ORT libs (#1221), LoCoMo label mapping (#1222)
+
+## v0.17.0 — Inspectable, Trustworthy Memory `✓ Released 2026-09-06`
+
+- **Explain recall (#1160)** — see why each memory ranked where it did, on every recall surface (CLI `--explain`, HTTP `explain`, MCP flag)
+- **Contradiction resolution as an auditable ledger (#1172)** — supersede/list/undo with provenance; contradiction benchmark segment: fusion winner@1 0.850 → 1.000 after supersede, stale@5 1.000 → 0.000
+- **Provenance data model (#1172, schema v18)** — `source_hash` tamper evidence, actor/evidence timeline events, `provenance(id)` report
+- **Dual-engine vector layer** — runtime-switchable vector engine (#1169/#1171)
+- **Namespace management API (#1181)** — rename/merge/delete with explicit memory strategy; `/list` pagination metadata (#1188)
+
 ## v0.16.0 — Fusion Default `✓ Released 2026-08-29`
 
 - **`fusion` is now the default recall strategy (#1123)** — weighted RRF of the vector and hybrid rankings; LongMemEval 500Q R@5 0.946 vs 0.854 hybrid (+9.2 pts), zero config needed

@@ -12,6 +12,8 @@ pub struct Room {
     pub namespace: String,
     pub created_at: String,
     pub updated_at: String,
+    /// Free-text description (schema v19, #1202). `None` = not set.
+    pub description: Option<String>,
 }
 
 /// Statistics about a room.
@@ -155,7 +157,8 @@ impl super::Store {
     pub fn get_room(&self, room_id: &str) -> Result<Option<Room>, Error> {
         self.conn
             .query_row(
-                "SELECT id, title, namespace, created_at, updated_at FROM rooms WHERE id = ?1",
+                "SELECT id, title, namespace, created_at, updated_at, description \
+                 FROM rooms WHERE id = ?1",
                 params![room_id],
                 |row| {
                     Ok(Room {
@@ -164,6 +167,7 @@ impl super::Store {
                         namespace: row.get(2)?,
                         created_at: row.get(3)?,
                         updated_at: row.get(4)?,
+                        description: row.get(5)?,
                     })
                 },
             )
@@ -180,13 +184,14 @@ impl super::Store {
         // on the rooms table itself (#545).
         let sql = match namespace {
             Some(_) => {
-                "SELECT id, title, namespace, created_at, updated_at \
+                "SELECT id, title, namespace, created_at, updated_at, description \
                  FROM rooms \
                  WHERE namespace = ?1 \
                  ORDER BY updated_at DESC"
             }
             None => {
-                "SELECT id, title, namespace, created_at, updated_at FROM rooms \
+                "SELECT id, title, namespace, created_at, updated_at, description \
+                 FROM rooms \
                  ORDER BY updated_at DESC"
             }
         };
@@ -205,6 +210,7 @@ impl super::Store {
                         namespace: row.get(2)?,
                         created_at: row.get(3)?,
                         updated_at: row.get(4)?,
+                        description: row.get(5)?,
                     })
                 })
                 .map_err(|e| Error::db("list rooms", e))?
@@ -218,6 +224,7 @@ impl super::Store {
                         namespace: row.get(2)?,
                         created_at: row.get(3)?,
                         updated_at: row.get(4)?,
+                        description: row.get(5)?,
                     })
                 })
                 .map_err(|e| Error::db("list rooms", e))?
@@ -226,6 +233,181 @@ impl super::Store {
         };
 
         Ok(rows)
+    }
+
+    /// Rename a room: update the registry row and every reference in
+    /// `room_memories` / `room_documents` in ONE transaction (#1202).
+    ///
+    /// The FK on `room_memories.room_id` is `ON DELETE CASCADE` only (no
+    /// `ON UPDATE`), so a plain `UPDATE rooms SET id` would either fail or
+    /// orphan members — all three tables are rewritten together instead.
+    /// Author/role/joined_at metadata on links is preserved untouched.
+    ///
+    /// Returns the renamed `Room`. Errors when the room does not exist or
+    /// the target ID is already taken.
+    pub fn rename_room(&self, old_id: &str, new_id: &str) -> Result<Room, Error> {
+        if old_id == new_id {
+            return Err(Error::Validation(
+                "Rename source and target room IDs are identical".to_string(),
+            ));
+        }
+        let exists = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM rooms WHERE id = ?1)",
+                params![old_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| Error::db("rename room: check source", e))?;
+        if !exists {
+            return Err(Error::Validation(format!("Room not found: {old_id}")));
+        }
+        let taken = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM rooms WHERE id = ?1)",
+                params![new_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| Error::db("rename room: check target", e))?;
+        if taken {
+            return Err(Error::Validation(format!("Room already exists: {new_id}")));
+        }
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("rename room: begin tx", e))?;
+        // FK-safe order: insert the new registry row FIRST, then repoint the
+        // children, then drop the old row — every intermediate state keeps
+        // every room_memories/room_documents FK satisfied (no ON UPDATE
+        // CASCADE on these FKs).
+        let now = chrono::Utc::now().to_rfc3339();
+        tx.execute(
+            "INSERT INTO rooms (id, title, namespace, created_at, updated_at, description) \
+             SELECT ?1, title, namespace, created_at, ?2, description FROM rooms WHERE id = ?3",
+            params![new_id, now, old_id],
+        )
+        .map_err(|e| Error::db("rename room: insert new row", e))?;
+        tx.execute(
+            "UPDATE room_memories SET room_id = ?1 WHERE room_id = ?2",
+            params![new_id, old_id],
+        )
+        .map_err(|e| Error::db("rename room: move members", e))?;
+        tx.execute(
+            "UPDATE room_documents SET room_id = ?1 WHERE room_id = ?2",
+            params![new_id, old_id],
+        )
+        .map_err(|e| Error::db("rename room: move document links", e))?;
+        tx.execute("DELETE FROM rooms WHERE id = ?1", params![old_id])
+            .map_err(|e| Error::db("rename room: remove old row", e))?;
+        tx.commit()
+            .map_err(|e| Error::db("rename room: commit", e))?;
+
+        Ok(self
+            .get_room(new_id)?
+            .expect("room row must exist after rename"))
+    }
+
+    /// Update a room's title and/or description (#1202). `None` fields are
+    /// left unchanged; the room row itself is never recreated, so members,
+    /// documents, and timestamps of linked rows stay valid.
+    ///
+    /// Returns the updated `Room`, or `None` when the room does not exist.
+    pub fn update_room(
+        &self,
+        room_id: &str,
+        title: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<Option<Room>, Error> {
+        let room = match self.get_room(room_id)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let new_title = title.or(room.title.as_deref());
+        let new_description = description.or(room.description.as_deref());
+        self.conn
+            .execute(
+                "UPDATE rooms SET title = ?1, description = ?2, updated_at = ?3 WHERE id = ?4",
+                params![new_title, new_description, now, room_id],
+            )
+            .map_err(|e| Error::db("update room", e))?;
+        self.get_room(room_id)
+    }
+
+    /// Move a memory from one room to another (#1202).
+    ///
+    /// Rooms are many-to-many (`room_memories` PK `(room_id, memory_id)`), so
+    /// the move removes the `from` link and inserts the `to` link in ONE
+    /// transaction, preserving the link's `author`/`role`/`joined_at`
+    /// provenance. `to` must differ from `from`; the target room must exist.
+    ///
+    /// Returns the number of links moved: `Ok(0)` when the memory has no link
+    /// in `from` (or `from` does not exist), `Ok(1)` on success.
+    pub fn move_memory_to_room(
+        &self,
+        memory_id: &str,
+        from_room: &str,
+        to_room: &str,
+    ) -> Result<usize, Error> {
+        if from_room == to_room {
+            return Err(Error::Validation(
+                "Move source and target rooms are identical".to_string(),
+            ));
+        }
+        let target_exists = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM rooms WHERE id = ?1)",
+                params![to_room],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| Error::db("move memory to room: check target", e))?;
+        if !target_exists {
+            return Err(Error::Validation(format!("Room not found: {to_room}")));
+        }
+
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("move memory to room: begin tx", e))?;
+        // Read the link's provenance BEFORE removing it — membership history
+        // (author/role/joined_at) moves with the link.
+        let link: Option<(String, String, String)> = tx
+            .query_row(
+                "SELECT author, role, joined_at FROM room_memories \
+                 WHERE room_id = ?1 AND memory_id = ?2",
+                params![from_room, memory_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(|e| Error::db("move memory to room: read link", e))?;
+        let (author, role, joined_at) = match link {
+            Some(l) => l,
+            // Nothing linked in `from` — leave the store untouched (the tx
+            // is dropped uncommitted, which rolls back cleanly).
+            None => return Ok(0),
+        };
+        tx.execute(
+            "DELETE FROM room_memories WHERE room_id = ?1 AND memory_id = ?2",
+            params![from_room, memory_id],
+        )
+        .map_err(|e| Error::db("move memory to room: unlink source", e))?;
+        tx.execute(
+            "INSERT OR IGNORE INTO room_memories (room_id, memory_id, author, role, joined_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![to_room, memory_id, author, role, joined_at],
+        )
+        .map_err(|e| Error::db("move memory to room: link target", e))?;
+        tx.execute(
+            "UPDATE rooms SET updated_at = ?1 WHERE id IN (?2, ?3)",
+            params![chrono::Utc::now().to_rfc3339(), from_room, to_room],
+        )
+        .map_err(|e| Error::db("move memory to room: timestamps", e))?;
+        tx.commit()
+            .map_err(|e| Error::db("move memory to room: commit", e))?;
+        Ok(1)
     }
 
     /// Get statistics about a room.

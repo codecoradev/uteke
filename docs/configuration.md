@@ -198,7 +198,7 @@ Control minimum similarity score for recall results:
 [recall]
 # Minimum similarity score (0.0-1.0). Memories below this score are excluded.
 # Default: 0.3 (balanced). Use 0.0 to disable filtering.
-min_score = 0.3
+min_score = 0.0
 
 # Strict-mode threshold (used with `--strict` flag)
 min_score_strict = 0.5
@@ -223,7 +223,7 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `min_score` | 0.3 | Minimum similarity score (0.0-1.0). **CLI only.** |
+| `min_score` | 0.0 | Minimum similarity score (0.0-1.0). **CLI only.** |
 | `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`). **CLI only.** |
 | `default_strategy` | `fusion` | Default recall strategy (`vector\|fts5\|hybrid\|graph\|fusion`). Since 0.16.0 `fusion` (weighted RRF: vector×1.7 + hybrid×1, #1123) is the default — LongMemEval fast50 R@5 0.98 vs 0.9267 hybrid |
 | `graph_density_weight` | 0.1 | Edge-density boost weight (graph strategy only) |
@@ -234,8 +234,10 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 >
 > | Interface | Default `min_score` | Notes |
 > |-----------|---------------------|-------|
-> | **CLI** | `0.3` (from `[recall] min_score`) | Reads from `uteke.toml`. `--min 0.0` to disable. |
+> | **CLI** | `0.0` (from `[recall] min_score`) | Reads from `uteke.toml`. Set `--min` or `[recall] min_score` to enable. |
 > | **HTTP API / Server** | `0.0` (`DEFAULT_MIN_SCORE`) | Server has its own constant, ignores `[recall] min_score`. |
+>
+> **Note (since 0.17.x, #1223):** default recall scores under the fusion strategy are rank-based (RRF contribution + salience/recency boosts, typically ~0.0-0.2), not raw cosine similarity. A legacy cosine-era default threshold of 0.3 silently filtered out nearly all results, so the default is now 0.0 across every surface. Set a threshold explicitly (config `min_score`, `--min`, `--strict`, or HTTP `min_score`) only when you know the score scale of the active strategy.
 > | **MCP** | `0.0` | MCP server hardcodes 0.0. |
 >
 > This means a score of 0.25 is returned by API/MCP but **filtered out** by CLI.
@@ -278,7 +280,7 @@ Resolution order (highest priority first):
 | `UTEKE_VECTOR_BACKEND` | `[vector] backend` | compiled-in default | Vector engine when both are compiled in: `usearch`, `vecq`. Ignored (with a warning) on single-engine builds or unknown values. Switching engines on an existing store auto-rebuilds the index from SQLite |
 | `UTEKE_SERVER_HOST` | `[server] host` | `127.0.0.1` | Server bind address |
 | `UTEKE_SERVER_PORT` | `[server] port` | `8767` | Server port |
-| `UTEKE_RECALL_MIN_SCORE` | `[recall] min_score` | `0.3` | Default similarity threshold |
+| `UTEKE_RECALL_MIN_SCORE` | `[recall] min_score` | `0.0` | Default similarity threshold |
 | `UTEKE_RECALL_MIN_SCORE_STRICT` | `[recall] min_score_strict` | `0.5` | Strict threshold |
 | `UTEKE_RECALL_STRATEGY` | `[recall] default_strategy` | `fusion` | Default recall strategy (`vector\|fts5\|hybrid\|graph\|fusion`) |
 | `UTEKE_GRAPH_DENSITY_WEIGHT` | `[recall] graph_density_weight` | `0.1` | Edge-density boost weight |

@@ -368,6 +368,7 @@ Additional flags not shown in the basic example above:
 # Minimum similarity score filter
 uteke recall "database config" --min 0.7
 uteke recall "database config" --strict    # uses min_score_strict (default 0.5)
+uteke recall "database config" --min 0.25  # opt-in similarity threshold (default 0.0 since #1223: fusion scores are rank-based)
 
 # Time-travel: query memories at specific point in time
 uteke recall "deployment process" --at 2026-06-01T12:00:00Z
@@ -415,6 +416,7 @@ uteke recall "api design" --context
 |------|-------------|
 | `--min <score>` | Minimum similarity score (0.0-1.0) |
 | `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
+| `--min <score>` | Minimum similarity score threshold (default 0.0 since 0.17.x, #1223 — fusion scores are rank-based, not cosine) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
@@ -849,6 +851,9 @@ uteke timeline <memory-id> --json
 | `uteke namespace list` | List all namespaces with memory counts |
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
+| `uteke namespace move <id> <ns>` | Move a memory to another namespace, no re-embed (#1181) |
+| `uteke namespace rename <old> <new>` | Rename a namespace; existing target = merge (#1181) |
+| `uteke namespace delete <ns> --confirm` | Delete a namespace (`--strategy refuse\|merge\|deprecate`, #1181) |
 | `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
 | `uteke init --agent <type>` | Initialize integration (opencode, pi, claude, cursor, hermes) |
 | `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md). **Note:** Hermes Mode B deprecated — see [integrations/hermes.md](integrations/hermes.md) for migration. |

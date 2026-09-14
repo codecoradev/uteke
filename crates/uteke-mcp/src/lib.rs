@@ -166,6 +166,9 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_room_create(),
                 tool_room_list(),
                 tool_room_delete(),
+                tool_room_rename(),
+                tool_room_update(),
+                tool_room_memory_move(),
                 tool_room_recall(),
                 tool_room_memories(),
                 tool_room_stats(),
@@ -221,6 +224,9 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_room_create" => exec_room_create(uteke, &arguments)?,
                 "uteke_room_list" => exec_room_list(uteke, &arguments)?,
                 "uteke_room_delete" => exec_room_delete(uteke, &arguments)?,
+                "uteke_room_rename" => exec_room_rename(uteke, &arguments)?,
+                "uteke_room_update" => exec_room_update(uteke, &arguments)?,
+                "uteke_room_memory_move" => exec_room_memory_move(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
                 "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
@@ -732,6 +738,53 @@ fn tool_room_delete() -> Value {
                 "room_id": { "type": "string", "description": "Room identifier to delete" }
             },
             "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_rename() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_rename",
+        "description": "Rename a room. The registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "from": { "type": "string", "description": "Current room identifier" },
+                "to": { "type": "string", "description": "New room identifier (must not exist)" }
+            },
+            "required": ["from", "to"]
+        }
+    })
+}
+
+fn tool_room_update() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_update",
+        "description": "Update a room's title and/or description. Omitted fields stay unchanged (#1202).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "room_id": { "type": "string", "description": "Room identifier" },
+                "title": { "type": "string", "description": "New title (omit to keep current)" },
+                "description": { "type": "string", "description": "New description (omit to keep current)" }
+            },
+            "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_memory_move() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_memory_move",
+        "description": "Move a memory from one room to another, preserving the link's author/role/joined_at provenance (#1202).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": { "type": "string", "description": "Memory identifier" },
+                "from_room": { "type": "string", "description": "Source room (memory must be a member)" },
+                "to_room": { "type": "string", "description": "Target room (must exist)" }
+            },
+            "required": ["memory_id", "from_room", "to_room"]
         }
     })
 }
@@ -2068,6 +2121,69 @@ fn exec_room_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let from = args["from"].as_str().ok_or("Missing 'from'")?;
+    let to = args["to"].as_str().ok_or("Missing 'to'")?;
+
+    uteke
+        .rename_room(from, to)
+        .map_err(|e| format!("Failed to rename room: {e}"))?;
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("✓ Room '{from}' renamed to '{to}' — all links moved atomically"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+    let title = args["title"].as_str();
+    let description = args["description"].as_str();
+
+    let room = uteke
+        .update_room(room_id, title, description)
+        .map_err(|e| format!("Failed to update room: {e}"))?
+        .ok_or_else(|| format!("Room not found: {room_id}"))?;
+
+    let title_out = room.title.as_deref().unwrap_or("(none)");
+    let desc_out = room.description.as_deref().unwrap_or("(none)");
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!(
+                "✓ Room '{room_id}' updated — title: {title_out}, description: {desc_out}"
+            ),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_memory_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let memory_id = args["memory_id"].as_str().ok_or("Missing 'memory_id'")?;
+    let from_room = args["from_room"].as_str().ok_or("Missing 'from_room'")?;
+    let to_room = args["to_room"].as_str().ok_or("Missing 'to_room'")?;
+
+    let moved = uteke
+        .move_memory_to_room(memory_id, from_room, to_room)
+        .map_err(|e| format!("Failed to move memory: {e}"))?;
+    if moved == 0 {
+        return Err(format!(
+            "Memory '{memory_id}' has no link in room '{from_room}'"
+        ));
+    }
+
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text: format!("✓ Memory '{memory_id}' moved from '{from_room}' to '{to_room}'"),
         }],
         is_error: false,
     })

@@ -1,0 +1,56 @@
+{
+  "fusion": {
+    "questions": 40,
+    "baseline_unresolved": {
+      "winner@1": 0.85,
+      "winner@5": 1.0,
+      "winner_mrr": 0.925,
+      "stale@1": 0.15,
+      "stale@5": 1.0
+    },
+    "resolved": {
+      "winner@1": 1.0,
+      "winner@5": 1.0,
+      "winner_mrr": 1.0,
+      "stale@1": 0.0,
+      "stale@5": 0.0
+    },
+    "ledger_listed_all": true
+  },
+  "hybrid": {
+    "questions": 40,
+    "baseline_unresolved": {
+      "winner@1": 0.025,
+      "winner@5": 1.0,
+      "winner_mrr": 0.4687500000000001,
+      "stale@1": 0.975,
+      "stale@5": 1.0
+    },
+    "resolved": {
+      "winner@1": 0.225,
+      "winner@5": 1.0,
+      "winner_mrr": 0.5875,
+      "stale@1": 0.0,
+      "stale@5": 0.0
+    },
+    "ledger_listed_all": true
+  },
+  "vector": {
+    "questions": 40,
+    "baseline_unresolved": {
+      "winner@1": 0.95,
+      "winner@5": 1.0,
+      "winner_mrr": 0.975,
+      "stale@1": 0.05,
+      "stale@5": 1.0
+    },
+    "resolved": {
+      "winner@1": 1.0,
+      "winner@5": 1.0,
+      "winner_mrr": 1.0,
+      "stale@1": 0.0,
+      "stale@5": 0.0
+    },
+    "ledger_listed_all": true
+  }
+}

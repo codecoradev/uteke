@@ -1649,6 +1649,120 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
 
+        // POST /room/rename — rename a room, moving all member/document
+        // links in one transaction (#1202)
+        (Method::Post, "/room/rename") => {
+            #[derive(Deserialize)]
+            struct RoomRenameRequest {
+                from: String,
+                to: String,
+            }
+            match read_body::<RoomRenameRequest>(req.as_reader()) {
+                Ok(req_data) => match uteke.rename_room(&req_data.from, &req_data.to) {
+                    Ok(room) => ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({
+                            "renamed": req_data.from,
+                            "to": req_data.to,
+                            "room": room,
+                        }),
+                    ),
+                    Err(e) => {
+                        let status = match e {
+                            uteke_core::Error::Validation(_) => 400,
+                            _ => 500,
+                        };
+                        ctx.error_response_for(req, status, e.to_string())
+                    }
+                },
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // POST /room/update — update room title/description (#1202)
+        (Method::Post, "/room/update") => {
+            #[derive(Deserialize)]
+            struct RoomUpdateRequest {
+                room_id: String,
+                #[serde(default)]
+                title: Option<String>,
+                #[serde(default)]
+                description: Option<String>,
+            }
+            match read_body::<RoomUpdateRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    match uteke.update_room(
+                        &req_data.room_id,
+                        req_data.title.as_deref(),
+                        req_data.description.as_deref(),
+                    ) {
+                        Ok(Some(room)) => {
+                            ctx.ok_response_for(req, &serde_json::json!({ "room": room }))
+                        }
+                        Ok(None) => ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Room not found: {}", req_data.room_id),
+                        ),
+                        Err(e) => {
+                            let status = match e {
+                                uteke_core::Error::Validation(_) => 400,
+                                _ => 500,
+                            };
+                            ctx.error_response_for(req, status, e.to_string())
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
+        // POST /room/memory/move — move a memory from one room to another,
+        // preserving link author/role/joined_at (#1202)
+        (Method::Post, "/room/memory/move") => {
+            #[derive(Deserialize)]
+            struct RoomMemoryMoveRequest {
+                memory_id: String,
+                from_room: String,
+                to_room: String,
+            }
+            match read_body::<RoomMemoryMoveRequest>(req.as_reader()) {
+                Ok(req_data) => {
+                    match uteke.move_memory_to_room(
+                        &req_data.memory_id,
+                        &req_data.from_room,
+                        &req_data.to_room,
+                    ) {
+                        Ok(1) => ctx.ok_response_for(
+                            req,
+                            &serde_json::json!({
+                                "moved": req_data.memory_id,
+                                "from_room": req_data.from_room,
+                                "to_room": req_data.to_room,
+                            }),
+                        ),
+                        Ok(0) => ctx.error_response_for(
+                            req,
+                            404,
+                            format!(
+                                "Memory {} has no link in room {}",
+                                req_data.memory_id, req_data.from_room
+                            ),
+                        ),
+                        Ok(_) => unreachable!("move returns 0 or 1"),
+                        Err(e) => {
+                            let status = match e {
+                                uteke_core::Error::Validation(_) => 400,
+                                _ => 500,
+                            };
+                            ctx.error_response_for(req, status, e.to_string())
+                        }
+                    }
+                }
+                Err(e) => ctx.error_response_for(req, 400, e),
+            }
+        }
+
         // POST /room/remember — store memory and link to room (#762)
         (Method::Post, "/room/remember") => {
             match read_body::<RoomRememberRequest>(req.as_reader()) {
@@ -3168,6 +3282,80 @@ mod room_recall_at_tests {
     }
 
     #[test]
+    fn room_rename_update_move_endpoints_roundtrip() {
+        let app = NamespaceApp::new();
+
+        // Create rooms + one room memory.
+        let body = serde_json::json!({ "room_id": "ws", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        let body = serde_json::json!({ "room_id": "ws-3", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_eq!(status, 200, "{resp}");
+
+        let body = serde_json::json!({
+            "content": "room note",
+            "tags": [],
+            "room_id": "ws",
+            "author": "tester"
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/room/remember", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        let memory_id = resp["id"].as_str().expect("memory id").to_string();
+
+        // Rename ws → ws-2.
+        let body = serde_json::json!({ "from": "ws", "to": "ws-2" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(resp["renamed"], serde_json::json!("ws"));
+        assert_eq!(resp["room"]["id"], serde_json::json!("ws-2"));
+
+        // Update title/description on ws-2.
+        let body = serde_json::json!({
+            "room_id": "ws-2",
+            "title": "Workspace",
+            "description": "Renamed workspace"
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/room/update", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(
+            resp["room"]["description"],
+            serde_json::json!("Renamed workspace")
+        );
+
+        // Move the memory ws-2 → ws-3.
+        let body = serde_json::json!({
+            "memory_id": memory_id,
+            "from_room": "ws-2",
+            "to_room": "ws-3"
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/room/memory/move", Some(body.clone()));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(resp["moved"], serde_json::json!(memory_id));
+
+        // Moving again → 404 (no link left in source).
+        let (status, resp) = app.call(Method::Post, "/room/memory/move", Some(body));
+        assert_eq!(status, 404, "{resp}");
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("no link")
+        );
+    }
+
+    #[test]
+    fn room_update_missing_room_returns_404() {
+        let app = NamespaceApp::new();
+        let body = serde_json::json!({ "room_id": "ghost", "title": "x" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/update", Some(body));
+        assert_eq!(status, 404, "{resp}");
+    }
+
+    #[test]
     fn namespace_delete_merge_removes_namespace() {
         let app = NamespaceApp::new();
         app.remember_in("m one", "doomed");
@@ -3638,5 +3826,126 @@ mod list_pagination_tests {
         let (status, resp) = app.call(Method::Post, "/list", Some(body));
         assert_eq!(status, 200);
         assert!(resp.is_array(), "at-mode stays a bare array: {resp}");
+    }
+}
+
+#[cfg(test)]
+mod payload_conformance_tests {
+    use super::*;
+    use std::io::Read as IoRead;
+
+    // ── #1233: raw-payload conformance — recall responses carry the FULL
+    // payload on every surface (HTTP route tested here; CLI --json prints
+    // the same serde SearchResult; MCP unified path reuses these types) ──
+    #[test]
+    fn recall_http_payload_conformance() {
+        use uteke_core::Uteke;
+
+        // No embedder: these tests are payload-shape conformance and must run
+        // in CI builds without the ONNX runtime lib (same pattern as the
+        // graph-edge tests). Keyword (fts5) recall needs no vectors.
+        let uteke = Uteke::open_with_backend(":memory:", None)
+            .expect("open in-memory uteke without embedder");
+        let shared = std::sync::Mutex::new(uteke);
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: vec![],
+            recall_config: None,
+            extraction_config: None,
+        };
+
+        let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
+        let mut remember_req = tiny_http::TestRequest::new()
+            .with_method(tiny_http::Method::Post)
+            .with_path("/remember")
+            .with_body(remember_body)
+            .into();
+        let remember_resp = route(&shared, &ctx, &mut remember_req);
+        let mut rbuf = String::new();
+        remember_resp
+            .into_reader()
+            .read_to_string(&mut rbuf)
+            .unwrap();
+        assert!(rbuf.contains("\"id\""), "remember must succeed: {rbuf}");
+
+        let mut req = tiny_http::TestRequest::new()
+            .with_method(tiny_http::Method::Post)
+            .with_path("/recall")
+            .with_body(r#"{"query":"zebraquartz","limit":5,"min_score":0.0,"namespace":"conf","strategy":"fts5"}"#)
+            .into();
+        let resp = route(&shared, &ctx, &mut req);
+        let mut buf = String::new();
+        resp.into_reader().read_to_string(&mut buf).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&buf).expect("valid JSON");
+
+        // Raw payload must be an array of FULL SearchResult objects.
+        let arr = v
+            .as_array()
+            .expect("recall response must be a top-level JSON array");
+        assert!(!arr.is_empty(), "expected at least one hit");
+        let first = &arr[0];
+        // Full payload = the memory object itself, not a summary stub.
+        let mem = first
+            .get("memory")
+            .expect("each hit must carry the full memory object");
+        assert!(mem.get("id").is_some(), "hit must include memory.id");
+        let content = mem
+            .get("content")
+            .and_then(|c| c.as_str())
+            .expect("hit must include memory.content");
+        assert!(
+            content.contains("zebraquartz"),
+            "content must be the FULL memory text"
+        );
+        assert!(
+            mem.get("created_at").is_some(),
+            "hit must include memory metadata"
+        );
+        assert!(
+            first.get("score").and_then(|s| s.as_f64()).is_some(),
+            "hit must include score"
+        );
+        // No stub markers anywhere.
+        let s = v.to_string();
+        assert!(
+            !s.contains("raw_hits"),
+            "hit-count stub leaked into payload"
+        );
+    }
+
+    #[test]
+    fn recall_http_empty_result_has_no_stub() {
+        use uteke_core::Uteke;
+
+        // No embedder: these tests are payload-shape conformance and must run
+        // in CI builds without the ONNX runtime lib (same pattern as the
+        // graph-edge tests). Keyword (fts5) recall needs no vectors.
+        let uteke = Uteke::open_with_backend(":memory:", None)
+            .expect("open in-memory uteke without embedder");
+        let shared = std::sync::Mutex::new(uteke);
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: vec![],
+            recall_config: None,
+            extraction_config: None,
+        };
+        let mut req = tiny_http::TestRequest::new()
+            .with_method(tiny_http::Method::Post)
+            .with_path("/recall")
+            .with_body(r#"{"query":"totally-unique-missing-query-xyz","limit":5,"min_score":0.0,"namespace":"conf","strategy":"fts5"}"#)
+            .into();
+        let resp = route(&shared, &ctx, &mut req);
+        let mut buf = String::new();
+        resp.into_reader().read_to_string(&mut buf).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&buf).expect("valid JSON");
+        // Contract: an empty result set is a bare EMPTY JSON ARRAY — the same
+        // full-payload shape as a populated response, just with zero hits.
+        // A "N hits" summary string or a {"raw_hits": N} stub would fail this.
+        let arr = v
+            .as_array()
+            .expect("recall response must be a top-level JSON array, never a summary string/stub");
+        assert!(arr.is_empty(), "expected an empty array for a no-hit query");
     }
 }

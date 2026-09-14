@@ -85,6 +85,11 @@ pub enum Commands {
         /// Source type: user, url, file, import, derived, system, unknown (#348)
         #[arg(long)]
         source_type: Option<String>,
+        /// Timestamp anchor: prepend "[Session date/time: ...]" to the content
+        /// so recall can answer temporal questions (#1232). Accepts RFC 3339,
+        /// "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
+        #[arg(long)]
+        timestamp: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -200,6 +205,26 @@ pub enum Commands {
         /// Memory ID (UUID)
         id: String,
     },
+    /// Update a memory in place (content/tags/importance/pinned/type) (#1202)
+    Update {
+        /// Memory ID (UUID)
+        id: String,
+        /// New content (omit to keep the current one)
+        #[arg(long)]
+        content: Option<String>,
+        /// New tags, comma-separated (replaces the current set)
+        #[arg(long)]
+        tags: Option<String>,
+        /// Importance override (0.0–1.0)
+        #[arg(long)]
+        importance: Option<f64>,
+        /// Pinned state (never decays, boosted in recall)
+        #[arg(long)]
+        pinned: Option<bool>,
+        /// Memory type: fact, procedure, preference, decision, context, note, insight, reference, event
+        #[arg(long = "type")]
+        r#type: Option<String>,
+    },
     /// Delete a memory by ID
     Forget {
         /// Memory ID (UUID)
@@ -310,6 +335,11 @@ pub enum Commands {
         /// Recurse into subdirectories
         #[arg(long, default_value_t = false)]
         recursive: bool,
+        /// Timestamp anchor: prepend "[Session date/time: ...]" to the imported
+        /// content (text format only) so recall can answer temporal questions
+        /// (#1232). Accepts RFC 3339, "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
+        #[arg(long)]
+        timestamp: Option<String>,
     },
     /// Generate shell completions
     Completions {
@@ -772,6 +802,35 @@ pub enum RoomCommands {
         /// Optional title for the room
         #[arg(long)]
         title: Option<String>,
+    },
+    /// Rename a room — registry row and all member/document links move together (#1202)
+    Rename {
+        /// Current room ID
+        old_id: String,
+        /// New room ID
+        new_id: String,
+    },
+    /// Update a room's title and/or description (#1202)
+    Update {
+        /// Room ID
+        room_id: String,
+        /// New title (omit to keep the current one)
+        #[arg(long)]
+        title: Option<String>,
+        /// New description (omit to keep the current one)
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Move a memory from one room to another, preserving link provenance (#1202)
+    MoveMemory {
+        /// Memory ID
+        memory_id: String,
+        /// Source room ID (the memory must be a member)
+        #[arg(long = "from")]
+        from_room: String,
+        /// Target room ID (must exist)
+        #[arg(long = "to")]
+        to_room: String,
     },
     /// List all rooms
     List {

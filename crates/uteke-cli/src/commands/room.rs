@@ -28,6 +28,67 @@ pub(crate) fn run(
             }
             Ok(())
         }
+        RoomCommands::Rename { old_id, new_id } => {
+            let room = uteke
+                .rename_room(old_id, new_id)
+                .map_err(|e| format!("Failed to rename room: {e}"))?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({"renamed": old_id, "to": new_id, "room": room})
+                );
+            } else {
+                println!("✓ Room '{old_id}' renamed to '{new_id}'");
+            }
+            Ok(())
+        }
+        RoomCommands::Update {
+            room_id,
+            title,
+            description,
+        } => {
+            let room = uteke
+                .update_room(room_id, title.as_deref(), description.as_deref())
+                .map_err(|e| format!("Failed to update room: {e}"))?;
+            match room {
+                Some(room) => {
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&room).unwrap());
+                    } else {
+                        println!("✓ Room '{room_id}' updated");
+                    }
+                }
+                None => return Err(format!("Room not found: {room_id}")),
+            }
+            Ok(())
+        }
+        RoomCommands::MoveMemory {
+            memory_id,
+            from_room,
+            to_room,
+        } => {
+            let moved = uteke
+                .move_memory_to_room(memory_id, from_room, to_room)
+                .map_err(|e| format!("Failed to move memory: {e}"))?;
+            if moved == 0 {
+                return Err(format!(
+                    "Memory '{memory_id}' has no link in room '{from_room}'"
+                ));
+            }
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "moved": memory_id,
+                        "from_room": from_room,
+                        "to_room": to_room
+                    })
+                );
+            } else {
+                println!("✓ Memory '{memory_id}' moved from '{from_room}' to '{to_room}'");
+            }
+            Ok(())
+        }
         RoomCommands::List { namespace } => {
             // Rooms are cross-namespace collaboration spaces (#392).
             // Only filter when --namespace is explicitly passed on the

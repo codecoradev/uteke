@@ -4,7 +4,7 @@ title: Docker
 
 # Docker
 
-Uteke ships as a lightweight multi-arch Docker image (~10MB). The embedding model (~188MB) downloads automatically on first run and is cached in the volume — subsequent updates are instant.
+Uteke ships as a lightweight multi-arch Docker image (~10MB). The embedding model (~200MB) downloads automatically on first run and is cached in the volume, so subsequent updates are instant.
 
 ## Quick Start
 
@@ -104,7 +104,21 @@ The volume contains:
 - `uteke_index.usearch` — HNSW vector index (default engine)
 - `uteke_index.vecq` — quantized index (created if you switch engines)
 - `uteke_index.keys` — Index key mapping
-- `models/embeddinggemma-q4/` — ONNX embedding model (~188MB)
+- `models/embeddinggemma-q4/` — ONNX embedding model (~200MB)
+
+### Choosing the vector engine (v0.17.0+)
+
+Both engines ship in the image. Pick one via env var — switching leaves your
+data untouched; the new engine rebuilds its index from SQLite on the next start:
+
+```yaml
+environment:
+  - UTEKE_VECTOR_BACKEND=vecq   # or "usearch" (default)
+```
+
+`usearch` (HNSW) has the best query latency at scale; `vecq` (4-bit + residual,
+pure Rust) builds indexes ~16x faster with ~3x smaller files. See
+[configuration](configuration.md#environment-variables) for details.
 
 ### Choosing the vector engine (v0.17.0+)
 

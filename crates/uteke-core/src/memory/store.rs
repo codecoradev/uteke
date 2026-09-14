@@ -143,7 +143,8 @@ CREATE TABLE IF NOT EXISTS rooms (
     title TEXT,
     namespace TEXT NOT NULL DEFAULT 'default',
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    description TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_rooms_namespace ON rooms(namespace);
 
@@ -179,7 +180,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 18;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 19;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -733,7 +734,7 @@ mod tests {
             .conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 18, "schema should be upgraded to current (v18)");
+        assert_eq!(version, 19, "schema should be upgraded to current (v19)");
 
         // Legacy row backfilled to 'agent'.
         let at: String = store

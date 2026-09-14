@@ -420,6 +420,8 @@ impl super::Store {
                 17 => self.migrate_v16_to_v17()?,
                 // v18: provenance chain — source_hash, actor, evidence_json (#1172)
                 18 => self.migrate_v17_to_v18()?,
+                // v19: room description column — room rename/update support (#1202)
+                19 => self.migrate_v18_to_v19()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1178,6 +1180,23 @@ impl super::Store {
         }
 
         tracing::info!("Migration v17 to v18 complete: provenance chain columns added");
+        Ok(())
+    }
+
+    /// Schema v19 (#1202): `rooms.description` — free-text room description
+    /// for `room update`. Additive and NULL-safe: NULL = no description.
+    /// Fresh stores get the column directly in CREATE TABLE; this migration
+    /// only patches stores stamped at v18 or lower.
+    fn migrate_v18_to_v19(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v18 to v19: rooms.description (#1202)");
+
+        if !self.column_exists_in("rooms", "description") {
+            self.conn
+                .execute_batch("ALTER TABLE rooms ADD COLUMN description TEXT;")
+                .map_err(|e| Error::db("schema migration v18 to v19: rooms.description", e))?;
+        }
+
+        tracing::info!("Migration v18 to v19 complete: rooms.description added");
         Ok(())
     }
 }
