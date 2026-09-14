@@ -411,6 +411,30 @@ List all memories in a room (chronological). Accepts `?room_id=...` query param.
 
 Delete a room (unlink-only): room links are removed, memories and documents are preserved. Response: `{ deleted, unlinked_memories }`. Accepts `?room_id=...` query param.
 
+#### 🟡 `POST` `/room/rename`
+
+Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). Accepts `{ from, to }`. Write op — blocked for read-only tokens.
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1202`*
+
+#### 🟡 `POST` `/room/update`
+
+Update a room's title and/or description; omitted fields stay unchanged (#1202). Accepts `{ room_id, title?, description? }`; 404 when the room is missing. Write op — blocked for read-only tokens.
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1202`*
+
+#### 🟡 `POST` `/room/memory/move`
+
+Move a memory from one room to another, preserving the link's author/role/joined_at provenance (#1202). Accepts `{ memory_id, from_room, to_room }`; 404 when the memory has no link in `from_room`. Write op — blocked for read-only tokens.
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1202`*
+
 #### 🟡 `POST` `/room/document`
 
 Store a reference document in a room (large content >500 chars).

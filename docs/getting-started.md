@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh |
 
 See the [Installation guide](/install) for all methods (Cargo, binary, Docker).
 
-> 💡 First run downloads the embedding model (~188MB). No API keys needed.
+> 💡 First run downloads the embedding model (~200MB). No API keys needed.
 
 ## Interactive Onboarding
 
@@ -168,7 +168,7 @@ All data lives in `~/.codecora/uteke/`:
 ├── uteke.db                    # SQLite (memories + metadata + FTS5)
 ├── uteke_index.usearch         # Persistent HNSW vector index
 ├── uteke_index.keys            # Index key mapping
-├── embeddinggemma-q4/          # Local ONNX embedding model (~188MB)
+├── embeddinggemma-q4/          # Local ONNX embedding model (~200MB)
 │   └── onnx/                   # model_q4.onnx + model_q4.onnx_data
 └── logs/
     ├── uteke.log               # Current log

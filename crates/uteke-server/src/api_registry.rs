@@ -338,6 +338,33 @@ pub const ENDPOINTS: &[Endpoint] = &[
         excludes_deprecated: false,
         issues: &[],
     },
+    Endpoint {
+        method: "POST",
+        path: "/room/rename",
+        description: "Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). Accepts `{ from, to }`. Write op — blocked for read-only tokens.",
+        request_type: Some("serde_json::Value"),
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1202"],
+    },
+    Endpoint {
+        method: "POST",
+        path: "/room/update",
+        description: "Update a room's title and/or description; omitted fields stay unchanged (#1202). Accepts `{ room_id, title?, description? }`; 404 when the room is missing. Write op — blocked for read-only tokens.",
+        request_type: Some("serde_json::Value"),
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1202"],
+    },
+    Endpoint {
+        method: "POST",
+        path: "/room/memory/move",
+        description: "Move a memory from one room to another, preserving the link's author/role/joined_at provenance (#1202). Accepts `{ memory_id, from_room, to_room }`; 404 when the memory has no link in `from_room`. Write op — blocked for read-only tokens.",
+        request_type: Some("serde_json::Value"),
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1202"],
+    },
     // ── Room Documents ──────────────────────────────────────────────────
     Endpoint {
         method: "POST",

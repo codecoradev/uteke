@@ -105,7 +105,8 @@ def run_uteke(args, store_path, subcommand, extra_args=None):
     """
     # Resolve to the repo's release binary to avoid PATH ambiguity
     # (e.g. /opt/data/.cargo/bin/uteke may be x86_64 on ARM hosts).
-    repo_root = Path(__file__).resolve().parent.parent.parent
+    # scripts/ -> longmemeval/ -> benchmarks/ -> repo root.
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
     uteke_bin = str(repo_root / "target" / "release" / "uteke")
     if not Path(uteke_bin).exists():
         # Prefer the known-good local install over ambiguous PATH hits

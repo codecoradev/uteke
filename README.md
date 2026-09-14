@@ -9,6 +9,10 @@
 </p>
 
 <p align="center">
+  <strong>98.4% LongMemEval-S recall@5</strong> · ~45 ms warm query · <strong>0 LLM tokens</strong> per query · CPU-only · fully offline
+</p>
+
+<p align="center">
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://github.com/codecoradev/uteke/releases"><img src="https://img.shields.io/github/v/release/codecoradev/uteke?style=flat-square&color=green" alt="Latest Release" /></a>
   <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
@@ -16,6 +20,7 @@
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
   <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
+  <a href="#-benchmarks--984-recall-on-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.4%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.4%" /></a>
 </p>
 
 <p align="center">
@@ -33,29 +38,21 @@ curl -sSL codecora.dev/uteke/install | sh
 # Store a memory
 uteke remember "Deploy v2.1 to staging at 3pm"
 
-# Search it back: by meaning, not just keywords
+# Search it back: by meaning AND by keyword
 uteke recall "when do we deploy?"
 ```
 
-**That's it.** No API keys, no Python, no cloud required. First run downloads the embedding model (~188MB, one-time) and you're running.
+**That's it.** No API keys, no Python, no cloud required. First run downloads the embedding model (~200MB, one-time) and you're running.
 
-> **Want Docker or server mode?** Uteke ships as a single binary by default, but Docker is ready when you need it:
-> ```bash
-> docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest
-> ```
-> 📖 [Docker docs](docs/docker.md)
+Want your agent (Claude Code, Cursor, Hermes) to use it? One line:
 
-Want richer memories? Add metadata:
-
-```bash
-uteke remember "Deploy v2.1 to staging" \
-  --tags deploy,staging \
-  --entity staging-server \
-  --category infrastructure
+```jsonc
+// .mcp.json
+{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
 ```
 
 <details>
-<summary>📦 More install options</summary>
+<summary>📦 More install options & Docker</summary>
 
 | Method | Command |
 |--------|---------|
@@ -68,37 +65,62 @@ uteke remember "Deploy v2.1 to staging" \
 📖 [Full install guide](INSTALL.md) · [Docker docs](docs/docker.md)
 </details>
 
+New to uteke (or you *are* an AI agent)? Run `uteke onboard`. It detects your
+setup, asks which agent you use, and wires everything up. 📖 [Onboarding docs](docs/getting-started.md#interactive-onboarding)
+
 ---
 
-## 🚀 Onboarding (New users & AI agents)
+## 📊 Benchmarks: 98.4% recall on LongMemEval-S
 
-> **Are you an AI agent reading this?** Your user just shared this repo link with you.
-> Run `uteke onboard` to interactively configure uteke for your environment. It will
-> detect your install, ask which agent you are, toggle features, write config, and
-> show you every command available. If non-interactive: `uteke onboard --yes --agent <your-agent>`.
+[LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) hides the facts an
+agent needs across ~115 chat sessions per question and checks whether retrieval
+finds the evidence. 500 hand-curated questions, five memory abilities. Uteke runs
+the full suite with **zero LLM calls in the retrieval path**: local embeddings,
+one CPU, deterministic.
 
-New to uteke? One command takes you from zero to productive:
+| Metric | uteke **v0.18.0** | agentmemory¹ | BM25-only¹ |
+|---|---|---|---|
+| **recall_any@5** (evidence in top-5) | **98.4%** | 95.2% | 86.2% |
+| recall_any@10 | 98.8% | 98.6% | 94.6% |
+| **recall_all@5** (all evidence, strict) | **88.0%**² | 88.2% MRR³ | n/a |
+| LLM tokens / query | **0** | 0 | 0 |
 
-```bash
-uteke onboard
-```
+<sub>¹ agentmemory's published numbers, same benchmark, same 500-question split (their recall_any@5 basis; verified apples-to-apples in our [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *every* gold session in top-5; 65% of questions have multiple gold sessions. Mathematical ceiling 99.4%. ³ MRR, not recall_all (not directly comparable; shown for completeness).</sub>
 
-The wizard will:
-1. **Detect** if uteke is installed and if a store exists
-2. **Ask** which AI agent you use (Hermes, Claude, Cursor, Pi, OpenCode)
-3. **Pick** integration mode: manual tool calls vs automatic memory-provider
-4. **Toggle** features on/off (Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode)
-5. **Write** `~/.codecora/uteke/uteke.toml` with your selections
-6. **Install** agent integration files automatically (`uteke init`)
-7. **Showcase** every uteke command grouped by category
+<p align="center">
+  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidated v0.18.0) vs MemPalace 96.6% and agentmemory 95.2% (raw results committed in-repo)" width="880" />
+</p>
 
-Non-interactive (CI, scripts, AI agents):
+**By question category** (recall_any@5: the category-level story most tools don't show):
 
-```bash
-uteke onboard --yes --agent hermes --namespace default
-```
+| knowledge-update | single-session | temporal | multi-session |
+|:---:|:---:|:---:|:---:|
+| **100%** | 96.7–98.2% | **99.2%** | 98.3% |
 
-📖 [Full onboarding docs](docs/getting-started.md#interactive-onboarding) · [CLI reference](docs/cli-reference.md#uteke-onboard)
+The hard part isn't finding *a* needle; every question's evidence lands in the
+top-50 (**zero misses**). The residual gap is *ordering* when a question needs
+several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling.
+
+> **🎯 Don't trust our benchmark. Run it yourself.** The full harness is in this
+> repo: public dataset, committed raw outputs for both releases, deterministic
+> scoring you can recompute in ~20 lines of Python. No embedder needed to verify,
+> ~$10 to re-run the whole 500 questions yourself.
+> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)**
+
+Also built in: `uteke bench --counts 100,1000,10000` for latency/throughput on
+your own machine. 📖 [Full benchmark docs](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md)
+
+---
+
+## 💡 What Can You Do With Uteke?
+
+**🤖 Building AI agents?** Give them persistent memory without cloud dependencies. Your agent remembers user preferences, past decisions, and context across sessions, fully offline.
+
+**👥 Working in a team?** Use [Rooms](docs/rooms.md) to share knowledge. Meeting notes, project decisions, architecture choices: searchable by everyone, attributed by author.
+
+**🔒 Building for privacy-sensitive domains?** Healthcare, finance, legal: data stays on your machine. No API calls, no telemetry, no cloud. Local embeddings (ONNX, 768d).
+
+**⌨️ Power user who lives in the terminal?** Uteke is your personal knowledge graph. Remember anything, recall by meaning, link related thoughts. All from the command line.
 
 ---
 
@@ -134,71 +156,6 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 >
 > **Uteke vs Tool C:** Tool C has 54 MCP tools and multi-agent shared memory via a local engine. Uteke's edge: **zero dependencies** (no npm, no extra engine), **hybrid search** (Tool C lacks FTS5), and **time-travel queries**.
 
-<details>
-<summary>📊 Benchmark numbers</summary>
-
-| Metric | Result | Notes |
-|--------|--------|-------|
-| **Recall latency (10K memories)** | **42ms** P50, 50ms P95 | Flat from 100 to 10K memories (HNSW O(log N)) |
-| **Insert throughput** | 6-22 ops/s | CPU-bound (ONNX embedding inference) |
-| **Storage per memory** | ~10KB | SQLite + HNSW, scales linearly |
-| **LongMemEval-S recall_any@5** | **98.2%** | Full 500Q validation, zero-config fusion default (v0.16.0) — the metric competitor benchmarks publish |
-| LongMemEval-S recall_all@10 | 95.4% | Strict: every gold session in top-10 |
-| LongMemEval-S strict recall_all@5 | 88.0% | Every gold session in top-5 (mathematical ceiling 99.4%) |
-
-![uteke vs published systems on LongMemEval-S](docs/assets/longmemeval-comparison.jpg)
-
-> **Don't trust our benchmark — run your own.** We re-ran 108 of the 500 published questions on a 4-core ARM desktop (different CPU architecture from the published Modal x86 run, same v0.16.0 binary and harness): **107/108 produced identical per-question rankings**. The single difference was an adjacent-rank near-tie, both runs retrieved the identical top-10 session set, one gold session swapped ranks 5-6. Details in [RESULTS.md](benchmarks/longmemeval/RESULTS.md).
-
-Full benchmarks: `uteke bench --counts 100,1000,10000 --json` · [Benchmark details](docs/benchmarks.md) · [LongMemEval results](benchmarks/longmemeval/RESULTS.md) — fusion default: R@5 0.946 / R@10 0.977 on the full 500Q validation set (v0.16.0)
-
-</details>
-
----
-
-## 💡 What Can You Do With Uteke?
-
-**🤖 Building AI agents?** Give them persistent memory without cloud dependencies. Your agent remembers user preferences, past decisions, and context across sessions, fully offline.
-
-**👥 Working in a team?** Use [Rooms](docs/getting-started.md) to share knowledge. Meeting notes, project decisions, architecture choices: searchable by everyone, attributed by author.
-
-**🔒 Building for privacy-sensitive domains?** Healthcare, finance, legal: data stays on your machine. No API calls, no telemetry, no cloud. Local embeddings (ONNX, 768d).
-
-**⌨️ Power user who lives in the terminal?** Uteke is your personal knowledge graph. Remember anything, recall by meaning, link related thoughts. All from the command line.
-
----
-
-## 🏠 Rooms: Multi-Agent Shared Memory
-
-Other memory layers are single-player: every fact stored under a flat `user_id`, invisible to other agents. **Uteke Rooms** let multiple AI agents share a memory space with full author attribution.
-
-```bash
-# Create a shared room
-uteke room create "engineering" --description "Team decisions"
-
-# Alice's agent stores a decision
-uteke remember "We chose Redis for caching over Memcached" \
-  --room engineering --author alice
-
-# Bob's agent adds context
-uteke remember "Redis cluster: 3 nodes, 2 replicas each" \
-  --room engineering --author bob
-
-# Any agent can recall the shared history
-uteke recall "caching decision" --room engineering
-```
-
-**Why this matters:**
-
-| Problem without Rooms | Solution with Rooms |
-|---|---|
-| Agent A can't see Agent B's memories | Shared space, cross-agent recall |
-| Team knowledge is siloed per user | One room, multiple authors |
-| No way to attribute who said what | Author on every memory |
-| Multi-agent workflows need manual sync | Agents share context automatically |
-
-📖 **[Full Rooms documentation →](docs/rooms.md)**
-
 ---
 
 ## ✨ Features
@@ -207,7 +164,7 @@ uteke recall "caching decision" --room engineering
 
 | Feature | What it does |
 |---------|-------------|
-| 🧠 **Hybrid + Fusion Search** | Vector similarity + FTS5 full-text search, merged by Reciprocal Rank Fusion (RRF). Since v0.16.0, `fusion` — a weighted RRF of the vector and hybrid rankings — is the default recall strategy. Finds by meaning AND exact keywords. |
+| 🧠 **Hybrid + Fusion Search** | Vector similarity + FTS5 full-text search, merged by Reciprocal Rank Fusion (RRF). Since v0.16.0, `fusion` (a weighted RRF of the vector and hybrid rankings) is the default recall strategy. Finds by meaning AND exact keywords. |
 | 🏠 **Rooms** | **Multi-agent shared memory.** Group memories by context (meetings, projects, clients). Multiple agents read/write to the same room with author attribution. Cross-agent recall without manual sync. |
 | ⏳ **Time-travel** | Recall memories as they existed at any point in time. `uteke recall "deploy" --at 2025-01-15` |
 | 🏷️ **Rich Metadata** | Tags, entities, categories, key:value pairs on every memory. |
@@ -226,7 +183,7 @@ uteke recall "caching decision" --room engineering
 | 📈 **Salience + Recency** | Dual-axis recall boost by memory type and age. |
 | 🔍 **Orphan Detection** | Find disconnected, low-importance memories for cleanup. |
 | 🌙 **Dream Cycle** | One-command maintenance: lint → backlinks → dedup → orphans. |
-| 🧬 **Consolidation** | Merge near-duplicate room memories into fewer, denser records — segment-level planner, provenance trust policy, per-pair control. (0.16.0) |
+| 🧬 **Consolidation** | Merge near-duplicate room memories into fewer, denser records: segment-level planner, provenance trust policy, per-pair control. |
 
 ### Integrations
 
@@ -238,7 +195,7 @@ uteke recall "caching decision" --room engineering
 | 📝 **Document Engine** | Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking. |
 | 📥 **Import/Export** | JSONL-based backup and restore. |
 | 🔑 **View-Only API Keys** | Read-only tokens for safe GET-only access to the server. |
-| 👤 **Author Types** | `human` vs `agent` attribution on every memory, across CLI, HTTP, and MCP. (0.16.0) |
+| 👤 **Author Types** | `human` vs `agent` attribution on every memory, across CLI, HTTP, and MCP. |
 
 ### Performance & Privacy
 
@@ -253,60 +210,9 @@ uteke recall "caching decision" --room engineering
 | 👥 **Multi-Agent Namespaces** | Fully isolated memory per agent, zero overhead. |
 | 📊 **Benchmarks** | Built-in `uteke bench` for perf testing. [See results](docs/benchmarks.md). |
 
-<details>
-<summary>🔌 MCP Server config: connect to Claude Code, Cursor, Hermes</summary>
-
-```jsonc
-// .mcp.json (Claude Code, Cursor)
-{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
-```
-
-For Claude Desktop, Hermes, and HTTP transport, see [MCP docs](docs/mcp.md).
-</details>
-
-📖 [Full documentation](docs/getting-started.md) · [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md)
-
 ---
 
-## 📦 Deployment Modes
-
-Uteke runs the same everywhere. Pick the mode that fits your setup.
-
-### Local-first (default)
-
-Single binary, zero infrastructure. Everything runs in-process on your machine:
-
-```bash
-curl -sSL codecora.dev/uteke/install | sh
-uteke remember "first memory"
-```
-
-No Docker, no Python, no database server. Your data stays in `~/.codecora/uteke/`. This is what most users need.
-
-### Docker / Server mode
-
-Running Uteke as a shared service for a team, or deploying to a server? Docker keeps it simple:
-
-```bash
-docker run -d \
-  -p 127.0.0.1:8767:8767 \
-  -v uteke-data:/data \
-  ghcr.io/codecoradev/uteke:latest
-```
-
-Prefer the binary directly? Run it as a daemon:
-
-```bash
-uteke serve --host 0.0.0.0 --port 8767
-```
-
-Both expose the same HTTP API. Other agents and tools connect via `http://your-host:8767`. Rooms work across agents whether they're on the same machine or connecting remotely.
-
-📖 **[Docker setup guide](docs/docker.md)** · [Server mode docs](docs/configuration.md#server-mode)
-
----
-
-## 🏗️ Architecture
+## 🚀 How It Works
 
 ```mermaid
 graph LR
@@ -329,6 +235,73 @@ graph LR
 
 Everything runs in-process. No network. No cloud. No server required (unless you want server mode).
 
+<details>
+<summary>🐳 Deployment modes (local-first by default, Docker/server when you need it)</summary>
+
+**Local-first (default)**: single binary, zero infrastructure.
+
+```bash
+curl -sSL codecora.dev/uteke/install | sh
+uteke remember "first memory"
+```
+
+Your data stays in `~/.codecora/uteke/`.
+
+**Docker / server mode**: for teams or remote agents.
+
+```bash
+docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest
+# or: uteke serve --host 0.0.0.0 --port 8767
+```
+
+📖 [Docker setup guide](docs/docker.md) · [Server mode docs](docs/configuration.md#server-mode)
+</details>
+
+<details>
+<summary>🏠 Rooms: multi-agent shared memory (example)</summary>
+
+```bash
+# Create a shared room
+uteke room create "engineering" --description "Team decisions"
+
+# Alice's agent stores a decision
+uteke remember "We chose Redis for caching over Memcached" \
+  --room engineering --author alice
+
+# Bob's agent adds context
+uteke remember "Redis cluster: 3 nodes, 2 replicas each" \
+  --room engineering --author bob
+
+# Any agent can recall the shared history
+uteke recall "caching decision" --room engineering
+```
+
+Author attribution on every memory; cross-agent recall without manual sync.
+📖 [Full Rooms documentation →](docs/rooms.md)
+</details>
+
+<details>
+<summary>🔌 MCP config: connect to Claude Code, Cursor, Hermes</summary>
+
+```jsonc
+// .mcp.json (Claude Code, Cursor)
+{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
+```
+
+For Claude Desktop, Hermes, and HTTP transport, see [MCP docs](docs/mcp.md).
+</details>
+
+---
+
+## 📚 Documentation
+
+| | |
+|---|---|
+| **Getting started** | [Installation](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
+| **Reference** | [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md) · [Docker](docs/docker.md) |
+| **Integrations** | [MCP setup](docs/mcp.md) · Claude Code · Cursor · Hermes |
+| **Benchmarks** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Reproduce it yourself](benchmarks/longmemeval/REPRODUCING.md) |
+
 ---
 
 ## ❓ FAQ
@@ -336,7 +309,7 @@ Everything runs in-process. No network. No cloud. No server required (unless you
 <details>
 <summary><strong>How is Uteke different from cloud-dependent memory tools?</strong></summary>
 
-Many memory layers (Python-based or TypeScript-based) require cloud API keys (OpenAI/LLM) and external infrastructure (Docker, Postgres, Qdrant). Your data gets sent to a cloud LLM provider. Uteke is a single binary with zero API keys. All embeddings run locally via ONNX. Your data never leaves your machine. [See comparison table](#-why-uteke).
+Many memory layers (Python-based or TypeScript-based) require cloud API keys (OpenAI/LLM) and external infrastructure (Docker, Postgres, Qdrant). Your data gets sent to a cloud LLM provider. Uteke is a single binary with zero API keys. All embeddings run locally via ONNX. Your data never leaves your machine. [See comparison table](#-why-uteke-).
 </details>
 
 <details>
@@ -348,31 +321,19 @@ Some platforms offer dozens of MCP tools and multi-agent shared memory via a loc
 <details>
 <summary><strong>How is Uteke different from other single-binary memory tools?</strong></summary>
 
-Some single-binary tools share our philosophy: one binary, zero deps, MCP server, local-first. The key difference is **search**: most are **FTS5-only** (keyword matching). Uteke uses **hybrid search** (HNSW vector similarity + FTS5 + Reciprocal Rank Fusion), meaning you can search by *meaning*, not just exact words. Uteke also adds rooms, time-travel, graph relationships, smart decay, document engine, and batch import.
-</details>
-
-<details>
-<summary><strong>How is Uteke different from local-mode cloud tools?</strong></summary>
-
-Some cloud-native tools now offer a local binary mode with Ollama support. Their cloud version still needs managed infrastructure (Workers, Postgres, etc.). Uteke is one binary with zero infrastructure: no Workers, no Postgres, no cloud account. Uteke also adds rooms for multi-agent collaboration, time-travel queries, and hybrid search (vector + FTS5 + RRF fusion).
-</details>
-
-<details>
-<summary><strong>What can Uteke remember?</strong></summary>
-
-Anything text-based: decisions, meeting notes, code snippets, project context, personal notes, agent state. You can tag, categorize, and link memories. The `--batch-dir` flag lets you import entire document directories.
+Some single-binary tools share our philosophy: one binary, zero deps, MCP server, local-first. The key difference is **search**: most are **FTS5-only** (keyword matching). Uteke uses **hybrid search** (HNSW vector similarity + FTS5 + Reciprocal Rank Fusion), meaning you can search by *meaning*, beyond exact words. Uteke also adds rooms, time-travel, graph relationships, smart decay, document engine, and batch import.
 </details>
 
 <details>
 <summary><strong>Does it really work offline?</strong></summary>
 
-Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~188MB) on first run. After that, zero network calls. No telemetry. If the local model fails, Uteke degrades gracefully to a no-op embedder. It never crashes and never calls a cloud API.
+Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~200MB) on first run. After that, zero network calls. No telemetry. If the local model fails, Uteke degrades gracefully to a no-op embedder. It never crashes and never calls a cloud API.
 </details>
 
 <details>
 <summary><strong>How fast is recall?</strong></summary>
 
-~45ms as a library (measured at 100–10K memories). No network round-trip because everything is local. The LRU recall cache eliminates redundant embedding computation for repeated queries.
+~45ms as a CLI (measurements: 31ms avg @10K on the published bench host, 100–10K memories, flat with store size). No network round-trip because everything is local. The LRU recall cache eliminates redundant embedding computation for repeated queries.
 </details>
 
 <details>
@@ -384,8 +345,23 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.16.0 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.17.0 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
+
+---
+
+## 🗺️ Roadmap & Editions
+
+| | **Uteke OSS** (this repo) | **Uteke Cloud** |
+|---|---|---|
+| Retrieval quality | ✅ Full (identical engine) | ✅ Identical (parity-benchmarked) |
+| License | Apache-2.0, self-host | Managed service |
+| LLM-powered answering (recency-aware fact resolution, abstention) | BYOK | Included |
+| Multi-workspace, dashboard, backups | DIY | ✅ Included |
+| Price | Free | *Coming soon* |
+
+The open-source engine stays full-capability. Nothing about the benchmark
+results above is paywalled. Cloud adds hosted convenience on top.
 
 ---
 

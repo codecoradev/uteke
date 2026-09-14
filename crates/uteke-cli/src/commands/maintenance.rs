@@ -260,6 +260,7 @@ pub(crate) struct ExtractOpts<'a> {
     pub source_label: Option<&'a str>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_import(
     cli: &Cli,
     uteke: &Uteke,
@@ -268,6 +269,7 @@ pub(crate) fn run_import(
     tags: &[String],
     format: &str,
     extract_opts: ExtractOpts<'_>,
+    timestamp: Option<&str>,
 ) -> Result<(), String> {
     tracing::info!("Importing memories from {input} (format: {format})");
 
@@ -279,6 +281,19 @@ pub(crate) fn run_import(
         buf
     } else {
         std::fs::read_to_string(input).map_err(|e| format!("Failed to read file: {e}"))?
+    };
+
+    // #1232: timestamp anchor — validate + prepend BEFORE storing so an
+    // invalid value fails loudly. Applies to the plain-text path only;
+    // JSONL/structural exports carry their own semantics.
+    let content = match timestamp {
+        Some(ts) if format == "text" => super::anchor::apply_timestamp_anchor(&content, ts)?,
+        Some(ts) => {
+            return Err(format!(
+                "--timestamp is only supported with --format text (got: {ts} with format '{format}')"
+            ));
+        }
+        None => content,
     };
 
     // Structural export detection (#1057): a manifest first line routes to

@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.18.0] - 2026-09-13
+
+Minor release. Theme: **agent-operable memory plumbing** - ingest with explicit timestamps, full room lifecycle management, and a recall payload contract that keeps benchmark harnesses honest. Retrieval behavior is unchanged from 0.17.0 (revalidated at the published config: recall@5 non-abs 0.9457, identical per-question rankings).
+
+### Added (release highlights)
+
+- **Ingest date anchors: `uteke remember --timestamp` / `import` timestamps (#1232, #1238)** - attach an explicit timestamp at write time (CLI flag + batch import field) so time-travel recall (`at`), temporal boosts, and audit chains no longer depend on ingest order. The `LMEVAL_DATE_ANCHOR` env is benchmark-harness-only and never affects the binary.
+- **Room lifecycle management (#1202/#1203)** - `POST /room/rename|/room/update|/room/memory/move`, CLI `uteke room rename|update|move-memory`, MCP `uteke_room_rename|uteke_room_update|uteke_room_memory_move`; schema v19 adds additive `rooms.description` (backward-compatible exports); `Uteke::rename_room` rewrites registry + all room references in ONE transaction. Plus `uteke update <id>` for in-place memory edits.
+- **Recall payload conformance tests (#1233, #1239)** - contract tests pinning that recall responses carry the FULL payload (no hit-count stubs) across CLI/HTTP/MCP.
+
+### Added
+
+- **Benchmarks directory restructure** — `benchmarks/` is now the single source of truth: `benchmarks/README.md` (index, policies, reproduction), `internal/` (uteke bench, re-verified on v0.17.0), `longmemeval/` (harness + committed canonical raw artifacts under `results/` + corrected baselines), `locomo/` (planned external benchmark #2). The old `benchmarks/RESULTS.md` stub (stale pre-embedding figures) is removed — real numbers live in `internal/RESULTS.md` and `docs/benchmarks.md`.
+
+### Fixed
+
+- **Default recall `min_score` lowered 0.3 → 0.0 (#1223)** — since the fusion strategy (weighted RRF) became the recall default in 0.16.0, returned scores are rank-based (RRF contribution plus salience/recency boosts, typically ~0.0-0.2) rather than cosine similarity, so the CLI default threshold of 0.3 (a cosine-era value; HTTP/MCP already default 0.0) silently filtered out almost every result — measured on embeddinggemma-q4: all 20 paraphrase probes scored 0.169-0.186 rank-1 while a legacy-distribution 0.3 default expects ~0.5+, making default `uteke recall` return empty. Thresholds remain opt-in via `[recall] min_score`, `--min`, `--strict` (0.5), or HTTP `min_score`; docs now state the score scale per strategy.
+- **LongMemEval baseline mislabel** — RESULTS.md previously attributed the 0.854/0.885 (2026-08-13) full-500 baseline to "v0.15.0 hybrid"; those figures are the **vector-only** run (hybrid was validated at 50 questions only). Corrected, with both delta bases stated (+8.9pp full-500, +9.2pp 470-non-abstention).
+- **Full-dataset aggregates** — RESULTS.md now labels all three bases explicitly: Overall (470 non-abstention), Abstention (30), and Overall (full 500 = 0.982 recall_any@5 / 0.880 strict recall_all@5); no questions silently dropped from the aggregate rows.
+- Removed stale run logs and an outdated metrics snapshot from git tracking (values superseded by recomputation from committed raw artifacts).
+
+- **Room rename, room update, and memory room-move (#1202)** — rooms now have sanctioned lifecycle ops matching the namespace family: `Uteke::rename_room(old, new)` rewrites the registry row and every `room_memories`/`room_documents` reference in ONE transaction (FK-safe insert→repoint→delete order; no `ON UPDATE CASCADE` needed), preserving title/description/namespace; `Uteke::update_room(id, title?, description?)` edits room metadata (schema v19 adds the additive `rooms.description` column; structural export/import carry it and stay backward-compatible with 5-column exports); `Uteke::move_memory_to_room(id, from, to)` moves a memory between rooms preserving the link's `author`/`role`/`joined_at` provenance (`Ok(0)` when not a member of `from`). Surfaces: HTTP `POST /room/rename|/room/update|/room/memory/move` (404 on missing room/link), CLI `uteke room rename|update|move-memory`, MCP `uteke_room_rename|uteke_room_update|uteke_room_memory_move`.
+- **`uteke update <id>` CLI** — in-place memory edit (content/tags/importance/pinned/type), closing the CLI surface gap: HTTP `PUT /memory` and MCP `uteke_update` already existed (#1202 item 5).
+
 ## [0.17.0] — 2026-09-06
 
 Minor release. Theme: **inspectable, trustworthy memory** — explain recall on
@@ -8,7 +34,7 @@ graphs, pagination metadata, and a dual-engine vector layer.
 
 ### Added
 
-- **Contradiction benchmark segment (#1172, phase 3)** — `benchmarks/longmemeval/contradiction_segment.py`: 40-topic active-store segment measuring conflict-resolution quality end-to-end. Baseline (both facts active) vs resolved (superseded): fusion winner@1 0.975 → 1.000, stale@5 0.825 → 0.000. Published in `benchmarks/longmemeval/RESULTS.md`. Also adds `uteke supersede <old> <new> [--reason]` — CLI surface parity for supersession (previously MCP/HTTP only).
+- **Contradiction benchmark segment (#1172, phase 3)** — `benchmarks/longmemeval/contradiction_segment.py`: 40-topic active-store segment measuring conflict-resolution quality end-to-end. Baseline (both facts active) vs resolved (superseded): fusion winner@1 0.850 → 1.000, stale@5 1.000 → 0.000. Published in `benchmarks/longmemeval/RESULTS.md`. Also adds `uteke supersede <old> <new> [--reason]` — CLI surface parity for supersession (previously MCP/HTTP only).
 
 - **`/list` pagination metadata (#1188)** — `POST /list` accepts `"include_meta": true` to respond with an envelope `{memories, total, has_more, next_offset}` (`next_offset` is `null` on the last page) so clients no longer blind-paginate with 100-row guesses. The default response is unchanged (bare array) — existing clients are untouched; `include_meta` is ignored in `at` (point-in-time) mode, which stays a bare array.
 

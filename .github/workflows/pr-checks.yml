@@ -9,6 +9,7 @@ jobs:
   branch-naming:
     name: Branch Naming
     runs-on: ubuntu-latest
+    if: "!contains(fromJSON('[\"dependabot[bot]\", \"renovate[bot]\", \"github-actions[bot]\", \"app/dependabot\", \"app/renovate\"]'), github.event.pull_request.user.login)"
     steps:
       - name: Check branch name
         env:
@@ -38,6 +39,7 @@ jobs:
   pr-template:
     name: PR Description
     runs-on: ubuntu-latest
+    if: "!contains(fromJSON('[\"dependabot[bot]\", \"renovate[bot]\", \"github-actions[bot]\", \"app/dependabot\", \"app/renovate\"]'), github.event.pull_request.user.login)"
     steps:
       - name: Check PR body
         env:

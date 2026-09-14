@@ -21,7 +21,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 Pin a specific version:
 
 ```bash
-UTEKE_VERSION=v0.16.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.18.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ## Install via Cargo
@@ -39,21 +39,26 @@ This compiles uteke from source and installs it to Cargo's binary directory (typ
 Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases):
 
 ```bash
-# Linux (x86_64)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.16.0.tar.gz | tar xz
-mv uteke ~/.local/bin/
+# Linux (x86_64) — tarball also contains libonnxruntime.so* (required for embeddings)
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.18.0.tar.gz | tar xz
+mv uteke uteke-serve uteke-mcp ~/.local/bin/
+mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
 # Linux (x86_64, legacy — no AVX2/SSE4.2)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.16.0.tar.gz | tar xz
-mv uteke ~/.local/bin/
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.18.0.tar.gz | tar xz
+mv uteke uteke-serve uteke-mcp ~/.local/bin/
+mv libonnxruntime.so* ~/.local/bin/
+mkdir -p ~/.local/bin/ort-legacy && mv ort-legacy/libonnxruntime.so* ~/.local/bin/ort-legacy/
 
 # Linux (aarch64 / ARM)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.16.0.tar.gz | tar xz
-mv uteke ~/.local/bin/
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.18.0.tar.gz | tar xz
+mv uteke uteke-serve uteke-mcp ~/.local/bin/
+mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
 # macOS (Apple Silicon)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.16.0.tar.gz | tar xz
-mv uteke ~/.local/bin/
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.18.0.tar.gz | tar xz
+mv uteke uteke-serve uteke-mcp ~/.local/bin/
+mv libonnxruntime*.dylib ~/.local/bin/
 ```
 
 Supported platforms:
@@ -86,7 +91,7 @@ docker pull ghcr.io/codecoradev/uteke:latest
 
 ## First Run
 
-On first run, uteke downloads the embedding model (~188MB). No API keys needed — fully offline.
+On first run, uteke downloads the embedding model (~200MB). No API keys needed — fully offline.
 
 ```bash
 uteke doctor   # Verify installation
@@ -115,10 +120,13 @@ uteke upgrade --yes    # Skip confirmation
 
 ## What Gets Installed
 
-The install script deploys three binaries:
+The install script deploys three binaries plus the bundled ONNX Runtime shared library (required for local embeddings, no API keys needed):
 
 | Binary | Purpose |
 |--------|---------|
 | `uteke` | Core CLI — remember, recall, search, list, etc. |
 | `uteke-serve` | HTTP server for remote access and MCP over HTTP |
 | `uteke-mcp` | Standalone MCP server for AI agent integration |
+| `libonnxruntime.so*` (Linux) / `libonnxruntime*.dylib` (macOS) / `onnxruntime.dll` (Windows) | ONNX Runtime (currently v1.24.4, matches `ort` crate `2.0.0-rc.12`) — resolved via `<exe_dir>/libonnxruntime.so`, system paths, or `ORT_LIB_PATH` |
+
+> **Arch / CachyOS note:** there is no system `libonnxruntime.so` by default and `pip install onnxruntime` may have no wheel for newer Python (e.g. 3.14), so you must keep the bundled `.so` next to the binary in `~/.local/bin/`. If you see `ONNX Runtime library not found` on `uteke remember`, re-run the installer above or set `ORT_LIB_PATH=/path/to/libonnxruntime.so`. Then `uteke doctor` should show `Embedding model: embeddinggemma-q4`.

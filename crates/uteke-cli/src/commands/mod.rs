@@ -1,6 +1,7 @@
 //! Command handler implementations for all CLI subcommands.
 
 mod aging;
+mod anchor;
 pub(crate) mod bench;
 mod contradictions;
 mod doc;
@@ -19,6 +20,7 @@ mod room;
 mod server;
 mod tags;
 mod timeline;
+mod update;
 pub(crate) mod update_check;
 pub(crate) mod upgrade;
 
@@ -51,6 +53,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             author,
             source,
             source_type,
+            timestamp,
         } => remember::run(
             cli,
             uteke,
@@ -67,6 +70,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             author.as_deref(),
             source.as_deref(),
             source_type.as_deref(),
+            timestamp.as_deref(),
         ),
 
         Commands::Recall {
@@ -151,6 +155,24 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Get { id } => list::run_get(cli, uteke, id),
 
+        Commands::Update {
+            id,
+            content,
+            tags,
+            importance,
+            pinned,
+            r#type,
+        } => update::run(
+            cli,
+            uteke,
+            id,
+            content.clone(),
+            tags.clone(),
+            *importance,
+            *pinned,
+            r#type.clone(),
+        ),
+
         Commands::Forget {
             id,
             tag,
@@ -212,6 +234,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             dry_run,
             max_size,
             recursive,
+            timestamp,
         } => {
             let opts = maintenance::ExtractOpts {
                 enabled: *extract,
@@ -225,6 +248,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
             // Batch mode: import entire directory
             if let Some(dir) = batch_dir {
+                if timestamp.is_some() {
+                    return Err(
+                        "--timestamp is not supported with --batch-dir: anchors apply to a single document, batch files carry their own per-file semantics".to_string(),
+                    );
+                }
                 let force_strategy = if *as_doc {
                     Some(maintenance::ImportStrategy::Document)
                 } else if *as_memory {
@@ -247,7 +275,16 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             }
 
             // Single file mode (original)
-            maintenance::run_import(cli, uteke, ns, input, tags, format, opts)
+            maintenance::run_import(
+                cli,
+                uteke,
+                ns,
+                input,
+                tags,
+                format,
+                opts,
+                timestamp.as_deref(),
+            )
         }
 
         Commands::Completions { .. } => {

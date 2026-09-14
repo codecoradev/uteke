@@ -64,6 +64,7 @@ pub(crate) fn run(
     author: Option<&str>,
     source: Option<&str>,
     source_type: Option<&str>,
+    timestamp: Option<&str>,
 ) -> Result<(), String> {
     tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
 
@@ -95,6 +96,15 @@ pub(crate) fn run(
         Box::leak(trimmed.into_boxed_str())
     } else {
         content
+    };
+    // #1232: timestamp anchor — validate + prepend BEFORE any write so an
+    // invalid value fails loudly without storing a row.
+    let content: &str = match timestamp {
+        Some(ts) => {
+            let anchored = super::anchor::apply_timestamp_anchor(content, ts)?;
+            Box::leak(anchored.into_boxed_str())
+        }
+        None => content,
     };
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
 

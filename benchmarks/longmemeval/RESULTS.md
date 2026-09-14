@@ -1,13 +1,84 @@
 # LongMemEval-S Benchmark Results
 
-**Dataset:** `longmemeval_s_cleaned.json` (500 questions, 6 question types)
-**Metric:** Session-level retrieval (Recall@k, NDCG@k)
+**Dataset:** `longmemeval_s_cleaned.json` — 500 questions = 470 answerable + 30 abstention (`_abs`), 6+1 question types
+**Metric:** Session-level retrieval (Recall@k, NDCG@k). Deterministic — no LLM in the retrieval path.
+
+**TL;DR headline (v0.17.0 re-validation, full 500 questions — see section below):**
+recall_any@5 = **0.984** · strict recall_all@5 = **0.880** · strict recall_all@10 = **0.954** · coverage@5 = **0.944**
+(Original v0.16.0 validation run: 0.982 / 0.880 / 0.954 / 0.943 — raw committed alongside the re-validation run.)
+
+Every number below can be recomputed from the committed raw artifacts in
+[`results/`](results/) — instructions at the bottom. See also the
+[metric definitions](README.md#what-it-measures).
 
 ---
 
+## Pure-default run — 500 questions, Modal x86_64, binary v0.16.0 from git `bfbc296` (2026-08-29)
+
+Pre-release validation of the shipped default: `--strategy default` (no flag at all)
+against the full 500-question dataset. Binary built in-image from exact SHA `bfbc296`
+(PR #1137/#1138); the image build prints `uteke 0.16.0`.
+
+Raw artifact (committed): [`results/default-500q.jsonl`](results/default-500q.jsonl).
+
+| Question type | n | R@5 (strict) | R@10 (strict) | any@5 | any@10 | NDCG@5 |
+|---|---|---|---|---|---|---|
+| knowledge-update | 72 | 1.000 | 1.000 | 1.000 | 1.000 | 0.972 |
+| single-session-assistant | 56 | 0.982 | 1.000 | 0.982 | 1.000 | 0.959 |
+| single-session-user | 64 | 0.969 | 0.969 | 0.969 | 0.969 | 0.913 |
+| single-session-preference | 30 | 0.967 | 0.967 | 0.967 | 0.967 | 0.839 |
+| temporal-reasoning | 127 | 0.920 | 0.962 | 0.984 | 0.992 | 0.849 |
+| multi-session | 121 | 0.906 | 0.976 | 0.983 | 0.992 | 0.880 |
+| abstention | 30 | 0.906 | 0.950 | 0.967 | 0.967 | 0.844 |
+| **Overall (470 non-abstention)** | 470 | **0.946** | 0.977 | 0.983 | 0.989 | 0.897 |
+| **Abstention (30)** | 30 | **0.906** | 0.950 | 0.967 | 0.967 | 0.844 |
+| **Overall (full 500)** | 500 | **0.943** | 0.975 | **0.982** | 0.988 | 0.894 |
+
+Strict-family headline on the full 500: recall_all@5 = **0.880** (binary), coverage@5 = **0.943**
+(partial credit). Mathematical ceiling for strict@5 is **0.994** — 3 questions have more than
+5 gold sessions.
+
+### Baselines & deltas (corrected labels, 2026-09-09)
+
+- **Vector-only baseline (full 500, 2026-08-13):** R@5 = 0.854 / R@10 = 0.885 / NDCG@5 = 0.810.
+  Raw artifact lives on the benchmark Modal volume (`results_vector`), not committed.
+  Fusion default vs this baseline: **+8.9pp on the same full-500 basis** (0.854 → 0.943),
+  **+9.2pp** against the 470-non-abstention aggregate (0.854 → 0.946) — zero configuration.
+- **Correction note:** this baseline was previously labeled "v0.15.0 hybrid" in this file.
+  The 0.854/0.885/2026-08-13 figures are the **vector-only** run (see Strategy Comparison
+  below). A hybrid 500-question run has never been executed; hybrid is validated at 50
+  questions (0.980 R@5). The vector-only comparison is the honest zero-config story:
+  fusion adds the lexical channel's wins on top of semantic-only retrieval.
+
+### Where the remaining failures live (structural facts)
+
+- Ranking-side optimization is **closed**: fusion is shipped, 3-way RRF is a measured NO-GO
+  (see below), and the weight sweep sits mid-plateau.
+- 51 questions miss partially at @5 (strict family); **44 of them miss exactly one gold
+  session** — the lever is insert-side granularity (multi-session grouping/diversity),
+  not ranking.
+- The two weakest categories (temporal 0.920, multi-session 0.906) are also the two
+  largest (53% of questions) — the aggregate is honestly weighted. Counterfactual:
+  dropping temporal-reasoning lifts the 470-aggregate by +0.95pp.
+- Abstention questions (evidence does not exist in the haystack) are scored by the same
+  retrieval-metric family and reported as a separate group; end-to-end QA accuracy
+  (reader/answering layer, incl. abstention behavior) is **unmeasured**.
+
+## FTS5-only ablation — 500 questions, Modal x86_64 (2026-08-29)
+
+Raw artifact (committed): [`results/fts5-500q.jsonl`](results/fts5-500q.jsonl).
+
+| Metric | Value |
+|---|---|
+| recall_any@5 | **0.914** |
+| coverage@5 | 0.821 |
+
+Lexical-only retrieval is strong (BM25/FTS5 phrasing matches) but fails hardest on
+temporal-reasoning and multi-session — the exact classes fusion's vector channel covers.
+
 ## Independent Reproduction (2026-09-01)
 
-The published 500Q run was produced on Modal x86. To test whether the result depends on that infrastructure, a 108-question subset (pref: 30, kupd: 78) was re-run locally on a 4-core ARM desktop (Oracle Ampere A1, aarch64) — same v0.16.0 binary, same harness (`run_eval.py`), different CPU architecture.
+The published 500Q run was produced on Modal x86. To test whether the result depends on that infrastructure, a 108-question subset (pref: 30, kupd: 78) was re-run locally on a 4-core ARM desktop (Oracle Ampere A1, aarch64) — same v0.16.0 binary, same harness (`scripts/run_eval.py`), different CPU architecture.
 
 | Subset | Questions | Identical per-question rankings | R@5 published | R@5 re-run |
 |---|---|---|---|---|
@@ -20,14 +91,40 @@ The published 500Q run was produced on Modal x86. To test whether the result dep
 **Reproduce:**
 
 ```bash
-python3 run_eval.py --data data/subset_kupd.json --output results_rerun --strategy default --resume
+python3 scripts/run_eval.py --data data/subset_kupd.json --output results_rerun --strategy default --resume
 ```
 
-Raw artifacts are kept on the benchmark Modal volume (`uteke-longmemeval`, `default/` and rerun prefixes), consistent with the published run — datasets and result JSONL files are not committed to git (see `.gitignore` here; `download_data.sh` fetches the dataset).
+Raw artifacts are kept on the benchmark Modal volume (`uteke-longmemeval`, `default/` and rerun prefixes), consistent with the published run — datasets and exploratory result files are not committed to git (see `.gitignore` here; `scripts/download_data.sh` fetches the dataset). **Canonical published artifacts ARE committed** under `results/`.
 
----
+## v0.17.0 re-validation — ✅ DONE (2026-09-09)
 
-## Uteke Retrieval — Strategy Comparison
+Full 500-question re-run on the v0.17.0 binary (built in-image from exact release SHA
+`a2ec81a` via `UTEKE_GIT_REF`, same 10-shard Modal fan-out, shards isolated under
+`default-v017/` on the volume so the v0.16.0 artifacts could not be resume-skipped).
+
+Raw artifact (committed): [`results/default-500q-v017.jsonl`](results/default-500q-v017.jsonl).
+
+| Metric | v0.16.0 | v0.17.0 | Δ |
+|---|---|---|---|
+| strict recall_all@5 | 0.8800 | **0.8800** | ±0.00pp |
+| strict recall_all@10 | 0.9540 | **0.9540** | ±0.00pp |
+| coverage@5 | 0.9433 | 0.9443 | +0.09pp |
+| recall_any@5 | 0.9820 | **0.9840** | +0.20pp |
+| recall_any@10 | 0.9880 | 0.9880 | ±0.00pp |
+
+Per-question comparison (n=500): 238 identical rankings, 254 reorder-only (identical
+top-k sets, near-tie swaps), **8** questions with a different top-10 set — of the 3
+questions whose strict@5 changed, all stayed within partial credit (none flipped
+perfect↔imperfect). The retrieval scoring path is confirmed unchanged in 0.17.0: the
+headline numbers above are now **re-validated on v0.17.0**, not merely attributed to
+the v0.16.0 run.
+
+```bash
+# reproduce
+UTEKE_GIT_REF=a2ec81a0915a242cee6e1de8811491e4fad1d4da modal run scripts/modal_fanout.py --strategy default --tag v017
+```
+
+## Strategy Comparison (historical runs)
 
 ### Vector (semantic only)
 
@@ -41,7 +138,7 @@ Raw artifacts are kept on the benchmark Modal volume (`uteke-longmemeval`, `defa
 |-----------|-----|------|------|--------|---------|-----------|------|
 | 50 | 98.0% | 100.0% | 100.0% | 0.960 | 0.967 | EmbeddingGemma 768d (API) | 2026-08-13 |
 
-**Improvement (Hybrid vs Vector): +12.6pp R@5**
+**Improvement (Hybrid vs Vector, 50Q): +12.6pp R@5**
 
 ### Fusion (weighted RRF of vector + hybrid rankings, #1123) — default since 0.16.0
 
@@ -66,8 +163,6 @@ fast10 detail: 1 partial miss @5 (60472f9c multi-session, R@5 0.67 → R@10 1.0)
 
 **Tuning evidence:** weight grid sweep on actual x86 rankings; chosen value sits mid-plateau (stable across a range), not at an edge. Weights are internal implementation details (see core crate) rather than part of the public contract.
 
----
-
 ## 50Q Hybrid — Per Question Type Breakdown
 
 | Question Type | Count | R@5 Hits | R@5 |
@@ -81,32 +176,11 @@ fast10 detail: 1 partial miss @5 (60472f9c multi-session, R@5 0.67 → R@10 1.0)
 
 **1 miss at R@5** — single-session-user (QID: 5d3d2817). R@10 recovers to 100%.
 
----
-
-## Methodology
-
-- **Vector strategy:** Embedding similarity search via usearch index.
-- **Hybrid strategy:** Reciprocal Rank Fusion (RRF k=60) of vector search + SQLite FTS5 keyword search.
-- **Embedding (vector 500Q):** EmbeddingGemma 300M Q4 ONNX, 768d, local inference.
-- **Embedding (hybrid 50Q):** EmbeddingGemma 768d via API endpoint, same model dimensions.
-- **Session-level:** Retrieval evaluated at session granularity (not per-turn).
-- **Throttled run:** 2 CPU cores, nice 19 (production-safe benchmark).
-
-## Reproduce
-
-```bash
-# Vector (500Q, ONNX local)
-python run_eval.py --data data/longmemeval_s_cleaned.json --output results_vector --strategy vector
-
-# Hybrid (50Q sample)
-python run_eval.py --data data/longmemeval_s_cleaned.json --output results_hybrid --limit 50 --strategy hybrid
-```
-
-### 3-way RRF (vec + hyb + fts5-only) — NO-GO (2026-08-29)
+## 3-way RRF (vec + hyb + fts5-only) — NO-GO (2026-08-29)
 
 Simulation over saved rankings; fts5-only rankings collected on Modal x86
 (500Q, ~4.5h, resume-safe via volume). Cross-check: sim fts5-only R@5=0.8211
-vs harness-reported 0.820 — parsing validated.
+vs harness-reported 0.820 — parsing validated. (Committed raw: `results/fts5-500q.jsonl`.)
 
 - 2-way shipped fusion (tuned weights) R@5 = 0.9800 (fast50)
 - best 3-way (2.0/1.0/0.1) R@5 = 0.9800 — delta +0.0000, **0 flipped questions**
@@ -115,30 +189,8 @@ vs harness-reported 0.820 — parsing validated.
   same classes already covered (partially) by hybrid's own FTS5 component
 
 Conclusion: ranking-side optimization via more RRF arms is exhausted.
-Remaining headroom is insert-side granularity (3 partial-recall fails) —
+Remaining headroom is insert-side granularity (partial-recall fails) —
 separate project, uncertain payoff.
-
-Artifacts: sim3way_final.py, preview_scores.py, results_modal_fts5_partial/
-
-### Pure-default (zero-config fusion) 500Q — Modal x86_64, binary 0.16.0 from git bfbc296 (2026-08-29)
-
-Pre-release validation: `--strategy default` (no flag at all) against the full 500Q dataset.
-Binary built in-image from exact SHA bfbc296 (PR #1137/#1138), image build prints `uteke 0.16.0`.
-
-| Question Type | Count | Recall@5 | Recall@10 | NDCG@5 | NDCG@10 |
-|---|---|---|---|---|---|
-| **Overall** | 470 | **0.946** | 0.977 | 0.897 | 0.911 |
-| knowledge-update | 72 | 1.000 | 1.000 | 0.972 | 0.972 |
-| multi-session | 121 | 0.906 | 0.976 | 0.880 | 0.913 |
-| single-session-assistant | 56 | 0.982 | 1.000 | 0.959 | 0.965 |
-| single-session-preference | 30 | 0.967 | 0.967 | 0.839 | 0.839 |
-| single-session-user | 64 | 0.969 | 0.969 | 0.913 | 0.913 |
-| temporal-reasoning | 127 | 0.920 | 0.962 | 0.849 | 0.867 |
-
-Context: v0.15.0 hybrid baseline on the same dataset: Overall R@5 = 0.854 / R@10 = 0.885 (2026-08-13).
-Fusion default lifts full-500Q recall@5 by **+9.2 points** (0.854 → 0.946) with zero configuration.
-
----
 
 ## Contradiction-resolution segment (#1172 Fase 3) — 2026-09-06
 
@@ -148,7 +200,7 @@ Baseline ranks with BOTH facts active; resolved ranks after `supersede(stale →
 baseline is measured for every strategy BEFORE any resolution, then the store is resolved once.
 Binary: local release build (0.16.0 + #1185 ledger), local ONNX EmbeddingGemma, ARM64.
 
-Harness: `contradiction_segment.py` (this directory). Raw metrics: `results_contradiction_f3/metrics.json`.
+Harness: `scripts/contradiction_segment.py`. Raw metrics (committed): [`results/contradiction-f3-metrics.json`](results/contradiction-f3-metrics.json).
 
 | Strategy | Stage | winner@1 | winner@5 | winner MRR | stale@1 | stale@5 |
 |---|---|---|---|---|---|---|
@@ -179,3 +231,38 @@ guarantees stale facts leave the retrieval surface — the difference between "u
 synthetic and deterministic (fixed topic list); it measures the conflict-resolution pipeline,
 not LongMemEval dataset recall.
 
+## Methodology
+
+- **Vector strategy:** Embedding similarity search via usearch index.
+- **Hybrid strategy:** Reciprocal Rank Fusion (RRF k=60) of vector search + SQLite FTS5 keyword search.
+- **Embedding (vector 500Q):** EmbeddingGemma 300M Q4 ONNX, 768d, local inference.
+- **Session-level:** Retrieval evaluated at session granularity (not per-turn).
+- **Throttled runs:** 2 CPU cores, nice 19 (production-safe benchmark); Modal fan-out keeps cpu=2 per shard for per-question latency comparability.
+- **Determinism:** no LLM in the retrieval path; identical input → identical rankings (see Independent Reproduction).
+
+## Reproduce
+
+```bash
+# Vector (500Q, ONNX local)
+python3 scripts/run_eval.py --data data/longmemeval_s_cleaned.json --output results_vector --strategy vector
+
+# Pure-default full run on Modal (10 shards, resume-safe)
+UTEKE_GIT_REF=<exact-sha> modal run scripts/modal_fanout.py
+
+# Aggregates (per-type + 470/30/full-500 decomposition)
+python3 scripts/print_metrics.py results/default-500q.jsonl
+```
+
+## Audit the headline numbers from the committed raw artifacts
+
+```python
+import json
+entries = [json.loads(l) for l in open("results/default-500q.jsonl")]
+s = [e["retrieval_results"]["metrics"]["session"] for e in entries]
+print("strict@5  :", sum(m["recall_all@5"] == 1.0 for m in s) / len(s))   # 0.880
+print("coverage@5:", sum(m["recall_all@5"] for m in s) / len(s))          # 0.943
+```
+
+`recall_any@k` recomputes from `retrieved_session_ids` vs the dataset's
+`answer_session_ids` (0.982 @5 over the full 500). For the 470/30 split, group by the
+`_abs` suffix in `question_id`.

@@ -226,7 +226,11 @@ impl Default for AgingConfig {
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
 pub struct RecallConfig {
-    /// Minimum cosine similarity score for recall results. Results below are filtered out.
+    /// Minimum similarity score for recall results. Results below are filtered out.
+    /// Default 0.0 (#1223): since fusion RRF became the default strategy (0.16.0),
+    /// returned scores are rank-based (~0.0-0.2), so a legacy cosine-era default of
+    /// 0.3 silently emptied default recalls. Threshold remains opt-in via config,
+    /// `--min`, or `--strict` (0.5).
     pub min_score: f64,
     /// Strict mode threshold (higher, for critical queries).
     pub min_score_strict: f64,
@@ -259,7 +263,7 @@ pub struct RecallConfig {
 impl Default for RecallConfig {
     fn default() -> Self {
         Self {
-            min_score: 0.3,
+            min_score: 0.0,
             min_score_strict: 0.5,
             // Fusion (weighted RRF: vector×1.7 + hybrid×1) is the default
             // strategy since 0.16.0 (#1123). Benchmark: fast50 R@5 0.98 vs
@@ -1035,7 +1039,7 @@ impl Config {
 # max_cold_count = 1000
 
 [recall]
-# min_score = 0.3
+# min_score = 0.0  # default since 0.17.x (#1223): fusion scores are rank-based; 0.3 is a legacy cosine-era threshold
 # min_score_strict = 0.5
 # default_strategy = "fusion"  # vector | fts5 | hybrid | graph | fusion
 # graph_density_weight = 0.1
@@ -1498,7 +1502,7 @@ namespace = "agent1"
     #[test]
     fn default_recall_config() {
         let cfg = RecallConfig::default();
-        assert!((cfg.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.min_score - 0.0).abs() < f64::EPSILON);
         assert!((cfg.min_score_strict - 0.5).abs() < f64::EPSILON);
         // Fusion (vector×1.7 + hybrid×1 weighted RRF) is the default
         // strategy since 0.16.0 (#1123).
@@ -1837,7 +1841,238 @@ max_seq_length = 128
         assert_eq!(cfg.logging.level, "warn");
         assert_eq!(cfg.server.host, "127.0.0.1");
         assert_eq!(cfg.server.port, 8767);
-        assert!((cfg.recall.min_score - 0.3).abs() < f64::EPSILON);
+        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
+    }
+
+    // ── #1078 P0 batch 3: score range guards, strategy validation, graph
+    // weights, embed fallback — none previously covered. ─────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_min_score_out_of_range_ignored() {
+        unsafe {
+            std::env::set_var("UTEKE_RECALL_MIN_SCORE", "1.5");
+        }
+        let cfg = Config::default().apply_env_overrides();
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        }
+        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_min_score_not_a_number_ignored() {
+        unsafe {
+            std::env::set_var("UTEKE_RECALL_MIN_SCORE", "banana");
+        }
+        let cfg = Config::default().apply_env_overrides();
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
+        }
+        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_strategy_valid_values_accepted() {
+        for v in ["vector", "fts5", "hybrid", "graph", "fusion"] {
+            unsafe {
+                std::env::set_var("UTEKE_RECALL_STRATEGY", v);
+            }
+            let cfg = Config::default().apply_env_overrides();
+            assert_eq!(cfg.recall.default_strategy, v, "strategy {v} rejected");
+        }
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_STRATEGY");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_strategy_invalid_ignored() {
+        unsafe {
+            std::env::set_var("UTEKE_RECALL_STRATEGY", "quantum");
+        }
+        let cfg = Config::default().apply_env_overrides();
+        unsafe {
+            std::env::remove_var("UTEKE_RECALL_STRATEGY");
+        }
+        // Invalid strategy keeps the fusion default
+        assert_eq!(cfg.recall.default_strategy, "fusion");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_graph_weights_valid() {
+        unsafe {
+            std::env::set_var("UTEKE_GRAPH_DENSITY_WEIGHT", "0.5");
+            std::env::set_var("UTEKE_GRAPH_AUTHORITY_WEIGHT", "0.7");
+        }
+        let cfg = Config::default().apply_env_overrides();
+        unsafe {
+            std::env::remove_var("UTEKE_GRAPH_DENSITY_WEIGHT");
+            std::env::remove_var("UTEKE_GRAPH_AUTHORITY_WEIGHT");
+        }
+        assert!((cfg.recall.graph_density_weight - 0.5).abs() < f32::EPSILON);
+        assert!((cfg.recall.graph_authority_weight - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_graph_weights_out_of_range_ignored() {
+        unsafe {
+            std::env::set_var("UTEKE_GRAPH_DENSITY_WEIGHT", "-1.0");
+            std::env::set_var("UTEKE_GRAPH_AUTHORITY_WEIGHT", "2.0");
+        }
+        let cfg = Config::default().apply_env_overrides();
+        unsafe {
+            std::env::remove_var("UTEKE_GRAPH_DENSITY_WEIGHT");
+            std::env::remove_var("UTEKE_GRAPH_AUTHORITY_WEIGHT");
+        }
+        assert!((cfg.recall.graph_density_weight - 0.1).abs() < f32::EPSILON);
+        assert!((cfg.recall.graph_authority_weight - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn env_override_embed_fallback_all_fields() {
+        unsafe {
+            std::env::set_var("UTEKE_EMBED_FALLBACK_API_KEY", "fb-key");
+            std::env::set_var("UTEKE_EMBED_FALLBACK_BASE_URL", "https://fb.example");
+            std::env::set_var("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH", "/v1/e");
+            std::env::set_var("UTEKE_EMBED_FALLBACK_MODEL", "fb-model");
+        }
+        let cfg = Config::default().apply_env_overrides();
+        unsafe {
+            std::env::remove_var("UTEKE_EMBED_FALLBACK_API_KEY");
+            std::env::remove_var("UTEKE_EMBED_FALLBACK_BASE_URL");
+            std::env::remove_var("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH");
+            std::env::remove_var("UTEKE_EMBED_FALLBACK_MODEL");
+        }
+        assert_eq!(cfg.embed_fallback.api_key, "fb-key");
+        assert_eq!(cfg.embed_fallback.base_url, "https://fb.example");
+        assert_eq!(cfg.embed_fallback.endpoint_path, "/v1/e");
+        assert_eq!(cfg.embed_fallback.model, "fb-model");
+        assert!(cfg.embed_fallback.is_configured());
+    }
+
+    #[test]
+    fn embed_fallback_is_configured_matrix() {
+        // Nothing set — not configured
+        let none = EmbedFallbackConfig {
+            api_key: String::new(),
+            base_url: String::new(),
+            endpoint_path: String::new(),
+            model: String::new(),
+        };
+        assert!(!none.is_configured());
+
+        // Partial (2 of 3 required) — still not configured
+        let partial = EmbedFallbackConfig {
+            api_key: "k".into(),
+            base_url: "u".into(),
+            endpoint_path: String::new(),
+            model: String::new(),
+        };
+        assert!(!partial.is_configured());
+
+        // All three required set — configured (endpoint_path optional)
+        let full = EmbedFallbackConfig {
+            api_key: "k".into(),
+            base_url: "u".into(),
+            endpoint_path: String::new(),
+            model: "m".into(),
+        };
+        assert!(full.is_configured());
+    }
+
+    // ── #1078 P0 batch 5: mutation survivors — migrate_content,
+    // global_config_path, set_namespace_in_toml. Previously untested.
+
+    #[test]
+    fn migrate_content_moves_embedding_keys_to_section() {
+        let old = "store_path = ~/.uteke\nmodel = gemma\nmax_seq_length = 512\n";
+        let out = migrate_content(old);
+        assert!(
+            out.contains("[store]\npath = ~/.uteke"),
+            "store path: {out}"
+        );
+        assert!(
+            out.contains("[embedding]\nmodel = gemma\nmax_seq_length = 512"),
+            "embedding keys must move to [embedding]: {out}"
+        );
+    }
+
+    #[test]
+    fn migrate_content_passes_through_unknown_and_sections() {
+        let old = "# comment\nunknown_key = 1\n[new_section]\nfoo = bar\n";
+        let out = migrate_content(old);
+        assert!(out.contains("# comment"));
+        assert!(out.contains("unknown_key = 1"));
+        assert!(out.contains("[new_section]\nfoo = bar"));
+        assert!(!out.contains("[store]"), "no store keys: {out}");
+        assert!(!out.contains("[embedding]"), "no embedding keys: {out}");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn global_config_path_respects_uteke_home() {
+        unsafe {
+            std::env::set_var("UTEKE_HOME", "/tmp/uteke-home-test");
+        }
+        let p = global_config_path().expect("UTEKE_HOME set → Some");
+        assert_eq!(p, PathBuf::from("/tmp/uteke-home-test/uteke.toml"));
+        unsafe {
+            std::env::remove_var("UTEKE_HOME");
+        }
+    }
+
+    #[test]
+    fn set_namespace_rewrites_only_store_section() {
+        // namespace in [other] must NOT be rewritten (guards the != and &&
+        // mutants: section-boundary tracking).
+        let content = "[store]\nnamespace = \"old\"\npath = p\n[other]\nnamespace = \"keep\"\n";
+        let out = set_namespace_in_toml(content, "new");
+        assert!(out.contains("namespace = \"new\""));
+        assert!(
+            out.contains("namespace = \"keep\""),
+            "[other] namespace untouched: {out}"
+        );
+        assert!(out.contains("path = p"), "other keys preserved: {out}");
+    }
+
+    #[test]
+    fn set_namespace_inserts_immediately_after_store_header() {
+        // namespace must land right after [store], not before it (guards
+        // the pos+1 insert-position mutant).
+        let content = "[store]\npath = p\n";
+        let out = set_namespace_in_toml(content, "ns1");
+        let lines: Vec<&str> = out.lines().collect();
+        let pos = lines.iter().position(|l| *l == "[store]").unwrap();
+        assert_eq!(
+            lines[pos + 1],
+            "namespace = \"ns1\"",
+            "insert after header: {out}"
+        );
+        assert!(out.contains("path = p"), "existing keys kept: {out}");
+    }
+
+    #[test]
+    fn set_namespace_appends_store_section_when_missing() {
+        let out = set_namespace_in_toml("top = 1\n", "ns2");
+        assert!(
+            out.contains("[store]\nnamespace = \"ns2\""),
+            "appended [store]: {out}"
+        );
+        assert!(out.contains("top = 1"));
+    }
+
+    #[test]
+    fn set_namespace_replaces_existing_value_in_place() {
+        let out = set_namespace_in_toml("[store]\nnamespace = \"a\"\n", "b");
+        assert!(out.contains("namespace = \"b\""));
+        assert!(!out.contains("\"a\""), "old value gone: {out}");
     }
 
     // ── #1078 P0 batch 3: score range guards, strategy validation, graph

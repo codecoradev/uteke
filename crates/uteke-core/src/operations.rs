@@ -274,7 +274,21 @@ impl crate::Uteke {
             }
             let sim = (1.0 - dist).clamp(0.0, 1.0);
             if sim >= DEDUP_THRESHOLD {
-                return Ok(Some(id.clone()));
+                // Verify against SQLite before trusting the index hit (#1210).
+                // A stale index can still hold vectors for rows that were
+                // soft-deleted (deprecated) or hard-deleted; deduplicating
+                // against them silently drops the write and can link rooms
+                // to invisible ghost rows. Treat them as absent and keep
+                // scanning remaining candidates.
+                match self.store.get_by_id(id) {
+                    // Live row — safe to dedup onto.
+                    Ok(Some(m)) if !m.deprecated => return Ok(Some(id.clone())),
+                    // Missing (hard-deleted) or deprecated row — stale index
+                    // entry; skip this candidate and keep scanning (#1210).
+                    Ok(_) => continue,
+                    // Store read failed — never dedup on an unreliable read.
+                    Err(_) => continue,
+                }
             }
         }
 
@@ -2542,6 +2556,40 @@ mod dedup_tests {
             .remember("Same content different namespace", &[], None, Some("ns2"))
             .unwrap();
         assert_ne!(id1, id2, "different namespace should not dedup");
+    }
+
+    #[test]
+    #[ignore = "requires ONNX embedder (model download) in CI"]
+    fn test_dedup_skips_deprecated_stale_index_entry() {
+        // #1210: a stale vector index on a long-running server can still hold
+        // the vector of a soft-deleted (deprecated) memory. Dedup must NOT
+        // match it — the rewrite must produce a NEW live memory instead of
+        // silently returning the deprecated ghost id (which also gets linked
+        // into rooms by remember_in_room, invisible in recall).
+        let uteke = Uteke::open(":memory:").unwrap();
+        let ns = "dedup-depr";
+        let content = "Ghost dedup regression content #1210";
+        let id1 = uteke.remember(content, &[], None, Some(ns)).unwrap();
+
+        // Healthy path: soft-delete removes the vector from the index.
+        uteke.soft_forget(&id1, "test: 1210 repro").unwrap();
+
+        // Simulate index/SQLite desync (missed repair / failed persistence):
+        // the deprecated row's vector re-enters the index.
+        let emb = uteke.store.get_by_id(&id1).unwrap().unwrap().embedding;
+        assert!(!emb.is_empty(), "precondition: first row must be embedded");
+        uteke.index.write().unwrap().insert(&id1, &emb).unwrap();
+
+        // The rewrite must NOT dedup onto the deprecated ghost.
+        let id2 = uteke.remember(content, &[], None, Some(ns)).unwrap();
+        assert_ne!(id2, id1, "deprecated row must not be a dedup target");
+
+        // The new row is live, holds the content, and the ghost stays hidden.
+        let live = uteke.store.get_by_id(&id2).unwrap().unwrap();
+        assert!(!live.deprecated);
+        assert_eq!(live.content, content);
+        let ghost = uteke.store.get_by_id(&id1).unwrap().unwrap();
+        assert!(ghost.deprecated);
     }
 
     #[test]
