@@ -116,6 +116,9 @@ pub enum AuthResult {
     Disabled,
     /// Authenticated with a specific role.
     Authenticated(ApiRole),
+    /// No valid token presented. Only the unauthenticated-friendly surface
+    /// (health check) is served — with a minimal payload (#1252).
+    Anonymous,
 }
 
 #[derive(Clone)]
