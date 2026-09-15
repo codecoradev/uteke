@@ -284,16 +284,25 @@ fn refresh_ort_libs(
             .file_type()
             .map_err(|e| format!("Failed to stat {fname}: {e}"))?;
         if ft.is_file() {
-            fs::copy(entry.path(), &dest).map_err(|e| format!("Failed to install {fname}: {e}"))?;
+            // Stage to a temp name, then rename over the target. Writing in
+            // place would truncate the live lib under a running `uteke-serve`
+            // (mmap -> SIGBUS) and an interrupted copy would leave a corrupt
+            // lib behind; rename is atomic on POSIX.
+            let staged = install_dir.join(format!("{fname}.new"));
+            fs::copy(entry.path(), &staged).map_err(|e| format!("Failed to stage {fname}: {e}"))?;
+            fs::rename(&staged, &dest).map_err(|e| format!("Failed to install {fname}: {e}"))?;
             refreshed += 1;
         } else if ft.is_symlink() {
             #[cfg(unix)]
             {
                 let target = fs::read_link(entry.path())
                     .map_err(|e| format!("Failed to read link {fname}: {e}"))?;
-                let _ = fs::remove_file(&dest);
-                std::os::unix::fs::symlink(&target, &dest)
+                let staged = install_dir.join(format!("{fname}.new"));
+                let _ = fs::remove_file(&staged);
+                std::os::unix::fs::symlink(&target, &staged)
                     .map_err(|e| format!("Failed to link {fname}: {e}"))?;
+                fs::rename(&staged, &dest)
+                    .map_err(|e| format!("Failed to install {fname}: {e}"))?;
                 refreshed += 1;
             }
             #[cfg(not(unix))]
