@@ -40,7 +40,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         method: "GET",
         path: "/health",
-        description: "Health check — returns server status and version",
+        description: "Health check — tokenless requests get {status} only; a valid bearer token (or auth-disabled server) returns status, version, memory counts, and update info",
         request_type: None,
         response_type: Some("HealthResponse"),
         excludes_deprecated: false,

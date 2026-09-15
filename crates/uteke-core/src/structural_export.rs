@@ -54,9 +54,36 @@ impl crate::Uteke {
         // Manifest first line — import detects this to route here.
         let mut sections = serde_json::Map::new();
         for s in SECTIONS {
-            let count: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {s}"), [], |r| r.get(0))
-                .unwrap_or(0);
+            // #1243: memory-referencing sections are counted with the same
+            // liveness predicate the dump uses, so manifest counts match the
+            // rows actually exported when the store holds soft-deleted memories.
+            // All queries are literals — no identifier interpolation.
+            let count_sql: &str = match *s {
+                "memories" => "SELECT COUNT(*) FROM memories WHERE deprecated = 0",
+                "room_memories" => {
+                    "SELECT COUNT(*) FROM room_memories rm \
+                     JOIN memories m ON m.id = rm.memory_id WHERE m.deprecated = 0"
+                }
+                "memory_edges" => {
+                    "SELECT COUNT(*) FROM memory_edges me \
+                     JOIN memories s ON s.id = me.source_id \
+                     JOIN memories t ON t.id = me.target_id \
+                     WHERE s.deprecated = 0 AND t.deprecated = 0"
+                }
+                "timeline_events" => {
+                    "SELECT COUNT(*) FROM timeline_events te \
+                     JOIN memories m ON m.id = te.memory_id WHERE m.deprecated = 0"
+                }
+                // Pure structural tables — no memory reference, nothing to filter.
+                "rooms" => "SELECT COUNT(*) FROM rooms",
+                "room_documents" => "SELECT COUNT(*) FROM room_documents",
+                "graph_nodes" => "SELECT COUNT(*) FROM graph_nodes",
+                "graph_edges" => "SELECT COUNT(*) FROM graph_edges",
+                "documents" => "SELECT COUNT(*) FROM documents",
+                "document_chunks" => "SELECT COUNT(*) FROM document_chunks",
+                _ => unreachable!("unknown export section: {s}"),
+            };
+            let count: i64 = conn.query_row(count_sql, [], |r| r.get(0)).unwrap_or(0);
             sections.insert((*s).to_string(), serde_json::json!(count));
         }
         let manifest = serde_json::json!({
@@ -144,28 +171,48 @@ impl crate::Uteke {
                  FROM rooms",
             ),
             (
+                // #1243: only memberships of live (non-deprecated) memories —
+                // junction rows must not outlive the memories they reference.
                 "room_memory",
-                "SELECT room_id, memory_id, author, joined_at FROM room_memories",
+                "SELECT rm.room_id, rm.memory_id, rm.author, rm.joined_at \
+                 FROM room_memories rm \
+                 JOIN memories m ON m.id = rm.memory_id WHERE m.deprecated = 0",
             ),
             (
                 "room_document",
                 "SELECT room_id, doc_slug, added_at FROM room_documents",
             ),
             (
+                // #1243: nodes survive, but a memory link pointing at a
+                // soft-deleted memory is nulled (mirrors the schema's
+                // ON DELETE SET NULL behavior for hard deletes).
                 "graph_node",
-                "SELECT id, label, entity_type, properties_json, memory_id, created_at FROM graph_nodes",
+                "SELECT gn.id, gn.label, gn.entity_type, gn.properties_json, \
+                 CASE WHEN m.id IS NOT NULL AND m.deprecated = 0 \
+                 THEN gn.memory_id ELSE NULL END, gn.created_at \
+                 FROM graph_nodes gn \
+                 LEFT JOIN memories m ON m.id = gn.memory_id",
             ),
             (
                 "graph_edge",
                 "SELECT id, source_id, target_id, relation, weight, created_at FROM graph_edges",
             ),
             (
+                // #1243: an edge exists only while BOTH endpoints are live;
+                // edges touching a soft-deleted memory are dropped.
                 "memory_edge",
-                "SELECT source_id, target_id, edge_type, created_at FROM memory_edges",
+                "SELECT me.source_id, me.target_id, me.edge_type, me.created_at \
+                 FROM memory_edges me \
+                 JOIN memories s ON s.id = me.source_id \
+                 JOIN memories t ON t.id = me.target_id \
+                 WHERE s.deprecated = 0 AND t.deprecated = 0",
             ),
             (
+                // #1243: events of a soft-deleted memory are dropped with it.
                 "timeline_event",
-                "SELECT id, memory_id, event_type, event_data, created_at FROM timeline_events",
+                "SELECT te.id, te.memory_id, te.event_type, te.event_data, te.created_at \
+                 FROM timeline_events te \
+                 JOIN memories m ON m.id = te.memory_id WHERE m.deprecated = 0",
             ),
         ];
 
@@ -782,5 +829,150 @@ mod tests {
             v.get("uteke_export").is_none(),
             "legacy rows carry no manifest marker"
         );
+    }
+
+    /// #1243: junction rows must not outlive their memory in the export.
+    /// A store containing a soft-deleted (deprecated) memory must produce an
+    /// export that imports cleanly into a fresh store with FK enforcement on:
+    /// room memberships, memory edges, and timeline events referencing the
+    /// dead memory are filtered at export time, and graph-node memory links
+    /// to it are nulled (node survives, dangling link does not).
+    #[test]
+    fn test_structural_export_drops_soft_deleted_memory_references() {
+        let dir_a = std::env::temp_dir().join(format!("sx-da-{}", std::process::id()));
+        let dir_b = std::env::temp_dir().join(format!("sx-db-{}", std::process::id()));
+        std::fs::create_dir_all(&dir_a).unwrap();
+        std::fs::create_dir_all(&dir_b).unwrap();
+
+        let src = Uteke::open(dir_a.join("t.db").to_str().unwrap()).unwrap();
+        let conn = src.graph_store();
+
+        let now = "2026-09-15T00:00:00Z";
+        // m1: live. m2: soft-deleted.
+        conn.execute(
+            "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, deprecated, memory_type, importance, pinned, content_type, source_type)              VALUES ('m1','live memory',NULL,'[]','{}',?1,?1,'sx-dns',0,0,'fact',0.5,0,'text','user')",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, deprecated, memory_type, importance, pinned, content_type, source_type)              VALUES ('m2','dead memory',NULL,'[]','{}',?1,?1,'sx-dns',0,1,'fact',0.5,0,'text','user')",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO rooms (id, title, namespace, created_at, updated_at) VALUES ('r1','dead-ref room','sx-dns',?1,?1)",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO room_memories (room_id, memory_id, author, joined_at) VALUES ('r1','m1','alice',?1)",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO room_memories (room_id, memory_id, author, joined_at) VALUES ('r1','m2','alice',?1)",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO memory_edges (source_id, target_id, edge_type, created_at) VALUES ('m1','m2','related',?1)",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at) VALUES ('m2','created','{}',?1)",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO graph_nodes (id, label, entity_type, properties_json, memory_id, created_at) VALUES ('gn1','dead-entity','concept','{}','m2',?1)",
+            [now],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO graph_nodes (id, label, entity_type, properties_json, memory_id, created_at) VALUES ('gn2','live-entity','concept','{}','m1',?1)",
+            [now],
+        ).unwrap();
+
+        let exported = src.export_full().unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_str(exported.lines().next().unwrap()).unwrap();
+        let sections = &manifest["uteke_export"]["sections"];
+        assert_eq!(sections["memories"], 1, "only the live memory is exported");
+        assert_eq!(
+            sections["room_memories"], 1,
+            "dead memory's room link is filtered"
+        );
+        assert_eq!(
+            sections["memory_edges"], 0,
+            "edge into the dead memory is filtered"
+        );
+        assert_eq!(
+            sections["timeline_events"], 0,
+            "dead memory's timeline event is filtered"
+        );
+        assert_eq!(
+            sections["graph_nodes"], 2,
+            "graph nodes survive with dead links nulled"
+        );
+
+        assert!(
+            !exported.contains("dead memory"),
+            "soft-deleted memory content must not appear in the dump"
+        );
+
+        // The node referencing the dead memory must be exported with a NULL
+        // memory link; the node referencing the live memory keeps its link.
+        let mut node_links = std::collections::HashMap::new();
+        for line in exported.lines() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if v["type"] == "graph_node" {
+                let id = v["row"][0].as_str().unwrap_or_default().to_string();
+                node_links.insert(id, v["row"][4].clone());
+            }
+        }
+        assert_eq!(node_links.len(), 2, "both nodes exported");
+        assert!(
+            node_links["gn1"].is_null(),
+            "graph-node link to a soft-deleted memory must be nulled"
+        );
+        assert_eq!(
+            node_links["gn2"],
+            serde_json::json!("m1"),
+            "graph-node link to a live memory survives"
+        );
+
+        // FK-enforced import into a fresh store must succeed.
+        let dst = Uteke::open(dir_b.join("t.db").to_str().unwrap()).unwrap();
+        let result = dst.import_full(&exported).unwrap();
+        assert_eq!(result["imported"]["memories"], 1);
+        assert_eq!(result["imported"]["room_memories"], 1);
+        assert_eq!(result["imported"]["graph_nodes"], 2);
+        // Sections with zero rows are absent from the counts map (not 0).
+        assert_eq!(result["imported"]["memory_edges"].as_u64().unwrap_or(0), 0);
+        assert_eq!(
+            result["imported"]["timeline_events"].as_u64().unwrap_or(0),
+            0
+        );
+
+        let dconn = dst.graph_store();
+        let dead_link: Option<String> = dconn
+            .query_row(
+                "SELECT memory_id FROM graph_nodes WHERE id='gn1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            dead_link.is_none(),
+            "restored node must not link the dead memory"
+        );
+        let live_link: String = dconn
+            .query_row(
+                "SELECT memory_id FROM graph_nodes WHERE id='gn2'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live_link, "m1", "live link survives the round-trip");
+
+        drop(src);
+        drop(dst);
+        std::fs::remove_dir_all(&dir_a).ok();
+        std::fs::remove_dir_all(&dir_b).ok();
     }
 }

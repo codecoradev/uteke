@@ -462,6 +462,11 @@ pub struct Config {
     /// Set to `false` to disable.
     #[serde(default = "default_true")]
     pub update_check: bool,
+    /// Show a one-line "Like Uteke?" footer after `uteke doctor` succeeds
+    /// (#1246). Interactive terminals only. Default: true. Set to `false`
+    /// to disable.
+    #[serde(default = "default_true")]
+    pub doctor_footer: bool,
 }
 
 /// Serde default helper: returns `true`.
@@ -487,6 +492,7 @@ impl Default for Config {
             dream: DreamConfig::default(),
             lifecycle: LifecycleConfig::default(),
             update_check: true,
+            doctor_footer: true,
         }
     }
 }
