@@ -215,9 +215,24 @@ pub(crate) fn print_doctor_human(report: &uteke_core::DoctorReport) {
     }
     if all_ok {
         println!("\n  All checks passed.");
+        print_doctor_footer();
     } else {
         println!("\n  Some checks failed. Run `uteke repair` if index is inconsistent.");
     }
+}
+
+/// One-line post-`doctor` callout (#1246). Quiet by design: interactive
+/// terminals only (CI/pipes stay machine-clean), config opt-out via
+/// `doctor_footer = false` in `uteke.toml`.
+fn print_doctor_footer() {
+    use std::io::IsTerminal;
+    if !std::io::stdout().is_terminal() {
+        return;
+    }
+    if !crate::Config::load().doctor_footer {
+        return;
+    }
+    println!("  Like Uteke? ★ github.com/codecoradev/uteke · Managed for you: uteke.cloud");
 }
 
 /// Print verify report in human-readable format.
