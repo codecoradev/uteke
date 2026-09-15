@@ -21,7 +21,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 Pin a specific version:
 
 ```bash
-UTEKE_VERSION=v0.18.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.18.1 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ## Install via Cargo
@@ -40,23 +40,23 @@ Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases):
 
 ```bash
 # Linux (x86_64) — tarball also contains libonnxruntime.so* (required for embeddings)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.18.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.18.1.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
 # Linux (x86_64, legacy — no AVX2/SSE4.2)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.18.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.18.1.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* ~/.local/bin/
 mkdir -p ~/.local/bin/ort-legacy && mv ort-legacy/libonnxruntime.so* ~/.local/bin/ort-legacy/
 
 # Linux (aarch64 / ARM)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.18.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.18.1.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
 # macOS (Apple Silicon)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.18.0.tar.gz | tar xz
+curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.18.1.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime*.dylib ~/.local/bin/
 ```
@@ -117,6 +117,13 @@ $ uteke doctor
 uteke upgrade          # Check + upgrade to latest release
 uteke upgrade --yes    # Skip confirmation
 ```
+
+`upgrade` keeps every installed artifact in sync with the release bundle: the
+CLI, `uteke-serve`, `uteke-mcp`, and the bundled ONNX Runtime shared libraries
+are all replaced from the same checksum-verified archive (binaries are
+run-verified and swapped atomically). The version comparison normalizes the
+release tag's `v` prefix, so an up-to-date install reports
+"Already up to date" instead of re-offering the same release.
 
 ## What Gets Installed
 
