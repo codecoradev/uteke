@@ -57,22 +57,33 @@ impl crate::Uteke {
             // #1243: memory-referencing sections are counted with the same
             // liveness predicate the dump uses, so manifest counts match the
             // rows actually exported when the store holds soft-deleted memories.
-            let count_sql = match *s {
-                "memories" => "SELECT COUNT(*) FROM memories WHERE deprecated = 0".to_string(),
-                "room_memories" => "SELECT COUNT(*) FROM room_memories rm \
+            // All queries are literals — no identifier interpolation.
+            let count_sql: &str = match *s {
+                "memories" => "SELECT COUNT(*) FROM memories WHERE deprecated = 0",
+                "room_memories" => {
+                    "SELECT COUNT(*) FROM room_memories rm \
                      JOIN memories m ON m.id = rm.memory_id WHERE m.deprecated = 0"
-                    .to_string(),
-                "memory_edges" => "SELECT COUNT(*) FROM memory_edges me \
+                }
+                "memory_edges" => {
+                    "SELECT COUNT(*) FROM memory_edges me \
                      JOIN memories s ON s.id = me.source_id \
                      JOIN memories t ON t.id = me.target_id \
                      WHERE s.deprecated = 0 AND t.deprecated = 0"
-                    .to_string(),
-                "timeline_events" => "SELECT COUNT(*) FROM timeline_events te \
+                }
+                "timeline_events" => {
+                    "SELECT COUNT(*) FROM timeline_events te \
                      JOIN memories m ON m.id = te.memory_id WHERE m.deprecated = 0"
-                    .to_string(),
-                _ => format!("SELECT COUNT(*) FROM {s}"),
+                }
+                // Pure structural tables — no memory reference, nothing to filter.
+                "rooms" => "SELECT COUNT(*) FROM rooms",
+                "room_documents" => "SELECT COUNT(*) FROM room_documents",
+                "graph_nodes" => "SELECT COUNT(*) FROM graph_nodes",
+                "graph_edges" => "SELECT COUNT(*) FROM graph_edges",
+                "documents" => "SELECT COUNT(*) FROM documents",
+                "document_chunks" => "SELECT COUNT(*) FROM document_chunks",
+                _ => unreachable!("unknown export section: {s}"),
             };
-            let count: i64 = conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0);
+            let count: i64 = conn.query_row(count_sql, [], |r| r.get(0)).unwrap_or(0);
             sections.insert((*s).to_string(), serde_json::json!(count));
         }
         let manifest = serde_json::json!({
