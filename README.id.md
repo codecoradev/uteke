@@ -82,7 +82,7 @@ menemukan buktinya. 500 pertanyaan hand-curated, lima kemampuan memori. Uteke
 menjalankan suite penuh dengan **nol panggilan LLM di jalur retrieval**: embedding
 lokal, satu CPU, deterministik.
 
-| Metrik | Uteke **v0.17.0** | agentmemory¹ | BM25-only¹ |
+| Metrik | Uteke **v0.18.1** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
 | **recall_any@5** (bukti di top-5) | **98.4%** | 95.2% | 86.2% |
 | recall_any@10 | 98.8% | 98.6% | 94.6% |
@@ -92,7 +92,7 @@ lokal, satu CPU, deterministik.
 <sub>¹ Angka publikasi agentmemory, benchmark yang sama, split 500 pertanyaan yang sama (basis recall_any@5 mereka; terverifikasi apples-to-apples di [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *semua* sesi gold harus masuk top-5; 65% pertanyaan butuh beberapa sesi. Ceiling matematis 99.4%. ³ MRR, bukan recall_all (tidak bisa dibandingkan langsung; ditampilkan untuk kelengkapan).</sub>
 
 <p align="center">
-  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidasi v0.18.0) vs MemPalace 96.6% dan agentmemory 95.2% (hasil raw di-commit di repo)" width="880" />
+  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidasi v0.18.1) vs MemPalace 96.6% dan agentmemory 95.2% (hasil raw di-commit di repo)" width="880" />
 </p>
 
 **Per kategori pertanyaan** (recall_any@5: cerita per kategori yang jarang ditampilkan tool lain):
@@ -384,7 +384,7 @@ Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan
 <details>
 <summary><strong>Sudah production-ready?</strong></summary>
 
-Uteke sekarang v0.17.0 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke sekarang v0.18.1 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
 </details>
 
 ---

@@ -46,17 +46,27 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         );
     }
 
-    // Health endpoint — no auth required (useful for load balancers)
+    // Health endpoint — reachable WITHOUT a token (load balancers, uptime
+    // probes), but anonymous callers get a minimal body: version, memory
+    // counts, and update info leak the instance fingerprint to scanners (#1252).
     let is_health = matches!((&method, route_path), (Method::Get, "/health"));
 
-    // Authenticate all non-health requests
+    // Authenticate every request; a tokenless health probe degrades to the
+    // Anonymous role instead of a 401 so uptime checks keep working.
+    let mut health_anonymous = false;
     let auth_role = if !is_health {
         match context::check_auth(req, ctx) {
             Ok(role) => role,
             Err(resp) => return resp,
         }
     } else {
-        AuthResult::Disabled
+        match context::check_auth(req, ctx) {
+            Ok(role) => role,
+            Err(_) => {
+                health_anonymous = true;
+                AuthResult::Anonymous
+            }
+        }
     };
 
     // Enforce read-only restriction (#409, #524):
@@ -106,6 +116,16 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     match (method, route_path) {
         // ── Health ──────────────────────────────────────────────────────
         (Method::Get, "/health") => {
+            // #1252: anonymous probe gets liveness only — no version, no
+            // counts, no update info. Authenticated (or auth-disabled)
+            // callers get the full payload, unchanged.
+            if health_anonymous {
+                #[derive(serde::Serialize)]
+                struct MinimalHealthResponse {
+                    status: &'static str,
+                }
+                return ctx.ok_response_for(req, &MinimalHealthResponse { status: "ok" });
+            }
             let total = uteke.count(None).unwrap_or(0);
             let namespaces = uteke.list_namespaces().unwrap_or_default().len();
             // Populate update_available from cache (non-blocking, no network).
@@ -3947,5 +3967,97 @@ mod payload_conformance_tests {
             .as_array()
             .expect("recall response must be a top-level JSON array, never a summary string/stub");
         assert!(arr.is_empty(), "expected an empty array for a no-hit query");
+    }
+    /// #1252: an unauthenticated GET /health gets liveness only — no version,
+    /// no counts — while an authenticated request (or auth-disabled server)
+    /// still receives the full payload.
+    #[test]
+    fn test_health_anonymous_gets_minimal_payload() {
+        struct HealthAuthApp {
+            uteke: Mutex<Uteke>,
+            admin_token: Option<&'static str>,
+        }
+        impl HealthAuthApp {
+            fn with_auth(token: Option<&'static str>) -> Self {
+                Self {
+                    uteke: Mutex::new(
+                        Uteke::open_with_backend(":memory:", None)
+                            .expect("open in-memory uteke without embedder"),
+                    ),
+                    admin_token: token,
+                }
+            }
+
+            fn call(&self, auth_header: Option<&str>) -> (u16, serde_json::Value) {
+                let mut builder = tiny_http::TestRequest::new()
+                    .with_method(tiny_http::Method::Get)
+                    .with_path("/health");
+                if let Some(h) = auth_header {
+                    builder = builder
+                        .with_header(tiny_http::Header::from_bytes("Authorization", h).unwrap());
+                }
+                let mut req: tiny_http::Request = builder.into();
+                let ctx = ReqCtx {
+                    auth_token_hash: self.admin_token.map(|t| {
+                        use sha2::{Digest, Sha256};
+                        Sha256::digest(t.as_bytes()).into()
+                    }),
+                    read_only_token_hash: None,
+                    cors_origins: Vec::new(),
+                    recall_config: None,
+                    extraction_config: None,
+                };
+                let resp = route(&self.uteke, &ctx, &mut req);
+                let status = resp.status_code().0;
+                let bytes = resp.into_reader().into_inner();
+                let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+                (status, json)
+            }
+        }
+
+        // Auth ENABLED, no token -> minimal body only.
+        let app = HealthAuthApp::with_auth(Some("secret-token"));
+        let (status, json) = app.call(None);
+        assert_eq!(status, 200);
+        assert_eq!(json["status"], "ok", "liveness must stay available");
+        assert!(
+            json.get("version").is_none()
+                && json.get("memories").is_none()
+                && json.get("namespaces").is_none()
+                && json.get("update_available").is_none(),
+            "anonymous health must not leak instance details: {json}"
+        );
+
+        // Auth ENABLED, valid token -> full payload.
+        let (status, json) = app.call(Some("Bearer secret-token"));
+        assert_eq!(status, 200);
+        assert_eq!(json["status"], "ok");
+        assert!(
+            json.get("version").is_some(),
+            "authenticated health carries version: {json}"
+        );
+        assert!(
+            json.get("memories").is_some(),
+            "authenticated health carries counts: {json}"
+        );
+
+        // Auth ENABLED, wrong token -> same minimal body as anonymous:
+        // an invalid credential must not see more than a scanner would,
+        // and uptime probes keep a 200 while tokens are being rotated.
+        let (status, json) = app.call(Some("Bearer wrong-token"));
+        assert_eq!(status, 200);
+        assert!(
+            json.get("version").is_none() && json.get("memories").is_none(),
+            "invalid credentials must get the minimal body: {json}"
+        );
+
+        // Auth DISABLED, no token -> full payload (single-operator local mode).
+        let app = HealthAuthApp::with_auth(None);
+        let (status, json) = app.call(None);
+        assert_eq!(status, 200);
+        assert!(
+            json.get("memories").is_some(),
+            "auth-disabled health stays full: {json}"
+        );
     }
 }

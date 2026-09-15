@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 
 const REPO: &str = "codecoradev/uteke";
 const BINARY_NAME: &str = "uteke";
+const SERVER_BINARY_NAME: &str = "uteke-serve";
+const MCP_BINARY_NAME: &str = "uteke-mcp";
 
 /// Entry point for `uteke upgrade`.
 pub fn run(yes: bool) -> Result<(), String> {
@@ -35,8 +37,11 @@ pub fn run(yes: bool) -> Result<(), String> {
     // 4. Get latest release version
     let latest_version = get_latest_version()?;
 
-    // 5. Check if already up to date
-    if latest_version == current_version {
+    // 5. Check if already up to date. The release tag carries a leading `v`
+    // that CARGO_PKG_VERSION does not — compare normalized, or an up-to-date
+    // install is re-offered the same release (#1245).
+    let latest_clean = latest_version.trim_start_matches('v');
+    if latest_clean == current_version {
         println!("[INFO] Already up to date ({current_version})");
         return Ok(());
     }
@@ -178,21 +183,56 @@ pub fn run(yes: bool) -> Result<(), String> {
         .unpack(&temp_dir)
         .map_err(|e| format!("Failed to extract archive: {e}"))?;
 
-    // 11. Find and replace binary
-    let extracted_binary = temp_dir.join(BINARY_NAME);
-    if !extracted_binary.exists() {
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err(format!("Binary '{BINARY_NAME}' not found in archive"));
-    }
-
+    // 11. Replace binaries and bundled libs from the same verified archive.
+    // `uteke upgrade` must keep every installed artifact in sync with the
+    // release bundle (#1245): replacing only the CLI left `uteke-serve` and
+    // `uteke-mcp` on the old version and discarded the freshly downloaded
+    // ONNX Runtime libs (install.sh has installed those since #1221).
     let install_dir = current_exe
         .parent()
         .ok_or_else(|| "Cannot determine install directory".to_string())?;
 
+    // CLI binary first — hard-fail on any problem (existing behavior).
+    replace_binary(&temp_dir, BINARY_NAME, install_dir, true)?;
+
+    // Companion binaries — replace when present in the archive; warn+skip
+    // otherwise so old installs without them still upgrade cleanly.
+    for name in [SERVER_BINARY_NAME, MCP_BINARY_NAME] {
+        replace_binary(&temp_dir, name, install_dir, false)?;
+    }
+
+    // Bundled ONNX Runtime shared libs — refresh from the archive when present.
+    refresh_ort_libs(&temp_dir, install_dir)?;
+
+    // 12. Cleanup
+    let _ = fs::remove_dir_all(&temp_dir);
+
+    println!("[INFO] Update complete. ({current_version} → {latest_version})");
+
+    Ok(())
+}
+
+/// Verify a freshly extracted binary runs, then atomically move it into
+/// `install_dir`. With `required = false`, a missing artifact is skipped
+/// with a warning (companion binaries absent from older bundles).
+fn replace_binary(
+    temp_dir: &std::path::Path,
+    name: &str,
+    install_dir: &std::path::Path,
+    required: bool,
+) -> Result<(), String> {
+    let extracted = temp_dir.join(name);
+    if !extracted.exists() {
+        if required {
+            return Err(format!("Binary '{name}' not found in archive"));
+        }
+        println!("[WARN] {name} not in bundle — skipping (left at its installed version)");
+        return Ok(());
+    }
+
     // Copy to temp file first, then rename (atomic on POSIX)
-    let temp_new = install_dir.join(format!("{BINARY_NAME}.new"));
-    fs::copy(&extracted_binary, &temp_new)
-        .map_err(|e| format!("Failed to copy new binary: {e}"))?;
+    let temp_new = install_dir.join(format!("{name}.new"));
+    fs::copy(&extracted, &temp_new).map_err(|e| format!("Failed to copy new {name}: {e}"))?;
 
     // Verify the new binary runs
     match std::process::Command::new(&temp_new)
@@ -203,31 +243,81 @@ pub fn run(yes: bool) -> Result<(), String> {
             let new_version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             // Extract version from clap output like "uteke 0.6.7"
             let extracted_version = new_version.split_whitespace().nth(1).unwrap_or("unknown");
-            println!("[INFO] Verified new binary: {extracted_version}");
+            println!("[INFO] Verified new {name}: {extracted_version}");
         }
         Ok(output) => {
             let _ = fs::remove_file(&temp_new);
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(format!(
-                "New binary failed to run: {}",
+                "New {name} failed to run: {}",
                 String::from_utf8_lossy(&output.stderr)
             ));
         }
         Err(e) => {
             let _ = fs::remove_file(&temp_new);
-            let _ = fs::remove_dir_all(&temp_dir);
-            return Err(format!("Failed to verify new binary: {e}"));
+            return Err(format!("Failed to verify new {name}: {e}"));
         }
     }
 
-    // Atomic rename
-    fs::rename(&temp_new, &current_exe).map_err(|e| format!("Failed to replace binary: {e}"))?;
+    fs::rename(&temp_new, install_dir.join(name))
+        .map_err(|e| format!("Failed to replace {name}: {e}"))?;
+    Ok(())
+}
 
-    // 12. Cleanup
-    let _ = fs::remove_dir_all(&temp_dir);
-
-    println!("[INFO] Update complete. ({current_version} → {latest_version})");
-
+/// Copy bundled ONNX Runtime shared libs from the extracted archive into the
+/// install dir when present (mirrors install.sh since #1221). Symlinks are
+/// preserved; a bundle without libs (very old releases) leaves existing libs
+/// untouched.
+fn refresh_ort_libs(
+    temp_dir: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> Result<(), String> {
+    let mut refreshed = 0usize;
+    let entries = fs::read_dir(temp_dir).map_err(|e| format!("Failed to read bundle dir: {e}"))?;
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let fname = fname.to_string_lossy().to_string();
+        if !fname.starts_with("libonnxruntime") {
+            continue;
+        }
+        let dest = install_dir.join(&fname);
+        let ft = entry
+            .file_type()
+            .map_err(|e| format!("Failed to stat {fname}: {e}"))?;
+        if ft.is_file() {
+            // Stage to a temp name, then rename over the target. Writing in
+            // place would truncate the live lib under a running `uteke-serve`
+            // (mmap -> SIGBUS) and an interrupted copy would leave a corrupt
+            // lib behind; rename is atomic on POSIX.
+            let staged = install_dir.join(format!("{fname}.new"));
+            fs::copy(entry.path(), &staged).map_err(|e| format!("Failed to stage {fname}: {e}"))?;
+            fs::rename(&staged, &dest).map_err(|e| format!("Failed to install {fname}: {e}"))?;
+            refreshed += 1;
+        } else if ft.is_symlink() {
+            #[cfg(unix)]
+            {
+                let target = fs::read_link(entry.path())
+                    .map_err(|e| format!("Failed to read link {fname}: {e}"))?;
+                let staged = install_dir.join(format!("{fname}.new"));
+                let _ = fs::remove_file(&staged);
+                std::os::unix::fs::symlink(&target, &staged)
+                    .map_err(|e| format!("Failed to link {fname}: {e}"))?;
+                fs::rename(&staged, &dest)
+                    .map_err(|e| format!("Failed to install {fname}: {e}"))?;
+                refreshed += 1;
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = dest;
+                // Symlinked libs are a Unix packaging detail; other platforms
+                // keep their installed libs untouched.
+            }
+        }
+    }
+    if refreshed > 0 {
+        println!("[INFO] Refreshed {refreshed} ONNX Runtime lib file(s)");
+    } else {
+        println!("[WARN] No ONNX Runtime libs in bundle — existing libs left untouched");
+    }
     Ok(())
 }
 
@@ -320,4 +410,58 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
     io::copy(&mut file, &mut hasher)
         .map_err(|e| format!("Failed to read file for hashing: {e}"))?;
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn replace_binary_verifies_and_installs() {
+        let dir = std::env::temp_dir().join(format!("uteke-upgrade-test-{}", std::process::id()));
+        let bundle = dir.join("bundle");
+        let inst = dir.join("inst");
+        fs::create_dir_all(&bundle).unwrap();
+        fs::create_dir_all(&inst).unwrap();
+
+        // Fake binary that runs successfully and reports a version.
+        let fake = bundle.join("uteke");
+        fs::write(&fake, "#!/bin/sh\necho \"uteke 9.9.9\"\n").unwrap();
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+
+        replace_binary(&bundle, "uteke", &inst, true).unwrap();
+        assert!(inst.join("uteke").exists(), "binary installed");
+
+        // Optional artifact missing -> skipped with a warning, no error.
+        replace_binary(&bundle, "uteke-not-shipped", &inst, false).unwrap();
+        assert!(!inst.join("uteke-not-shipped").exists());
+
+        // Required artifact missing -> hard error.
+        assert!(replace_binary(&bundle, "uteke-required", &inst, true).is_err());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replace_binary_rejects_broken_artifact() {
+        let dir = std::env::temp_dir().join(format!("uteke-upgrade-broken-{}", std::process::id()));
+        let bundle = dir.join("bundle");
+        let inst = dir.join("inst");
+        fs::create_dir_all(&bundle).unwrap();
+        fs::create_dir_all(&inst).unwrap();
+
+        // Binary that exits non-zero must fail verification and not install.
+        let bad = bundle.join("uteke-broken");
+        fs::write(&bad, "#!/bin/sh\nexit 1\n").unwrap();
+        fs::set_permissions(&bad, fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert!(replace_binary(&bundle, "uteke-broken", &inst, true).is_err());
+        assert!(
+            !inst.join("uteke-broken").exists(),
+            "broken binary must not be installed"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

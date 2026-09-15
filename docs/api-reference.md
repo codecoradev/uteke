@@ -213,7 +213,7 @@ Rebuild backlink indices for memory graph.
 
 #### 🟢 `GET` `/health`
 
-Health check — returns server status and version
+Health check — tokenless requests get {status} only; a valid bearer token (or auth-disabled server) returns status, version, memory counts, and update info
 
 **Response**: [`HealthResponse`](#healthresponse)
 

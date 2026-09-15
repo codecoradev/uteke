@@ -120,20 +120,6 @@ environment:
 pure Rust) builds indexes ~16x faster with ~3x smaller files. See
 [configuration](configuration.md#environment-variables) for details.
 
-### Choosing the vector engine (v0.17.0+)
-
-Both engines ship in the image. Pick one via env var — switching leaves your
-data untouched; the new engine rebuilds its index from SQLite on the next start:
-
-```yaml
-environment:
-  - UTEKE_VECTOR_BACKEND=vecq   # or "usearch" (default)
-```
-
-`usearch` (HNSW) has the best query latency at scale; `vecq` (4-bit + residual,
-pure Rust) builds indexes ~16x faster with ~3x smaller files. See
-[configuration](configuration.md#environment-variables) for details.
-
 ## Multi-Architecture
 
 Images are built for:
