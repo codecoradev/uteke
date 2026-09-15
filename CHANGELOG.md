@@ -26,6 +26,11 @@ Minor release. Theme: **agent-operable memory plumbing** - ingest with explicit 
 - **Room rename, room update, and memory room-move (#1202)** — rooms now have sanctioned lifecycle ops matching the namespace family: `Uteke::rename_room(old, new)` rewrites the registry row and every `room_memories`/`room_documents` reference in ONE transaction (FK-safe insert→repoint→delete order; no `ON UPDATE CASCADE` needed), preserving title/description/namespace; `Uteke::update_room(id, title?, description?)` edits room metadata (schema v19 adds the additive `rooms.description` column; structural export/import carry it and stay backward-compatible with 5-column exports); `Uteke::move_memory_to_room(id, from, to)` moves a memory between rooms preserving the link's `author`/`role`/`joined_at` provenance (`Ok(0)` when not a member of `from`). Surfaces: HTTP `POST /room/rename|/room/update|/room/memory/move` (404 on missing room/link), CLI `uteke room rename|update|move-memory`, MCP `uteke_room_rename|uteke_room_update|uteke_room_memory_move`.
 - **`uteke update <id>` CLI** — in-place memory edit (content/tags/importance/pinned/type), closing the CLI surface gap: HTTP `PUT /memory` and MCP `uteke_update` already existed (#1202 item 5).
 
+### Contributors
+
+- [@KazamiHazaki](https://github.com/KazamiHazaki) — binary install ORT lib fixes (#1221)
+- [@dependabot](https://github.com/apps/dependabot) — dependency updates (dirs, tokenizers, toml, usearch)
+
 ## [0.17.0] — 2026-09-06
 
 Minor release. Theme: **inspectable, trustworthy memory** — explain recall on
