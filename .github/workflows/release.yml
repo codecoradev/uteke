@@ -369,6 +369,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Extract version
         id: version
@@ -434,6 +436,34 @@ jobs:
               sed "s/__VER__/${VER}/g" scripts/release-notes-template.md
             } > release-notes.md
           fi
+
+      - name: Append contributor credits
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo ""
+            echo ""
+            echo "## Community contributors"
+            echo ""
+          } >> release-notes.md
+          FOUND=0
+          for PR in $(grep -oE '#[0-9]+' changelog-body.md 2>/dev/null | sort -u); do
+            NUM="${PR#\#}"
+            LOGIN="$(gh pr view "${NUM}" --repo "${GITHUB_REPOSITORY}" --json author --jq '.author.login' 2>/dev/null || true)"
+            [ -z "${LOGIN}" ] && continue
+            case "${LOGIN}" in ajianaz|codecoradev|app/*|*"[bot]") continue ;; esac
+            ASSOC="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${NUM}" --jq '.author_association' 2>/dev/null || true)"
+            case "${ASSOC}" in MEMBER|COLLABORATOR|OWNER) continue ;; esac
+            TITLE="$(gh pr view "${NUM}" --repo "${GITHUB_REPOSITORY}" --json title --jq '.title' 2>/dev/null || true)"
+            echo "- @${LOGIN} — ${TITLE} (${PR})" >> release-notes.md
+            FOUND=1
+          done
+          if [ "${FOUND}" -eq 0 ]; then
+            echo "(No external contributions in this cycle. Full contributor list: https://github.com/${GITHUB_REPOSITORY}/graphs/contributors)" >> release-notes.md
+          fi
+          echo "--- release-notes.md tail ---"
+          tail -n 10 release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

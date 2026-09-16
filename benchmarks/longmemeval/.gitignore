@@ -17,9 +17,3 @@ results_*/
 __pycache__/
 *.pyc
 .venv/
-
-# Fast-eval datasets are derived from the parent dataset (regenerate with make_fast_eval.py)
-data/longmemeval_fast50.json
-data/longmemeval_fast10.json
-data/longmemeval_temporal15.json
-data/longmemeval_multisession15.json

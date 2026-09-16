@@ -436,6 +436,10 @@ UTEKE_AUTH_TOKEN=admin-secret UTEKE_READ_ONLY_TOKEN=viewer-key uteke-serve
 Read-only tokens can only access GET endpoints (recall, search, list, stats, graph, health).
 POST/DELETE operations return `403 Forbidden`.
 
+`GET /health` also answers without a token (for load balancers and uptime probes),
+but tokenless — or invalidly-authenticated — requests receive only `{"status":"ok"}`.
+Version, memory counts, and update info require a valid token (or auth disabled).
+
 ## Aging (#247)
 
 Controls automatic memory lifecycle management. Disabled by default — opt-in for long-running stores.

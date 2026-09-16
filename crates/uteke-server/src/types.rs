@@ -176,6 +176,7 @@ pub fn to_v1_flat(result: &uteke_core::memory::types::UnifiedSearchResult) -> se
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)] // #1251: unknown keys (e.g. v1-style `ns`) must 400, not vanish
 pub struct RememberRequest {
     pub content: String,
     #[serde(default)]
@@ -631,6 +632,7 @@ pub struct ImportRequest {
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)] // #1251: same strictness as /remember
 pub struct RoomRememberRequest {
     pub room_id: String,
     pub content: String,
@@ -792,6 +794,47 @@ mod tests {
         assert_eq!(url_decode("hello%20world"), "hello world");
         assert_eq!(url_decode("hello+world"), "hello world");
         assert_eq!(url_decode("%41%42%43"), "ABC");
+    }
+
+    /// #1251: v2 write payloads must reject unknown keys instead of silently
+    /// dropping them — a v1-style `ns` key used to be accepted with 200 and
+    /// the memory silently landed in the default namespace.
+    #[test]
+    fn test_remember_request_rejects_unknown_fields() {
+        let payload = r#"{"content": "hello", "ns": "repo-vetio"}"#;
+        let mut cursor = payload.as_bytes();
+        let err = match read_body::<RememberRequest>(&mut cursor) {
+            Err(e) => e,
+            Ok(_) => panic!("unknown key `ns` must be rejected"),
+        };
+        assert!(
+            err.contains("`ns`"),
+            "error must name the offending key: {err}"
+        );
+    }
+
+    #[test]
+    fn test_room_remember_request_rejects_unknown_fields() {
+        let payload = r#"{"room_id": "r1", "content": "hello", "room": "r1"}"#;
+        let mut cursor = payload.as_bytes();
+        let err = match read_body::<RoomRememberRequest>(&mut cursor) {
+            Err(e) => e,
+            Ok(_) => panic!("unknown key `room` must be rejected"),
+        };
+        assert!(
+            err.contains("`room`"),
+            "error must name the offending key: {err}"
+        );
+    }
+
+    #[test]
+    fn test_remember_request_still_accepts_valid_payload() {
+        let payload =
+            r#"{"content": "hello", "tags": ["t"], "namespace": "n1", "metadata": {"k": "v"}}"#;
+        let mut cursor = payload.as_bytes();
+        let req = read_body::<RememberRequest>(&mut cursor).unwrap();
+        assert_eq!(req.content, "hello");
+        assert_eq!(req.namespace.as_deref(), Some("n1"));
     }
 
     #[test]
