@@ -455,6 +455,19 @@ impl super::Store {
 
     /// List root documents (parent_id IS NULL), global.
     pub fn list_root_documents(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
+        self.list_root_documents_ns(None, limit)
+    }
+
+    /// List root documents, optionally scoped to a namespace (#1268).
+    ///
+    /// Namespace filtering happens in SQL BEFORE the LIMIT so a scoped view
+    /// still returns matches that fall outside the N most-recent global rows
+    /// (CodeCora alert on the filter-after-limit variant).
+    pub fn list_root_documents_ns(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
         let limit = limit.min(1000) as i64;
 
         let mut stmt = self
@@ -462,13 +475,13 @@ impl super::Store {
             .prepare(
                 "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents WHERE parent_id IS NULL \
-                 ORDER BY sort_order, updated_at DESC LIMIT ?1",
+                 FROM documents WHERE parent_id IS NULL AND (?1 IS NULL OR namespace = ?1) \
+                 ORDER BY sort_order, updated_at DESC LIMIT ?2",
             )
             .map_err(|e| Error::db("prepare list root documents", e))?;
 
         let rows = stmt
-            .query_map(params![limit], row_to_summary)
+            .query_map(params![namespace, limit], row_to_summary)
             .map_err(|e| Error::db("list root documents query", e))?;
 
         let docs: Vec<DocumentSummary> = rows.filter_map(|r| r.ok()).collect();

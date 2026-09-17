@@ -1789,14 +1789,7 @@ impl Uteke {
         namespace: Option<&str>,
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
-        let roots = self.store.list_root_documents(limit)?;
-        match namespace {
-            Some(ns) => Ok(roots
-                .into_iter()
-                .filter(|d| d.namespace.as_deref() == Some(ns))
-                .collect()),
-            None => Ok(roots),
-        }
+        self.store.list_root_documents_ns(namespace, limit)
     }
 
     /// List children of a document (#438).
