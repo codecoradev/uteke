@@ -1929,15 +1929,27 @@ impl Uteke {
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         let limit = limit.min(50);
 
+        // Over-fetch when namespace-scoping post-filters: the mode search
+        // runs globally, so a plain `limit` fetch could retain fewer than
+        // `limit` matches for a namespace whose docs rank below the global
+        // top-N (CodeCora alert). 4x mirrors the entity/category post-filter
+        // heuristic used on the memory path (recall_unified_memories).
+        let fetch = if namespace.is_some() {
+            limit * 4
+        } else {
+            limit
+        };
+
         let mut results = match mode {
-            "semantic" => self.doc_search_semantic(query, limit),
-            "fts" => self.doc_search_fts(query, limit),
-            _ => self.doc_search_hybrid(query, limit),
+            "semantic" => self.doc_search_semantic(query, fetch),
+            "fts" => self.doc_search_fts(query, fetch),
+            _ => self.doc_search_hybrid(query, fetch),
         }?;
 
         if let Some(ns) = namespace {
             results.retain(|r| r.document.namespace.as_deref() == Some(ns));
         }
+        results.truncate(limit);
         Ok(results)
     }
 
