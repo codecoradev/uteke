@@ -1911,13 +1911,46 @@ impl Uteke {
         limit: usize,
         mode: &str,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        self.doc_search_in(query, limit, mode, None)
+    }
+
+    /// Document search scoped to a namespace (unified recall doc arm).
+    ///
+    /// `None` searches across all namespaces (legacy global view); a
+    /// namespace value retains only documents whose namespace matches
+    /// exactly — NULL-namespace documents are global-view-only. Applies
+    /// to every mode after retrieval so each arm stays filter-free.
+    pub fn doc_search_in(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         let limit = limit.min(50);
 
-        match mode {
-            "semantic" => self.doc_search_semantic(query, limit),
-            "fts" => self.doc_search_fts(query, limit),
-            _ => self.doc_search_hybrid(query, limit),
+        // Over-fetch when namespace-scoping post-filters: the mode search
+        // runs globally, so a plain `limit` fetch could retain fewer than
+        // `limit` matches for a namespace whose docs rank below the global
+        // top-N (CodeCora alert). 4x mirrors the entity/category post-filter
+        // heuristic used on the memory path (recall_unified_memories).
+        let fetch = if namespace.is_some() {
+            limit * 4
+        } else {
+            limit
+        };
+
+        let mut results = match mode {
+            "semantic" => self.doc_search_semantic(query, fetch),
+            "fts" => self.doc_search_fts(query, fetch),
+            _ => self.doc_search_hybrid(query, fetch),
+        }?;
+
+        if let Some(ns) = namespace {
+            results.retain(|r| r.document.namespace.as_deref() == Some(ns));
         }
+        results.truncate(limit);
+        Ok(results)
     }
 
     fn doc_search_semantic(
@@ -2338,7 +2371,10 @@ impl Uteke {
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
         const RRF_K: u32 = 60;
 
-        // 1. Memory recall — use recall_hybrid with caller's strategy (#900)
+        // 1. Memory recall — use recall_hybrid with caller's strategy (#900).
+        // min_score 0.0: recall_hybrid filters against rank-based fusion scores
+        // before boosts (#1223), so the caller's cosine-scale threshold is
+        // meaningless here; apply it post-merge on the reported scores below.
         let mem_results =
             match self.recall_hybrid(query, limit * 2, tags_filter, Some(ns), strategy, 0.0) {
                 Ok(r) => r,
@@ -2350,8 +2386,14 @@ impl Uteke {
                 }
             };
 
-        // 2. Document search (hybrid)
-        let doc_results = match self.doc_search(query, limit * 2, "hybrid") {
+        // 2. Document search — namespace-scoped, hybrid mode. Hybrid keeps
+        // documents findable even when chunk vectors were evicted from the
+        // index by a rebuild (#1110) — the FTS arm still matches. `dr.score`
+        // is the raw hybrid RRF sum (~0.016-0.033), the same rank-based
+        // family as the memory fusion base scores; it is NOT normalized, so
+        // a rank-0 doc no longer reports a fake 1.000 that outranks every
+        // memory (the old behavior flooded short-query results with docs).
+        let doc_results = match self.doc_search_in(query, limit * 2, "hybrid", Some(ns)) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Unified search: doc search failed, using partial results: {e}");
@@ -2385,23 +2427,16 @@ impl Uteke {
         let mut scored: Vec<(String, f64)> = rrf_scores.into_iter().collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Max possible RRF: 1/(k+1) when rank=0 in a single source.
-        let max_rrf = 1.0 / (RRF_K as f64 + 1.0);
-
         // RRF decides the ORDER; it must not decide the reported score. Normalizing the
         // RRF sum yields (k+1)/(k+1+rank) — a pure function of rank, identical for every
         // query — so a query matching nothing still reports 1.000 and `min_score` can
-        // never filter. Memories carry a real cosine, so report that.
-        //
-        // Documents keep the normalized RRF for now: `DocumentSearchResult::score` means
-        // three different things by mode (cosine from doc_search_semantic, 1/(i+1) rank
-        // from doc_search_fts, an RRF sum from doc_search_hybrid), and an FTS-only hit has
-        // no similarity to report at all. Putting documents on the same scale requires
-        // unifying that first — a separate change.
+        // never filter. Memories carry their weighted-RRF+boost score, documents their
+        // raw hybrid RRF sum — both rank-based families of comparable magnitude,
+        // neither an artificial 1.0 (see #short-query / unified doc flooding).
         let results: Vec<UnifiedSearchResult> = scored
             .into_iter()
             .take(limit)
-            .map(|(key, rrf_sum)| {
+            .map(|(key, _rrf_sum)| {
                 if let Some(sr) = mem_map.remove(&key) {
                     let m = &sr.memory;
                     UnifiedSearchResult {
@@ -2431,7 +2466,12 @@ impl Uteke {
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
                         result_type: SearchResultType::Document,
-                        score: (rrf_sum / max_rrf).clamp(0.0, 1.0) as f32,
+                        // Raw hybrid-mode RRF sum (~0.016-0.033): the same
+                        // rank-based family as the memory fusion base scores
+                        // (see the doc-arm comment above for why hybrid, not
+                        // semantic). NOT a cosine — do not threshold it like
+                        // one.
+                        score: dr.score,
                         content: if dr.chunk_snippet.is_empty() {
                             dr.document.title.clone()
                         } else {
@@ -2453,7 +2493,7 @@ impl Uteke {
                         tags: vec![],
                         metadata: None,
                         memory_type: None,
-                        namespace: None,
+                        namespace: dr.document.namespace.clone(),
                         source: None,
                         source_type: None,
                         importance: None,
@@ -2471,7 +2511,15 @@ impl Uteke {
             })
             .collect();
 
-        // Apply min_score filter on normalized RRF scores.
+        // Apply the caller's threshold on reported scores — opt-in via
+        // --min/--strict (config default is 0.0 since #1228). Caveat: both
+        // scales here are RANK-based, not cosine, and their magnitudes
+        // differ — memory fusion scores reach ~0.2 with boosts, document
+        // hybrid sums top out at ~0.033 — so any threshold above ~0.033
+        // filters out ALL documents while memories survive. That asymmetry
+        // is inherent to rank-based scoring (#1223: don't read these as
+        // similarity); pass `--type memory` + a vector strategy when a
+        // cosine-threshold filter is actually needed.
         let mut results: Vec<UnifiedSearchResult> = results
             .into_iter()
             .filter(|r| r.score >= min_score)
