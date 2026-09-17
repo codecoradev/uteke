@@ -1911,13 +1911,34 @@ impl Uteke {
         limit: usize,
         mode: &str,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        self.doc_search_in(query, limit, mode, None)
+    }
+
+    /// Document search scoped to a namespace (unified recall doc arm).
+    ///
+    /// `None` searches across all namespaces (legacy global view); a
+    /// namespace value retains only documents whose namespace matches
+    /// exactly — NULL-namespace documents are global-view-only. Applies
+    /// to every mode after retrieval so each arm stays filter-free.
+    pub fn doc_search_in(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: &str,
+        namespace: Option<&str>,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         let limit = limit.min(50);
 
-        match mode {
+        let mut results = match mode {
             "semantic" => self.doc_search_semantic(query, limit),
             "fts" => self.doc_search_fts(query, limit),
             _ => self.doc_search_hybrid(query, limit),
+        }?;
+
+        if let Some(ns) = namespace {
+            results.retain(|r| r.document.namespace.as_deref() == Some(ns));
         }
+        Ok(results)
     }
 
     fn doc_search_semantic(
@@ -2338,7 +2359,10 @@ impl Uteke {
     ) -> Result<Vec<UnifiedSearchResult>, Error> {
         const RRF_K: u32 = 60;
 
-        // 1. Memory recall — use recall_hybrid with caller's strategy (#900)
+        // 1. Memory recall — use recall_hybrid with caller's strategy (#900).
+        // min_score 0.0: recall_hybrid filters against rank-based fusion scores
+        // before boosts (#1223), so the caller's cosine-scale threshold is
+        // meaningless here; apply it post-merge on the reported scores below.
         let mem_results =
             match self.recall_hybrid(query, limit * 2, tags_filter, Some(ns), strategy, 0.0) {
                 Ok(r) => r,
@@ -2350,8 +2374,14 @@ impl Uteke {
                 }
             };
 
-        // 2. Document search (hybrid)
-        let doc_results = match self.doc_search(query, limit * 2, "hybrid") {
+        // 2. Document search — namespace-scoped, hybrid mode. Hybrid keeps
+        // documents findable even when chunk vectors were evicted from the
+        // index by a rebuild (#1110) — the FTS arm still matches. `dr.score`
+        // is the raw hybrid RRF sum (~0.016-0.033), the same rank-based
+        // family as the memory fusion base scores; it is NOT normalized, so
+        // a rank-0 doc no longer reports a fake 1.000 that outranks every
+        // memory (the old behavior flooded short-query results with docs).
+        let doc_results = match self.doc_search_in(query, limit * 2, "hybrid", Some(ns)) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Unified search: doc search failed, using partial results: {e}");
@@ -2385,23 +2415,16 @@ impl Uteke {
         let mut scored: Vec<(String, f64)> = rrf_scores.into_iter().collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Max possible RRF: 1/(k+1) when rank=0 in a single source.
-        let max_rrf = 1.0 / (RRF_K as f64 + 1.0);
-
         // RRF decides the ORDER; it must not decide the reported score. Normalizing the
         // RRF sum yields (k+1)/(k+1+rank) — a pure function of rank, identical for every
         // query — so a query matching nothing still reports 1.000 and `min_score` can
-        // never filter. Memories carry a real cosine, so report that.
-        //
-        // Documents keep the normalized RRF for now: `DocumentSearchResult::score` means
-        // three different things by mode (cosine from doc_search_semantic, 1/(i+1) rank
-        // from doc_search_fts, an RRF sum from doc_search_hybrid), and an FTS-only hit has
-        // no similarity to report at all. Putting documents on the same scale requires
-        // unifying that first — a separate change.
+        // never filter. Memories carry their weighted-RRF+boost score, documents their
+        // raw hybrid RRF sum — both rank-based families of comparable magnitude,
+        // neither an artificial 1.0 (see #short-query / unified doc flooding).
         let results: Vec<UnifiedSearchResult> = scored
             .into_iter()
             .take(limit)
-            .map(|(key, rrf_sum)| {
+            .map(|(key, _rrf_sum)| {
                 if let Some(sr) = mem_map.remove(&key) {
                     let m = &sr.memory;
                     UnifiedSearchResult {
@@ -2431,7 +2454,10 @@ impl Uteke {
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
                         result_type: SearchResultType::Document,
-                        score: (rrf_sum / max_rrf).clamp(0.0, 1.0) as f32,
+                        // Real cosine from the semantic doc arm — not the
+                        // rank-derived RRF sum (kept in `rrf_sum` only for
+                        // merge ordering).
+                        score: dr.score,
                         content: if dr.chunk_snippet.is_empty() {
                             dr.document.title.clone()
                         } else {
@@ -2453,7 +2479,7 @@ impl Uteke {
                         tags: vec![],
                         metadata: None,
                         memory_type: None,
-                        namespace: None,
+                        namespace: dr.document.namespace.clone(),
                         source: None,
                         source_type: None,
                         importance: None,
@@ -2471,7 +2497,9 @@ impl Uteke {
             })
             .collect();
 
-        // Apply min_score filter on normalized RRF scores.
+        // Apply the caller's threshold on reported scores (both scales are
+        // honest 0..1 similarities now). The default config min_score is 0.0
+        // since #1228, so this is opt-in via --min/--strict.
         let mut results: Vec<UnifiedSearchResult> = results
             .into_iter()
             .filter(|r| r.score >= min_score)
