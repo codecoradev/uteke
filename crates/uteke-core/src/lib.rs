@@ -2466,9 +2466,11 @@ impl Uteke {
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
                         result_type: SearchResultType::Document,
-                        // Real cosine from the semantic doc arm — not the
-                        // rank-derived RRF sum (kept in `rrf_sum` only for
-                        // merge ordering).
+                        // Raw hybrid-mode RRF sum (~0.016-0.033): the same
+                        // rank-based family as the memory fusion base scores
+                        // (see the doc-arm comment above for why hybrid, not
+                        // semantic). NOT a cosine — do not threshold it like
+                        // one.
                         score: dr.score,
                         content: if dr.chunk_snippet.is_empty() {
                             dr.document.title.clone()
@@ -2509,9 +2511,15 @@ impl Uteke {
             })
             .collect();
 
-        // Apply the caller's threshold on reported scores (both scales are
-        // honest 0..1 similarities now). The default config min_score is 0.0
-        // since #1228, so this is opt-in via --min/--strict.
+        // Apply the caller's threshold on reported scores — opt-in via
+        // --min/--strict (config default is 0.0 since #1228). Caveat: both
+        // scales here are RANK-based, not cosine, and their magnitudes
+        // differ — memory fusion scores reach ~0.2 with boosts, document
+        // hybrid sums top out at ~0.033 — so any threshold above ~0.033
+        // filters out ALL documents while memories survive. That asymmetry
+        // is inherent to rank-based scoring (#1223: don't read these as
+        // similarity); pass `--type memory` + a vector strategy when a
+        // cosine-threshold filter is actually needed.
         let mut results: Vec<UnifiedSearchResult> = results
             .into_iter()
             .filter(|r| r.score >= min_score)
