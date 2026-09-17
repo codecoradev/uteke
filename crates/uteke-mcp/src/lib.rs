@@ -1599,8 +1599,11 @@ fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 fn exec_doc_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+    let namespace = args["namespace"].as_str();
 
-    let docs = uteke.doc_list(limit).map_err(|e| format!("Failed: {e}"))?;
+    let docs = uteke
+        .doc_list(namespace, limit)
+        .map_err(|e| format!("Failed: {e}"))?;
 
     if docs.is_empty() {
         return Ok(ToolResult {

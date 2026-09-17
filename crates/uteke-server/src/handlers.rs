@@ -2157,11 +2157,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
             Ok(params) => {
                 let result = if params.roots_only {
-                    uteke.doc_list_roots(params.limit)
+                    uteke.doc_list_roots(params.namespace.as_deref(), params.limit)
                 } else if let Some(ref parent) = params.parent {
                     uteke.doc_list_children(parent, params.limit)
                 } else {
-                    uteke.doc_list(params.limit)
+                    uteke.doc_list(params.namespace.as_deref(), params.limit)
                 };
                 match result {
                     Ok(docs) => ctx.ok_response_for(req, &docs),

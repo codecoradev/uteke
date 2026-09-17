@@ -35,6 +35,9 @@ pub struct DocListParams {
     pub roots_only: bool,
     #[serde(default)]
     pub parent: Option<String>,
+    /// Namespace filter (#1268) — None = all namespaces.
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
