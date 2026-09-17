@@ -153,6 +153,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_stats(),
                 tool_context(),
                 tool_dream(),
+                tool_verify(),
+                tool_repair(),
                 tool_doc_create(),
                 tool_doc_update(),
                 tool_doc_get(),
@@ -211,6 +213,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_stats" => exec_stats(uteke, &arguments)?,
                 "uteke_context" => exec_context(uteke, &arguments)?,
                 "uteke_dream" => exec_dream(uteke, &arguments)?,
+                "uteke_verify" => exec_verify(uteke)?,
+                "uteke_repair" => exec_repair(uteke)?,
                 "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
                 "uteke_doc_update" => exec_doc_update(uteke, &arguments)?,
                 "uteke_doc_get" => exec_doc_get(uteke, &arguments)?,
@@ -664,6 +668,22 @@ fn tool_dream() -> Value {
                 "confirm_large": { "type": "boolean", "description": "Required when an APPLYING run projects more than 100 changes (default: false — run refuses instead)" }
             }
         }
+    })
+}
+
+fn tool_verify() -> Value {
+    serde_json::json!({
+        "name": "uteke_verify",
+        "description": "Check vector-index/SQLite consistency without mutating anything (#1266). Reports row/vector counts and whether they match. Run after serve upgrades or whenever recall behaves as if recent memories lack vectors.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
+fn tool_repair() -> Value {
+    serde_json::json!({
+        "name": "uteke_repair",
+        "description": "Rebuild the vector index from stored embeddings (#1266). Fixes recall desync where rows exist in SQLite/FTS5 but not in the usearch index. DESTRUCTIVE to the index only — SQLite data is untouched; the index is rebuilt from it. Verify first with uteke_verify.",
+        "inputSchema": { "type": "object", "properties": {} }
     })
 }
 
@@ -1845,6 +1865,30 @@ fn exec_context(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: context,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_verify(uteke: &Uteke) -> Result<ToolResult, String> {
+    let report = uteke.verify().map_err(|e| format!("Failed: {e}"))?;
+    let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_repair(uteke: &Uteke) -> Result<ToolResult, String> {
+    let report = uteke.repair().map_err(|e| format!("Failed: {e}"))?;
+    let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
         }],
         is_error: false,
     })

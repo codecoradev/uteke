@@ -2632,6 +2632,23 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── Prune (maintenance) ───────────────────────────────────────────
+        // ── Verify / Repair (index consistency, #1266) ───────────────────
+        // POST /verify → VerifyReport (read-only check, write token like
+        // other maintenance endpoints). POST /repair → rebuilds the vector
+        // index from SQLite embeddings so stores can recover from desync
+        // (e.g. version-lagged serve binaries, #1245 class) WITHOUT a
+        // restart — the previous runbook required stopping uteke-serve
+        // (pitfall 0f lock contention).
+        (Method::Post, "/verify") => match uteke.verify() {
+            Ok(r) => ctx.ok_response_for(req, &r),
+            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+        },
+
+        (Method::Post, "/repair") => match uteke.repair() {
+            Ok(r) => ctx.ok_response_for(req, &r),
+            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+        },
+
         (Method::Post, "/prune") => match read_body::<PruneRequest>(req.as_reader()) {
             Ok(req_data) => {
                 let result =
