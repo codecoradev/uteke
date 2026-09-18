@@ -82,7 +82,7 @@ menemukan buktinya. 500 pertanyaan hand-curated, lima kemampuan memori. Uteke
 menjalankan suite penuh dengan **nol panggilan LLM di jalur retrieval**: embedding
 lokal, satu CPU, deterministik.
 
-| Metrik | Uteke **v0.18.1** | agentmemory¹ | BM25-only¹ |
+| Metrik | Uteke **v0.18.2** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
 | **recall_any@5** (bukti di top-5) | **98.4%** | 95.2% | 86.2% |
 | recall_any@10 | 98.8% | 98.6% | 94.6% |
@@ -384,7 +384,7 @@ Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan
 <details>
 <summary><strong>Sudah production-ready?</strong></summary>
 
-Uteke sekarang v0.18.1 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke sekarang v0.18.2 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
 </details>
 
 ---

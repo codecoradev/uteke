@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-09-18
+
+Patch release. Theme: **fix the unified doc recall flooding bug (#1270)** —
+backport of the #1271 fix from develop onto the v0.18.1 release line. The
+upcoming minor release (v0.19.0) ships #1269, #1272, and #1274 on top.
+
+### Fixed
+
+- **Unified recall (`--type all`) no longer floods results with cross-namespace documents (#1270, #1271)** - the document arm ignored the recall's namespace (`doc_search`'s `ns` parameter was unused), so documents from any namespace — including NULL-namespace rows — leaked into every scoped recall; new `Uteke::doc_search_in(query, limit, mode, namespace)` retains only exact-namespace documents (NULL-namespace docs are global-view-only, matching #1269 doc-list semantics). Document scores are now the raw hybrid RRF sum (~0.016–0.033) instead of the rank-derived `(k+1)/(k+1+rank)` that reported a fake 1.000 for rank-0 regardless of query and outranked every memory fusion score. The memory arm is called with `min_score 0.0` (#1223 rank-based scores) and the caller's threshold is applied post-merge, so `--min`/`--strict` behave consistently on both result types. Unified document results now carry their `namespace`. Core-only change (`crates/uteke-core/src/lib.rs`) — CLI/MCP/HTTP surface unchanged; namespace-scoped `doc list` (#1269) and HTTP verify/repair (#1272) follow in the next minor release.
+
 ## [0.18.1] - 2026-09-15
 
 Patch release. Theme: **correctness and operational hardening** - structural
