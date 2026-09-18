@@ -2,6 +2,7 @@
 
 use crate::error::Error;
 use crate::memory::types::{ContradictionResult, DEFAULT_NAMESPACE};
+use crate::operations::RememberOutcome;
 
 impl crate::Uteke {
     /// Check for contradictions when storing a new memory.
@@ -67,7 +68,7 @@ impl crate::Uteke {
         memory_type: Option<&str>,
         check_contradiction: bool,
         contradiction_threshold: f32,
-    ) -> Result<(String, ContradictionResult), Error> {
+    ) -> Result<(RememberOutcome, ContradictionResult), Error> {
         crate::validate_input(content, tags)?;
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
 
@@ -96,7 +97,7 @@ impl crate::Uteke {
         let content_type = crate::memory::crud::detect_content_type(content);
 
         // Use remember_precomputed to avoid double-embedding
-        let id = self.remember_precomputed(
+        let outcome = self.remember_precomputed_detailed(
             content,
             tags,
             metadata,
@@ -104,7 +105,9 @@ impl crate::Uteke {
             memory_type.unwrap_or("fact"),
             content_type,
             &embedding,
+            None,
         )?;
+        let id = outcome.id.clone();
 
         // Timeline: if this is a contradiction-aware remember that
         // supersedes an older memory, record a Consolidated event (#347)
@@ -150,7 +153,9 @@ impl crate::Uteke {
             }
         }
 
-        Ok((id, contradiction))
+        // The outcome carries the honest embedding status from
+        // remember_precomputed_detailed (#1273).
+        Ok((outcome, contradiction))
     }
 
     /// Find near-duplicate memory pairs (similarity > threshold).

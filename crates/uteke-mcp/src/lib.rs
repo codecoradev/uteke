@@ -1058,7 +1058,7 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room = args["room"].as_str();
     let author = args["author"].as_str().unwrap_or("anonymous");
 
-    let id = if let Some(room_id) = room {
+    let outcome = if let Some(room_id) = room {
         uteke
             .remember_in_room(
                 content,
@@ -1072,14 +1072,21 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             .map_err(|e| format!("Failed: {e}"))?
     } else {
         uteke
-            .remember_typed(content, &tags, None, namespace, memory_type)
+            .remember_typed_detailed(content, &tags, None, namespace, memory_type)
             .map_err(|e| format!("Failed: {e}"))?
     };
+
+    let mut text = format!("✓ Stored memory with ID: {}", outcome.id);
+    if let Some(ref warn) = outcome.warning {
+        text.push_str(&format!(
+            "\n⚠ Embedding NOT written: {warn}\nMemory is keyword-searchable only; run `uteke repair` to backfill."
+        ));
+    }
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("✓ Stored memory with ID: {id}"),
+            text,
         }],
         is_error: false,
     })

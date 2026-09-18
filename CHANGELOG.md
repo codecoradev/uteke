@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`remember` reports embedding-write failures honestly (#1273)** - when embedding generation fails after retries, the vector insert fails, or index persistence fails, the memory is still stored (SQLite + FTS5, keyword-searchable) but every surface now says so instead of failing hard or passing silently: `remember_detailed`/`remember_typed_detailed`/`remember_auto_infer_detailed` return a `RememberOutcome { id, embedding_written, warning }`; `POST /remember` and `POST /room/remember` responses carry `embedding_written` + `warning`; the CLI prints a warning line and includes both fields in JSON output; MCP `uteke_remember` appends the warning to its result text. Recoverable any time via `uteke repair`.
+
 ## [0.18.1] - 2026-09-15
 
 Patch release. Theme: **correctness and operational hardening** - structural

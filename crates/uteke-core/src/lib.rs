@@ -28,6 +28,8 @@ mod maintenance;
 pub mod memory;
 pub mod offline_extraction;
 mod operations;
+
+pub use operations::RememberOutcome;
 mod orphans;
 pub mod provenance;
 mod recall_cache;

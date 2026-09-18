@@ -56,6 +56,27 @@ pub(crate) fn retry_embed(
     unreachable!()
 }
 
+/// Result of a remember operation with honest embedding-write reporting (#1273).
+///
+/// `embedding_written` is `false` when the memory row was stored (SQLite +
+/// FTS5, keyword-searchable) but the vector entry is NOT durably usable:
+/// embedding generation failed after retries, the index insert failed, or
+/// index persistence failed after retries. Such rows are recoverable via
+/// `uteke repair` / `POST /repair`. `warning` carries a human-readable
+/// reason whenever `embedding_written` is `false` due to a FAILURE.
+/// Note: a store with no embedder backend configured (#1166) also reports
+/// `embedding_written: false` — by configuration, not failure — with no
+/// warning.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RememberOutcome {
+    /// ID of the stored memory.
+    pub id: String,
+    /// Whether the vector embedding is durably usable for semantic search.
+    pub embedding_written: bool,
+    /// Failure reason when the embedding could not be persisted.
+    pub warning: Option<String>,
+}
+
 impl crate::Uteke {
     /// Store a new memory.
     ///
@@ -71,6 +92,17 @@ impl crate::Uteke {
         // would bypass inference — use remember_auto_infer(None) so content
         // signals drive the type.
         self.remember_auto_infer(content, tags, metadata, namespace, None)
+    }
+
+    /// Store a new memory, reporting embedding status (#1273).
+    pub fn remember_detailed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+    ) -> Result<RememberOutcome, Error> {
+        self.remember_auto_infer_detailed(content, tags, metadata, namespace, None)
     }
 
     /// Store a JSON-structured memory. Content must be valid JSON.
@@ -113,7 +145,28 @@ impl crate::Uteke {
                 "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
             ))
         })?;
-        self.remember_embed(content, tags, metadata, namespace, memory_type)
+        self.remember_typed_detailed(content, tags, metadata, namespace, memory_type)
+            .map(|o| o.id)
+    }
+
+    /// Store a new memory with explicit type, reporting embedding status (#1273).
+    pub fn remember_typed_detailed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+    ) -> Result<RememberOutcome, Error> {
+        crate::validate_input(content, tags)?;
+        // Validate memory_type against known variants. The type is used
+        // as-is — no inference, no override.
+        crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
+            Error::Validation(format!(
+                "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+            ))
+        })?;
+        self.remember_embed_detailed(content, tags, metadata, namespace, memory_type)
     }
 
     /// Store a new memory with auto-inferred type (#349).
@@ -133,6 +186,19 @@ impl crate::Uteke {
         namespace: Option<&str>,
         explicit_type: Option<&str>,
     ) -> Result<String, Error> {
+        self.remember_auto_infer_detailed(content, tags, metadata, namespace, explicit_type)
+            .map(|o| o.id)
+    }
+
+    /// Store a new memory with auto-inferred type, reporting embedding status (#1273).
+    pub fn remember_auto_infer_detailed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        explicit_type: Option<&str>,
+    ) -> Result<RememberOutcome, Error> {
         let effective_type = match explicit_type {
             Some(t) => {
                 // Validate explicit type — same check as remember_typed
@@ -154,18 +220,18 @@ impl crate::Uteke {
                 }
             }
         };
-        self.remember_embed(content, tags, metadata, namespace, &effective_type)
+        self.remember_embed_detailed(content, tags, metadata, namespace, &effective_type)
     }
 
-    /// Embed-then-store shared by [`remember_typed`] and [`remember_auto_infer`].
-    fn remember_embed(
+    /// Embed-then-store with honest embedding reporting (#1273).
+    fn remember_embed_detailed(
         &self,
         content: &str,
         tags: &[&str],
         metadata: Option<serde_json::Value>,
         namespace: Option<&str>,
         memory_type: &str,
-    ) -> Result<String, Error> {
+    ) -> Result<RememberOutcome, Error> {
         crate::validate_input(content, tags)?;
         // Validate memory_type against known variants.
         crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
@@ -186,14 +252,31 @@ impl crate::Uteke {
         // row is stored FTS5-only and stays keyword-searchable. Vector
         // search for this row becomes available once an embedding is
         // supplied via the injected-embedding path or `uteke repair`.
-        let embedding = if self.embedder_backend.is_empty() {
+        // #1273: embedding GENERATION failure is also a store-and-warn case —
+        // the row is kept (SQLite + FTS5) and the outcome carries the reason.
+        let (embedding, generation_error): (Vec<f32>, Option<String>) = if self
+            .embedder_backend
+            .is_empty()
+        {
             tracing::debug!("No embedding backend configured; storing memory FTS5-only (#1166)");
-            Vec::new()
+            (Vec::new(), None)
         } else {
             self.ensure_embedder()?;
             // Retry embedding generation up to 3 times with exponential backoff.
             // Embedding failures silently drop vector entries, causing desync (#621).
-            self::retry_embed(&self.embedder, &embed_text)?
+            match self::retry_embed(&self.embedder, &embed_text) {
+                Ok(e) => (e, None),
+                Err(e) => {
+                    tracing::warn!(
+                        "Embedding generation failed after retries ({e}). \
+                             Memory stored FTS5-only; run `uteke repair` to backfill. (#1273)"
+                    );
+                    (
+                        Vec::new(),
+                        Some(format!("embedding generation failed after retries: {e}")),
+                    )
+                }
+            }
         };
 
         // Dedup check: if an existing memory has cosine >= 0.95, return it
@@ -203,11 +286,15 @@ impl crate::Uteke {
         if !embedding.is_empty() {
             if let Some(existing_id) = self.check_duplicate(&embedding, namespace)? {
                 tracing::info!("Dedup: memory {existing_id} is nearly identical, skipping insert");
-                return Ok(existing_id);
+                return Ok(RememberOutcome {
+                    id: existing_id,
+                    embedding_written: true,
+                    warning: None,
+                });
             }
         }
 
-        self.remember_precomputed(
+        self.remember_precomputed_detailed(
             content,
             tags,
             metadata,
@@ -215,6 +302,7 @@ impl crate::Uteke {
             memory_type,
             content_type,
             &embedding,
+            generation_error,
         )
     }
 
@@ -296,6 +384,10 @@ impl crate::Uteke {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Test-only ID convenience wrapper — production callers use
+    /// [`Self::remember_precomputed_detailed`] for the honest
+    /// `RememberOutcome` (#1273).
+    #[cfg(test)]
     pub(crate) fn remember_precomputed(
         &self,
         content: &str,
@@ -306,6 +398,37 @@ impl crate::Uteke {
         content_type: &str,
         embedding: &[f32],
     ) -> Result<String, Error> {
+        self.remember_precomputed_detailed(
+            content,
+            tags,
+            metadata,
+            namespace,
+            memory_type,
+            content_type,
+            embedding,
+            None,
+        )
+        .map(|o| o.id)
+    }
+
+    /// Store a memory whose embedding already exists, with honest embedding
+    /// reporting (#1273). SQLite commit + vector insert + index save are
+    /// each allowed to fail INDEPENDENTLY without losing the honest result:
+    /// the memory row stays stored whenever it was committed, and
+    /// `embedding_written: false` + `warning` surface any vector-side loss
+    /// instead of a misleading hard error or a silent success.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn remember_precomputed_detailed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+        content_type: &str,
+        embedding: &[f32],
+        embedding_error: Option<String>,
+    ) -> Result<RememberOutcome, Error> {
         let id = uuid::Uuid::now_v7().to_string();
         let now = chrono::Utc::now();
 
@@ -378,29 +501,66 @@ impl crate::Uteke {
         // (already committed to SQLite above) without a vector entry. The
         // row stays FTS5-searchable; `uteke repair` can backfill vectors
         // once an embedder is available.
+        // Honest vector-write accounting (#1273): a vector insert or index
+        // persistence failure must NOT fail the whole remember (the SQLite
+        // row is already committed) nor pass as silent success. The outcome
+        // carries embedding_written=false + warning so every surface can
+        // tell the truth; `uteke repair` can backfill the vector later.
+        let mut vector_error = embedding_error;
         if !embedding.is_empty() {
-            index.insert(&id, embedding)?;
-        }
-        // Retry index persistence up to 3 times (#621).
-        // A failed save means the in-memory index has the entry but
-        // on-disk doesn't → silent desync on next process launch.
-        for attempt in 0..3 {
-            match index.save() {
-                Ok(()) => break,
-                Err(e) => {
-                    if attempt < 2 {
-                        tracing::warn!(
-                            "Index save attempt {}/3 failed after remember for id={id}: {e}. Retrying...",
-                            attempt + 1
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(200));
-                    } else {
-                        tracing::warn!(
-                            "Failed to persist vector index after 3 attempts for remember id={id}: {e}. \
-                             Index entry can be rebuilt via `uteke repair`."
-                        );
+            // Retry the index insert itself (in-memory op, cheap) — #1273.
+            let mut insert_ok = false;
+            let mut last_err: Option<String> = None;
+            for attempt in 0..3 {
+                match index.insert(&id, embedding) {
+                    Ok(()) => {
+                        insert_ok = true;
+                        break;
+                    }
+                    Err(e) => {
+                        last_err = Some(e.to_string());
+                        if attempt < 2 {
+                            tracing::warn!(
+                                "Vector insert attempt {}/3 failed for id={id}: {e}. Retrying...",
+                                attempt + 1
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
                     }
                 }
+            }
+            if insert_ok {
+                // Retry index persistence up to 3 times (#621).
+                // A failed save means the in-memory index has the entry but
+                // on-disk doesn't → silent desync on next process launch.
+                for attempt in 0..3 {
+                    match index.save() {
+                        Ok(()) => break,
+                        Err(e) => {
+                            if attempt < 2 {
+                                tracing::warn!(
+                                    "Index save attempt {}/3 failed after remember for id={id}: {e}. Retrying...",
+                                    attempt + 1
+                                );
+                                std::thread::sleep(std::time::Duration::from_millis(200));
+                            } else {
+                                tracing::warn!(
+                                    "Failed to persist vector index after 3 attempts for remember id={id}: {e}. \
+                                     Index entry can be rebuilt via `uteke repair`."
+                                );
+                                vector_error =
+                                    Some(format!("index persist failed after 3 attempts: {e}"));
+                            }
+                        }
+                    }
+                }
+            } else {
+                let e = last_err.unwrap_or_else(|| "unknown vector insert error".to_string());
+                tracing::warn!(
+                    "Vector insert failed after 3 attempts for remember id={id}: {e}. \
+                     Memory stored FTS5-only; run `uteke repair` to backfill."
+                );
+                vector_error = Some(format!("vector insert failed after 3 attempts: {e}"));
             }
         }
         // Drop the write lock BEFORE auto_link_cosine to prevent deadlock.
@@ -413,11 +573,16 @@ impl crate::Uteke {
         // Best-effort: errors logged, never fails remember().
         // #1166: cosine auto-linking needs a real embedding; skip when the
         // row was stored FTS5-only (no embedder configured).
-        if !embedding.is_empty() {
+        let embedding_written = !embedding.is_empty() && vector_error.is_none();
+        if embedding_written {
             self.auto_link_cosine(&id, embedding, Some(memory.namespace.as_str()));
         }
 
-        Ok(id)
+        Ok(RememberOutcome {
+            embedding_written,
+            warning: vector_error,
+            id,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2602,7 +2767,7 @@ mod dedup_tests {
             "entity": "test-app",
             "category": "integration"
         }));
-        let (id, _contradiction) = uteke
+        let (outcome, _contradiction) = uteke
             .remember_with_contradiction(
                 "Contradiction metadata test content",
                 &[],
@@ -2613,6 +2778,7 @@ mod dedup_tests {
                 0.65,
             )
             .unwrap();
+        let id = outcome.id;
         // Retrieve and verify metadata was stored
         let memory = uteke
             .get_by_id(&id)
@@ -2872,5 +3038,172 @@ mod namespace_management_tests {
         let created = events.iter().find(|e| e.event_type == "created").unwrap();
         assert!(created.actor.is_none());
         assert!(created.evidence.is_none());
+    }
+}
+
+#[cfg(test)]
+mod remember_embedding_status_tests {
+    //! #1273 — honest embedding-write reporting across the remember chain.
+    use super::RememberOutcome;
+    use crate::Uteke;
+    use crate::embed::Embedder;
+    use crate::error::Error;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Embedder whose embed() always fails — simulates a provider outage.
+    struct FailingEmbedder {
+        calls: AtomicUsize,
+    }
+
+    impl Embedder for FailingEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(Error::Validation("simulated provider outage".to_string()))
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "failing-test-embedder"
+        }
+    }
+
+    /// Embedder that fails `fail_times` times, then succeeds — proves the
+    /// retry path (#621) still lands a usable vector.
+    struct FlakyThenOkEmbedder {
+        fail_times: usize,
+        calls: AtomicUsize,
+    }
+
+    impl Embedder for FlakyThenOkEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.fail_times {
+                Err(Error::Validation(format!("transient failure #{n}")))
+            } else {
+                Ok(vec![0.1f32; 4])
+            }
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "flaky-test-embedder"
+        }
+    }
+
+    /// Open an in-memory Uteke with an injected embedder (test-only; both
+    /// constructor pieces are crate-private and reachable from here).
+    fn open_with_embedder(embedder: Option<Box<dyn Embedder>>, backend: &str) -> Uteke {
+        let (_db_str, store) = Uteke::open_store(":memory:").expect("open_store");
+        Uteke::finish_open_full(
+            store,
+            embedder,
+            backend.to_string(),
+            crate::TierConfig::default(),
+            crate::RecallConfig::default(),
+            crate::EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remember_reports_missing_embedding_when_generation_fails() {
+        unsafe { std::env::set_var("UTEKE_EMBEDDING_DIMS", "4") };
+        let u = open_with_embedder(
+            Some(Box::new(FailingEmbedder {
+                calls: AtomicUsize::new(0),
+            })),
+            "test-failing",
+        );
+
+        // The store must SUCCEED (row kept) while honestly reporting that
+        // no embedding was written — never a bare success, never a hard error.
+        let out: RememberOutcome = u
+            .remember_typed_detailed("embedding outage probe", &[], None, None, "fact")
+            .expect("store must succeed even when embedding fails (#1273)");
+
+        assert!(!out.embedding_written, "embedding_written must be false");
+        let warning = out.warning.expect("warning must be present on failure");
+        assert!(
+            warning.contains("embedding generation failed"),
+            "warning should name the root cause, got: {warning}"
+        );
+
+        // The row is stored and FTS5/keyword-findable (embedding empty).
+        let stored = u
+            .store
+            .get_by_id(&out.id)
+            .expect("store read must work")
+            .expect("memory row must exist after embedding failure");
+        assert!(
+            stored.embedding.is_empty(),
+            "stored row must carry no vector when generation failed"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remember_retries_then_succeeds_with_embedding_written() {
+        unsafe { std::env::set_var("UTEKE_EMBEDDING_DIMS", "4") };
+        let embedder = FlakyThenOkEmbedder {
+            fail_times: 2,
+            calls: AtomicUsize::new(0),
+        };
+        // AtomicUsize is not Clone/Copy-friendly for two consumers; wrap a
+        // shared counter instead by leaking an alias is overkill — just use
+        // the same struct for construction and later assertion.
+        let u = open_with_embedder(
+            Some(Box::new(FlakyThenOkEmbedder {
+                fail_times: 2,
+                calls: AtomicUsize::new(0),
+            })),
+            "test-flaky",
+        );
+        let _ = &embedder; // (counter assertion handled via outcome below)
+
+        let out = u
+            .remember_typed_detailed("retry path probe", &[], None, None, "fact")
+            .expect("store must succeed after transient failures");
+
+        assert!(out.embedding_written, "vector must be written after retry");
+        assert!(out.warning.is_none(), "no warning on the success path");
+        let stored = u
+            .store
+            .get_by_id(&out.id)
+            .expect("store read must work")
+            .expect("memory row must exist");
+        assert_eq!(stored.embedding.len(), 4, "vector dims must match embedder");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn remember_without_backend_reports_false_but_no_warning() {
+        unsafe { std::env::set_var("UTEKE_EMBEDDING_DIMS", "4") };
+        // #1166 by-design case: no embedder configured → FTS5-only storage.
+        let u = open_with_embedder(None, "");
+        let out = u
+            .remember_detailed("no backend probe", &[], None, None)
+            .expect("store must succeed without a backend");
+        assert!(!out.embedding_written);
+        assert!(
+            out.warning.is_none(),
+            "configuration (no backend) is not a failure — no warning"
+        );
+        let stored = u
+            .store
+            .get_by_id(&out.id)
+            .expect("store read must work")
+            .expect("memory row must exist");
+        assert!(stored.embedding.is_empty());
     }
 }
