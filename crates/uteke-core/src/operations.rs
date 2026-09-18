@@ -1293,8 +1293,12 @@ impl crate::Uteke {
             .map_err(|_| Error::lock("index write lock during forget"))?;
         // Audit tombstone BEFORE the delete: with schema v20+ events survive the
         // row, and on pre-v20 stores (FK CASCADE) this is the only chance to
-        // record the deletion at all. Best-effort.
-        self.try_timeline_event(id, crate::timeline::TimelineEventType::Forgot, None);
+        // record the deletion at all. Written ONLY when the memory actually
+        // exists — `delete` below returns false for unknown IDs and must not
+        // produce spurious tombstones. Best-effort.
+        if self.store.get_by_id(id).ok().flatten().is_some() {
+            self.try_timeline_event(id, crate::timeline::TimelineEventType::Forgot, None);
+        }
         // SQLite delete (source of truth).
         // Check the return value: Ok(false) means the ID was not found in the DB (#926).
         let deleted = self.store.delete(id)?;

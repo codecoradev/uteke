@@ -735,8 +735,7 @@ mod tests {
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(
-            version,
-            CURRENT_SCHEMA_VERSION,
+            version, CURRENT_SCHEMA_VERSION,
             "schema should be upgraded to current"
         );
 

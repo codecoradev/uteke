@@ -1213,6 +1213,12 @@ impl super::Store {
     ///    become intentional orphans (audit tombstones).
     /// 2. Backfill `created` events (actor = 'backfill') for memories that
     ///    predate the timeline table or arrived via import paths.
+    ///
+    /// Atomicity: each execute_batch below is ONE batch = ONE implicit
+    /// transaction (SQLite). The dispatcher (`run_migrations`) wraps this
+    /// whole step in its own transaction and stamps v20 only on success, so
+    /// an interrupted run either lands the rebuild+backfill completely or
+    /// rolls back entirely — no partial-history-loss window.
     fn migrate_v19_to_v20(&self) -> Result<(), Error> {
         tracing::info!(
             "Applying schema migration v19 to v20: timeline_events FK drop + Created backfill"
