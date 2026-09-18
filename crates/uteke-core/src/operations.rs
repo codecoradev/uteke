@@ -3118,7 +3118,6 @@ mod remember_embedding_status_tests {
     #[test]
     #[serial_test::serial]
     fn remember_reports_missing_embedding_when_generation_fails() {
-        unsafe { std::env::set_var("UTEKE_EMBEDDING_DIMS", "4") };
         let u = open_with_embedder(
             Some(Box::new(FailingEmbedder {
                 calls: AtomicUsize::new(0),
@@ -3154,7 +3153,6 @@ mod remember_embedding_status_tests {
     #[test]
     #[serial_test::serial]
     fn remember_retries_then_succeeds_with_embedding_written() {
-        unsafe { std::env::set_var("UTEKE_EMBEDDING_DIMS", "4") };
         let embedder = FlakyThenOkEmbedder {
             fail_times: 2,
             calls: AtomicUsize::new(0),
@@ -3188,7 +3186,6 @@ mod remember_embedding_status_tests {
     #[test]
     #[serial_test::serial]
     fn remember_without_backend_reports_false_but_no_warning() {
-        unsafe { std::env::set_var("UTEKE_EMBEDDING_DIMS", "4") };
         // #1166 by-design case: no embedder configured → FTS5-only storage.
         let u = open_with_embedder(None, "");
         let out = u
