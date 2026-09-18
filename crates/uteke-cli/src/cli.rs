@@ -574,6 +574,9 @@ pub enum DocCommands {
         /// Show as tree hierarchy (#438)
         #[arg(long)]
         tree: bool,
+        /// Only list documents in this namespace (#1268)
+        #[arg(long)]
+        namespace: Option<String>,
     },
     /// List children of a document (#438)
     Children {

@@ -28,6 +28,8 @@ mod maintenance;
 pub mod memory;
 pub mod offline_extraction;
 mod operations;
+
+pub use operations::RememberOutcome;
 mod orphans;
 pub mod provenance;
 mod recall_cache;
@@ -1771,14 +1773,25 @@ impl Uteke {
         Ok(Some(updated))
     }
 
-    /// List documents (global, no namespace filter).
-    pub fn doc_list(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
-        self.store.list_documents(limit)
+    /// List documents, optionally scoped to a namespace (#1268).
+    ///
+    /// `None` (or an empty slug) lists across all namespaces — the legacy
+    /// global view. A namespace value returns only matching documents.
+    pub fn doc_list(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_documents_ns(namespace, limit)
     }
 
-    /// List root documents (parent_id IS NULL, global).
-    pub fn doc_list_roots(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
-        self.store.list_root_documents(limit)
+    /// List root documents, optionally scoped to a namespace (#1268).
+    pub fn doc_list_roots(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_root_documents_ns(namespace, limit)
     }
 
     /// List children of a document (#438).

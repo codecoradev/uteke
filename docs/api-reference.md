@@ -96,6 +96,18 @@ Update an existing memory's content and/or metadata.
 
 **Request body**: [`MemoryUpdateRequest`](#memoryupdaterequest)
 
+#### 🟡 `POST` `/verify`
+
+Check vector-index/SQLite consistency: row vs vector counts, mismatch flag (#1266).
+
+**Response**: [`VerifyReport`](#verifyreport)
+
+#### 🟡 `POST` `/repair`
+
+Rebuild the vector index from stored embeddings to fix recall desync (#1266). SQLite data is untouched.
+
+**Response**: [`RepairReport`](#repairreport)
+
 #### 🟢 `GET` `/graph`
 
 Get graph edges for a memory. Accepts `?id=...` query param.

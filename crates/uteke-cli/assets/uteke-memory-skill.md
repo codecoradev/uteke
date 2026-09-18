@@ -5,7 +5,12 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.16.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. Zero unsafe code.
+Version: **0.18.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. Zero unsafe code.
+
+> This skill ships with each release — its version tracks the CLI version
+> (a CI gate fails when they drift, see `skill-version-parity` test).
+> If this file is older than your `uteke --version`, run `uteke init` again
+> or re-read the docs for the current release.
 
 > **Hermes integration:** Install the `uteke-memory` plugin for automatic recall
 > on every turn via the `pre_llm_call` hook. No shell hook or daemon needed.
@@ -128,6 +133,31 @@ Version: **0.16.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 | `uteke verify` | Compare DB count vs vector index count |
 | `uteke verify-checksums` | Verify binary integrity against SHA256 checksums |
 | `uteke repair` | Rebuild vector index from SQLite |
+
+> **Stale-index symptom (pitfall 0g):** a memory is recallable via
+> `--strategy fts5` but missing under the default fusion/hybrid — that is a
+> vector-index desync, not data loss. Run `uteke verify`, then `uteke repair`.
+> On uteke-serve, use `POST /verify` / `POST /repair` (HTTP) or the
+> `uteke_verify` / `uteke_repair` MCP tools — no restart needed.
+> Run `verify` after every serve upgrade (#1245 class: CLI upgraded, serve left
+> behind → index written by the old binary reads as mismatched).
+>
+> **Search strategy guide — filters, not silos:**
+> - `namespace` = agent/workspace identity — pass it explicitly on recall.
+> - `room` = collaborative discussion context (`uteke room recall`).
+> - `tags` (e.g. `project:<repo>`) = the primary project filter.
+> - Strategies: `fusion` (default), `hybrid` (RRF vector+FTS5), `fts5`
+>   (keyword — best for short 1–3 word queries and exact terms), `vector`
+>   (pure semantic), `graph`. Scores are rank-based (RRF), not cosine —
+>   don't threshold them like similarity; use `recall --explain` for the
+>   real vector similarity.
+> - Prefer 2–3 core keywords: FTS5 AND-matches all tokens, long natural
+>   sentences can zero out the keyword arm.
+
+### Import / Export / Bench
+
+| Command | Description |
+|---------|-------------|
 | `uteke export [FILE]` | Export to JSONL (no embeddings). Default: stdout |
 | `uteke import [FILE]` | Import from JSONL/Markdown/text. Default: stdin |
 | `uteke bench` | Performance benchmarks | `--counts`, `--json` |

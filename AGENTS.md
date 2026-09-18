@@ -37,6 +37,25 @@ rejects direct pushes). Instead: branch from the release commit, `git merge main
 resolve keeping develop's side (unless main carries unique content — verify), push
 the branch as `chore/release-*`, and open the release PR from it.
 
+## CORE/LAB contract — source of truth (MUST READ before API-surface work)
+
+Uteke OSS ships a written compatibility contract to uteke-cloud: **CORE** endpoints
+must stay semantically compatible; everything else is **LAB** (free to evolve, no
+port promise). The canonical contract (CORE/LAB lists, change-control rules,
+anti-drift mechanism, backlog) lives in the PROD uteke document tree
+`kontrak-core-cloud` with sub-docs `01-aturan-perubahan`, `02-daftar-core`,
+`03-daftar-lab`, `04-anti-drift`.
+
+- Read it before touching any HTTP/MCP/CLI surface:
+  `uteke doc get kontrak-core-cloud` (children:
+  `uteke doc get kontrak-core-cloud/01-aturan-perubahan` … `/04-anti-drift`).
+- **Change control (LOCKED):** the contract changes ONLY on an explicit owner
+  (ajianaz) order, quoted in the parent doc's change history. Agents may draft
+  amendment proposals as issues/room notes but must NOT edit the contract
+  unprompted.
+- Changing CORE semantics in OSS requires a contract issue on uteke-cloud FIRST.
+  Execution backlog: cloud #81–#85; analysis archive: cloud issue #69.
+
 ## Source of truth for workflow standards
 
 The canonical workflow SOP (merge gate, release flow, governance) lives in the

@@ -211,29 +211,31 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     }
                 }
 
-                let result = if req_data.detect_contradiction {
-                    uteke
-                        .remember_with_contradiction(
+                let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
+                    if req_data.detect_contradiction {
+                        uteke
+                            .remember_with_contradiction(
+                                &req_data.content,
+                                &tag_refs,
+                                metadata,
+                                ns(&req_data.namespace),
+                                req_data.r#type.as_deref(),
+                                true,
+                                0.65,
+                            )
+                            .map(|(outcome, _)| outcome)
+                    } else {
+                        uteke.remember_detailed(
                             &req_data.content,
                             &tag_refs,
                             metadata,
                             ns(&req_data.namespace),
-                            req_data.r#type.as_deref(),
-                            true,
-                            0.65,
                         )
-                        .map(|(id, _)| id)
-                } else {
-                    uteke.remember(
-                        &req_data.content,
-                        &tag_refs,
-                        metadata,
-                        ns(&req_data.namespace),
-                    )
-                };
+                    };
 
                 match result {
-                    Ok(id) => {
+                    Ok(outcome) => {
+                        let id = outcome.id;
                         // Set source provenance after storage (#682) — matches CLI.
                         if req_data.source.is_some() || req_data.source_type.is_some() {
                             let st = req_data.source_type.as_deref().unwrap_or("user");
@@ -252,11 +254,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         // recorded (#1106) — data was already stored correctly,
                         // the response just omitted the field. Default mirrors
                         // the schema default (author_type DEFAULT 'agent', #1083).
+                        // #1273: honest embedding status — never a bare success
+                        // when the vector write failed.
                         ctx.ok_response_for(
                             req,
                             &serde_json::json!({
                                 "id": id,
                                 "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
+                                "embedding_written": outcome.embedding_written,
+                                "warning": outcome.warning,
                             }),
                         )
                     }
@@ -1802,11 +1808,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         &req_data.room_id,
                         author,
                     ) {
-                        Ok(id) => ctx.ok_response_for(
+                        Ok(outcome) => ctx.ok_response_for(
                             req,
                             &serde_json::json!({
-                                "id": id,
+                                "id": outcome.id,
                                 "room_id": req_data.room_id,
+                                "embedding_written": outcome.embedding_written,
+                                "warning": outcome.warning,
                             }),
                         ),
                         Err(e) => {
@@ -2157,11 +2165,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
             Ok(params) => {
                 let result = if params.roots_only {
-                    uteke.doc_list_roots(params.limit)
+                    uteke.doc_list_roots(params.namespace.as_deref(), params.limit)
                 } else if let Some(ref parent) = params.parent {
                     uteke.doc_list_children(parent, params.limit)
                 } else {
-                    uteke.doc_list(params.limit)
+                    uteke.doc_list(params.namespace.as_deref(), params.limit)
                 };
                 match result {
                     Ok(docs) => ctx.ok_response_for(req, &docs),
@@ -2632,6 +2640,23 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── Prune (maintenance) ───────────────────────────────────────────
+        // ── Verify / Repair (index consistency, #1266) ───────────────────
+        // POST /verify → VerifyReport (read-only check, write token like
+        // other maintenance endpoints). POST /repair → rebuilds the vector
+        // index from SQLite embeddings so stores can recover from desync
+        // (e.g. version-lagged serve binaries, #1245 class) WITHOUT a
+        // restart — the previous runbook required stopping uteke-serve
+        // (pitfall 0f lock contention).
+        (Method::Post, "/verify") => match uteke.verify() {
+            Ok(r) => ctx.ok_response_for(req, &r),
+            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+        },
+
+        (Method::Post, "/repair") => match uteke.repair() {
+            Ok(r) => ctx.ok_response_for(req, &r),
+            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+        },
+
         (Method::Post, "/prune") => match read_body::<PruneRequest>(req.as_reader()) {
             Ok(req_data) => {
                 let result =

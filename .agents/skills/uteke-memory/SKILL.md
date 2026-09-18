@@ -1,15 +1,20 @@
 ---
-description: "Persistent memory engine for AI agents via the uteke CLI — remember, recall, search, forget with semantic + FTS5 hybrid search, documents, knowledge graph, rooms, tiered memory, and multi-agent namespaces."
+description: "Persistent memory engine for AI agents via the uteke CLI — remember, recall, search, forget with hybrid + fusion semantic search (fusion default since 0.16.0), documents, knowledge graph, rooms, tiered memory, and multi-agent namespaces."
 ---
 
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.10.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Zero unsafe code.
+Version: **0.18.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. Zero unsafe code.
+
+> This skill ships with each release — its version tracks the CLI version
+> (a CI gate fails when they drift, see `skill-version-parity` test).
+> If this file is older than your `uteke --version`, run `uteke init` again
+> or re-read the docs for the current release.
 
 > **Hermes integration:** Install the `uteke-memory` plugin for automatic recall
 > on every turn via the `pre_llm_call` hook. No shell hook or daemon needed.
-> See `extensions/hermes-memory-provider/` for the plugin source.
+> See `extensions/hermes-uteke-memory/` for the plugin source.
 > Manual tool calls via `uteke-tool` plugin remain available for explicit
 > remember/forget/room operations.
 
@@ -29,7 +34,7 @@ Version: **0.10.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Z
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `uteke remember <TEXT>` | Store a new memory | `--tags`, `--type`, `--entity`, `--category`, `--meta`, `--room`, `--author`, `--source`, `--source-type`, `--detect-contradiction` |
-| `uteke recall <QUERY>` | Hybrid search (vector + FTS5, RRF) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (vector/fts5/hybrid/graph), `--salience`, `--recency`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter) |
+| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience`, `--recency`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter) |
 | `uteke search <QUERY>` | Keyword text search | `--limit`, `--tags` |
 | `uteke list` | List memories with filters | `--tag`, `--entity`, `--category`, `--limit`, `--offset`, `--at` |
 | `uteke get <ID>` | Get single memory by UUID | |
@@ -94,7 +99,8 @@ Version: **0.10.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Z
 
 | Command | Description | Key Options |
 |---------|-------------|-------------|
-| `uteke dream` | Full maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify | `--phases`, `--skip`, `--dry-run`, `--quiet` |
+| `uteke dream` | Full maintenance pipeline: lint → backlinks → dedup → orphans → compact → verify (dry-run first by default) | `--phases`, `--skip`, `--dry-run`, `--quiet` |
+| `uteke lifecycle <cycle\|promote\|status>` | Safe lifecycle: soft-deprecate aged memories, promote back, status | `--namespace` |
 | `uteke consolidate` | Merge near-duplicate memories | `--threshold` (default 0.90), `--dry-run` |
 | `uteke prune` | Remove deprecated/expired memories | `--ttl` (default 30), `--dry-run` |
 | `uteke timeline <ID>` | Show audit log events for a memory | `--limit` (default 20) |
@@ -127,6 +133,31 @@ Version: **0.10.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Z
 | `uteke verify` | Compare DB count vs vector index count |
 | `uteke verify-checksums` | Verify binary integrity against SHA256 checksums |
 | `uteke repair` | Rebuild vector index from SQLite |
+
+> **Stale-index symptom (pitfall 0g):** a memory is recallable via
+> `--strategy fts5` but missing under the default fusion/hybrid — that is a
+> vector-index desync, not data loss. Run `uteke verify`, then `uteke repair`.
+> On uteke-serve, use `POST /verify` / `POST /repair` (HTTP) or the
+> `uteke_verify` / `uteke_repair` MCP tools — no restart needed.
+> Run `verify` after every serve upgrade (#1245 class: CLI upgraded, serve left
+> behind → index written by the old binary reads as mismatched).
+>
+> **Search strategy guide — filters, not silos:**
+> - `namespace` = agent/workspace identity — pass it explicitly on recall.
+> - `room` = collaborative discussion context (`uteke room recall`).
+> - `tags` (e.g. `project:<repo>`) = the primary project filter.
+> - Strategies: `fusion` (default), `hybrid` (RRF vector+FTS5), `fts5`
+>   (keyword — best for short 1–3 word queries and exact terms), `vector`
+>   (pure semantic), `graph`. Scores are rank-based (RRF), not cosine —
+>   don't threshold them like similarity; use `recall --explain` for the
+>   real vector similarity.
+> - Prefer 2–3 core keywords: FTS5 AND-matches all tokens, long natural
+>   sentences can zero out the keyword arm.
+
+### Import / Export / Bench
+
+| Command | Description |
+|---------|-------------|
 | `uteke export [FILE]` | Export to JSONL (no embeddings). Default: stdout |
 | `uteke import [FILE]` | Import from JSONL/Markdown/text. Default: stdin |
 | `uteke bench` | Performance benchmarks | `--counts`, `--json` |
@@ -139,12 +170,14 @@ Version: **0.10.0** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60). Z
 | `uteke hook install <SHELL>` | Install shell hook (bash/zsh/fish) |
 | `uteke completions <SHELL>` | Generate shell completions (bash/zsh/fish/powershell) |
 | `uteke upgrade` | Check for updates and upgrade | `-y` (skip confirmation) |
+| `uteke onboard` | Interactive setup wizard: detect install, pick agent, toggle features, write config | `--yes --agent <TYPE>` |
 
 ## Architecture
 
 - **Storage:** SQLite (WAL mode) with namespace column + FTS5 virtual table
 - **Vector index:** usearch persistent HNSW (768d, cosine similarity)
 - **Hybrid search:** RRF (k=60) merges vector + FTS5 results; graph strategy adds graph-signal reranking
+- **Fusion (default since 0.16.0):** weighted RRF of the vector and hybrid rankings — LongMemEval 500Q R@5 0.946
 - **Embedding:** ONNX EmbeddingGemma Q4 (768d), auto-downloaded
 - **Tiered memory:** Hot (<7d, +0.1 boost), Warm (<30d), Cold (>30d)
 - **Schema versioning:** Integer counter, auto-migration on upgrade

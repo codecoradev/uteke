@@ -1,0 +1,319 @@
+{
+  "change_control": "CORE list changes ONLY via an explicit owner order recorded in the contract doc; OSS-side CORE semantic changes require a uteke-cloud contract issue first",
+  "contract": "CORE/LAB compatibility contract between uteke OSS and uteke-cloud",
+  "core": [
+    {
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "method": "GET",
+      "path": "/namespaces"
+    },
+    {
+      "method": "POST",
+      "path": "/namespaces/rename"
+    },
+    {
+      "method": "POST",
+      "path": "/namespaces/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/remember"
+    },
+    {
+      "method": "POST",
+      "path": "/recall"
+    },
+    {
+      "method": "POST",
+      "path": "/search"
+    },
+    {
+      "method": "PUT",
+      "path": "/memory"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/pin"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/importance"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/feedback"
+    },
+    {
+      "method": "POST",
+      "path": "/memory/doc-refs"
+    },
+    {
+      "method": "GET",
+      "path": "/tags"
+    },
+    {
+      "method": "POST",
+      "path": "/tags/rename"
+    },
+    {
+      "method": "POST",
+      "path": "/pin"
+    },
+    {
+      "method": "POST",
+      "path": "/unpin"
+    },
+    {
+      "method": "POST",
+      "path": "/room/create"
+    },
+    {
+      "method": "POST",
+      "path": "/room/remember"
+    },
+    {
+      "method": "POST",
+      "path": "/room/recall"
+    },
+    {
+      "method": "GET",
+      "path": "/room/list"
+    },
+    {
+      "method": "POST",
+      "path": "/room/consolidate"
+    },
+    {
+      "method": "POST",
+      "path": "/room/stats"
+    },
+    {
+      "method": "GET",
+      "path": "/room/memories"
+    },
+    {
+      "method": "DELETE",
+      "path": "/room/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/room/rename"
+    },
+    {
+      "method": "POST",
+      "path": "/room/update"
+    },
+    {
+      "method": "POST",
+      "path": "/room/memory/move"
+    },
+    {
+      "method": "GET",
+      "path": "/provenance"
+    },
+    {
+      "method": "GET",
+      "path": "/contradictions"
+    },
+    {
+      "method": "POST",
+      "path": "/contradictions/undo"
+    },
+    {
+      "method": "POST",
+      "path": "/import"
+    },
+    {
+      "method": "GET",
+      "path": "/export"
+    },
+    {
+      "method": "POST",
+      "path": "/consolidate/pair"
+    }
+  ],
+  "generated_by": "cargo run -p docgen — from uteke-server api_registry::ENDPOINTS tier tags; do not edit manually",
+  "lab": [
+    {
+      "method": "GET",
+      "path": "/guide"
+    },
+    {
+      "method": "GET",
+      "path": "/stats"
+    },
+    {
+      "method": "POST",
+      "path": "/stats"
+    },
+    {
+      "method": "POST",
+      "path": "/list"
+    },
+    {
+      "method": "DELETE",
+      "path": "/forget"
+    },
+    {
+      "method": "GET",
+      "path": "/memory"
+    },
+    {
+      "method": "POST",
+      "path": "/tags/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/room/summary"
+    },
+    {
+      "method": "POST",
+      "path": "/room/summary-document"
+    },
+    {
+      "method": "POST",
+      "path": "/room/document"
+    },
+    {
+      "method": "POST",
+      "path": "/room/document/list"
+    },
+    {
+      "method": "PUT",
+      "path": "/room/document/add"
+    },
+    {
+      "method": "DELETE",
+      "path": "/room/document/remove"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/room/list"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/create"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/get"
+    },
+    {
+      "method": "POST",
+      "path": "/verify"
+    },
+    {
+      "method": "POST",
+      "path": "/repair"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/list"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/search"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/update"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/move"
+    },
+    {
+      "method": "DELETE",
+      "path": "/doc/delete"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/mem-refs"
+    },
+    {
+      "method": "GET",
+      "path": "/graph"
+    },
+    {
+      "method": "POST",
+      "path": "/graph/edge"
+    },
+    {
+      "method": "DELETE",
+      "path": "/graph/edge"
+    },
+    {
+      "method": "GET",
+      "path": "/edges"
+    },
+    {
+      "method": "GET",
+      "path": "/timeline"
+    },
+    {
+      "method": "POST",
+      "path": "/prune"
+    },
+    {
+      "method": "POST",
+      "path": "/consolidate"
+    },
+    {
+      "method": "POST",
+      "path": "/aging"
+    },
+    {
+      "method": "POST",
+      "path": "/importance"
+    },
+    {
+      "method": "POST",
+      "path": "/orphans"
+    },
+    {
+      "method": "POST",
+      "path": "/extract"
+    },
+    {
+      "method": "POST",
+      "path": "/rebuild-backlinks"
+    },
+    {
+      "method": "POST",
+      "path": "/context"
+    },
+    {
+      "method": "POST",
+      "path": "/dream"
+    },
+    {
+      "method": "POST",
+      "path": "/mcp"
+    },
+    {
+      "method": "GET",
+      "path": "/recent"
+    },
+    {
+      "method": "POST",
+      "path": "/lifecycle/cycle"
+    },
+    {
+      "method": "POST",
+      "path": "/lifecycle/promote"
+    },
+    {
+      "method": "GET",
+      "path": "/lifecycle/status"
+    },
+    {
+      "method": "GET",
+      "path": "/lifecycle/deprecated"
+    }
+  ],
+  "source_of_truth": "uteke PROD store, document tree kontrak-core-cloud",
+  "version": "0.18.1"
+}

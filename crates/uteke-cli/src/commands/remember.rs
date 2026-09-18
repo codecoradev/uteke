@@ -136,7 +136,7 @@ pub(crate) fn run(
     let stored_id: String; // captured for set_source (#348)
 
     if detect_contradiction {
-        let (id, contradiction) = uteke
+        let (outcome, contradiction) = uteke
             .remember_with_contradiction(
                 content,
                 &tag_refs,
@@ -147,6 +147,8 @@ pub(crate) fn run(
                 0.65,
             )
             .map_err(|e| format!("Failed to store memory: {e}"))?;
+        let id = outcome.id.clone();
+        let embed_warning = outcome.warning.clone();
         stored_id = id.clone();
         tracing::info!("Memory stored with ID: {id}");
         // #1084/#1106: persist the (already-validated) author_type.
@@ -159,6 +161,8 @@ pub(crate) fn run(
             let mut obj = serde_json::json!({
                 "id": id,
                 "author_type": author_type.unwrap_or("agent"),
+                "embedding_written": embed_warning.is_none(),
+                "warning": embed_warning,
                 "contradiction": {
                     "detected": contradiction.contradicted,
                     "deprecated_id": contradiction.deprecated_id,
@@ -173,6 +177,10 @@ pub(crate) fn run(
             println!("{obj}");
         } else {
             output::print_remember_human(&id);
+            if let Some(ref warn) = embed_warning {
+                println!("  \u{26a0} Embedding NOT written: {warn}");
+                println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");
+            }
             if contradiction.contradicted {
                 if let Some(dep_id) = &contradiction.deprecated_id {
                     println!(
@@ -190,7 +198,7 @@ pub(crate) fn run(
             }
         }
     } else {
-        let id = if let Some(room_id) = room {
+        let outcome = if let Some(room_id) = room {
             // Room mode: store memory and link to room with author
             let author_name = author.unwrap_or("anonymous");
             uteke
@@ -206,9 +214,10 @@ pub(crate) fn run(
                 .map_err(|e| format!("Failed to store memory in room: {e}"))?
         } else {
             uteke
-                .remember(content, &tag_refs, metadata, ns)
+                .remember_detailed(content, &tag_refs, metadata, ns)
                 .map_err(|e| format!("Failed to store memory: {e}"))?
         };
+        let id = outcome.id.clone();
         stored_id = id.clone();
         tracing::info!("Memory stored with ID: {id}");
         // #1084/#1106: persist the (already-validated) author_type.
@@ -221,6 +230,8 @@ pub(crate) fn run(
             let mut obj = serde_json::json!({
                 "id": id,
                 "author_type": author_type.unwrap_or("agent"),
+                "embedding_written": outcome.embedding_written,
+                "warning": outcome.warning,
             });
             // Reconstruct metadata for JSON output (already consumed by remember)
             if entity.is_some() || category.is_some() || !meta.is_empty() {
@@ -247,6 +258,10 @@ pub(crate) fn run(
             println!("{obj}");
         } else {
             output::print_remember_human(&id);
+            if let Some(ref warn) = outcome.warning {
+                println!("  \u{26a0} Embedding NOT written: {warn}");
+                println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");
+            }
             if let Some(entity_name) = entity {
                 println!("  entity: {entity_name}");
             }

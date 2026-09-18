@@ -78,7 +78,7 @@ finds the evidence. 500 hand-curated questions, five memory abilities. Uteke run
 the full suite with **zero LLM calls in the retrieval path**: local embeddings,
 one CPU, deterministic.
 
-| Metric | uteke **v0.18.2** | agentmemory¹ | BM25-only¹ |
+| Metric | uteke **v0.18.1** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
 | **recall_any@5** (evidence in top-5) | **98.4%** | 95.2% | 86.2% |
 | recall_any@10 | 98.8% | 98.6% | 94.6% |
@@ -345,7 +345,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.18.2 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.18.1 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
 
 ---
@@ -387,7 +387,13 @@ Contributions welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guid
 ## ⭐ Star History
 
 <p align="center">
-  <img src="https://s3.ajianaz.dev/hermes/codecoradev/uteke/star-history.png" alt="Uteke Star History" width="720" />
+  <a href="https://www.star-history.com/?repos=codecoradev%2Futeke&type=timeline&legend=top-left">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&theme=dark&legend=top-left" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&theme=light&legend=top-left" />
+      <img alt="Uteke Star History Chart" src="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&legend=top-left" />
+    </picture>
+  </a>
 </p>
 
 ---
