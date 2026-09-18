@@ -20,6 +20,46 @@ fn main() {
     fs::create_dir_all(out.parent().unwrap()).ok();
     fs::write(out, &content).expect("Failed to write api-reference.md");
     println!("✅ Generated {} ({} bytes)", out.display(), content.len());
+
+    let core_path = Path::new("docs/core-contract.json");
+    let core = core_contract();
+    fs::write(core_path, &core).expect("Failed to write core-contract.json");
+    println!(
+        "✅ Generated {} ({} bytes)",
+        core_path.display(),
+        core.len()
+    );
+}
+
+/// Generates `docs/core-contract.json` — the machine-readable CORE endpoint
+/// list consumed by uteke-cloud's route_parity gate (uteke-cloud #81).
+/// CORE/LAB semantics: see the contract doc tree `kontrak-core-cloud` in the
+/// uteke PROD store. CORE changes require a uteke-cloud contract issue FIRST
+/// plus an explicit owner order recorded in the contract doc.
+fn core_contract() -> String {
+    use uteke_server::api_registry::Tier;
+
+    let mut core = Vec::new();
+    let mut lab = Vec::new();
+    for ep in ENDPOINTS {
+        let entry = serde_json::json!({ "method": ep.method, "path": ep.path });
+        match ep.tier {
+            Tier::Core => core.push(entry),
+            Tier::Lab => lab.push(entry),
+        }
+    }
+    let doc = serde_json::json!({
+        "contract": "CORE/LAB compatibility contract between uteke OSS and uteke-cloud",
+        "source_of_truth": "uteke PROD store, document tree kontrak-core-cloud",
+        "change_control": "CORE list changes ONLY via an explicit owner order recorded in the contract doc; OSS-side CORE semantic changes require a uteke-cloud contract issue first",
+        "generated_by": "cargo run -p docgen — from uteke-server api_registry::ENDPOINTS tier tags; do not edit manually",
+        "version": uteke_server::api_registry::REGISTRY_VERSION,
+        "core": core,
+        "lab": lab,
+    });
+    let mut s = serde_json::to_string_pretty(&doc).expect("serialize core contract");
+    s.push('\n');
+    s
 }
 
 fn generate() -> String {
