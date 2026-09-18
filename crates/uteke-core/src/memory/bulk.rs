@@ -2,6 +2,7 @@
 
 use crate::Error;
 use crate::memory::types::{DEFAULT_NAMESPACE, Memory};
+use crate::timeline::TimelineEventType;
 use rusqlite::params;
 
 use super::store::row_to_memory;
@@ -188,7 +189,17 @@ impl super::Store {
                     "Memory with id='{id}' not found in store. Nothing was deprecated."
                 )));
             }
-            // Already deprecated: idempotent success
+            // Already deprecated: idempotent success — no duplicate event.
+            return Ok(());
+        }
+        // Timeline audit trail (owner decision 2026-09-18): the deprecate path
+        // is the fleet's dominant delete traffic and was previously unwired.
+        // Best-effort, never fails the deprecation.
+        let event_data = serde_json::json!({ "reason": reason });
+        if let Err(e) =
+            self.add_timeline_event(id, TimelineEventType::Deprecated, Some(&event_data))
+        {
+            tracing::warn!("deprecated timeline event failed for {id}: {e}");
         }
         Ok(())
     }

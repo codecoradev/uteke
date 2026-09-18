@@ -145,6 +145,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_list(),
                 tool_get(),
                 tool_provenance(),
+                tool_timeline(),
                 tool_contradictions(),
                 tool_contradictions_undo(),
                 tool_supersede(),
@@ -205,6 +206,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_list" => exec_list(uteke, &arguments)?,
                 "uteke_get" => exec_get(uteke, &arguments)?,
                 "uteke_provenance" => exec_provenance(uteke, &arguments)?,
+                "uteke_timeline" => exec_timeline(uteke, &arguments)?,
                 "uteke_contradictions" => exec_contradictions(uteke, &arguments)?,
                 "uteke_contradictions_undo" => exec_contradictions_undo(uteke, &arguments)?,
                 "uteke_supersede" => exec_supersede(uteke, &arguments)?,
@@ -358,6 +360,43 @@ fn exec_provenance(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .ok_or_else(|| format!("Memory not found: {id}"))?;
 
     let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn tool_timeline() -> Value {
+    serde_json::json!({
+        "name": "uteke_timeline",
+        "description": "Timeline event chain for one memory (#347): created/updated/deprecated/forgot/superseded events with actor + evidence. Audit a memory's full lifecycle — who wrote it, when it changed, whether and by whom it was deprecated or deleted. Companion to uteke_provenance (which adds author/source/trust fields).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Full UUID or unambiguous prefix" },
+                "limit": { "type": "number", "description": "Max events to return (default 100)" }
+            },
+            "required": ["id"]
+        }
+    })
+}
+
+/// Timeline event chain for one memory (#347, owner decision 2026-09-18:
+/// audit-grade history). Events survive memory deletion, so this also works
+/// as a tombstone lookup for forgotten memories.
+fn exec_timeline(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
+    let id = resolve_id(uteke, id_arg)?;
+    let limit = args["limit"].as_u64().unwrap_or(100).min(1000) as usize;
+
+    let events = uteke
+        .timeline(&id, limit)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let text = serde_json::to_string_pretty(&events).unwrap_or_else(|_| "[]".to_string());
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),

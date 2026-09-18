@@ -1291,6 +1291,10 @@ impl crate::Uteke {
             .index
             .write()
             .map_err(|_| Error::lock("index write lock during forget"))?;
+        // Audit tombstone BEFORE the delete: with schema v20+ events survive the
+        // row, and on pre-v20 stores (FK CASCADE) this is the only chance to
+        // record the deletion at all. Best-effort.
+        self.try_timeline_event(id, crate::timeline::TimelineEventType::Forgot, None);
         // SQLite delete (source of truth).
         // Check the return value: Ok(false) means the ID was not found in the DB (#926).
         let deleted = self.store.delete(id)?;
@@ -2117,6 +2121,90 @@ mod forget_tests {
             result.is_err(),
             "forget on non-existent ID should return Err, not Ok(())"
         );
+    }
+
+    /// Owner decision 2026-09-18 (audit-grade timeline): the deprecate path
+    /// (soft forget, the fleet's dominant delete traffic) must write a
+    /// `deprecated` timeline event, and a hard forget must write a `forgot`
+    /// tombstone whose events survive the row deletion (schema v20).
+    #[test]
+    fn test_timeline_deprecate_and_forget_events() {
+        let uteke = Uteke::open(":memory:").unwrap();
+
+        // Soft forget → deprecated event recorded.
+        let embedding = vec![0.1_f32; 768];
+        let id = uteke
+            .remember_precomputed(
+                "soft-deleted memory",
+                &[],
+                None,
+                None,
+                "fact",
+                "text",
+                &embedding,
+            )
+            .unwrap();
+        uteke.forget(&id).unwrap();
+        let events = uteke.timeline(&id, 50).unwrap();
+        let types: Vec<&str> = events.iter().map(|e| e.event_type.as_str()).collect();
+        assert!(
+            types.contains(&"deprecated"),
+            "soft forget must record a deprecated event, got: {types:?}"
+        );
+
+        // Hard forget → forgot tombstone, and history survives the delete.
+        let dir = std::env::temp_dir().join(format!("uteke-tl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut uteke2 = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        uteke2.set_lifecycle_config(crate::LifecycleConfig {
+            soft_delete_only: false,
+            ..crate::LifecycleConfig::default()
+        });
+        let id2 = uteke2
+            .remember_precomputed(
+                "hard-deleted memory",
+                &[],
+                None,
+                None,
+                "fact",
+                "text",
+                &embedding,
+            )
+            .unwrap();
+        uteke2.forget(&id2).unwrap();
+
+        // Direct SQL through a fresh store handle: the memory row is gone but
+        // its events (created + forgot tombstone) must still be there.
+        let conn = rusqlite::Connection::open(dir.join("t.db")).unwrap();
+        let mem_count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM memories WHERE id = ?1", [&id2], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(mem_count, 0, "hard forget must remove the memory row");
+        let event_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM timeline_events WHERE memory_id = ?1",
+                [&id2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            event_count >= 2,
+            "history must survive hard delete: expected created+forgot events, got {event_count}"
+        );
+        let forgot: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM timeline_events WHERE memory_id = ?1 AND event_type='forgot'",
+                [&id2],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            forgot, 1,
+            "hard forget must record exactly one forgot tombstone"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Forget → re-insert should work (soft-deleted memory stays, new ID for re-insert) (#926).
