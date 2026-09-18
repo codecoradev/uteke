@@ -7,7 +7,7 @@
 **Uteke** is a local-first semantic memory engine for AI agents. Single Rust binary, fully offline, ~30ms recall. No API key, Docker, or cloud service needed.
 
 - **Repo:** `codecoradev/uteke` (remote GitHub), local clone
-- **Version:** 0.18.1
+- **Version:** 0.18.2
 - **License:** Apache 2.0
 - **Main branches:** `develop` (default branch, all PRs go here), `main` (release mirror)
 
@@ -339,6 +339,17 @@ Agents working in this repo are in **advisory mode by default**. An audit reques
 
 **Exception — the agent's own in-flight work branch:** local edits, builds, tests, and validation on a branch the agent created itself are fine without per-step approval; the gate applies at push/PR/merge and at touching anything that isn't yours.
 
+### 15. Record Key Notes and Findings to Uteke Memory Immediately
+
+Important notes, decisions, findings, and gotchas discovered while working in this repo MUST be saved to uteke memory (the relevant room/namespace) as soon as they are confirmed — not "at the end of the session", not "when writing the summary". Memory is the cross-session source of truth; an unrecorded finding is lost the moment the session ends.
+
+- **When:** the moment a finding is verified (bug reproduced, decision made, pitfall confirmed, owner clarification received)
+- **Where:** the project room for this repo (namespace `repo-uteke` on the shared PROD instance); agent-workflow state goes to the agent's own coordination room
+- **What:** bug root causes + reproducer anchors, owner decisions (with date), behavioral contract clarifications, release/repair state, verification evidence (scores/IDs, not vibes)
+- **Verify:** every write is confirmed by reading it back (recall or GET by ID) before it counts as recorded
+
+**Real case (2026-09-18):** the doc-recall flooding investigation (#1270/#1271) surfaced a key design fact — documents are global (NULL namespace) by design — and the owner had to explicitly remind the agent to persist findings to uteke memory and update this file. Recording state is part of the task, not an afterthought.
+
 
 ---
 
@@ -466,13 +477,14 @@ ONNX model load takes ~2.5s. Wrapping `embedder` in `Mutex<Option<EmbeddingEngin
  7. Update CHANGELOG.md (add under [Unreleased])
  8. Update docs/ if there are new features/flags (see Critical Rule #8)
  9. git add -A && git commit -m "type: description"
-10. git push origin <branch>
-11. gh pr create --base develop
-12. Monitor CI (gh pr checks <number>)
-13. Review PR comments (Cora, CodeRabbit)
-14. Fix if there are new findings
-15. gh pr merge <number> --squash --delete-branch
-16. Pick next issue
+10. Record key findings/decisions to uteke memory (Critical Rule #15) — verify read-back
+11. git push origin <branch>
+12. gh pr create --base develop
+13. Monitor CI (gh pr checks <number>)
+14. Review PR comments (Cora, CodeRabbit)
+15. Fix if there are new findings
+16. gh pr merge <number> --squash --delete-branch
+17. Pick next issue
 ```
 
 ### Branch Naming Convention
@@ -507,6 +519,7 @@ docs: update CLI reference for metadata flags
 |------------|--------|---------|
 | usearch `ef` parameter cannot be set | External | usearch v2.25.3 Rust bindings don't expose `ef` in `search()` |
 | Embedder requires `Mutex` | Architectural | ONNX tokenizer internally uses `&mut self` |
+| Documents are global (NULL namespace) | Design | Docs have no namespace isolation by design; scoped unified recall therefore never returns documents (doc arm retains exact-namespace matches only, #1271), while `doc search` remains the global doc view |
 | Metadata filtering is post-filter | Design | Entity/category/meta in JSON blob, not SQL column |
 | Consolidate is O(n²) | Algorithm | Pairwise cosine, slow at >1000 memories |
 | FTS5-only mode score placeholder | Design | BM25 can't normalize to 0..1, actual ranking via RRF |
