@@ -2,9 +2,20 @@
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-09-18
+
+Patch release. Theme: **fix the unified doc recall flooding bug (#1270)** —
+backport of the #1271 fix from develop onto the v0.18.1 release line, plus
+honest embedding-write reporting (#1273). The upcoming minor release
+(v0.19.0) ships #1269, #1272, and #1274 on top.
+
 ### Changed
 
-- **`remember` reports embedding-write failures honestly (#1273)** - when embedding generation fails after retries, the vector insert fails, or index persistence fails, the memory is still stored (SQLite + FTS5, keyword-searchable) but every surface now says so instead of failing hard or passing silently: `remember_detailed`/`remember_typed_detailed`/`remember_auto_infer_detailed` return a `RememberOutcome { id, embedding_written, warning }`; `POST /remember` and `POST /room/remember` responses carry `embedding_written` + `warning`; the CLI prints a warning line and includes both fields in JSON output; MCP `uteke_remember` appends the warning to its result text. Recoverable any time via `uteke repair`.
+- **`remember` reports embedding-write failures honestly (#1273)** - when embedding generation fails after retries, the vector insert fails, or index persistence fails, the memory is still stored (SQLite + FTS5, keyword-searchable) but every surface now says so instead of failing hard or passing silently: `remember_detailed`/`remember_typed_detailed`/`remember_auto_infer_detailed` return a `RememberOutcome { id, embedding_written, warning }`; `POST /remember` and `POST /room/remember` responses carry `embedding_written` + `warning`; the CLI prints a warning line and includes both fields in JSON output; MCP `uteke_remember` appends the warning to its result text. Recoverable any time via `uteke repair`. (Moved from Unreleased: ships in v0.18.2.)
+
+### Fixed
+
+- **Unified recall (`--type all`) no longer floods results with cross-namespace documents (#1270, #1271)** - the document arm ignored the recall's namespace (`doc_search`'s `ns` parameter was unused), so documents from any namespace — including NULL-namespace rows — leaked into every scoped recall; new `Uteke::doc_search_in(query, limit, mode, namespace)` retains only exact-namespace documents (NULL-namespace docs are global-view-only, matching the #1269 doc-list semantics on develop). Document scores are now the raw hybrid RRF sum (~0.016–0.033) instead of the rank-derived `(k+1)/(k+1+rank)` that reported a fake 1.000 for rank-0 regardless of query and outranked every memory fusion score. The memory arm is called with `min_score 0.0` (#1223 rank-based scores) and the caller's threshold is applied post-merge, so `--min`/`--strict` behave consistently on both result types. Unified document results now carry their `namespace`. Core-only change (`crates/uteke-core/src/lib.rs`) — CLI/MCP/HTTP surface unchanged. Design note: documents are global by design (NULL namespace = global view), so namespace-scoped unified recall returns memories only; documents remain discoverable via global `doc search`.
 
 ## [0.18.1] - 2026-09-15
 

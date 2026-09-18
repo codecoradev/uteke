@@ -78,7 +78,7 @@ finds the evidence. 500 hand-curated questions, five memory abilities. Uteke run
 the full suite with **zero LLM calls in the retrieval path**: local embeddings,
 one CPU, deterministic.
 
-| Metric | uteke **v0.18.1** | agentmemory¹ | BM25-only¹ |
+| Metric | uteke **v0.18.2** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
 | **recall_any@5** (evidence in top-5) | **98.4%** | 95.2% | 86.2% |
 | recall_any@10 | 98.8% | 98.6% | 94.6% |
@@ -345,7 +345,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.18.1 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.18.2 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
 
 ---
