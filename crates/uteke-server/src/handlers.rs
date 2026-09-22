@@ -442,6 +442,19 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 // rank-order preserving. Honours the caller's search_type
                 // (validated with the same 400 as the plain path).
                 if req_data.pack {
+                    // Loud reject like the CLI: pack is not composable with
+                    // point-in-time / range filters (the plain unified path
+                    // consumes them further down, after this early return).
+                    if req_data.at.is_some()
+                        || req_data.after.is_some()
+                        || req_data.before.is_some()
+                    {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            "pack is not supported with at/after/before filters; rerun without time filters",
+                        );
+                    }
                     let parsed_search_type = match req_data.search_type.as_deref() {
                         Some("memory") => uteke_core::SearchType::Memory,
                         Some("doc") => uteke_core::SearchType::Document,
@@ -3804,6 +3817,26 @@ mod pack_recall_api_tests {
         assert!(
             !resp3["skipped"].as_array().unwrap().is_empty(),
             "oversized items must be reported: {resp3}"
+        );
+
+        // pack + time filters → 400 (loud, same contract as the CLI).
+        let body4 = serde_json::json!({
+            "query": "quick brown fox",
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 10000,
+            "at": "2026-01-01T00:00:00Z"
+        })
+        .to_string();
+        let (status, resp4) = app.call(Method::Post, "/recall", Some(body4));
+        assert_eq!(status, 400, "{resp4}");
+        assert!(
+            resp4["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("pack is not supported"),
+            "{resp4}"
         );
     }
 }
