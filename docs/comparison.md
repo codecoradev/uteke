@@ -302,7 +302,7 @@ There's no "best" memory layer. There's the **right one for your constraints**. 
 **Uteke chose simplicity, privacy, and multi-agent collaboration.** If those are your priorities too, give it a try:
 
 ```bash
-curl -sSL codecora.dev/install | sh
+curl -sSL codecora.dev/uteke/install | sh
 uteke onboard
 ```
 

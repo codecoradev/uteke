@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <!-- Uteke README hero banner — EVERGREEN (no version/star/test numbers; dynamic figures live in shields badges).
+       Source of truth: docs/assets/uteke-banner.svg — regenerate PNG via: python3 scripts/regen-banner.py -->
+  <defs>
+    <radialGradient id="bg" cx="85%" cy="0%" r="140%">
+      <stop offset="0%" stop-color="#353048"/>
+      <stop offset="45%" stop-color="#1D222F"/>
+      <stop offset="100%" stop-color="#161A24"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- starfield specks -->
+  <circle cx="128" cy="134" r="2" fill="#FFFFFF" opacity="0.13"/>
+  <circle cx="1088" cy="90" r="2.5" fill="#FFFFFF" opacity="0.15"/>
+  <circle cx="640" cy="250" r="2" fill="#FFFFFF" opacity="0.11"/>
+  <circle cx="781" cy="506" r="2" fill="#FFFFFF" opacity="0.13"/>
+  <circle cx="51" cy="557" r="2.5" fill="#FFFFFF" opacity="0.12"/>
+
+  <!-- avatar tile + mascot -->
+  <rect x="56" y="150" width="48" height="48" rx="13" fill="#1E2736" stroke="#454E63" stroke-width="2"/>
+  <line x1="80" y1="156" x2="80" y2="162" stroke="#8D95A9" stroke-width="2"/>
+  <circle cx="80" cy="155" r="2.5" fill="#B09AF5"/>
+  <path d="M 66 180 a 14 14 0 0 1 28 0 z" fill="#CFE4F2"/>
+  <rect x="64" y="178" width="32" height="12" rx="6" fill="#CFE4F2"/>
+  <rect x="70" y="179" width="20" height="7" rx="3.5" fill="#223047"/>
+  <circle cx="76" cy="182.5" r="1.6" fill="#CFE4F2"/>
+  <circle cx="84" cy="182.5" r="1.6" fill="#CFE4F2"/>
+
+  <!-- username row -->
+  <text x="116" y="183" font-family="Nunito ExtraLight" font-weight="700" font-size="23"><tspan fill="#F2F4FA">codecoradev</tspan><tspan fill="#6F7787"> / </tspan><tspan fill="#B09AF5">uteke</tspan></text>
+
+  <!-- headline -->
+  <text x="56" y="288" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">Offline Semantic Memory</text>
+  <text x="56" y="342" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">for AI Agents</text>
+
+  <!-- subtitle -->
+  <text x="56" y="410" font-family="Inter" font-weight="400" font-size="19" fill="#8D95A9">~45ms recall · single Rust binary · zero cloud</text>
+
+  <!-- install code box (lower-right, clear of headline) -->
+  <rect x="700" y="470" width="524" height="60" rx="14" fill="#131722" stroke="#2C3344" stroke-width="1"/>
+  <text x="962" y="508" text-anchor="middle" font-family="JetBrains Mono" font-weight="400" font-size="19" fill="#B9A7EA">curl -sSL codecora.dev/uteke/install | sh</text>
+
+  <!-- meta row (right-aligned; single fill — cairosvg mis-anchors multi-tspan end-anchored text) -->
+  <text x="1224" y="300" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#82C692">Apache 2.0 · offline-first · CPU-only</text>
+
+  <!-- features row -->
+  <text x="1224" y="348" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#98A2B8">HNSW + FTS5 + RRF(k=60) · ONNX EmbeddingGemma · MCP server</text>
+</svg>
