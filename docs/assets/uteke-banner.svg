@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
   <!-- Uteke README hero banner — EVERGREEN (no version/star/test numbers; dynamic figures live in shields badges).
-       Source of truth: docs/assets/uteke-banner.svg — regenerate PNG via: python3 scripts/regen-banner.py -->
+       Source of truth: docs/assets/uteke-banner.svg — regenerate PNG via: python3 scripts/regen-banner.py
+       The avatar slot at (56,150) 48x48 is composited with the official Uteke icon
+       (docs/assets/uteke-icon.png from uteke-mobile) by the regen script. -->
   <defs>
     <radialGradient id="bg" cx="85%" cy="0%" r="140%">
       <stop offset="0%" stop-color="#353048"/>
@@ -18,17 +20,7 @@
   <circle cx="781" cy="506" r="2" fill="#FFFFFF" opacity="0.13"/>
   <circle cx="51" cy="557" r="2.5" fill="#FFFFFF" opacity="0.12"/>
 
-  <!-- avatar tile + mascot -->
-  <rect x="56" y="150" width="48" height="48" rx="13" fill="#1E2736" stroke="#454E63" stroke-width="2"/>
-  <line x1="80" y1="156" x2="80" y2="162" stroke="#8D95A9" stroke-width="2"/>
-  <circle cx="80" cy="155" r="2.5" fill="#B09AF5"/>
-  <path d="M 66 180 a 14 14 0 0 1 28 0 z" fill="#CFE4F2"/>
-  <rect x="64" y="178" width="32" height="12" rx="6" fill="#CFE4F2"/>
-  <rect x="70" y="179" width="20" height="7" rx="3.5" fill="#223047"/>
-  <circle cx="76" cy="182.5" r="1.6" fill="#CFE4F2"/>
-  <circle cx="84" cy="182.5" r="1.6" fill="#CFE4F2"/>
-
-  <!-- username row -->
+  <!-- username row (avatar slot sits to the left, composited by regen script) -->
   <text x="116" y="183" font-family="Nunito ExtraLight" font-weight="700" font-size="23"><tspan fill="#F2F4FA">codecoradev</tspan><tspan fill="#6F7787"> / </tspan><tspan fill="#B09AF5">uteke</tspan></text>
 
   <!-- headline -->
