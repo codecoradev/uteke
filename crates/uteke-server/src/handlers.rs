@@ -437,6 +437,48 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     };
                 }
 
+                // Budgeted context pack (#1281 Phase 1): unified recall +
+                // greedy character-budget fill; deterministic, LLM-free,
+                // rank-order preserving. Honours the caller's search_type
+                // (validated with the same 400 as the plain path).
+                if req_data.pack {
+                    let parsed_search_type = match req_data.search_type.as_deref() {
+                        Some("memory") => uteke_core::SearchType::Memory,
+                        Some("doc") => uteke_core::SearchType::Document,
+                        Some("all") | None => uteke_core::SearchType::All,
+                        Some(other) => {
+                            return ctx.error_response_for(
+                                req,
+                                400,
+                                format!(
+                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
+                                ),
+                            );
+                        }
+                    };
+                    let exclude_ids = req_data.exclude_ids.clone().unwrap_or_default();
+                    return match uteke.recall_unified_packed(
+                        &req_data.query,
+                        limit,
+                        tags_filter,
+                        ns(&req_data.namespace),
+                        min_score,
+                        parsed_search_type,
+                        entity_filter,
+                        category_filter,
+                        req_data.enrich,
+                        strategy,
+                        req_data.budget_chars.unwrap_or(4000),
+                        &exclude_ids,
+                    ) {
+                        Ok(pack) => ctx.ok_response_for(req, &pack),
+                        Err(e) => {
+                            error!("Pack recall error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    };
+                }
+
                 // Unified search path (#531): when search_type is specified,
                 // use recall_unified. Entity/category filters are passed
                 // through to the core recall candidate loop (#663).
@@ -3624,6 +3666,147 @@ mod contradiction_api_tests {
 }
 
 // ── Explain recall API (#1160) ──────────────────────────────────────
+
+#[cfg(test)]
+mod pack_recall_api_tests {
+    //! #1281 Phase 1: `pack` recall returns a budgeted ContextPack envelope.
+    use super::*;
+    use tiny_http::TestRequest;
+
+    struct PackApp {
+        uteke: Mutex<Uteke>,
+    }
+
+    impl PackApp {
+        fn new() -> Self {
+            // No embedder: tests use the fts5 strategy, which needs no
+            // query embedding (CI-safe without ONNX).
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+            }
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            body: Option<String>,
+        ) -> (u16, serde_json::Value) {
+            let mut req = match body {
+                Some(b) => {
+                    let leaked: &'static str = Box::leak(b.into_boxed_str());
+                    TestRequest::new()
+                        .with_method(method)
+                        .with_path(url)
+                        .with_body(leaked)
+                        .into()
+                }
+                None => TestRequest::new().with_method(method).with_path(url).into(),
+            };
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: None,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+
+        fn remember_in(&self, content: &str, namespace: &str) -> String {
+            let body =
+                serde_json::json!({ "content": content, "namespace": namespace }).to_string();
+            let (status, resp) = self.call(Method::Post, "/remember", Some(body));
+            assert_eq!(status, 200, "remember must succeed: {resp}");
+            resp["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("remember response must carry id: {resp}"))
+                .to_string()
+        }
+    }
+
+    #[test]
+    fn pack_returns_envelope_honours_budget_and_excludes() {
+        let app = PackApp::new();
+        let fox_id = app.remember_in("The quick brown fox jumps over the lazy dog", "pack-ns");
+        app.remember_in(
+            "Completely unrelated content about gardening tools",
+            "pack-ns",
+        );
+
+        // Normal pack: envelope shape with a generous budget.
+        let body = serde_json::json!({
+            "query": "quick brown fox",
+            "limit": 5,
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 10000
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/recall", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert!(
+            resp["selected"].is_array(),
+            "pack must carry selected: {resp}"
+        );
+        assert!(
+            !resp["selected"].as_array().unwrap().is_empty(),
+            "fts5 must find the fox"
+        );
+        assert_eq!(resp["budget_chars"], serde_json::json!(10000));
+        assert!(resp["budget_used"].as_u64().unwrap() > 0, "{resp}");
+        assert!(resp["skipped"].is_array(), "{resp}");
+
+        // exclude_ids: the fox is already injected → skipped, reason excluded.
+        let body2 = serde_json::json!({
+            "query": "quick brown fox",
+            "limit": 5,
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 10000,
+            "exclude_ids": [fox_id]
+        })
+        .to_string();
+        let (status, resp2) = app.call(Method::Post, "/recall", Some(body2));
+        assert_eq!(status, 200, "{resp2}");
+        let skipped = resp2["skipped"].as_array().unwrap();
+        assert!(
+            skipped
+                .iter()
+                .any(|s| s["memory_id"] == serde_json::json!(fox_id)
+                    && s["reason"] == serde_json::json!("excluded")),
+            "excluded fox must be reported: {resp2}"
+        );
+
+        // Impossible budget → nothing selected, everything skipped as budget.
+        let body3 = serde_json::json!({
+            "query": "quick brown fox",
+            "limit": 5,
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 1
+        })
+        .to_string();
+        let (status, resp3) = app.call(Method::Post, "/recall", Some(body3));
+        assert_eq!(status, 200, "{resp3}");
+        assert!(resp3["selected"].as_array().unwrap().is_empty());
+        assert_eq!(resp3["budget_used"], serde_json::json!(0));
+        assert!(
+            !resp3["skipped"].as_array().unwrap().is_empty(),
+            "oversized items must be reported: {resp3}"
+        );
+    }
+}
 
 #[cfg(test)]
 mod explain_recall_api_tests {

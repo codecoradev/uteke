@@ -31,6 +31,9 @@ pub(crate) fn run_recall(
     search_type: Option<&str>,
     enrich: bool,
     explain: bool,
+    pack: bool,
+    budget: usize,
+    exclude_ids: &[String],
 ) -> Result<(), String> {
     // Resolve search type: --type flag > default (All = unified)
     let resolved_search_type = match search_type {
@@ -198,6 +201,44 @@ pub(crate) fn run_recall(
                 println!("   ID: {}", er.result.memory.id);
                 println!();
             }
+        }
+        return Ok(());
+    }
+
+    // Budgeted context pack (#1281 Phase 1): unified recall + greedy
+    // character-budget fill. Deterministic, LLM-free, rank-order preserving.
+    // Entity/category filters are honoured by the core post-filter; memory
+    // filters that have no packed-path equivalent are rejected loudly
+    // instead of being silently dropped.
+    if pack {
+        if at.is_some() || related || where_filter.is_some() {
+            return Err(
+                "--pack does not support --at/--related/--where; rerun without them".to_string(),
+            );
+        }
+        let pack_result = uteke
+            .recall_unified_packed(
+                query,
+                limit,
+                tags_filter,
+                ns,
+                min_score,
+                resolved_search_type,
+                entity,
+                category,
+                enrich,
+                resolved_strategy,
+                budget,
+                exclude_ids,
+            )
+            .map_err(|e| format!("Failed to recall: {e}"))?;
+
+        uteke.reset_salience_recency_config();
+
+        if cli.json {
+            output::print_json(&pack_result);
+        } else {
+            output::print_pack_human(&pack_result);
         }
         return Ok(());
     }

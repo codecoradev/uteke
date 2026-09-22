@@ -137,7 +137,7 @@ Both transports expose the same 46 tools (MCP protocol version `2025-06-18`):
 | Tool | Description |
 |------|-------------|
 | `uteke_remember` | Store a memory (supports type, room, author, tags) |
-| `uteke_recall` | Semantic search (supports tags filter, min_score, strategy: fusion/vector/fts5/hybrid/graph — default `fusion` since 0.16.0, and the `explain` flag showing why each result ranked where it did, #1160) |
+| `uteke_recall` | Semantic search (supports tags filter, min_score, strategy: fusion/vector/fts5/hybrid/graph — default `fusion` since 0.16.0, and the `explain` flag showing why each result ranked where it did, #1160). `pack: true` returns a budgeted context pack `{selected, skipped, budget_used, budget_chars}` (#1281) — deterministic, LLM-free, rank-order preserving; pair with `budget_chars` and `exclude_ids` (IDs already injected this turn) |
 | `uteke_search` | Text search with optional tag filter |
 | `uteke_list` | List memories (supports pagination via offset, or `include_meta: true` for the `{memories, total, has_more, next_offset}` envelope, #1188) |
 | `uteke_get` | Fetch a single memory's full record by id — no truncation (accepts UUID or unambiguous prefix) |

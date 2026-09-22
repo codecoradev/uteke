@@ -28,6 +28,7 @@ mod maintenance;
 pub mod memory;
 pub mod offline_extraction;
 mod operations;
+pub mod pack_mode;
 
 pub use operations::RememberOutcome;
 mod orphans;
@@ -2222,6 +2223,44 @@ impl Uteke {
         }
 
         Ok(results)
+    }
+
+    /// Budgeted context pack over unified recall (#1281 Phase 1).
+    ///
+    /// Runs the normal unified recall, then greedily selects results into a
+    /// caller-supplied character budget (see [`pack_mode`]). Deterministic,
+    /// LLM-free, rank-order preserving. `exclude_ids` are memory IDs the
+    /// caller already injected this turn; they come back as `skipped` with
+    /// reason `excluded`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn recall_unified_packed(
+        &self,
+        query: &str,
+        limit: usize,
+        tags_filter: Option<&[&str]>,
+        namespace: Option<&str>,
+        min_score: f32,
+        search_type: SearchType,
+        entity_filter: Option<&str>,
+        category_filter: Option<&str>,
+        enrich: bool,
+        strategy: RecallStrategy,
+        budget_chars: usize,
+        exclude_ids: &[String],
+    ) -> Result<pack_mode::ContextPack, Error> {
+        let results = self.recall_unified(
+            query,
+            limit,
+            tags_filter,
+            namespace,
+            min_score,
+            search_type,
+            entity_filter,
+            category_filter,
+            enrich,
+            strategy,
+        )?;
+        Ok(pack_mode::pack_context(results, budget_chars, exclude_ids))
     }
 
     #[allow(clippy::too_many_arguments)]

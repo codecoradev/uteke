@@ -122,6 +122,9 @@ uteke recall "API architecture" --type doc
 uteke recall "deployment" --type memory
 # Explain mode (#1160): show the ranking signals behind each result
 uteke recall "database caching" --explain
+# Budgeted context pack (#1281): bounded selection for prompt injection
+uteke recall "database caching" --pack --budget 4000
+uteke recall "database caching" --pack --exclude-ids abc123,def456
 ```
 
 | Flag | Description |
@@ -133,6 +136,9 @@ uteke recall "database caching" --explain
 | `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
 | `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`) |
 | `--explain` | Show the ranking signals behind each result (#1160): final score, strategy, vector similarity + rank, FTS rank, RRF score with per-channel fusion contributions, and jaccard/salience/recency/graph boost deltas. Memory-only — not available with `--type doc` |
+| `--pack` | Return a budgeted context pack (#1281) instead of a bare ranked list: `{selected, skipped, budget_used, budget_chars}`. Rank-order preserving greedy fill of the character budget; deterministic and LLM-free |
+| `--budget <chars>` | Character budget for `--pack` (default: 4000) |
+| `--exclude-ids <ids>` | Memory IDs already injected this turn, comma-separated — excluded from the pack and reported as `skipped[reason=excluded]` |
 | `--json` | Output as JSON array |
 
 ## uteke search
