@@ -298,7 +298,10 @@ fn tool_recall() -> Value {
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
                 "strategy": { "type": "string", "enum": ["fusion", "hybrid", "vector", "fts5", "graph"], "description": "Recall strategy: 'fusion' (default since 0.16.0, weighted RRF of vector×1.7 + hybrid×1, #1123), 'hybrid' (vector+FTS5 via RRF), 'vector' (similarity only), 'fts5' (keyword only), or 'graph' (hybrid + graph-signal reranking)", "default": "fusion" },
-                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." }
+                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." },
+                "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
+                "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
+                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." }
             },
             "required": ["query"]
         }
@@ -1205,6 +1208,55 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     // Use unified search when type is specified or default (all).
     // Fall back to legacy recall only for backward compat with existing MCP consumers.
+    // Budgeted context pack (#1281 Phase 1): `pack: true` returns a
+    // ContextPack envelope (selected/skipped/budget_used/budget_chars)
+    // instead of a bare ranked list. Deterministic, LLM-free, rank-order
+    // preserving; `exclude_ids` are memory IDs already injected this turn.
+    if args["pack"].as_bool().unwrap_or(false) {
+        let budget = args["budget_chars"].as_u64().unwrap_or(4000) as usize;
+        let exclude_ids: Vec<String> = args["exclude_ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let pack = uteke
+            .recall_unified_packed(
+                query,
+                limit,
+                tags_ref,
+                namespace,
+                min_score,
+                search_type,
+                None,
+                None,
+                false,
+                strategy,
+                budget,
+                &exclude_ids,
+            )
+            .map_err(|e| format!("Failed: {e}"))?;
+        if pack.selected.is_empty() {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: "No results fit the budget.".to_string(),
+                }],
+                is_error: false,
+            });
+        }
+        let text = serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string());
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text,
+            }],
+            is_error: false,
+        });
+    }
+
     let results = uteke
         .recall_unified(
             query,

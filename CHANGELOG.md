@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Budgeted context pack: `recall --pack` (#1281 Phase 1)** - `uteke recall --pack [--budget <chars>] [--exclude-ids <ids>]` returns a `{selected, skipped, budget_used, budget_chars}` envelope instead of a bare ranked list: rank-order preserving greedy fill of a character budget, with per-item skip reasons (`excluded` for caller-supplied memory IDs already injected this turn, `budget` for items that no longer fit). Deterministic and LLM-free — ranking is untouched (fusion RRF remains the default strategy); this is a selection primitive, not a re-ranker. Surfaces: CLI flags, HTTP `POST /recall` (`"pack": true`, `"budget_chars"`, `"exclude_ids"`), MCP `uteke_recall` (`pack`, `budget_chars`, `exclude_ids`). Phase 2 (MMR diversity) is an experiment gated on LongMemEval + redundancy benchmarks per the issue.
+
 ## [0.18.2] - 2026-09-18
 
 Patch release. Theme: **fix the unified doc recall flooding bug (#1270)** —

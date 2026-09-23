@@ -93,6 +93,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             r#type,
             enrich,
             explain,
+            pack,
+            budget,
+            exclude_ids,
         } => recall::run_recall(
             cli,
             uteke,
@@ -117,6 +120,9 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             r#type.as_deref(),
             *enrich,
             *explain,
+            *pack,
+            *budget,
+            exclude_ids,
         ),
 
         Commands::Context { namespace } => {

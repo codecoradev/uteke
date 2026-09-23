@@ -161,6 +161,18 @@ pub enum Commands {
         /// on document results (#689).
         #[arg(long)]
         enrich: bool,
+        /// Return a budgeted context pack instead of a bare ranked list
+        /// (#1281): rank-order preserving greedy fill of a character budget,
+        /// deterministic and LLM-free. Pair with --budget and --exclude-ids.
+        #[arg(long)]
+        pack: bool,
+        /// Character budget for --pack (default: 4000).
+        #[arg(long, default_value = "4000")]
+        budget: usize,
+        /// Memory IDs to exclude from a --pack result (already injected this
+        /// turn), comma-separated (#1281).
+        #[arg(long, value_delimiter = ',')]
+        exclude_ids: Vec<String>,
     },
     /// Show project context summary (memory counts, top tags, recent activity)
     Context {

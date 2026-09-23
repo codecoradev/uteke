@@ -249,6 +249,18 @@ pub struct RecallRequest {
     /// `linked_memory_ids` on document results.
     #[serde(default)]
     pub enrich: bool,
+    /// Budgeted context pack (#1281 Phase 1): return a ContextPack
+    /// (selected/skipped/budget_used) instead of a bare ranked list.
+    /// Deterministic, LLM-free, rank-order preserving.
+    #[serde(default)]
+    pub pack: bool,
+    /// Character budget for `pack` (default 4000).
+    #[serde(default)]
+    pub budget_chars: Option<usize>,
+    /// Memory IDs already injected this turn; excluded from pack results
+    /// (reported as `skipped` with reason `excluded`).
+    #[serde(default)]
+    pub exclude_ids: Option<Vec<String>>,
     /// Recall strategy: "fusion" (default since 0.16.0), "vector", "fts5",
     /// "hybrid", or "graph" (#900, #1034, #1123).
     /// When absent, the server falls back to `[recall] default_strategy` from

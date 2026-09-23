@@ -1,8 +1,38 @@
 //! Human-readable and JSON output helpers.
 
+use uteke_core::pack_mode::ContextPack;
+
 /// Print a value as JSON to stdout.
 pub(crate) fn print_json<T: serde::Serialize>(value: &T) {
     println!("{}", serde_json::to_string(value).unwrap());
+}
+
+/// Print a context pack (#1281) in human-readable form.
+pub(crate) fn print_pack_human(pack: &ContextPack) {
+    println!(
+        "Context pack: {} selected, {} skipped, budget {}/{} chars",
+        pack.selected.len(),
+        pack.skipped.len(),
+        pack.budget_used,
+        pack.budget_chars
+    );
+    if pack.selected.is_empty() {
+        println!("No results fit the budget.");
+        return;
+    }
+    println!("\n── selected ──");
+    print_unified_human(&pack.selected);
+    if !pack.skipped.is_empty() {
+        println!("\n── skipped ──");
+        for s in &pack.skipped {
+            let id = s
+                .memory_id
+                .as_deref()
+                .map(|i| format!(" ({i})"))
+                .unwrap_or_default();
+            println!("• [{}] {}{id}", s.reason, s.content);
+        }
+    }
 }
 
 /// Print tags in human-readable format.
