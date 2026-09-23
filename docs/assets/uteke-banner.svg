@@ -12,6 +12,12 @@
   </defs>
 
   <rect width="1280" height="640" fill="url(#bg)"/>
+  <radialGradient id="glow" cx="50%" cy="118%" r="85%">
+    <stop offset="0%" stop-color="#94E2D5" stop-opacity="0.38"/>
+    <stop offset="45%" stop-color="#94E2D5" stop-opacity="0.12"/>
+    <stop offset="100%" stop-color="#94E2D5" stop-opacity="0"/>
+  </radialGradient>
+  <rect width="1280" height="640" fill="url(#glow)"/>
 
   <!-- starfield specks -->
   <circle cx="128" cy="134" r="2" fill="#FFFFFF" opacity="0.13"/>
@@ -24,18 +30,21 @@
   <text x="116" y="183" font-family="Nunito ExtraLight" font-weight="700" font-size="23"><tspan fill="#F2F4FA">codecoradev</tspan><tspan fill="#6F7787"> / </tspan><tspan fill="#B09AF5">uteke</tspan></text>
 
   <!-- headline -->
-  <text x="56" y="288" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">Offline Semantic Memory</text>
-  <text x="56" y="342" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">for AI Agents</text>
+  <text x="56" y="288" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">Offline <tspan fill="#94E2D5">Semantic Memory</tspan></text>
+  <text x="56" y="342" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">for <tspan fill="#94E2D5">AI Agents</tspan></text>
 
   <!-- subtitle -->
   <text x="56" y="410" font-family="Inter" font-weight="400" font-size="19" fill="#8D95A9">~45ms recall · single Rust binary · zero cloud</text>
 
   <!-- install code box (lower-right, clear of headline) -->
   <rect x="700" y="470" width="524" height="60" rx="14" fill="#131722" stroke="#2C3344" stroke-width="1"/>
-  <text x="962" y="508" text-anchor="middle" font-family="JetBrains Mono" font-weight="400" font-size="19" fill="#B9A7EA">curl -sSL codecora.dev/uteke/install | sh</text>
+  <text x="962" y="508" text-anchor="middle" font-family="JetBrains Mono" font-weight="400" font-size="19" fill="#94E2D5">curl -sSL codecora.dev/uteke/install | sh</text>
 
   <!-- meta row (right-aligned; single fill — cairosvg mis-anchors multi-tspan end-anchored text) -->
-  <text x="1224" y="300" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#82C692">Apache 2.0 · offline-first · CPU-only</text>
+  <text x="1224" y="300" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#7ED8C9">Apache 2.0 · offline-first · CPU-only</text>
+
+  <!-- footer line -->
+  <text x="56" y="590" font-family="Inter" font-weight="400" font-size="17" fill="#8D95A9">Mobile: <tspan fill="#94E2D5">https://uteke.app</tspan> · local-first · your data never leaves your device</text>
 
   <!-- features row -->
   <text x="1224" y="348" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#98A2B8">HNSW + FTS5 + RRF(k=60) · ONNX EmbeddingGemma · MCP server</text>
