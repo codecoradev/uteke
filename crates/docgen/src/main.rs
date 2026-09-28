@@ -106,7 +106,7 @@ fn generate() -> String {
 }
 
 fn categorize(path: &str) -> &'static str {
-    if path == "/health" {
+    if path == "/health" || path == "/routes" {
         return "🔴 Health & Info";
     }
     if path.starts_with("/room/") || path.starts_with("/doc/room/") {

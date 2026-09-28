@@ -8,6 +8,8 @@
 
 ### Added
 
+- **`GET /routes` — machine-readable API route introspection (#1289)** - `uteke-serve` now serves the endpoint registry as JSON: method, path, tier (CORE/LAB), description, request/response types, and related issues for every route, straight from `api_registry::ENDPOINTS` — the same single source of truth that generates `docs/api-reference.md`. Consumers (typed clients, MCP tool descriptions, agent skill notes) can validate against the real contract instead of stale notes, closing the GET-vs-POST and param-name mismatch class that produced false "missing feature" reports. Auth follows the standard rules: anonymous callers get 401 when a token is configured (GET is allowed for read-only tokens, like every read endpoint). Registry entry is LAB tier (introspection only, no CORE contract impact); usage text and docgen grouping updated.
+
 - **Budgeted context pack: `recall --pack` (#1281 Phase 1)** - `uteke recall --pack [--budget <chars>] [--exclude-ids <ids>]` returns a `{selected, skipped, budget_used, budget_chars}` envelope instead of a bare ranked list: rank-order preserving greedy fill of a character budget, with per-item skip reasons (`excluded` for caller-supplied memory IDs already injected this turn, `budget` for items that no longer fit). Deterministic and LLM-free — ranking is untouched (fusion RRF remains the default strategy); this is a selection primitive, not a re-ranker. Surfaces: CLI flags, HTTP `POST /recall` (`"pack": true`, `"budget_chars"`, `"exclude_ids"`), MCP `uteke_recall` (`pack`, `budget_chars`, `exclude_ids`). Phase 2 (MMR diversity) is an experiment gated on LongMemEval + redundancy benchmarks per the issue.
 
 ## [0.18.2] - 2026-09-18

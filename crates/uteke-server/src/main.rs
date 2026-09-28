@@ -3,7 +3,8 @@
 //! Keeps the embedding model loaded in RAM for <50ms recall.
 //! Usage: `uteke-serve [--port 8767] [--host 127.0.0.1] [--auth-token <TOKEN>]`
 
-#[cfg(feature = "docgen")]
+// api_registry is runtime data now: GET /routes serves it (#1289),
+// in addition to its original docgen role.
 mod api_registry;
 mod context;
 mod handlers;
@@ -125,6 +126,9 @@ fn main() {
                 println!("API:");
                 println!(
                     "  GET  /health              → {{ status, version, memories, namespaces }}"
+                );
+                println!(
+                    "  GET  /routes              → machine-readable endpoint registry (method, path, tier, description) (#1289)"
                 );
                 println!("  POST /remember            → {{ content, tags? }} → {{ id }}");
                 println!("  POST /recall              → {{ query, limit? }} → {{ results }}");

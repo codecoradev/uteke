@@ -229,6 +229,12 @@ Health check — tokenless requests get {status} only; a valid bearer token (or 
 
 **Response**: [`HealthResponse`](#healthresponse)
 
+#### 🟢 `GET` `/routes`
+
+Machine-readable API route introspection: returns this registry (method, path, tier, description, request/response types) as JSON — the same source of truth that generates docs/api-reference.md (#1289).
+
+*Related: `#1289`*
+
 
 ## 🔵 Documents
 

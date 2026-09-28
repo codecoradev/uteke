@@ -78,6 +78,16 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         method: "GET",
+        path: "/routes",
+        tier: Tier::Lab,
+        description: "Machine-readable API route introspection: returns this registry (method, path, tier, description, request/response types) as JSON — the same source of truth that generates docs/api-reference.md (#1289).",
+        request_type: None,
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1289"],
+    },
+    Endpoint {
+        method: "GET",
         path: "/namespaces",
         tier: Tier::Core,
         description: "List all namespaces in the memory store. `?with_counts=true` adds `count` (total) plus `active`/`deprecated` breakdown fields (#1181).",

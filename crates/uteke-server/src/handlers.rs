@@ -14,6 +14,7 @@ use tracing::{error, warn};
 use uteke_core::Uteke;
 use uteke_core::memory::types::validate_author_type;
 
+use crate::api_registry;
 use crate::context::{self, ApiRole, AuthResult, ReqCtx};
 use crate::types::*;
 
@@ -159,6 +160,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 },
             )
         }
+
+        // ── Route Introspection (#1289) ─────────────────────────────────
+        // Machine-readable API spec: serialize the api_registry ENDPOINTS
+        // table — the same single source of truth docgen renders into
+        // docs/api-reference.md — so consumers can validate against the
+        // real contract instead of stale notes. GET is inherently
+        // read-only, so the ReadOnly token gate needs no extra entry.
+        (Method::Get, "/routes") => ctx.ok_response_for(req, &api_registry::ENDPOINTS),
 
         // ── Remember ───────────────────────────────────────────────────
         (Method::Post, "/remember") => match read_body::<RememberRequest>(req.as_reader()) {
@@ -4415,5 +4424,117 @@ mod payload_conformance_tests {
             json.get("memories").is_some(),
             "auth-disabled health stays full: {json}"
         );
+    }
+}
+
+// ── /routes machine-readable registry (#1289) ──────────────────────────
+
+#[cfg(test)]
+mod routes_introspection_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    struct RoutesApp {
+        uteke: Mutex<Uteke>,
+        read_only_token_hash: Option<[u8; 32]>,
+    }
+
+    impl RoutesApp {
+        fn new() -> Self {
+            // No embedder: storage-only server tests must run in CI builds
+            // without the ONNX runtime lib.
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+                read_only_token_hash: None,
+            }
+        }
+
+        fn with_read_only_token(token: &str) -> Self {
+            let mut app = Self::new();
+            app.read_only_token_hash = Some(Sha256::digest(token.as_bytes()).into());
+            app
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            auth_header: Option<&str>,
+        ) -> (u16, serde_json::Value) {
+            let mut builder = tiny_http::TestRequest::new()
+                .with_method(method)
+                .with_path(url);
+            if let Some(h) = auth_header {
+                builder =
+                    builder.with_header(tiny_http::Header::from_bytes("Authorization", h).unwrap());
+            }
+            let mut req: tiny_http::Request = builder.into();
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: self.read_only_token_hash,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    }
+
+    #[test]
+    fn routes_returns_full_registry() {
+        let app = RoutesApp::new();
+        let (status, json) = app.call(Method::Get, "/routes", None);
+        assert_eq!(status, 200, "{json}");
+
+        let entries = json.as_array().expect("routes payload is a JSON array");
+        assert_eq!(
+            entries.len(),
+            crate::api_registry::ENDPOINTS.len(),
+            "one entry per registered endpoint"
+        );
+
+        // Self-describing: /routes lists itself.
+        let self_entry = entries
+            .iter()
+            .find(|e| e["path"] == "/routes" && e["method"] == "GET")
+            .expect("/routes must list itself");
+        assert!(self_entry["tier"].is_string(), "{self_entry}");
+        assert!(self_entry["description"].is_string(), "{self_entry}");
+
+        // Entry shape matches the registry struct fields.
+        let first = &entries[0];
+        for field in ["method", "path", "tier", "description", "issues"] {
+            assert!(
+                first.get(field).is_some(),
+                "registry entry missing field '{field}': {first}"
+            );
+        }
+    }
+
+    #[test]
+    fn routes_respects_auth_roles() {
+        // RO-only server: no token -> 401.
+        let app = RoutesApp::with_read_only_token("ro-secret");
+        let (status, _) = app.call(Method::Get, "/routes", None);
+        assert_eq!(status, 401, "anonymous must not read the registry");
+
+        // Valid RO token -> allowed (GET is inherently read-only).
+        let (status, json) = app.call(Method::Get, "/routes", Some("Bearer ro-secret"));
+        assert_eq!(status, 200, "{json}");
+        assert!(json.as_array().is_some(), "RO token gets the registry");
+    }
+
+    #[test]
+    fn routes_post_is_not_routed() {
+        let app = RoutesApp::new();
+        let (status, _) = app.call(Method::Post, "/routes", None);
+        assert_eq!(status, 404, "only GET /routes exists (catch-all 404)");
     }
 }
