@@ -96,6 +96,18 @@ Update an existing memory's content and/or metadata.
 
 **Request body**: [`MemoryUpdateRequest`](#memoryupdaterequest)
 
+#### 🟡 `POST` `/verify`
+
+Check vector-index/SQLite consistency: row vs vector counts, mismatch flag (#1266).
+
+**Response**: [`VerifyReport`](#verifyreport)
+
+#### 🟡 `POST` `/repair`
+
+Rebuild the vector index from stored embeddings to fix recall desync (#1266). SQLite data is untouched.
+
+**Response**: [`RepairReport`](#repairreport)
+
 #### 🟢 `GET` `/graph`
 
 Get graph edges for a memory. Accepts `?id=...` query param.
@@ -216,6 +228,12 @@ Rebuild backlink indices for memory graph.
 Health check — tokenless requests get {status} only; a valid bearer token (or auth-disabled server) returns status, version, memory counts, and update info
 
 **Response**: [`HealthResponse`](#healthresponse)
+
+#### 🟢 `GET` `/routes`
+
+Machine-readable API route introspection: returns this registry (method, path, tier, description, request/response types) as JSON — the same source of truth that generates docs/api-reference.md (#1289).
+
+*Related: `#1289`*
 
 
 ## 🔵 Documents
@@ -403,7 +421,7 @@ Get memory count for a room. Includes deprecated memories (known discrepancy vs 
 
 #### 🟢 `GET` `/room/memories`
 
-List all memories in a room (chronological). Accepts `?room_id=...` query param.
+List all memories in a room (chronological). Accepts `?room_id=...` query param; optional `?author=...` and `?namespace=...` filters (#1288). Without `namespace`, returns ALL namespaces that contributed to the room.
 
 *Excludes deprecated memories from results.*
 
@@ -717,11 +735,14 @@ RFC3339 timestamp (#902). |
 | `at` | any | No | Time-travel: query memories that existed at this RFC3339 timestamp. |
 | `before` | any | No | Temporal range filter: only return memories created at or before this
 RFC3339 timestamp (#902). |
+| `budget_chars` | any | No | Character budget for `pack` (default 4000). |
 | `category` | any | No | Filter by category metadata. |
 | `enrich` | `boolean` | No | Enrich results with cross-entity links (doc↔memory) (#689).
 When true, populates `linked_doc_slugs` on memory results and
 `linked_memory_ids` on document results. |
 | `entity` | any | No | Filter by entity metadata. |
+| `exclude_ids` | any | No | Memory IDs already injected this turn; excluded from pack results
+(reported as `skipped` with reason `excluded`). |
 | `explain` | `boolean` | No | Explain mode (#1160): return per-result ranking signals alongside
 each memory. Memory-only recall — rejected (400) together with
 search_type/unified, at, before/after. |
@@ -729,6 +750,9 @@ search_type/unified, at, before/after. |
 | `min_score` | any | No | Minimum similarity score (0.0-1.0). Results below are filtered.
 Default: 0.0 (no filtering). Use `strict=true` for 0.5 default (#995). |
 | `namespace` | any | No |  |
+| `pack` | `boolean` | No | Budgeted context pack (#1281 Phase 1): return a ContextPack
+(selected/skipped/budget_used) instead of a bare ranked list.
+Deterministic, LLM-free, rank-order preserving. |
 | `query` | `string` | Yes |  |
 | `search_type` | any | No | Search type filter: "all" (default, unified), "memory", or "doc" (#531). |
 | `strategy` | any | No | Recall strategy: "fusion" (default since 0.16.0), "vector", "fts5",

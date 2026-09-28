@@ -414,8 +414,25 @@ impl super::Store {
         Ok(doc)
     }
 
-    /// List all documents (global, no namespace filter).
+    /// List documents across all namespaces (legacy global view).
+    ///
+    /// Back-compat wrapper for [`Self::list_documents_ns`] — prefer the
+    /// `_ns` variant (#1268).
     pub fn list_documents(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
+        self.list_documents_ns(None, limit)
+    }
+
+    /// List documents, optionally scoped to a namespace (#1268).
+    ///
+    /// `None` lists across all namespaces (legacy global behavior); a
+    /// namespace value returns only documents whose namespace matches
+    /// exactly. Documents with a NULL namespace are only visible in the
+    /// global view.
+    pub fn list_documents_ns(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
         let limit = limit.min(1000) as i64;
 
         let mut stmt = self
@@ -423,12 +440,13 @@ impl super::Store {
             .prepare(
                 "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents ORDER BY updated_at DESC LIMIT ?1",
+                 FROM documents WHERE (?1 IS NULL OR namespace = ?1) \
+                 ORDER BY updated_at DESC LIMIT ?2",
             )
             .map_err(|e| Error::db("prepare list documents", e))?;
 
         let rows = stmt
-            .query_map(params![limit], row_to_summary)
+            .query_map(params![namespace, limit], row_to_summary)
             .map_err(|e| Error::db("list documents query", e))?;
 
         let docs: Vec<DocumentSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -437,6 +455,19 @@ impl super::Store {
 
     /// List root documents (parent_id IS NULL), global.
     pub fn list_root_documents(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
+        self.list_root_documents_ns(None, limit)
+    }
+
+    /// List root documents, optionally scoped to a namespace (#1268).
+    ///
+    /// Namespace filtering happens in SQL BEFORE the LIMIT so a scoped view
+    /// still returns matches that fall outside the N most-recent global rows
+    /// (CodeCora alert on the filter-after-limit variant).
+    pub fn list_root_documents_ns(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
         let limit = limit.min(1000) as i64;
 
         let mut stmt = self
@@ -444,13 +475,13 @@ impl super::Store {
             .prepare(
                 "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents WHERE parent_id IS NULL \
-                 ORDER BY sort_order, updated_at DESC LIMIT ?1",
+                 FROM documents WHERE parent_id IS NULL AND (?1 IS NULL OR namespace = ?1) \
+                 ORDER BY sort_order, updated_at DESC LIMIT ?2",
             )
             .map_err(|e| Error::db("prepare list root documents", e))?;
 
         let rows = stmt
-            .query_map(params![limit], row_to_summary)
+            .query_map(params![namespace, limit], row_to_summary)
             .map_err(|e| Error::db("list root documents query", e))?;
 
         let docs: Vec<DocumentSummary> = rows.filter_map(|r| r.ok()).collect();
@@ -1230,5 +1261,43 @@ mod tests {
 
         let all = store.list_documents(10).unwrap();
         assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_list_documents_namespace_scoped() {
+        // #1268: list_documents_ns must scope to the requested namespace;
+        // NULL-namespace docs are only visible in the global view.
+        let store = open_test_store();
+
+        let mut a = make_doc("doc-a", "ns-a-doc", "Doc A");
+        a.namespace = Some("alpha".to_string());
+        store.upsert_document(&a).unwrap();
+
+        let mut b = make_doc("doc-b", "ns-b-doc", "Doc B");
+        b.namespace = Some("beta".to_string());
+        store.upsert_document(&b).unwrap();
+
+        let unscoped = make_doc("doc-u", "no-ns-doc", "Doc U");
+        store.upsert_document(&unscoped).unwrap();
+
+        // Scoped views return only exact namespace matches.
+        let alpha = store.list_documents_ns(Some("alpha"), 10).unwrap();
+        assert_eq!(alpha.len(), 1);
+        assert_eq!(alpha[0].id, "doc-a");
+
+        let beta = store.list_documents_ns(Some("beta"), 10).unwrap();
+        assert_eq!(beta.len(), 1);
+        assert_eq!(beta[0].id, "doc-b");
+
+        let missing = store.list_documents_ns(Some("gamma"), 10).unwrap();
+        assert!(missing.is_empty());
+
+        // Global view keeps legacy behavior (all docs, incl. NULL namespace).
+        let all = store.list_documents_ns(None, 10).unwrap();
+        assert_eq!(all.len(), 3);
+
+        // Legacy wrapper delegates to the global view.
+        let legacy = store.list_documents(10).unwrap();
+        assert_eq!(legacy.len(), 3);
     }
 }

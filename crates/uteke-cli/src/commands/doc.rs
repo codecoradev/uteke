@@ -101,14 +101,19 @@ pub(crate) fn run(
             }
         }
 
-        DocCommands::List { limit, tree } => {
+        DocCommands::List {
+            limit,
+            tree,
+            namespace,
+        } => {
+            let ns = namespace.as_deref().or(cli.namespace.as_deref());
             let docs = if *tree {
                 uteke
-                    .doc_list_roots(*limit)
+                    .doc_list_roots(ns, *limit)
                     .map_err(|e| format!("Failed to list root documents: {e}"))?
             } else {
                 uteke
-                    .doc_list(*limit)
+                    .doc_list(ns, *limit)
                     .map_err(|e| format!("Failed to list documents: {e}"))?
             };
             if cli.json {
@@ -427,7 +432,7 @@ pub(crate) fn run(
 
         DocCommands::Export { output: _ } => {
             let docs = uteke
-                .doc_list(1000)
+                .doc_list(None, 1000)
                 .map_err(|e| format!("Failed to list documents for export: {e}"))?;
             if cli.json {
                 output::print_json(&docs);

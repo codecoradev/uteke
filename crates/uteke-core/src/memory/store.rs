@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_edges_type ON memory_edges(edge_type);
 -- v9: Timeline events log (#347).
 CREATE TABLE IF NOT EXISTS timeline_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    memory_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
     event_data TEXT,
     created_at TEXT NOT NULL,
@@ -180,7 +180,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 19;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 20;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -734,7 +734,10 @@ mod tests {
             .conn
             .query_row("SELECT MAX(version) FROM schema_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 19, "schema should be upgraded to current (v19)");
+        assert_eq!(
+            version, CURRENT_SCHEMA_VERSION,
+            "schema should be upgraded to current"
+        );
 
         // Legacy row backfilled to 'agent'.
         let at: String = store
@@ -2059,5 +2062,150 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 1, "index {idx} should exist after migration");
         }
+    }
+
+    /// v20 (owner decision 2026-09-18): timeline_events rebuilt WITHOUT the
+    /// FK CASCADE — hard-deleting a memory must NOT wipe its history — and
+    /// memories lacking a `created` event get one backfilled (actor='backfill').
+    #[test]
+    fn test_migration_v19_to_v20_history_survives_delete_and_backfills_created() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        // 1. Base memories table (v19 shape is a superset of the columns used here).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS memories (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                embedding BLOB,
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                access_count INTEGER NOT NULL DEFAULT 0,
+                last_accessed TEXT,
+                deprecated INTEGER NOT NULL DEFAULT 0,
+                valid_from TEXT,
+                valid_until TEXT,
+                memory_type TEXT NOT NULL DEFAULT 'fact',
+                importance REAL NOT NULL DEFAULT 0.5,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT NOT NULL DEFAULT 'text',
+                slug TEXT,
+                source TEXT,
+                source_type TEXT NOT NULL DEFAULT 'user'
+            );",
+        )
+        .unwrap();
+
+        // 2. timeline_events at the v9 shape — WITH the FK CASCADE.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS timeline_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                event_type TEXT NOT NULL,
+                event_data TEXT,
+                created_at TEXT NOT NULL,
+                actor TEXT,
+                evidence_json TEXT
+            );",
+        )
+        .unwrap();
+
+        // 3. Stamp v19.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_version (version, applied_at) VALUES (19, '2026-09-17T00:00:00Z');",
+        )
+        .unwrap();
+
+        // 4. Two memories: one WITH an existing created event, one WITHOUT
+        //    (pre-timeline-schema or import path).
+        conn.execute(
+            "INSERT INTO memories (id, content, embedding, created_at, updated_at)
+             VALUES ('mem-with', 'has event', X'', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (id, content, embedding, created_at, updated_at)
+             VALUES ('mem-no', 'no event', X'', '2026-08-02T00:00:00Z', '2026-08-02T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at, actor)
+             VALUES ('mem-with', 'created', NULL, '2026-08-01T00:00:00Z', 'cli')",
+            [],
+        )
+        .unwrap();
+
+        // 5. Migrate.
+        let store = Store::from_conn(conn).unwrap();
+
+        let version: i32 = store
+            .conn
+            .query_row(
+                "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+
+        // 6. Backfill: mem-no gets exactly one created event (actor='backfill'),
+        //    mem-with is NOT duplicated.
+        let count: i32 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM timeline_events WHERE memory_id='mem-with' AND event_type='created'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "existing created event must not be duplicated");
+        let (etype, actor): (String, String) = store
+            .conn
+            .query_row(
+                "SELECT event_type, actor FROM timeline_events WHERE memory_id='mem-no'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(etype, "created");
+        assert_eq!(actor, "backfill");
+
+        // 7. THE core assertion: delete the memory, its history must survive.
+        store
+            .conn
+            .execute("DELETE FROM memories WHERE id='mem-with'", [])
+            .unwrap();
+        let survived: i32 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM timeline_events WHERE memory_id='mem-with'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            survived, 1,
+            "timeline events must survive memory deletion after v20 (no FK CASCADE)"
+        );
+
+        // 8. FK must be gone from the fresh table definition.
+        let fk_count: i32 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_list('timeline_events')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fk_count, 0, "timeline_events must have no FK after v20");
     }
 }
