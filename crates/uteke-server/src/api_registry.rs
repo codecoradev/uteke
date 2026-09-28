@@ -374,7 +374,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
         method: "GET",
         path: "/room/memories",
         tier: Tier::Core,
-        description: "List all memories in a room (chronological). Accepts `?room_id=...` query param.",
+        description: "List all memories in a room (chronological). Accepts `?room_id=...` query param; optional `?author=...` and `?namespace=...` filters (#1288). Without `namespace`, returns ALL namespaces that contributed to the room.",
         request_type: None,
         response_type: None,
         excludes_deprecated: true,

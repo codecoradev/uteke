@@ -147,7 +147,7 @@ fn main() {
                 );
                 println!("  GET  /room/list            → [?namespace=] → [rooms]");
                 println!(
-                    "  GET  /room/memories       → ?room_id=<id>[&author=&limit=] → chronological memories"
+                    "  GET  /room/memories       → ?room_id=<id>[&author=&namespace=&limit=] → chronological memories"
                 );
                 println!(
                     "  POST /room/recall          → {{ room_id, query? }} → ranked memories (query optional, falls back to chronological)"

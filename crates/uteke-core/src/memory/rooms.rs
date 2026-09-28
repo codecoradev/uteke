@@ -498,91 +498,80 @@ impl super::Store {
         Ok(())
     }
 
-    /// Recall all memories linked to a room, sorted by time.
-    /// Cross-namespace: returns memories from ALL namespaces that contributed to the room.
-    /// Only returns active (non-deprecated) memories (#784).
+    /// Compatibility wrapper: old signature without a namespace filter.
+    /// Delegates to `recall_room_scoped` with `namespace = None`.
     pub fn recall_room(
         &self,
         room_id: &str,
         author: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::memory::types::Memory>, Error> {
+        self.recall_room_scoped(room_id, author, None, limit)
+    }
+
+    /// Recall all memories linked to a room, sorted by time.
+    /// Cross-namespace by default: returns memories from ALL namespaces that
+    /// contributed to the room. When `namespace` is Some, restrict to that
+    /// namespace (#1288).
+    /// Only returns active (non-deprecated) memories (#784).
+    pub fn recall_room_scoped(
+        &self,
+        room_id: &str,
+        author: Option<&str>,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<crate::memory::types::Memory>, Error> {
         // limit=0 means "return all" — omit LIMIT clause (#623).
         let no_limit = limit == 0;
-        let sql = match (author, no_limit) {
-            (Some(_), false) => {
-                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                 m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, \
-                 m.slug, m.source, m.source_type \
-                 FROM memories m \
-                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
-                 WHERE rm.room_id = ?1 AND rm.author = ?2 AND m.deprecated = 0 \
-                 ORDER BY rm.joined_at ASC \
-                 LIMIT ?3"
-            }
-            (Some(_), true) => {
-                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                 m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, \
-                 m.slug, m.source, m.source_type \
-                 FROM memories m \
-                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
-                 WHERE rm.room_id = ?1 AND rm.author = ?2 AND m.deprecated = 0 \
-                 ORDER BY rm.joined_at ASC"
-            }
-            (None, false) => {
-                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                 m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, \
-                 m.slug, m.source, m.source_type \
-                 FROM memories m \
-                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
-                 WHERE rm.room_id = ?1 AND m.deprecated = 0 \
-                 ORDER BY rm.joined_at ASC \
-                 LIMIT ?2"
-            }
-            (None, true) => {
-                "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                 m.created_at, m.updated_at, m.namespace, m.access_count, \
-                 m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, \
-                 m.slug, m.source, m.source_type \
-                 FROM memories m \
-                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
-                 WHERE rm.room_id = ?1 AND m.deprecated = 0 \
-                 ORDER BY rm.joined_at ASC"
-            }
-        };
+        // Dynamic WHERE, but every literal fragment stays in the SQL text and
+        // all values are bound below — no string interpolation of inputs.
+        let mut conditions: Vec<&str> = vec!["rm.room_id = ?"];
+        if author.is_some() {
+            conditions.push("rm.author = ?");
+        }
+        if namespace.is_some() {
+            conditions.push("m.namespace = ?");
+        }
+        conditions.push("m.deprecated = 0");
+        let sql = format!(
+            "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
+             m.created_at, m.updated_at, m.namespace, m.access_count, \
+             m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, \
+             m.slug, m.source, m.source_type \
+             FROM memories m \
+             INNER JOIN room_memories rm ON m.id = rm.memory_id \
+             WHERE {} \
+             ORDER BY rm.joined_at ASC{}",
+            conditions.join(" AND "),
+            if no_limit { "" } else { " LIMIT ?" },
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(room_id.to_string())];
+        if let Some(a) = author {
+            params_vec.push(Box::new(a.to_string()));
+        }
+        if let Some(ns) = namespace {
+            params_vec.push(Box::new(ns.to_string()));
+        }
+        if !no_limit {
+            params_vec.push(Box::new(limit as i64));
+        }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
 
         let mut stmt = self
             .conn
-            .prepare(sql)
+            .prepare(&sql)
             .map_err(|e| Error::db("recall room", e))?;
 
         use super::store::row_to_memory;
 
-        let memories = match (author, no_limit) {
-            (Some(a), false) => stmt
-                .query_map(params![room_id, a, limit as i64], row_to_memory)
-                .map_err(|e| Error::db("recall room", e))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Error::db("recall room", e))?,
-            (Some(a), true) => stmt
-                .query_map(params![room_id, a], row_to_memory)
-                .map_err(|e| Error::db("recall room", e))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Error::db("recall room", e))?,
-            (None, false) => stmt
-                .query_map(params![room_id, limit as i64], row_to_memory)
-                .map_err(|e| Error::db("recall room", e))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Error::db("recall room", e))?,
-            (None, true) => stmt
-                .query_map(params![room_id], row_to_memory)
-                .map_err(|e| Error::db("recall room", e))?
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| Error::db("recall room", e))?,
-        };
+        let memories = stmt
+            .query_map(rusqlite::params_from_iter(param_refs), row_to_memory)
+            .map_err(|e| Error::db("recall room", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("recall room", e))?;
 
         // Enrich memories with author from room_memories (#624).
         // Author is stored in room_memories, not in the memories table.
@@ -1484,6 +1473,53 @@ mod tests {
             .unwrap();
         assert_eq!(alice_mems.len(), 1);
         assert_eq!(alice_mems[0].id, "mem-a1");
+    }
+
+    #[test]
+    fn recall_room_scoped_namespace_filter() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_room("ns-room", None, "default").unwrap();
+
+        let mut hermes_mem = make_test_memory("mem-ns-hermes", "from hermes ns", &[]);
+        hermes_mem.namespace = "hermes".to_string();
+        let mut cmo_mem = make_test_memory("mem-ns-cmo", "from cmo ns", &[]);
+        cmo_mem.namespace = "cmo".to_string();
+        store.insert(&hermes_mem).unwrap();
+        store.insert(&cmo_mem).unwrap();
+        store
+            .link_memory_to_room("ns-room", "mem-ns-hermes", "hermes", "participant")
+            .unwrap();
+        store
+            .link_memory_to_room("ns-room", "mem-ns-cmo", "cmo", "participant")
+            .unwrap();
+
+        // No namespace → cross-namespace default (both).
+        let all = store.recall_room_scoped("ns-room", None, None, 0).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Scoped to cmo → only the cmo memory.
+        let cmo = store
+            .recall_room_scoped("ns-room", None, Some("cmo"), 0)
+            .unwrap();
+        assert_eq!(cmo.len(), 1);
+        assert_eq!(cmo[0].id, "mem-ns-cmo");
+
+        // Scoped + author combined.
+        let scoped = store
+            .recall_room_scoped("ns-room", Some("hermes"), Some("hermes"), 10)
+            .unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].id, "mem-ns-hermes");
+
+        // Old signature unchanged: cross-namespace default.
+        let legacy = store.recall_room("ns-room", None, 0).unwrap();
+        assert_eq!(legacy.len(), 2);
+
+        // Nonexistent namespace → empty, not an error.
+        let none = store
+            .recall_room_scoped("ns-room", None, Some("ghost"), 0)
+            .unwrap();
+        assert!(none.is_empty());
     }
 
     #[test]

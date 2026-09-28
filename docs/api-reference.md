@@ -415,7 +415,7 @@ Get memory count for a room. Includes deprecated memories (known discrepancy vs 
 
 #### 🟢 `GET` `/room/memories`
 
-List all memories in a room (chronological). Accepts `?room_id=...` query param.
+List all memories in a room (chronological). Accepts `?room_id=...` query param; optional `?author=...` and `?namespace=...` filters (#1288). Without `namespace`, returns ALL namespaces that contributed to the room.
 
 *Excludes deprecated memories from results.*
 

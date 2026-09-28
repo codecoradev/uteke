@@ -1587,7 +1587,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     return ctx.error_response_for(
                         req,
                         400,
-                        "Missing required parameter: room_id. Usage: GET /room/memories?room_id=<id>[&author=<author>&limit=<n>]",
+                        "Missing required parameter: room_id. Usage: GET /room/memories?room_id=<id>[&author=<author>&namespace=<ns>&limit=<n>]",
                     );
                 }
             };
@@ -1596,7 +1596,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(100);
             let author = query_str.and_then(|q| parse_query_param(q, "author"));
-            match uteke.recall_room(&room_id, author.as_deref(), limit) {
+            let namespace = query_str.and_then(|q| parse_query_param(q, "namespace"));
+            match uteke.recall_room_scoped(&room_id, author.as_deref(), namespace.as_deref(), limit)
+            {
                 Ok(memories) => ctx.ok_response_for(req, &memories),
                 Err(e) => {
                     error!("Internal error: {e}");
@@ -2934,6 +2936,119 @@ fn filter_room_memories_at_time(
         .into_iter()
         .filter(|m| memory_exists_at(m, pit))
         .collect()
+}
+
+#[cfg(test)]
+mod room_memories_namespace_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    /// Minimal harness mirroring ContradictionApp: no embedder (CI-safe),
+    /// route() called directly (#1288).
+    struct RoomMemoriesApp {
+        uteke: Mutex<Uteke>,
+    }
+
+    impl RoomMemoriesApp {
+        fn new() -> Self {
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+            }
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            body: Option<String>,
+        ) -> (u16, serde_json::Value) {
+            let mut req = match body {
+                Some(b) => {
+                    let leaked: &'static str = Box::leak(b.into_boxed_str());
+                    TestRequest::new()
+                        .with_method(method)
+                        .with_path(url)
+                        .with_body(leaked)
+                        .into()
+                }
+                None => TestRequest::new().with_method(method).with_path(url).into(),
+            };
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: None,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    }
+
+    #[test]
+    fn room_memories_namespace_filter_and_param_observable() {
+        let app = RoomMemoriesApp::new();
+
+        let body = serde_json::json!({ "room_id": "ns-room", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_eq!(status, 200, "{resp}");
+
+        let mut ids: Vec<String> = Vec::new();
+        for (ns, author) in [("cmo", "cmo-agent"), ("hermes", "hermes-agent")] {
+            let body = serde_json::json!({
+                "room_id": "ns-room",
+                "content": format!("note from {ns}"),
+                "namespace": ns,
+                "author": author
+            })
+            .to_string();
+            let (status, resp) = app.call(Method::Post, "/room/remember", Some(body));
+            assert_eq!(status, 200, "{resp}");
+            ids.push(resp["id"].as_str().expect("memory id").to_string());
+        }
+
+        // URL constants: query-string URLs live in consts because the registry
+        // coverage test treats any method-plus-URL literal on one line as a
+        // handler route, and a query string would look like an unregistered
+        // path.
+        const URL_ALL: &str = "/room/memories?room_id=ns-room";
+        const URL_CMO: &str = "/room/memories?room_id=ns-room&namespace=cmo";
+        const URL_CMO_OTHER_AUTHOR: &str =
+            "/room/memories?room_id=ns-room&namespace=cmo&author=hermes-agent";
+
+        // Unfiltered: cross-namespace default — both entries.
+        let (status, resp) = app.call(Method::Get, URL_ALL, None);
+        assert_eq!(status, 200, "{resp}");
+        let arr = resp.as_array().expect("bare JSON array response");
+        assert_eq!(
+            arr.len(),
+            2,
+            "cross-namespace default must return both: {resp}"
+        );
+
+        // namespace=cmo → exactly the cmo entry (#1288 — was silently ignored).
+        let (status, resp) = app.call(Method::Get, URL_CMO, None);
+        assert_eq!(status, 200, "{resp}");
+        let arr = resp.as_array().expect("bare JSON array response");
+        assert_eq!(arr.len(), 1, "namespace filter must narrow results: {resp}");
+        assert_eq!(arr[0]["namespace"], serde_json::json!("cmo"));
+        assert_eq!(arr[0]["content"], serde_json::json!("note from cmo"));
+
+        // namespace + author combined.
+        let (status, resp) = app.call(Method::Get, URL_CMO_OTHER_AUTHOR, None);
+        assert_eq!(status, 200, "{resp}");
+        let arr = resp.as_array().expect("bare JSON array response");
+        assert!(
+            arr.is_empty(),
+            "conflicting filters must yield empty: {resp}"
+        );
+    }
 }
 
 #[cfg(test)]

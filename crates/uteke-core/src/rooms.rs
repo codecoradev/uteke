@@ -74,6 +74,19 @@ impl crate::Uteke {
         self.store.recall_room(room_id, author, limit)
     }
 
+    /// Recall all memories in a room, optionally filtered by author AND/OR
+    /// namespace (#1288). `namespace = None` keeps the cross-namespace default.
+    pub fn recall_room_scoped(
+        &self,
+        room_id: &str,
+        author: Option<&str>,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Memory>, Error> {
+        self.store
+            .recall_room_scoped(room_id, author, namespace, limit)
+    }
+
     /// Semantic recall within room context using hybrid search (vector + FTS5).
     ///
     /// Returns room memories ranked by relevance to query, with scores.
