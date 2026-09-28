@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`GET /room/memories` honors the `namespace` query param (#1288)** - the endpoint parsed only `room_id`, `limit`, and `author`, so any `namespace` value was silently ignored and callers got a 200 with the room's full cross-namespace list — wrong scope presented as success (issue repro: 72 entries returned instead of the 19 in the requested namespace). The param is now parsed in the handler and applied at the SQL level via new `Uteke::recall_room_scoped(room_id, author, namespace, limit)`; `recall_room` remains as a compatibility wrapper with the old cross-namespace default. Filtering happens inside the same query as LIMIT (no fetch-then-post-filter, #1085 class), the four duplicated SQL variants collapse into one dynamically composed WHERE clause (literal fragments stay in SQL text, all values bound as parameters), and usage text, registry description, and `docs/api-reference.md` were regenerated. New core and server tests cover the scoped filter, author+namespace combination, legacy signature, and ghost namespaces.
+
 ### Added
 
 - **Budgeted context pack: `recall --pack` (#1281 Phase 1)** - `uteke recall --pack [--budget <chars>] [--exclude-ids <ids>]` returns a `{selected, skipped, budget_used, budget_chars}` envelope instead of a bare ranked list: rank-order preserving greedy fill of a character budget, with per-item skip reasons (`excluded` for caller-supplied memory IDs already injected this turn, `budget` for items that no longer fit). Deterministic and LLM-free — ranking is untouched (fusion RRF remains the default strategy); this is a selection primitive, not a re-ranker. Surfaces: CLI flags, HTTP `POST /recall` (`"pack": true`, `"budget_chars"`, `"exclude_ids"`), MCP `uteke_recall` (`pack`, `budget_chars`, `exclude_ids`). Phase 2 (MMR diversity) is an experiment gated on LongMemEval + redundancy benchmarks per the issue.
