@@ -60,7 +60,6 @@ uteke remember "Deploy v2.1 ke staging" \
 
 | Metode | Command |
 |--------|---------|
-| **Homebrew** | `brew install codecoradev/tap/uteke` |
 | **Cargo** | `cargo install uteke-cli` |
 | **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest` |
 | **Binary** | [GitHub Releases](https://github.com/codecoradev/uteke/releases) (macOS, Linux, Windows) |
