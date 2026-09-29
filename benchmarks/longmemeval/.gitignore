@@ -6,6 +6,7 @@ data/
 results/*
 !results/default-500q.jsonl
 !results/default-500q-v017.jsonl
+!results/default-500q-v0.19.0.jsonl
 !results/fts5-500q.jsonl
 !results/contradiction-f3-metrics.json
 results_*/
