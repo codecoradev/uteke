@@ -35,6 +35,9 @@ pub enum TimelineEventType {
     Tagged,
     /// Memory deleted.
     Forgot,
+    /// Memory deprecated (soft-delete / retire). Kept in store, hidden from
+    /// recall (#932). Recorded so the deprecate path leaves an audit trail.
+    Deprecated,
     /// Superseded by a newer memory (#1172 Fase 2) — resolution recorded
     /// with actor + evidence.
     Superseded,
@@ -51,6 +54,7 @@ impl TimelineEventType {
             Self::Consolidated => "consolidated",
             Self::Tagged => "tagged",
             Self::Forgot => "forgot",
+            Self::Deprecated => "deprecated",
             Self::Superseded => "superseded",
             Self::SupersessionUndone => "supersession_undone",
         }
@@ -64,6 +68,7 @@ impl TimelineEventType {
             "consolidated" => Some(Self::Consolidated),
             "tagged" => Some(Self::Tagged),
             "forgot" => Some(Self::Forgot),
+            "deprecated" => Some(Self::Deprecated),
             "superseded" => Some(Self::Superseded),
             "supersession_undone" => Some(Self::SupersessionUndone),
             _ => None,

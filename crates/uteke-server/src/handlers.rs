@@ -14,6 +14,7 @@ use tracing::{error, warn};
 use uteke_core::Uteke;
 use uteke_core::memory::types::validate_author_type;
 
+use crate::api_registry;
 use crate::context::{self, ApiRole, AuthResult, ReqCtx};
 use crate::types::*;
 
@@ -160,6 +161,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             )
         }
 
+        // ── Route Introspection (#1289) ─────────────────────────────────
+        // Machine-readable API spec: serialize the api_registry ENDPOINTS
+        // table — the same single source of truth docgen renders into
+        // docs/api-reference.md — so consumers can validate against the
+        // real contract instead of stale notes. GET is inherently
+        // read-only, so the ReadOnly token gate needs no extra entry.
+        (Method::Get, "/routes") => ctx.ok_response_for(req, &api_registry::ENDPOINTS),
+
         // ── Remember ───────────────────────────────────────────────────
         (Method::Post, "/remember") => match read_body::<RememberRequest>(req.as_reader()) {
             Ok(req_data) => {
@@ -211,29 +220,31 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     }
                 }
 
-                let result = if req_data.detect_contradiction {
-                    uteke
-                        .remember_with_contradiction(
+                let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
+                    if req_data.detect_contradiction {
+                        uteke
+                            .remember_with_contradiction(
+                                &req_data.content,
+                                &tag_refs,
+                                metadata,
+                                ns(&req_data.namespace),
+                                req_data.r#type.as_deref(),
+                                true,
+                                0.65,
+                            )
+                            .map(|(outcome, _)| outcome)
+                    } else {
+                        uteke.remember_detailed(
                             &req_data.content,
                             &tag_refs,
                             metadata,
                             ns(&req_data.namespace),
-                            req_data.r#type.as_deref(),
-                            true,
-                            0.65,
                         )
-                        .map(|(id, _)| id)
-                } else {
-                    uteke.remember(
-                        &req_data.content,
-                        &tag_refs,
-                        metadata,
-                        ns(&req_data.namespace),
-                    )
-                };
+                    };
 
                 match result {
-                    Ok(id) => {
+                    Ok(outcome) => {
+                        let id = outcome.id;
                         // Set source provenance after storage (#682) — matches CLI.
                         if req_data.source.is_some() || req_data.source_type.is_some() {
                             let st = req_data.source_type.as_deref().unwrap_or("user");
@@ -252,11 +263,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         // recorded (#1106) — data was already stored correctly,
                         // the response just omitted the field. Default mirrors
                         // the schema default (author_type DEFAULT 'agent', #1083).
+                        // #1273: honest embedding status — never a bare success
+                        // when the vector write failed.
                         ctx.ok_response_for(
                             req,
                             &serde_json::json!({
                                 "id": id,
                                 "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
+                                "embedding_written": outcome.embedding_written,
+                                "warning": outcome.warning,
                             }),
                         )
                     }
@@ -426,6 +441,61 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         Ok(explained) => ctx.ok_response_for(req, &explained),
                         Err(e) => {
                             error!("Explain recall error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
+                    };
+                }
+
+                // Budgeted context pack (#1281 Phase 1): unified recall +
+                // greedy character-budget fill; deterministic, LLM-free,
+                // rank-order preserving. Honours the caller's search_type
+                // (validated with the same 400 as the plain path).
+                if req_data.pack {
+                    // Loud reject like the CLI: pack is not composable with
+                    // point-in-time / range filters (the plain unified path
+                    // consumes them further down, after this early return).
+                    if req_data.at.is_some()
+                        || req_data.after.is_some()
+                        || req_data.before.is_some()
+                    {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            "pack is not supported with at/after/before filters; rerun without time filters",
+                        );
+                    }
+                    let parsed_search_type = match req_data.search_type.as_deref() {
+                        Some("memory") => uteke_core::SearchType::Memory,
+                        Some("doc") => uteke_core::SearchType::Document,
+                        Some("all") | None => uteke_core::SearchType::All,
+                        Some(other) => {
+                            return ctx.error_response_for(
+                                req,
+                                400,
+                                format!(
+                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
+                                ),
+                            );
+                        }
+                    };
+                    let exclude_ids = req_data.exclude_ids.clone().unwrap_or_default();
+                    return match uteke.recall_unified_packed(
+                        &req_data.query,
+                        limit,
+                        tags_filter,
+                        ns(&req_data.namespace),
+                        min_score,
+                        parsed_search_type,
+                        entity_filter,
+                        category_filter,
+                        req_data.enrich,
+                        strategy,
+                        req_data.budget_chars.unwrap_or(4000),
+                        &exclude_ids,
+                    ) {
+                        Ok(pack) => ctx.ok_response_for(req, &pack),
+                        Err(e) => {
+                            error!("Pack recall error: {e}");
                             ctx.error_response_for(req, 500, "Internal server error")
                         }
                     };
@@ -1526,7 +1596,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     return ctx.error_response_for(
                         req,
                         400,
-                        "Missing required parameter: room_id. Usage: GET /room/memories?room_id=<id>[&author=<author>&limit=<n>]",
+                        "Missing required parameter: room_id. Usage: GET /room/memories?room_id=<id>[&author=<author>&namespace=<ns>&limit=<n>]",
                     );
                 }
             };
@@ -1535,7 +1605,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(100);
             let author = query_str.and_then(|q| parse_query_param(q, "author"));
-            match uteke.recall_room(&room_id, author.as_deref(), limit) {
+            let namespace = query_str.and_then(|q| parse_query_param(q, "namespace"));
+            match uteke.recall_room_scoped(&room_id, author.as_deref(), namespace.as_deref(), limit)
+            {
                 Ok(memories) => ctx.ok_response_for(req, &memories),
                 Err(e) => {
                     error!("Internal error: {e}");
@@ -1802,11 +1874,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         &req_data.room_id,
                         author,
                     ) {
-                        Ok(id) => ctx.ok_response_for(
+                        Ok(outcome) => ctx.ok_response_for(
                             req,
                             &serde_json::json!({
-                                "id": id,
+                                "id": outcome.id,
                                 "room_id": req_data.room_id,
+                                "embedding_written": outcome.embedding_written,
+                                "warning": outcome.warning,
                             }),
                         ),
                         Err(e) => {
@@ -2157,11 +2231,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
             Ok(params) => {
                 let result = if params.roots_only {
-                    uteke.doc_list_roots(params.limit)
+                    uteke.doc_list_roots(params.namespace.as_deref(), params.limit)
                 } else if let Some(ref parent) = params.parent {
                     uteke.doc_list_children(parent, params.limit)
                 } else {
-                    uteke.doc_list(params.limit)
+                    uteke.doc_list(params.namespace.as_deref(), params.limit)
                 };
                 match result {
                     Ok(docs) => ctx.ok_response_for(req, &docs),
@@ -2632,6 +2706,23 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── Prune (maintenance) ───────────────────────────────────────────
+        // ── Verify / Repair (index consistency, #1266) ───────────────────
+        // POST /verify → VerifyReport (read-only check, write token like
+        // other maintenance endpoints). POST /repair → rebuilds the vector
+        // index from SQLite embeddings so stores can recover from desync
+        // (e.g. version-lagged serve binaries, #1245 class) WITHOUT a
+        // restart — the previous runbook required stopping uteke-serve
+        // (pitfall 0f lock contention).
+        (Method::Post, "/verify") => match uteke.verify() {
+            Ok(r) => ctx.ok_response_for(req, &r),
+            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+        },
+
+        (Method::Post, "/repair") => match uteke.repair() {
+            Ok(r) => ctx.ok_response_for(req, &r),
+            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+        },
+
         (Method::Post, "/prune") => match read_body::<PruneRequest>(req.as_reader()) {
             Ok(req_data) => {
                 let result =
@@ -2854,6 +2945,119 @@ fn filter_room_memories_at_time(
         .into_iter()
         .filter(|m| memory_exists_at(m, pit))
         .collect()
+}
+
+#[cfg(test)]
+mod room_memories_namespace_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    /// Minimal harness mirroring ContradictionApp: no embedder (CI-safe),
+    /// route() called directly (#1288).
+    struct RoomMemoriesApp {
+        uteke: Mutex<Uteke>,
+    }
+
+    impl RoomMemoriesApp {
+        fn new() -> Self {
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+            }
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            body: Option<String>,
+        ) -> (u16, serde_json::Value) {
+            let mut req = match body {
+                Some(b) => {
+                    let leaked: &'static str = Box::leak(b.into_boxed_str());
+                    TestRequest::new()
+                        .with_method(method)
+                        .with_path(url)
+                        .with_body(leaked)
+                        .into()
+                }
+                None => TestRequest::new().with_method(method).with_path(url).into(),
+            };
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: None,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    }
+
+    #[test]
+    fn room_memories_namespace_filter_and_param_observable() {
+        let app = RoomMemoriesApp::new();
+
+        let body = serde_json::json!({ "room_id": "ns-room", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_eq!(status, 200, "{resp}");
+
+        let mut ids: Vec<String> = Vec::new();
+        for (ns, author) in [("cmo", "cmo-agent"), ("hermes", "hermes-agent")] {
+            let body = serde_json::json!({
+                "room_id": "ns-room",
+                "content": format!("note from {ns}"),
+                "namespace": ns,
+                "author": author
+            })
+            .to_string();
+            let (status, resp) = app.call(Method::Post, "/room/remember", Some(body));
+            assert_eq!(status, 200, "{resp}");
+            ids.push(resp["id"].as_str().expect("memory id").to_string());
+        }
+
+        // URL constants: query-string URLs live in consts because the registry
+        // coverage test treats any method-plus-URL literal on one line as a
+        // handler route, and a query string would look like an unregistered
+        // path.
+        const URL_ALL: &str = "/room/memories?room_id=ns-room";
+        const URL_CMO: &str = "/room/memories?room_id=ns-room&namespace=cmo";
+        const URL_CMO_OTHER_AUTHOR: &str =
+            "/room/memories?room_id=ns-room&namespace=cmo&author=hermes-agent";
+
+        // Unfiltered: cross-namespace default — both entries.
+        let (status, resp) = app.call(Method::Get, URL_ALL, None);
+        assert_eq!(status, 200, "{resp}");
+        let arr = resp.as_array().expect("bare JSON array response");
+        assert_eq!(
+            arr.len(),
+            2,
+            "cross-namespace default must return both: {resp}"
+        );
+
+        // namespace=cmo → exactly the cmo entry (#1288 — was silently ignored).
+        let (status, resp) = app.call(Method::Get, URL_CMO, None);
+        assert_eq!(status, 200, "{resp}");
+        let arr = resp.as_array().expect("bare JSON array response");
+        assert_eq!(arr.len(), 1, "namespace filter must narrow results: {resp}");
+        assert_eq!(arr[0]["namespace"], serde_json::json!("cmo"));
+        assert_eq!(arr[0]["content"], serde_json::json!("note from cmo"));
+
+        // namespace + author combined.
+        let (status, resp) = app.call(Method::Get, URL_CMO_OTHER_AUTHOR, None);
+        assert_eq!(status, 200, "{resp}");
+        let arr = resp.as_array().expect("bare JSON array response");
+        assert!(
+            arr.is_empty(),
+            "conflicting filters must yield empty: {resp}"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3601,6 +3805,167 @@ mod contradiction_api_tests {
 // ── Explain recall API (#1160) ──────────────────────────────────────
 
 #[cfg(test)]
+mod pack_recall_api_tests {
+    //! #1281 Phase 1: `pack` recall returns a budgeted ContextPack envelope.
+    use super::*;
+    use tiny_http::TestRequest;
+
+    struct PackApp {
+        uteke: Mutex<Uteke>,
+    }
+
+    impl PackApp {
+        fn new() -> Self {
+            // No embedder: tests use the fts5 strategy, which needs no
+            // query embedding (CI-safe without ONNX).
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+            }
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            body: Option<String>,
+        ) -> (u16, serde_json::Value) {
+            let mut req = match body {
+                Some(b) => {
+                    let leaked: &'static str = Box::leak(b.into_boxed_str());
+                    TestRequest::new()
+                        .with_method(method)
+                        .with_path(url)
+                        .with_body(leaked)
+                        .into()
+                }
+                None => TestRequest::new().with_method(method).with_path(url).into(),
+            };
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: None,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+
+        fn remember_in(&self, content: &str, namespace: &str) -> String {
+            let body =
+                serde_json::json!({ "content": content, "namespace": namespace }).to_string();
+            let (status, resp) = self.call(Method::Post, "/remember", Some(body));
+            assert_eq!(status, 200, "remember must succeed: {resp}");
+            resp["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("remember response must carry id: {resp}"))
+                .to_string()
+        }
+    }
+
+    #[test]
+    fn pack_returns_envelope_honours_budget_and_excludes() {
+        let app = PackApp::new();
+        let fox_id = app.remember_in("The quick brown fox jumps over the lazy dog", "pack-ns");
+        app.remember_in(
+            "Completely unrelated content about gardening tools",
+            "pack-ns",
+        );
+
+        // Normal pack: envelope shape with a generous budget.
+        let body = serde_json::json!({
+            "query": "quick brown fox",
+            "limit": 5,
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 10000
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/recall", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert!(
+            resp["selected"].is_array(),
+            "pack must carry selected: {resp}"
+        );
+        assert!(
+            !resp["selected"].as_array().unwrap().is_empty(),
+            "fts5 must find the fox"
+        );
+        assert_eq!(resp["budget_chars"], serde_json::json!(10000));
+        assert!(resp["budget_used"].as_u64().unwrap() > 0, "{resp}");
+        assert!(resp["skipped"].is_array(), "{resp}");
+
+        // exclude_ids: the fox is already injected → skipped, reason excluded.
+        let body2 = serde_json::json!({
+            "query": "quick brown fox",
+            "limit": 5,
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 10000,
+            "exclude_ids": [fox_id]
+        })
+        .to_string();
+        let (status, resp2) = app.call(Method::Post, "/recall", Some(body2));
+        assert_eq!(status, 200, "{resp2}");
+        let skipped = resp2["skipped"].as_array().unwrap();
+        assert!(
+            skipped
+                .iter()
+                .any(|s| s["memory_id"] == serde_json::json!(fox_id)
+                    && s["reason"] == serde_json::json!("excluded")),
+            "excluded fox must be reported: {resp2}"
+        );
+
+        // Impossible budget → nothing selected, everything skipped as budget.
+        let body3 = serde_json::json!({
+            "query": "quick brown fox",
+            "limit": 5,
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 1
+        })
+        .to_string();
+        let (status, resp3) = app.call(Method::Post, "/recall", Some(body3));
+        assert_eq!(status, 200, "{resp3}");
+        assert!(resp3["selected"].as_array().unwrap().is_empty());
+        assert_eq!(resp3["budget_used"], serde_json::json!(0));
+        assert!(
+            !resp3["skipped"].as_array().unwrap().is_empty(),
+            "oversized items must be reported: {resp3}"
+        );
+
+        // pack + time filters → 400 (loud, same contract as the CLI).
+        let body4 = serde_json::json!({
+            "query": "quick brown fox",
+            "namespace": "pack-ns",
+            "strategy": "fts5",
+            "pack": true,
+            "budget_chars": 10000,
+            "at": "2026-01-01T00:00:00Z"
+        })
+        .to_string();
+        let (status, resp4) = app.call(Method::Post, "/recall", Some(body4));
+        assert_eq!(status, 400, "{resp4}");
+        assert!(
+            resp4["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("pack is not supported"),
+            "{resp4}"
+        );
+    }
+}
+
+#[cfg(test)]
 mod explain_recall_api_tests {
     use super::*;
     use tiny_http::TestRequest;
@@ -4059,5 +4424,117 @@ mod payload_conformance_tests {
             json.get("memories").is_some(),
             "auth-disabled health stays full: {json}"
         );
+    }
+}
+
+// ── /routes machine-readable registry (#1289) ──────────────────────────
+
+#[cfg(test)]
+mod routes_introspection_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+
+    struct RoutesApp {
+        uteke: Mutex<Uteke>,
+        read_only_token_hash: Option<[u8; 32]>,
+    }
+
+    impl RoutesApp {
+        fn new() -> Self {
+            // No embedder: storage-only server tests must run in CI builds
+            // without the ONNX runtime lib.
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+                read_only_token_hash: None,
+            }
+        }
+
+        fn with_read_only_token(token: &str) -> Self {
+            let mut app = Self::new();
+            app.read_only_token_hash = Some(Sha256::digest(token.as_bytes()).into());
+            app
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            auth_header: Option<&str>,
+        ) -> (u16, serde_json::Value) {
+            let mut builder = tiny_http::TestRequest::new()
+                .with_method(method)
+                .with_path(url);
+            if let Some(h) = auth_header {
+                builder =
+                    builder.with_header(tiny_http::Header::from_bytes("Authorization", h).unwrap());
+            }
+            let mut req: tiny_http::Request = builder.into();
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: self.read_only_token_hash,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    }
+
+    #[test]
+    fn routes_returns_full_registry() {
+        let app = RoutesApp::new();
+        let (status, json) = app.call(Method::Get, "/routes", None);
+        assert_eq!(status, 200, "{json}");
+
+        let entries = json.as_array().expect("routes payload is a JSON array");
+        assert_eq!(
+            entries.len(),
+            crate::api_registry::ENDPOINTS.len(),
+            "one entry per registered endpoint"
+        );
+
+        // Self-describing: /routes lists itself.
+        let self_entry = entries
+            .iter()
+            .find(|e| e["path"] == "/routes" && e["method"] == "GET")
+            .expect("/routes must list itself");
+        assert!(self_entry["tier"].is_string(), "{self_entry}");
+        assert!(self_entry["description"].is_string(), "{self_entry}");
+
+        // Entry shape matches the registry struct fields.
+        let first = &entries[0];
+        for field in ["method", "path", "tier", "description", "issues"] {
+            assert!(
+                first.get(field).is_some(),
+                "registry entry missing field '{field}': {first}"
+            );
+        }
+    }
+
+    #[test]
+    fn routes_respects_auth_roles() {
+        // RO-only server: no token -> 401.
+        let app = RoutesApp::with_read_only_token("ro-secret");
+        let (status, _) = app.call(Method::Get, "/routes", None);
+        assert_eq!(status, 401, "anonymous must not read the registry");
+
+        // Valid RO token -> allowed (GET is inherently read-only).
+        let (status, json) = app.call(Method::Get, "/routes", Some("Bearer ro-secret"));
+        assert_eq!(status, 200, "{json}");
+        assert!(json.as_array().is_some(), "RO token gets the registry");
+    }
+
+    #[test]
+    fn routes_post_is_not_routed() {
+        let app = RoutesApp::new();
+        let (status, _) = app.call(Method::Post, "/routes", None);
+        assert_eq!(status, 404, "only GET /routes exists (catch-all 404)");
     }
 }

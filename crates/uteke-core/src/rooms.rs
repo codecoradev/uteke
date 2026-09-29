@@ -3,6 +3,7 @@
 use crate::error::Error;
 use crate::memory::types::{Memory, RecallStrategy, SearchResult};
 use crate::memory::{Room, RoomDocument, RoomStats, RoomSummary};
+use crate::operations::RememberOutcome;
 
 impl crate::Uteke {
     /// Create a new room for collaborative memory.
@@ -42,9 +43,12 @@ impl crate::Uteke {
         memory_type: &str,
         room_id: &str,
         author: &str,
-    ) -> Result<String, Error> {
-        // Store the memory normally (lazy-loads embedder if needed)
-        let memory_id = self.remember_typed(content, tags, metadata, namespace, memory_type)?;
+    ) -> Result<RememberOutcome, Error> {
+        // Store the memory normally (lazy-loads embedder if needed),
+        // keeping the honest embedding status (#1273).
+        let outcome =
+            self.remember_typed_detailed(content, tags, metadata, namespace, memory_type)?;
+        let memory_id = outcome.id.clone();
 
         // Ensure room exists (auto-create if needed)
         if self.store.get_room(room_id)?.is_none() {
@@ -56,7 +60,7 @@ impl crate::Uteke {
         self.store
             .link_memory_to_room(room_id, &memory_id, author, "participant")?;
 
-        Ok(memory_id)
+        Ok(outcome)
     }
 
     /// Recall all memories in a room (cross-namespace).
@@ -68,6 +72,19 @@ impl crate::Uteke {
         limit: usize,
     ) -> Result<Vec<Memory>, Error> {
         self.store.recall_room(room_id, author, limit)
+    }
+
+    /// Recall all memories in a room, optionally filtered by author AND/OR
+    /// namespace (#1288). `namespace = None` keeps the cross-namespace default.
+    pub fn recall_room_scoped(
+        &self,
+        room_id: &str,
+        author: Option<&str>,
+        namespace: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Memory>, Error> {
+        self.store
+            .recall_room_scoped(room_id, author, namespace, limit)
     }
 
     /// Semantic recall within room context using hybrid search (vector + FTS5).
@@ -676,7 +693,8 @@ mod tests {
                 "room-x",
                 "alice",
             )
-            .unwrap();
+            .unwrap()
+            .id;
 
         // Memory was stored and linked
         let recalled = uteke.recall_room("room-x", None, 0).unwrap();

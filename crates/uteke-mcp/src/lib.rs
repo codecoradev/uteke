@@ -145,6 +145,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_list(),
                 tool_get(),
                 tool_provenance(),
+                tool_timeline(),
                 tool_contradictions(),
                 tool_contradictions_undo(),
                 tool_supersede(),
@@ -153,6 +154,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 tool_stats(),
                 tool_context(),
                 tool_dream(),
+                tool_verify(),
+                tool_repair(),
                 tool_doc_create(),
                 tool_doc_update(),
                 tool_doc_get(),
@@ -203,6 +206,7 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_list" => exec_list(uteke, &arguments)?,
                 "uteke_get" => exec_get(uteke, &arguments)?,
                 "uteke_provenance" => exec_provenance(uteke, &arguments)?,
+                "uteke_timeline" => exec_timeline(uteke, &arguments)?,
                 "uteke_contradictions" => exec_contradictions(uteke, &arguments)?,
                 "uteke_contradictions_undo" => exec_contradictions_undo(uteke, &arguments)?,
                 "uteke_supersede" => exec_supersede(uteke, &arguments)?,
@@ -211,6 +215,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 "uteke_stats" => exec_stats(uteke, &arguments)?,
                 "uteke_context" => exec_context(uteke, &arguments)?,
                 "uteke_dream" => exec_dream(uteke, &arguments)?,
+                "uteke_verify" => exec_verify(uteke)?,
+                "uteke_repair" => exec_repair(uteke)?,
                 "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
                 "uteke_doc_update" => exec_doc_update(uteke, &arguments)?,
                 "uteke_doc_get" => exec_doc_get(uteke, &arguments)?,
@@ -292,7 +298,10 @@ fn tool_recall() -> Value {
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
                 "strategy": { "type": "string", "enum": ["fusion", "hybrid", "vector", "fts5", "graph"], "description": "Recall strategy: 'fusion' (default since 0.16.0, weighted RRF of vector×1.7 + hybrid×1, #1123), 'hybrid' (vector+FTS5 via RRF), 'vector' (similarity only), 'fts5' (keyword only), or 'graph' (hybrid + graph-signal reranking)", "default": "fusion" },
-                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." }
+                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." },
+                "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
+                "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
+                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." }
             },
             "required": ["query"]
         }
@@ -354,6 +363,43 @@ fn exec_provenance(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .ok_or_else(|| format!("Memory not found: {id}"))?;
 
     let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn tool_timeline() -> Value {
+    serde_json::json!({
+        "name": "uteke_timeline",
+        "description": "Timeline event chain for one memory (#347): created/updated/deprecated/forgot/superseded events with actor + evidence. Audit a memory's full lifecycle — who wrote it, when it changed, whether and by whom it was deprecated or deleted. Companion to uteke_provenance (which adds author/source/trust fields).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "string", "description": "Full UUID or unambiguous prefix" },
+                "limit": { "type": "number", "description": "Max events to return (default 100)" }
+            },
+            "required": ["id"]
+        }
+    })
+}
+
+/// Timeline event chain for one memory (#347, owner decision 2026-09-18:
+/// audit-grade history). Events survive memory deletion, so this also works
+/// as a tombstone lookup for forgotten memories.
+fn exec_timeline(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
+    let id = resolve_id(uteke, id_arg)?;
+    let limit = args["limit"].as_u64().unwrap_or(100).min(1000) as usize;
+
+    let events = uteke
+        .timeline(&id, limit)
+        .map_err(|e| format!("Failed: {e}"))?;
+
+    let text = serde_json::to_string_pretty(&events).unwrap_or_else(|_| "[]".to_string());
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
@@ -664,6 +710,22 @@ fn tool_dream() -> Value {
                 "confirm_large": { "type": "boolean", "description": "Required when an APPLYING run projects more than 100 changes (default: false — run refuses instead)" }
             }
         }
+    })
+}
+
+fn tool_verify() -> Value {
+    serde_json::json!({
+        "name": "uteke_verify",
+        "description": "Check vector-index/SQLite consistency without mutating anything (#1266). Reports row/vector counts and whether they match. Run after serve upgrades or whenever recall behaves as if recent memories lack vectors.",
+        "inputSchema": { "type": "object", "properties": {} }
+    })
+}
+
+fn tool_repair() -> Value {
+    serde_json::json!({
+        "name": "uteke_repair",
+        "description": "Rebuild the vector index from stored embeddings (#1266). Fixes recall desync where rows exist in SQLite/FTS5 but not in the usearch index. DESTRUCTIVE to the index only — SQLite data is untouched; the index is rebuilt from it. Verify first with uteke_verify.",
+        "inputSchema": { "type": "object", "properties": {} }
     })
 }
 
@@ -1038,7 +1100,7 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room = args["room"].as_str();
     let author = args["author"].as_str().unwrap_or("anonymous");
 
-    let id = if let Some(room_id) = room {
+    let outcome = if let Some(room_id) = room {
         uteke
             .remember_in_room(
                 content,
@@ -1052,14 +1114,21 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             .map_err(|e| format!("Failed: {e}"))?
     } else {
         uteke
-            .remember_typed(content, &tags, None, namespace, memory_type)
+            .remember_typed_detailed(content, &tags, None, namespace, memory_type)
             .map_err(|e| format!("Failed: {e}"))?
     };
+
+    let mut text = format!("✓ Stored memory with ID: {}", outcome.id);
+    if let Some(ref warn) = outcome.warning {
+        text.push_str(&format!(
+            "\n⚠ Embedding NOT written: {warn}\nMemory is keyword-searchable only; run `uteke repair` to backfill."
+        ));
+    }
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("✓ Stored memory with ID: {id}"),
+            text,
         }],
         is_error: false,
     })
@@ -1139,6 +1208,55 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     // Use unified search when type is specified or default (all).
     // Fall back to legacy recall only for backward compat with existing MCP consumers.
+    // Budgeted context pack (#1281 Phase 1): `pack: true` returns a
+    // ContextPack envelope (selected/skipped/budget_used/budget_chars)
+    // instead of a bare ranked list. Deterministic, LLM-free, rank-order
+    // preserving; `exclude_ids` are memory IDs already injected this turn.
+    if args["pack"].as_bool().unwrap_or(false) {
+        let budget = args["budget_chars"].as_u64().unwrap_or(4000) as usize;
+        let exclude_ids: Vec<String> = args["exclude_ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let pack = uteke
+            .recall_unified_packed(
+                query,
+                limit,
+                tags_ref,
+                namespace,
+                min_score,
+                search_type,
+                None,
+                None,
+                false,
+                strategy,
+                budget,
+                &exclude_ids,
+            )
+            .map_err(|e| format!("Failed: {e}"))?;
+        if pack.selected.is_empty() {
+            return Ok(ToolResult {
+                content: vec![McpContent::Text {
+                    r#type: "text".to_string(),
+                    text: "No results fit the budget.".to_string(),
+                }],
+                is_error: false,
+            });
+        }
+        let text = serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string());
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text,
+            }],
+            is_error: false,
+        });
+    }
+
     let results = uteke
         .recall_unified(
             query,
@@ -1599,8 +1717,11 @@ fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 fn exec_doc_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
+    let namespace = args["namespace"].as_str();
 
-    let docs = uteke.doc_list(limit).map_err(|e| format!("Failed: {e}"))?;
+    let docs = uteke
+        .doc_list(namespace, limit)
+        .map_err(|e| format!("Failed: {e}"))?;
 
     if docs.is_empty() {
         return Ok(ToolResult {
@@ -1845,6 +1966,30 @@ fn exec_context(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: context,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_verify(uteke: &Uteke) -> Result<ToolResult, String> {
+    let report = uteke.verify().map_err(|e| format!("Failed: {e}"))?;
+    let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_repair(uteke: &Uteke) -> Result<ToolResult, String> {
+    let report = uteke.repair().map_err(|e| format!("Failed: {e}"))?;
+    let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
         }],
         is_error: false,
     })

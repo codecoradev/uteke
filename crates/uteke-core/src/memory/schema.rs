@@ -422,6 +422,9 @@ impl super::Store {
                 18 => self.migrate_v17_to_v18()?,
                 // v19: room description column — room rename/update support (#1202)
                 19 => self.migrate_v18_to_v19()?,
+                // v20: timeline audit-grade — drop FK CASCADE (history survives
+                // memory deletion, owner decision 2026-09-18) + backfill Created
+                20 => self.migrate_v19_to_v20()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1197,6 +1200,103 @@ impl super::Store {
         }
 
         tracing::info!("Migration v18 to v19 complete: rooms.description added");
+        Ok(())
+    }
+
+    /// v20: timeline audit-grade (owner decision 2026-09-18, contract doc
+    /// kontrak-core-cloud/03 "history survives forget").
+    ///
+    /// Two changes:
+    /// 1. Rebuild `timeline_events` WITHOUT the
+    ///    `REFERENCES memories(id) ON DELETE CASCADE` FK — hard-deleting a
+    ///    memory must no longer wipe its history. Events of deleted memories
+    ///    become intentional orphans (audit tombstones).
+    /// 2. Backfill `created` events (actor = 'backfill') for memories that
+    ///    predate the timeline table or arrived via import paths.
+    ///
+    /// Atomicity: each execute_batch below is ONE batch = ONE implicit
+    /// transaction (SQLite). The dispatcher (`run_migrations`) wraps this
+    /// whole step in its own transaction and stamps v20 only on success, so
+    /// an interrupted run either lands the rebuild+backfill completely or
+    /// rolls back entirely — no partial-history-loss window.
+    fn migrate_v19_to_v20(&self) -> Result<(), Error> {
+        tracing::info!(
+            "Applying schema migration v19 to v20: timeline_events FK drop + Created backfill"
+        );
+
+        // Some real-world v19 databases were created before the v9 timeline
+        // table existed (e.g. stores migrated from ancient schemas where the
+        // table was never materialized). Handle both cases.
+        let timeline_exists: i32 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='timeline_events'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::db("schema migration v19 to v20", e))?;
+
+        if timeline_exists > 0 {
+            // Rebuild WITHOUT the FK CASCADE (copy rows → drop → rename).
+            self.conn
+                .execute_batch(
+                    r#"
+                CREATE TABLE timeline_events_v20 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    created_at TEXT NOT NULL,
+                    actor TEXT,
+                    evidence_json TEXT
+                );
+                INSERT INTO timeline_events_v20
+                    (id, memory_id, event_type, event_data, created_at, actor, evidence_json)
+                SELECT id, memory_id, event_type, event_data, created_at, actor, evidence_json
+                FROM timeline_events;
+                DROP TABLE timeline_events;
+                ALTER TABLE timeline_events_v20 RENAME TO timeline_events;
+                "#,
+                )
+                .map_err(|e| Error::db("schema migration v19 to v20", e))?;
+        } else {
+            // Fresh table at the v20 shape (no FK).
+            self.conn
+                .execute_batch(
+                    r#"
+                CREATE TABLE IF NOT EXISTS timeline_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    memory_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    created_at TEXT NOT NULL,
+                    actor TEXT,
+                    evidence_json TEXT
+                );
+                "#,
+                )
+                .map_err(|e| Error::db("schema migration v19 to v20", e))?;
+        }
+
+        // Indexes + backfill apply to the final table in both cases.
+        self.conn
+            .execute_batch(
+                r#"
+                CREATE INDEX IF NOT EXISTS idx_timeline_memory ON timeline_events(memory_id);
+                CREATE INDEX IF NOT EXISTS idx_timeline_type ON timeline_events(event_type);
+                CREATE INDEX IF NOT EXISTS idx_timeline_created ON timeline_events(created_at);
+                INSERT INTO timeline_events
+                    (memory_id, event_type, event_data, created_at, actor)
+                SELECT m.id, 'created', NULL, m.created_at, 'backfill'
+                FROM memories m
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM timeline_events t
+                    WHERE t.memory_id = m.id AND t.event_type = 'created'
+                );
+                "#,
+            )
+            .map_err(|e| Error::db("schema migration v19 to v20", e))?;
+        tracing::info!("Migration v19 to v20 complete: FK dropped, Created backfilled");
         Ok(())
     }
 }
