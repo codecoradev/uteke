@@ -132,7 +132,7 @@ uteke init --agent hermes  # Installs pre_llm_call hook
 
 ## Available Tools
 
-Both transports expose the same 46 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 49 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -146,10 +146,13 @@ Both transports expose the same 46 tools (MCP protocol version `2025-06-18`):
 | `uteke_provenance` | Full provenance report for a memory (#1172): author/source fields, trust tier, source hash at write vs live-recomputed content hash, and the timeline event chain with actor + evidence |
 | `uteke_contradictions` | List the contradiction resolution ledger (#1172): superseded-but-not-restored memories with winner, reason, and timestamp |
 | `uteke_contradictions_undo` | Undo a contradiction resolution (#1172): restore the retired memory, remove the supersession edge pair, record `supersession_undone` events |
+| `uteke_timeline` | Read the audit-grade timeline for a memory (#1280, schema v20): `id`, optional `limit`. Includes `deprecated` events (with reason) and `forgot` tombstones of hard-forgotten memories — history is never deleted |
 | `uteke_forget` | Delete a memory (accepts UUID or unambiguous prefix) |
 | `uteke_stats` | Memory store statistics |
 | `uteke_context` | AI-optimized context output for prompts |
 | `uteke_dream` | Maintenance pipeline (lint → backlinks → dedup → orphans → compact → verify). **Dry-run by default** — pass `dry_run: false` to apply; scope `namespace` or `confirm_large` for whole-store / >100-change runs |
+| `uteke_verify` | Report SQLite row count vs vector index size with a match flag (#1272) — live audit without restarting `uteke-serve` (write-token surface) |
+| `uteke_repair` | Rebuild the vector index from stored embeddings (#1272) — fixes the stale-index failure mode where rows exist in SQLite+FTS5 but go missing under fusion/hybrid recall |
 | `uteke_doc_create` | Create a document (wiki/knowledge base entry) |
 | `uteke_doc_get` | Retrieve a document by ID |
 | `uteke_doc_list` | List all documents |
