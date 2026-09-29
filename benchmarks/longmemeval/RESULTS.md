@@ -3,9 +3,11 @@
 **Dataset:** `longmemeval_s_cleaned.json` — 500 questions = 470 answerable + 30 abstention (`_abs`), 6+1 question types
 **Metric:** Session-level retrieval (Recall@k, NDCG@k). Deterministic — no LLM in the retrieval path.
 
-**TL;DR headline (v0.17.0 re-validation, full 500 questions — see section below):**
-recall_any@5 = **0.984** · strict recall_all@5 = **0.880** · strict recall_all@10 = **0.954** · coverage@5 = **0.944**
-(Original v0.16.0 validation run: 0.982 / 0.880 / 0.954 / 0.943 — raw committed alongside the re-validation run.)
+**TL;DR headline (v0.19.0, full 500 questions — see section below):**
+recall_any@5 = **0.982** · strict recall_all@5 = **0.880** · strict recall_all@10 = **0.954** · coverage@5 = **0.943**
+(Per-release headline: v0.16.0 = 0.982 · v0.17.0 = 0.984 · v0.19.0 = 0.982 any@5 — the strict
+family is bit-stable at 0.880/0.954 across all three releases. Raw artifacts for all three
+runs are committed under [`results/`](results/).)
 
 Every number below can be recomputed from the committed raw artifacts in
 [`results/`](results/) — instructions at the bottom. See also the
@@ -122,6 +124,52 @@ the v0.16.0 run.
 ```bash
 # reproduce
 UTEKE_GIT_REF=a2ec81a0915a242cee6e1de8811491e4fad1d4da modal run scripts/modal_fanout.py --strategy default --tag v017
+```
+
+## v0.19.0 validation — ✅ DONE (2026-09-29)
+
+Full 500-question run on the v0.19.0 release tree (image built from exact SHA
+`fbfed5f` = the released v0.19.0, Modal run `ap-7VTM9mzqzyn4XOlLxn4TvJ`, 10 shards,
+strategy `default`). Raw artifact (committed):
+[`results/default-500q-v0.19.0.jsonl`](results/default-500q-v0.19.0.jsonl).
+
+| Question type | n | R@5 (strict) | R@10 (strict) | any@5 | any@10 | NDCG@5 |
+|---|---|---|---|---|---|---|
+| knowledge-update | 72 | 1.000 | 1.000 | 1.000 | 1.000 | 0.972 |
+| single-session-assistant | 56 | 0.982 | 1.000 | 0.982 | 1.000 | 0.959 |
+| single-session-user | 64 | 0.969 | 0.969 | 0.969 | 0.969 | 0.913 |
+| single-session-preference | 30 | 0.967 | 0.967 | 0.967 | 0.967 | 0.839 |
+| temporal-reasoning | 127 | 0.920 | 0.962 | 0.984 | 0.992 | 0.849 |
+| multi-session | 121 | 0.906 | 0.976 | 0.983 | 0.992 | 0.879 |
+| **Overall (470 non-abstention)** | 470 | **0.946** | 0.977 | 0.983 | 0.989 | 0.897 |
+| **Abstention (30)** | 30 | **0.906** | 0.950 | 0.967 | 0.967 | 0.844 |
+| **Overall (full 500)** | 500 | **0.943** | 0.975 | **0.982** | 0.988 | 0.894 |
+
+Strict-family headline on the full 500: recall_all@5 = **0.880** (binary), coverage@5 =
+**0.943** — identical to v0.16.0 and v0.17.0.
+
+### Three-release stability (full 500-question basis, scored from committed raw)
+
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 |
+|---|---|---|---|
+| recall_any@5 | 0.982 | **0.984** | 0.982 |
+| recall_any@10 | 0.988 | 0.988 | 0.988 |
+| strict recall_all@5 | 0.880 | 0.880 | 0.880 |
+| strict recall_all@10 | 0.954 | 0.954 | 0.954 |
+| coverage@5 | 0.943 | 0.944 | 0.943 |
+| total misses @50 | 0 | 0 | 0 |
+
+Per-question comparison vs v0.17.0 (n=500): 250 identical full rankings, 243
+reorder-only within the top-50, 7 questions with a different top-50 set. At the
+metric level: **zero flips @10 and @50**, exactly **one flip @5** — question
+`gpt4_1916e0ea` (2 gold sessions, one at rank 5 → rank 6, a near-tie boundary
+move of the same class as the cross-architecture noise in the Independent
+Reproduction above). The strict family (88.0/95.4) has not moved across three
+releases; any@5 sits in a ±0.2pp band (98.2–98.4).
+
+```bash
+# reproduce
+UTEKE_GIT_REF=fbfed5f7258093558c179b89f08c5a53a6069666 modal run scripts/modal_fanout.py --strategy default --tag v019
 ```
 
 ## Strategy Comparison (historical runs)

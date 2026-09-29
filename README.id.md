@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>98.4% LongMemEval-S recall@5</strong> · query hangat ~45 ms · <strong>0 LLM token</strong> per query · CPU-only · fully offline
+  <strong>98.2% LongMemEval-S recall@5</strong> · query hangat ~45 ms · <strong>0 LLM token</strong> per query · CPU-only · fully offline
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
   <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
-  <a href="#-benchmark-984-recall-di-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.4%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.4%" /></a>
+  <a href="#-benchmark-982-recall-di-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@ mendeteksi setup, nanya agent apa yang kamu pakai, dan nyambungin semuanya. 📖
 
 ---
 
-## 📊 Benchmark: 98.4% recall di LongMemEval-S
+## 📊 Benchmark: 98.2% recall di LongMemEval-S
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) nyembunyiin fakta yang
 dibutuhkan agent di ~115 sesi chat per pertanyaan, lalu ngecek apakah retrieval
@@ -81,32 +81,40 @@ menemukan buktinya. 500 pertanyaan hand-curated, lima kemampuan memori. Uteke
 menjalankan suite penuh dengan **nol panggilan LLM di jalur retrieval**: embedding
 lokal, satu CPU, deterministik.
 
-| Metrik | Uteke **v0.18.2** | agentmemory¹ | BM25-only¹ |
+| Metrik | Uteke **v0.19.0** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
-| **recall_any@5** (bukti di top-5) | **98.4%** | 95.2% | 86.2% |
+| **recall_any@5** (bukti di top-5) | **98.2%** | 95.2% | 86.2% |
 | recall_any@10 | 98.8% | 98.6% | 94.6% |
 | **recall_all@5** (semua bukti, strict) | **88.0%**² | 88.2% MRR³ | n/a |
 | LLM token / query | **0** | 0 | 0 |
 
+**Stabilitas antar-rilis** (500 pertanyaan penuh, diskor dari raw yang di-commit —
+[RESULTS.md](benchmarks/longmemeval/RESULTS.md#three-release-stability-full-500-question-basis-scored-from-committed-raw)):
+
+| Rilis | v0.16.0 | v0.17.0 | v0.19.0 |
+|---|---|---|---|
+| recall_any@5 | 98.2% | 98.4% | **98.2%** |
+| strict recall_all@5 | 88.0% | 88.0% | **88.0%** |
+
 <sub>¹ Angka publikasi agentmemory, benchmark yang sama, split 500 pertanyaan yang sama (basis recall_any@5 mereka; terverifikasi apples-to-apples di [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *semua* sesi gold harus masuk top-5; 65% pertanyaan butuh beberapa sesi. Ceiling matematis 99.4%. ³ MRR, bukan recall_all (tidak bisa dibandingkan langsung; ditampilkan untuk kelengkapan).</sub>
 
 <p align="center">
-  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidasi v0.18.1) vs MemPalace 96.6% dan agentmemory 95.2% (hasil raw di-commit di repo)" width="880" />
+  <img src="docs/assets/longmemeval-recall-v019.png" alt="LongMemEval-S recall@5: uteke 98.2% (v0.19.0) vs MemPalace 96.6% dan agentmemory 95.2% (hasil raw ketiga rilis di-commit di repo)" width="880" />
 </p>
 
 **Per kategori pertanyaan** (recall_any@5: cerita per kategori yang jarang ditampilkan tool lain):
 
 | knowledge-update | single-session | temporal | multi-session |
 |:---:|:---:|:---:|:---:|
-| **100%** | 96.7–98.2% | **99.2%** | 98.3% |
+| **100%** | 96.7–98.2% | **98.4%** | 98.3% |
 
 Bagian sulit itu bukan menemukan *sebuah* jarum; bukti setiap pertanyaan ada di
 top-50 (**nol meleset**). Sisa gap-nya: *urutan*, saat satu pertanyaan butuh
 beberapa sesi sekaligus: strict recall_all@5 di angka 88.0% dengan ceiling 99.4%.
 
 > **🎯 Jangan percaya benchmark kami. Jalankan sendiri.** Harness lengkapnya ada di
-> repo ini: dataset publik, output raw di-commit untuk kedua rilis, scoring
-> deterministik yang bisa kamu hitung ulang dalam ~20 baris Python. Tanpa perlu
+> repo ini: dataset publik, output raw di-commit untuk ketiga rilis (v0.16/v0.17/v0.19),
+> scoring deterministik yang bisa kamu hitung ulang dalam ~20 baris Python. Tanpa perlu
 > embedder untuk verifikasi, ~$10 untuk menjalankan 500 pertanyaan sendiri.
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)**
 
@@ -383,7 +391,7 @@ Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan
 <details>
 <summary><strong>Sudah production-ready?</strong></summary>
 
-Uteke sekarang v0.18.2 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke sekarang v0.19.0 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
 </details>
 
 ---

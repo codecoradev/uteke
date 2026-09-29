@@ -14,12 +14,13 @@ the computer tell you the truth yourself. Three budgets, pick one:
 disk. The embedding model (~200 MB) downloads once on first run. Everything else is
 in this repo.
 
-> **Published numbers (v0.17.0, 500 questions, LongMemEval-S):**
-> recall_any@5 **98.4%** · recall_any@10 98.8% · strict recall_all@5 88.0% ·
-> coverage@5 94.4% — all on the full 500-question basis. On the 470
+> **Published numbers (v0.19.0, 500 questions, LongMemEval-S):**
+> recall_any@5 **98.2%** · recall_any@10 98.8% · strict recall_all@5 88.0% ·
+> coverage@5 94.3% — all on the full 500-question basis. On the 470
 > non-abstention questions (the 30 `_abs` questions are reported separately:
 > they measure answering, not retrieval), strict recall_all@5 is 88.3% and
-> coverage@5 is 94.7%.
+> coverage@5 is 94.6%. Per-release any@5: v0.16.0 98.2% · v0.17.0 98.4% ·
+> v0.19.0 98.2% — the strict family (88.0/95.4) is unchanged across all three.
 > What these metric names mean: [docs/benchmarks.md](../../docs/benchmarks.md) and
 > [`RESULTS.md`](RESULTS.md#reading-the-metrics).
 
@@ -27,8 +28,9 @@ in this repo.
 
 | File | Run | Headline |
 |---|---|---|
-| [`results/default-500q-v017.jsonl`](results/default-500q-v017.jsonl) | v0.17.0 (current release binary) | any@5 **98.4%** |
-| [`results/default-500q.jsonl`](results/default-500q.jsonl) | v0.16.0 (canonical validation) | any@5 98.3% |
+| [`results/default-500q-v0.19.0.jsonl`](results/default-500q-v0.19.0.jsonl) | v0.19.0 (current release binary) | any@5 **98.2%** |
+| [`results/default-500q-v017.jsonl`](results/default-500q-v017.jsonl) | v0.17.0 | any@5 98.4% |
+| [`results/default-500q.jsonl`](results/default-500q.jsonl) | v0.16.0 (canonical validation) | any@5 98.2% |
 
 ---
 
@@ -46,7 +48,7 @@ cd benchmarks/longmemeval
 python3 - <<'EOF'
 import json
 
-RAW = 'results/default-500q-v017.jsonl'   # v0.17.0 (headline); or default-500q.jsonl for v0.16.0
+RAW = 'results/default-500q-v0.19.0.jsonl'   # v0.19.0 (headline); or default-500q-v017.jsonl / default-500q.jsonl for older releases
 rows = {}
 for line in open(RAW):
     line = line.strip()
@@ -70,9 +72,9 @@ print(f"total-miss@50  = {sum(1 for q in non_abs if not (gold[q] & set(rows[q][:
 EOF
 ```
 
-Expected output — `recall_any@5` = **0.9851** (v0.17.0 file) or **0.9830**
-(v0.16.0 file), `total-miss@50 = 0`: every question has all its gold sessions
-somewhere in the top-50; everything below perfect is ranking order, not missing
+Expected output — `recall_any@5` = **0.9820** (v0.19.0 file), **0.9840** (v0.17.0)
+or **0.9820** (v0.16.0 file), `total-miss@50 = 0`: every question has all its gold
+sessions somewhere in the top-50; everything below perfect is ranking order, not missing
 data.
 
 If the file ever stops matching the README, that's a bug — open an issue.
@@ -130,7 +132,7 @@ curl -L -o data/longmemeval_s_cleaned.json \
 
 # pin the EXACT binary you want to measure (builds from source inside the image;
 # do not skip this — an untagged image silently measures whatever it was built with)
-export UTEKE_GIT_REF=<commit-sha-or-tag>     # e.g. the v0.17.0 release tag
+export UTEKE_GIT_REF=<commit-sha-or-tag>     # e.g. the v0.19.0 release tag
 export MODAL_TOKEN_ID=... MODAL_TOKEN_SECRET=...
 
 modal run scripts/modal_fanout.py --strategy default --num-shards 10
@@ -153,17 +155,17 @@ different questions:
 
 - **recall_any@K** — "did the retriever surface *the* evidence?" (at least one
   gold session in top-K). This is the metric competitor benchmarks publish;
-  ours: **98.4% @ 5** (full 500-question set).
+  ours: **98.2% @ 5** (full 500-question set, v0.19.0).
 - **recall_all@K (strict)** — "did it get *all* of them?" (every gold session in
   top-K; 65% of the 500 questions have multiple gold sessions). The honest
   ceiling-capable number: **88.0% @ 5** on the full 500 (88.3% on the 470
   non-abstention) — mathematical ceiling is 99.4% (3 questions have 6 gold
   sessions; top-5 physically can't hold all).
-- **coverage R@K** — partial credit (fraction of gold sessions found). 94.4%
-  full-500 (94.7% on the 470 non-abstention).
+- **coverage R@K** — partial credit (fraction of gold sessions found). 94.3%
+  full-500 (94.6% on the 470 non-abstention).
 
 Per-category breakdown, the 30 abstention questions, contradiction segment, and
-the full v0.16.0 → v0.17.0 comparison: [`RESULTS.md`](RESULTS.md),
+the v0.16.0 → v0.17.0 → v0.19.0 comparisons: [`RESULTS.md`](RESULTS.md),
 [`docs/benchmarks.md`](../../docs/benchmarks.md).
 
 ## Reproducibility guarantees

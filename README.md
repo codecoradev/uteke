@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <strong>98.4% LongMemEval-S recall@5</strong> · ~45 ms warm query · <strong>0 LLM tokens</strong> per query · CPU-only · fully offline
+  <strong>98.2% LongMemEval-S recall@5</strong> · ~45 ms warm query · <strong>0 LLM tokens</strong> per query · CPU-only · fully offline
 </p>
 
 <p align="center">
@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
   <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
-  <a href="#-benchmarks--984-recall-on-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.4%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.4%" /></a>
+  <a href="#-benchmarks--982-recall-on-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
 
 <p align="center">
@@ -69,7 +69,7 @@ setup, asks which agent you use, and wires everything up. 📖 [Onboarding docs]
 
 ---
 
-## 📊 Benchmarks: 98.4% recall on LongMemEval-S
+## 📊 Benchmarks: 98.2% recall on LongMemEval-S
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) hides the facts an
 agent needs across ~115 chat sessions per question and checks whether retrieval
@@ -77,33 +77,41 @@ finds the evidence. 500 hand-curated questions, five memory abilities. Uteke run
 the full suite with **zero LLM calls in the retrieval path**: local embeddings,
 one CPU, deterministic.
 
-| Metric | uteke **v0.18.2** | agentmemory¹ | BM25-only¹ |
+| Metric | uteke **v0.19.0** | agentmemory¹ | BM25-only¹ |
 |---|---|---|---|
-| **recall_any@5** (evidence in top-5) | **98.4%** | 95.2% | 86.2% |
+| **recall_any@5** (evidence in top-5) | **98.2%** | 95.2% | 86.2% |
 | recall_any@10 | 98.8% | 98.6% | 94.6% |
 | **recall_all@5** (all evidence, strict) | **88.0%**² | 88.2% MRR³ | n/a |
 | LLM tokens / query | **0** | 0 | 0 |
 
+**Per-release stability** (full 500 questions, scored from committed raw —
+[RESULTS.md](benchmarks/longmemeval/RESULTS.md#three-release-stability-full-500-question-basis-scored-from-committed-raw)):
+
+| Release | v0.16.0 | v0.17.0 | v0.19.0 |
+|---|---|---|---|
+| recall_any@5 | 98.2% | 98.4% | **98.2%** |
+| strict recall_all@5 | 88.0% | 88.0% | **88.0%** |
+
 <sub>¹ agentmemory's published numbers, same benchmark, same 500-question split (their recall_any@5 basis; verified apples-to-apples in our [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *every* gold session in top-5; 65% of questions have multiple gold sessions. Mathematical ceiling 99.4%. ³ MRR, not recall_all (not directly comparable; shown for completeness).</sub>
 
 <p align="center">
-  <img src="docs/assets/longmemeval-recall-v017.png" alt="LongMemEval-S recall@5: uteke 98.4% (revalidated v0.18.1) vs MemPalace 96.6% and agentmemory 95.2% (raw results committed in-repo)" width="880" />
+  <img src="docs/assets/longmemeval-recall-v019.png" alt="LongMemEval-S recall@5: uteke 98.2% (v0.19.0) vs MemPalace 96.6% and agentmemory 95.2% (raw results for all three releases committed in-repo)" width="880" />
 </p>
 
 **By question category** (recall_any@5: the category-level story most tools don't show):
 
 | knowledge-update | single-session | temporal | multi-session |
 |:---:|:---:|:---:|:---:|
-| **100%** | 96.7–98.2% | **99.2%** | 98.3% |
+| **100%** | 96.7–98.2% | **98.4%** | 98.3% |
 
 The hard part isn't finding *a* needle; every question's evidence lands in the
 top-50 (**zero misses**). The residual gap is *ordering* when a question needs
 several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling.
 
 > **🎯 Don't trust our benchmark. Run it yourself.** The full harness is in this
-> repo: public dataset, committed raw outputs for both releases, deterministic
-> scoring you can recompute in ~20 lines of Python. No embedder needed to verify,
-> ~$10 to re-run the whole 500 questions yourself.
+> repo: public dataset, committed raw outputs for all three releases (v0.16/v0.17/v0.19),
+> deterministic scoring you can recompute in ~20 lines of Python. No embedder needed to
+> verify, ~$10 to re-run the whole 500 questions yourself.
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)**
 
 Also built in: `uteke bench --counts 100,1000,10000` for latency/throughput on
@@ -344,7 +352,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.18.2 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.19.0 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
 
 ---
