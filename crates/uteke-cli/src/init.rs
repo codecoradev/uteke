@@ -744,4 +744,32 @@ mod tests {
         assert!(PI_PACKAGE_JSON.contains("uteke-memory-provider"));
         assert!(PI_PACKAGE_JSON.contains("Apache-2.0"));
     }
+
+    // Hermes integration package guards (#1300). The committed, rendered
+    // package in integrations/hermes/ must stay byte-identical to the
+    // embedded templates — it is what the Hermes Desktop "Install plugin"
+    // dialog and the plugin catalog scan for. Drift here silently breaks
+    // repository installation.
+    const INTEGRATION_PLUGIN_YAML: &str = include_str!("../../../integrations/hermes/plugin.yaml");
+    const INTEGRATION_INIT_PY: &str = include_str!("../../../integrations/hermes/__init__.py");
+
+    #[test]
+    fn hermes_integration_package_matches_embedded_templates() {
+        assert_eq!(
+            INTEGRATION_PLUGIN_YAML, PLUGIN_YAML,
+            "integrations/hermes/plugin.yaml drifted from the embedded template — run scripts/render-hermes-integration.sh and commit"
+        );
+        assert_eq!(
+            INTEGRATION_INIT_PY, INIT_PY,
+            "integrations/hermes/__init__.py drifted from the embedded template — run scripts/render-hermes-integration.sh and commit"
+        );
+    }
+
+    #[test]
+    fn hermes_integration_package_is_detectable_by_hermes_scanner() {
+        // Mirror of the Desktop scanner's detectPluginComponents(): an agent
+        // plugin requires BOTH a plugin manifest and a Python entry point.
+        assert!(INTEGRATION_PLUGIN_YAML.contains("name: uteke-memory"));
+        assert!(INTEGRATION_INIT_PY.contains("def register("));
+    }
 }
