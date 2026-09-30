@@ -62,7 +62,7 @@ def _load_config() -> dict:
     try:
         from hermes_constants import get_hermes_home
     except ImportError:
-        get_hermes_home = lambda: None  # type: ignore[assignment]
+        get_hermes_home = None  # type: ignore[assignment]
 
     hermes_home = get_hermes_home() if get_hermes_home else os.environ.get("HERMES_HOME", "")
 
