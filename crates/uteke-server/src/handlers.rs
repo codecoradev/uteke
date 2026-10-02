@@ -12,6 +12,7 @@ use tiny_http::{Header, Method, Request, Response, StatusCode};
 use tracing::{error, warn};
 
 use uteke_core::Uteke;
+use uteke_core::memory::types::MemoryType;
 use uteke_core::memory::types::validate_author_type;
 
 use crate::api_registry;
@@ -219,6 +220,24 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         return ctx.error_response_for(req, 400, e.to_string());
                     }
                 }
+                // #1302: validate the requested memory type BEFORE any write and
+                // honor it on the plain path — parity with rooms. The previous
+                // behavior only copied `type` into metadata and fell through to
+                // `remember_detailed` (auto-inference), silently storing `fact`
+                // for every explicit caller type — a contract break for typed
+                // writers (tole #143). Unknown values now fail loudly (400)
+                // listing the supported vocabulary instead of defaulting.
+                if let Some(t) = req_data.r#type.as_deref() {
+                    if MemoryType::from_str_opt(t).is_none() {
+                        return ctx.error_response_for(
+                            req,
+                            400,
+                            format!(
+                                "Unknown memory type '{t}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+                            ),
+                        );
+                    }
+                }
 
                 let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
                     if req_data.detect_contradiction {
@@ -233,6 +252,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 0.65,
                             )
                             .map(|(outcome, _)| outcome)
+                    } else if let Some(t) = req_data.r#type.as_deref() {
+                        uteke.remember_typed_detailed(
+                            &req_data.content,
+                            &tag_refs,
+                            metadata,
+                            ns(&req_data.namespace),
+                            t,
+                        )
                     } else {
                         uteke.remember_detailed(
                             &req_data.content,
@@ -4536,5 +4563,130 @@ mod routes_introspection_tests {
         let app = RoutesApp::new();
         let (status, _) = app.call(Method::Post, "/routes", None);
         assert_eq!(status, 404, "only GET /routes exists (catch-all 404)");
+    }
+}
+
+// ── #1302: plain /remember must honor (not silently normalize) `type` ──────
+
+#[cfg(test)]
+mod plain_remember_type_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    /// Minimal harness mirroring the other in-memory route tests:
+    /// no embedder (CI-safe), route() called directly (#1288).
+    struct PlainRememberApp {
+        uteke: Mutex<Uteke>,
+    }
+
+    impl PlainRememberApp {
+        fn new() -> Self {
+            Self {
+                uteke: Mutex::new(
+                    Uteke::open_with_backend(":memory:", None)
+                        .expect("open in-memory uteke without embedder"),
+                ),
+            }
+        }
+
+        fn call(
+            &self,
+            method: Method,
+            url: &str,
+            body: Option<String>,
+        ) -> (u16, serde_json::Value) {
+            let mut req = match body {
+                Some(b) => {
+                    let leaked: &'static str = Box::leak(b.into_boxed_str());
+                    TestRequest::new()
+                        .with_method(method)
+                        .with_path(url)
+                        .with_body(leaked)
+                        .into()
+                }
+                None => TestRequest::new().with_method(method).with_path(url).into(),
+            };
+            let ctx = ReqCtx {
+                auth_token_hash: None,
+                read_only_token_hash: None,
+                cors_origins: Vec::new(),
+                recall_config: None,
+                extraction_config: None,
+            };
+            let resp = route(&self.uteke, &ctx, &mut req);
+            let status = resp.status_code().0;
+            let bytes = resp.into_reader().into_inner();
+            let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            (status, json)
+        }
+    }
+
+    #[test]
+    fn plain_remember_honors_explicit_type() {
+        let app = PlainRememberApp::new();
+
+        // Issue repro: explicit `decision` on the plain path must survive —
+        // silently downgrading it to `fact` broke typed writers (tole #143).
+        let body = serde_json::json!({
+            "content": "ISOLATION-TEST decision typing contract",
+            "namespace": "repo-mem-e2e",
+            "type": "decision",
+            "tags": ["test", "isolation"],
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/remember", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        let id = resp["id"].as_str().expect("memory id").to_string();
+
+        let (status, mem) = app.call(Method::Get, &format!("/memory?id={id}"), None);
+        assert_eq!(status, 200, "{mem}");
+        assert_eq!(
+            mem["memory_type"].as_str(),
+            Some("decision"),
+            "explicit type must be stored verbatim, not normalized to fact: {mem}"
+        );
+        // Metadata copy retained (back-compat for metadata-based readers).
+        assert_eq!(mem["metadata"]["type"].as_str(), Some("decision"));
+    }
+
+    #[test]
+    fn plain_remember_rejects_unknown_type_loudly() {
+        let app = PlainRememberApp::new();
+
+        let body = serde_json::json!({
+            "content": "ISOLATION-TEST unknown type must 400",
+            "type": "journal",
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/remember", Some(body));
+        assert_eq!(status, 400, "unknown type must fail loudly: {resp}");
+        let err = resp["error"].as_str().unwrap_or_default();
+        assert!(err.contains("Unknown memory type"), "{err}");
+        assert!(
+            err.contains("decision"),
+            "error must list the supported vocabulary: {err}"
+        );
+    }
+
+    #[test]
+    fn plain_remember_without_type_still_auto_infers() {
+        let app = PlainRememberApp::new();
+
+        // No explicit type → legacy auto-inference path unchanged.
+        let body = serde_json::json!({
+            "content": "ISOLATION-TEST auto infer: we decided to keep the contract",
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/remember", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        let id = resp["id"].as_str().expect("memory id").to_string();
+
+        let (status, mem) = app.call(Method::Get, &format!("/memory?id={id}"), None);
+        assert_eq!(status, 200, "{mem}");
+        assert_eq!(
+            mem["memory_type"].as_str(),
+            Some("decision"),
+            "content contains 'we decided' → auto-inference must still run: {mem}"
+        );
     }
 }

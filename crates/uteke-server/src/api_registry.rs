@@ -141,7 +141,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
         method: "POST",
         path: "/remember",
         tier: Tier::Core,
-        description: "Store a new memory. Accepts content, tags, namespace, type, metadata.",
+        description: "Store a new memory. Accepts content, tags, namespace, type, metadata. Explicit `type` is honored as-is (no silent normalization, #1302); unknown types are rejected with 400 listing the valid vocabulary. Omit `type` to auto-infer.",
         request_type: Some("RememberRequest"),
         response_type: Some("Memory"),
         excludes_deprecated: false,
