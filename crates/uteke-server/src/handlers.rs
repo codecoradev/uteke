@@ -4669,6 +4669,34 @@ mod plain_remember_type_tests {
     }
 
     #[test]
+    fn plain_remember_rejects_unknown_type_even_with_contradiction() {
+        let app = PlainRememberApp::new();
+
+        // #1302 review follow-up: type validation runs BEFORE the branch, so
+        // the contradiction arm is equally covered — no path may store an
+        // invalid type. (Honoring a valid type on the contradiction arm is
+        // verified by live E2E: it forwards the type to the core, which has
+        // no embedder here — CI-safe validation-only assertion.)
+        let body = serde_json::json!({
+            "content": "ISOLATION-TEST unknown type contradiction arm",
+            "type": "journal",
+            "detect_contradiction": true,
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/remember", Some(body));
+        assert_eq!(
+            status, 400,
+            "type validation must precede the contradiction arm: {resp}"
+        );
+        assert!(
+            resp["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Unknown memory type")
+        );
+    }
+
+    #[test]
     fn plain_remember_without_type_still_auto_infers() {
         let app = PlainRememberApp::new();
 
