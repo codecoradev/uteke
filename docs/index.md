@@ -3,7 +3,7 @@ layout: home
 
 hero:
   name: uteke
-  text: One Memory. Every Agent. Zero Cloud.
+  text: One Memory. Every Agent. Local-first.
   tagline: Give your AI a memory that never leaves your machine. Works with Claude, Cursor, Copilot, and any MCP-compatible agent.
   actions:
     - theme: brand

@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/uteke-banner.png" alt="Uteke: One memory. Every agent. Zero cloud." width="640" />
+  <img src="docs/assets/uteke-banner.png" alt="Uteke: One memory. Every agent. Local-first." width="640" />
 </p>
 
 <h1 align="center">Uteke</h1>
-<p align="center"><strong>One memory. Every agent. Zero cloud.</strong></p>
+<p align="center"><strong>One memory. Every agent. Local-first.</strong></p>
 <p align="center">
   Give your AI a memory that never leaves your machine. Works with Claude, Cursor, Copilot, and any MCP-compatible agent.
 </p>
