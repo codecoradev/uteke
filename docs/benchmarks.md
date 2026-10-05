@@ -95,25 +95,32 @@ See [LongMemEval retrieval harness](https://github.com/codecoradev/uteke/tree/de
 Full-validation runs of the default strategy (fusion, zero-config) on
 LongMemEval-S: 500 questions, session-level retrieval, ~115 haystack sessions per
 question (2,415 unique sessions), EmbeddingGemma Q4 CPU-only, deterministic — no
-LLM anywhere in the retrieval path. Originally validated on v0.16.0 and
-re-validated end-to-end on the v0.17.0 release binary (2026-09-09).
+LLM anywhere in the retrieval path. Originally validated on v0.16.0,
+re-validated end-to-end on the v0.17.0 release binary (2026-09-09), and
+re-validated again on the v0.19.0 release tree (2026-09-29).
 
-![uteke vs published systems on LongMemEval-S, revalidated on v0.17.0](assets/longmemeval-recall-v017.png)
+![uteke vs published systems on LongMemEval-S, v0.19.0 run](assets/longmemeval-recall-v019.png)
 
 ### Headline numbers
 
-Full 500-question basis, v0.17.0 re-validation (v0.16.0 original run alongside):
+Full 500-question basis, all three validated releases (scored from the committed
+raw artifacts):
 
-| Metric | v0.17.0 | v0.16.0 | What it means |
-|---|---|---|---|
-| **recall_any@5** | **98.4%** | 98.2% | At least one gold session in top-5 — the metric competitor benchmarks publish |
-| recall_any@10 | 98.8% | 98.8% | |
-| strict recall_all@5 | 88.0% | 88.0% | **Strict:** every gold session in top-5 (mathematical ceiling 99.4% — 3 questions have 6 gold sessions) |
-| strict recall_all@10 | 95.4% | 95.4% | Every gold session in top-10 |
-| coverage@5 | 94.4% | 94.3% | Partial credit per question |
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 | What it means |
+|---|---|---|---|---|
+| **recall_any@5** | 98.2% | 98.4% | **98.2%** | At least one gold session in top-5 — the metric competitor benchmarks publish |
+| recall_any@10 | 98.8% | 98.8% | 98.8% | |
+| strict recall_all@5 | 88.0% | 88.0% | 88.0% | **Strict:** every gold session in top-5 (mathematical ceiling 99.4% — 3 questions have 6 gold sessions) |
+| strict recall_all@10 | 95.4% | 95.4% | 95.4% | Every gold session in top-10 |
+| coverage@5 | 94.3% | 94.4% | 94.3% | Partial credit per question |
+
+The strict family (88.0 / 95.4) is bit-stable across all three releases;
+recall_any@5 sits in a ±0.2pp band (98.2–98.4) with zero flips @10/@50 and one
+rank-boundary flip @5 between v0.17.0 and v0.19.0
+([details](../benchmarks/longmemeval/RESULTS.md#three-release-stability-full-500-question-basis-scored-from-committed-raw)).
 
 On the 470 non-abstention questions (the 30 `_abs` abstention questions are
-reported separately), strict recall_all@5 is 88.3% and coverage@5 is 94.7%.
+reported separately), strict recall_all@5 is 88.3% and coverage@5 is 94.6%.
 Per-type breakdown, ablations, and the contradiction segment:
 [benchmarks/longmemeval/RESULTS.md](../benchmarks/longmemeval/RESULTS.md).
 
@@ -133,7 +140,7 @@ the same data.
 
 ### Head-to-head vs published systems
 
-The agentmemory numbers quoted in the [README](../README.md#-benchmarks-984-recall-on-longmemeval-s)
+The agentmemory numbers quoted in the [README](../README.md#-benchmarks-982-recall-on-longmemeval-s)
 are their published figures on the same benchmark and the same 500-question
 split, on their own recall_any@5 basis — verified apples-to-apples before
 quoting (their harness, their split, their metric definition). The BM25-only
@@ -147,7 +154,7 @@ ablation on this dataset scores 91.4% any@5 ([RESULTS.md](../benchmarks/longmeme
   published benchmark documents (accessed Aug 2026) and differ in embedding
   models and pipeline details.
 - The FTS5-only bar is an ablation of our own system, not a competitor.
-- Aggregate metrics + per-type breakdown: benchmarks/longmemeval/RESULTS.md in this repo. Canonical raw per-question artifacts are committed under benchmarks/longmemeval/results/ (default & FTS5-ablation 500-question runs, contradiction segment) — recompute any headline number straight from the repo; older exploratory outputs live on the benchmark Modal volume (uteke-longmemeval).
+- Aggregate metrics + per-type breakdown: benchmarks/longmemeval/RESULTS.md in this repo. Canonical raw per-question artifacts are committed under benchmarks/longmemeval/results/ (default 500-question runs for v0.16.0, v0.17.0 and v0.19.0, FTS5 ablation, contradiction segment) — recompute any headline number straight from the repo; older exploratory outputs live on the benchmark Modal volume (uteke-longmemeval).
 
 ### Reproducibility
 
@@ -161,7 +168,7 @@ An independent local re-run (2026-09-01) of 108 of the 500 questions on a 4-core
 | OS | Linux 6.8.0 (aarch64) |
 | Rust | 1.85+ |
 | Embedding | EmbeddingGemma Q4, 768d, ONNX Runtime CPU |
-| Uteke | v0.16.0 validation + v0.17.0 re-validation (2026-09-09), both full 500 questions; perf table re-verified on v0.17.0 |
+| Uteke | v0.16.0 validation + v0.17.0 re-validation (2026-09-09) + v0.19.0 re-validation (2026-09-29), all full 500 questions; perf table re-verified on v0.17.0 |
 
 ## Methodology
 

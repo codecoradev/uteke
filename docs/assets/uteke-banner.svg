@@ -34,7 +34,7 @@
   <text x="56" y="342" font-family="Nunito ExtraLight" font-weight="800" font-size="50" fill="#E9ECF7">for <tspan fill="#94E2D5">AI Agents</tspan></text>
 
   <!-- subtitle -->
-  <text x="56" y="410" font-family="Inter" font-weight="400" font-size="19" fill="#8D95A9">~45ms recall · single Rust binary · zero cloud</text>
+  <text x="56" y="410" font-family="Inter" font-weight="400" font-size="19" fill="#8D95A9">~45ms recall · single Rust binary · local-first</text>
 
   <!-- install code box (lower-right, clear of headline) -->
   <rect x="700" y="470" width="524" height="60" rx="14" fill="#131722" stroke="#2C3344" stroke-width="1"/>

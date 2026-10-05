@@ -186,6 +186,9 @@ pub struct RememberRequest {
     pub tags: Vec<String>,
     #[serde(default)]
     pub namespace: Option<String>,
+    /// Memory type — validated against the MemoryType vocabulary and stored
+    /// as-is (no silent normalization, #1302). Unknown values are rejected
+    /// with 400 listing the valid types. Omit to let auto-inference decide.
     #[serde(default)]
     pub r#type: Option<String>,
     #[serde(default)]

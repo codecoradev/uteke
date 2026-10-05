@@ -27,6 +27,18 @@ cargo install --path crates/uteke-cli
 uteke --version
 ```
 
+### Homebrew (macOS Apple Silicon & Linux)
+
+```bash
+brew install codecoradev/tap/uteke
+```
+
+Ships the bundled ONNX Runtime libraries — embeddings work out of the box
+(verify with `uteke doctor`). There is no Intel Mac prebuilt, so macOS Intel
+users should use [Build from Source](#build-from-source-recommended) or the
+quick-install script. While installed via Homebrew, use
+`brew upgrade codecoradev/tap/uteke` instead of the built-in `uteke upgrade`.
+
 ### Pre-built Binaries
 
 Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases):

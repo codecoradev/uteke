@@ -1,0 +1,8 @@
+name: uteke-memory
+version: 2.0.0
+description: "Uteke — offline-first local memory with auto-recall. Registers a pre_llm_call plugin hook for automatic memory injection every turn. Requires uteke binary on PATH or UTEKE_BIN env var."
+author: CodeCoraDev
+pip_dependencies: []
+requires_env: []
+provides_hooks:
+  - pre_llm_call

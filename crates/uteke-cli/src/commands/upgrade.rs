@@ -76,11 +76,23 @@ pub fn run(yes: bool) -> Result<(), String> {
 
     println!("[INFO] Downloading {archive_name} ...");
 
-    let temp_dir = std::env::temp_dir().join(format!("uteke-update-{latest_version}"));
-    fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    // Private temp dir (random suffix, 0700): a predictable shared path like
+    // /tmp/uteke-update-{version} lets a local attacker pre-create it as a
+    // symlink and clobber arbitrary files during extraction; TempDir also
+    // removes leftovers on every early-return path (cora scan #1307).
+    let temp = tempfile::Builder::new()
+        .prefix("uteke-update-")
+        .tempdir()
+        .map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    let temp_dir = temp.path().to_path_buf();
     let archive_path = temp_dir.join(&archive_name);
 
-    let client = reqwest::blocking::Client::new();
+    // Bounded timeouts so a stalled connection cannot hang the upgrade.
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {e}"))?;
     let mut resp = client
         .get(&download_url)
         .send()
@@ -118,7 +130,6 @@ pub fn run(yes: bool) -> Result<(), String> {
 
         if !checksums_resp.status().is_success() {
             let status = checksums_resp.status();
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(format!(
                 "Failed to download checksums (HTTP {status}). \
                  Refusing to install unverified binary. \
@@ -131,7 +142,6 @@ pub fn run(yes: bool) -> Result<(), String> {
             .map_err(|e| format!("Failed to read checksums body: {e}"))?;
 
         let expected = parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
-            let _ = fs::remove_dir_all(&temp_dir);
             format!(
                 "Checksum for '{archive_name}' not found in checksums file. \
                  Refusing to install unverified binary. \
@@ -141,7 +151,6 @@ pub fn run(yes: bool) -> Result<(), String> {
 
         let actual = sha256_file(&archive_path)?;
         if actual != expected {
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(format!(
                 "Checksum mismatch! Expected: {expected}, got: {actual}"
             ));
@@ -165,7 +174,6 @@ pub fn run(yes: bool) -> Result<(), String> {
             .map_err(|e| format!("Archive path error: {e}"))?;
         let path_str = path.to_string_lossy();
         if path_str.starts_with('/') || path_str.contains("..") {
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(
                 "Archive contains unsafe paths (absolute or directory traversal) — refusing to extract"
                     .to_string(),
@@ -204,8 +212,7 @@ pub fn run(yes: bool) -> Result<(), String> {
     // Bundled ONNX Runtime shared libs — refresh from the archive when present.
     refresh_ort_libs(&temp_dir, install_dir)?;
 
-    // 12. Cleanup
-    let _ = fs::remove_dir_all(&temp_dir);
+    // TempDir cleans itself up on drop — no manual removal needed.
 
     println!("[INFO] Update complete. ({current_version} → {latest_version})");
 
@@ -350,41 +357,68 @@ fn get_target(os: &str, arch: &str) -> Result<String, String> {
 }
 
 pub(crate) fn get_latest_version() -> Result<String, String> {
-    let client = reqwest::blocking::Client::new();
+    // Primary: HEAD /releases/latest returns a 302 whose `location` header
+    // carries the latest tag — no API call, no rate limit. reqwest follows
+    // redirects by default, which lands on the tag page (200, no location
+    // header), so redirect following must be disabled for this probe (#1307).
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {e}"))?;
 
-    // Primary: parse 302 redirect (no API call, no rate limit)
-    let resp = client
+    if let Ok(resp) = client
         .head(format!("https://github.com/{REPO}/releases/latest"))
         .send()
-        .map_err(|e| format!("Failed to check latest release: {e}"))?;
-
-    if let Some(location) = resp.headers().get("location") {
-        let loc = location.to_str().unwrap_or_default();
-        if let Some(tag) = loc.strip_prefix("/codecoradev/uteke/releases/tag/") {
-            return Ok(tag.trim_end_matches('?').to_string());
-        }
-        // Some mirrors might use different prefix
-        if let Some(tag) = loc.rsplit('/').next() {
-            if tag.starts_with('v') {
-                return Ok(tag.trim_end_matches('?').to_string());
+    {
+        if let Some(location) = resp.headers().get("location") {
+            if let Some(tag) = parse_tag_from_location(location.to_str().unwrap_or_default()) {
+                return Ok(tag);
             }
         }
     }
 
-    // Fallback: GitHub API
+    // Fallback: GitHub API (60 req/h unauthenticated — best effort only).
+    let api_client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {e}"))?;
     let api_url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let resp = client
+    let mut req = api_client
         .get(&api_url)
         .header("User-Agent", "uteke-upgrade")
-        .send()
-        .map_err(|e| format!("GitHub API failed: {e}"))?;
+        .header("Accept", "application/vnd.github+json");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            req = req.bearer_auth(&token);
+        }
+    }
+    let resp = req.send().map_err(|e| format!("GitHub API failed: {e}"))?;
+
+    if matches!(resp.status().as_u16(), 403 | 429) {
+        if std::env::var("GITHUB_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+            return Err(
+                "GitHub API rate limit exceeded even with GITHUB_TOKEN set. \
+                 Retry later — the 302-redirect primary path needs no token."
+                    .into(),
+            );
+        }
+        return Err(
+            "GitHub API rate limit exceeded (unauthenticated: 60 req/h per IP). \
+             Retry later or set GITHUB_TOKEN to raise the limit."
+                .into(),
+        );
+    }
 
     if resp.status().is_success() {
         let json: serde_json::Value = resp
             .json()
             .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
         if let Some(tag) = json["tag_name"].as_str() {
-            return Ok(tag.to_string());
+            if is_valid_version_tag(tag) {
+                return Ok(tag.to_string());
+            }
         }
     }
 
@@ -393,10 +427,41 @@ pub(crate) fn get_latest_version() -> Result<String, String> {
     ))
 }
 
+/// Extract a version tag from a `releases/tag/<tag>` URL (absolute or relative).
+fn parse_tag_from_location(loc: &str) -> Option<String> {
+    let tag_marker = format!("/{REPO}/releases/tag/");
+    if let Some((_, tag)) = loc.split_once(&tag_marker) {
+        let tag = tag.split('?').next().unwrap_or_default();
+        if is_valid_version_tag(tag) {
+            return Some(tag.to_string());
+        }
+    }
+    // Mirror-style alternate URL: last path segment when it looks like a tag.
+    let last = loc.rsplit('/').next()?;
+    let tag = last.split('?').next().unwrap_or_default();
+    if tag.starts_with('v') && is_valid_version_tag(tag) {
+        return Some(tag.to_string());
+    }
+    None
+}
+
+/// A version tag looks like `v0.19.0` / `0.19.0` (optional suffix after `-`).
+fn is_valid_version_tag(tag: &str) -> bool {
+    let numeric = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let mut parts = tag.trim_start_matches('v').split('.');
+    let major = parts.next().unwrap_or_default();
+    let minor = parts.next().unwrap_or_default();
+    let patch_raw = parts.next().unwrap_or_default();
+    let (patch, _) = patch_raw.split_once('-').unwrap_or((patch_raw, ""));
+    numeric(major) && numeric(minor) && numeric(patch)
+}
+
 fn parse_checksum(checksums_text: &str, archive_name: &str) -> Option<String> {
     for line in checksums_text.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[1].contains(archive_name) {
+        // Exact filename match — substring matching can pick a different
+        // artifact's line (e.g. a `.sig` companion of the same archive).
+        if parts.len() >= 2 && parts[1] == archive_name {
             return Some(parts[0].to_string());
         }
     }
@@ -416,6 +481,62 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn parse_checksum_requires_exact_filename() {
+        let text = concat!(
+            "aaaa  uteke-x86_64-unknown-linux-gnu-v0.19.0.tar.gz.sig\n",
+            "bbbb  uteke-x86_64-unknown-linux-gnu-v0.19.0.tar.gz\n",
+            "cccc  uteke-aarch64-unknown-linux-gnu-v0.19.0.tar.gz\n",
+        );
+        // Substring candidates (the `.sig` companion) must not win.
+        assert_eq!(
+            parse_checksum(text, "uteke-x86_64-unknown-linux-gnu-v0.19.0.tar.gz"),
+            Some("bbbb".to_string())
+        );
+        assert_eq!(parse_checksum(text, "missing.tar.gz"), None);
+    }
+
+    #[test]
+    fn test_parse_tag_from_location_absolute() {
+        assert_eq!(
+            parse_tag_from_location("https://github.com/codecoradev/uteke/releases/tag/v0.19.0"),
+            Some("v0.19.0".to_string())
+        );
+        assert_eq!(
+            parse_tag_from_location("/codecoradev/uteke/releases/tag/v0.18.1"),
+            Some("v0.18.1".to_string())
+        );
+        assert_eq!(
+            parse_tag_from_location(
+                "https://github.com/codecoradev/uteke/releases/tag/v0.19.0?utm_source=test"
+            ),
+            Some("v0.19.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_tag_from_location_rejects_non_tag() {
+        assert_eq!(
+            parse_tag_from_location("https://github.com/codecoradev/uteke/releases"),
+            None
+        );
+        assert_eq!(
+            parse_tag_from_location("/codecoradev/uteke/releases/tag/latest"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_is_valid_version_tag() {
+        assert!(is_valid_version_tag("v0.19.0"));
+        assert!(is_valid_version_tag("0.19.0"));
+        assert!(is_valid_version_tag("v1.0.0-rc.1"));
+        assert!(!is_valid_version_tag("latest"));
+        assert!(!is_valid_version_tag(""));
+        assert!(!is_valid_version_tag("v1"));
+        assert!(!is_valid_version_tag("v.alpha"));
+    }
 
     #[test]
     fn replace_binary_verifies_and_installs() {

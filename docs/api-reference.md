@@ -314,7 +314,7 @@ Get timeline of memory events for a memory. Accepts `?id=...` query param.
 
 #### 🟡 `POST` `/remember`
 
-Store a new memory. Accepts content, tags, namespace, type, metadata.
+Store a new memory. Accepts content, tags, namespace, type, metadata. Explicit `type` is honored as-is (no silent normalization, #1302); unknown types are rejected with 400 listing the valid vocabulary. Omit `type` to auto-infer.
 
 **Request body**: [`RememberRequest`](#rememberrequest)
 
@@ -779,7 +779,9 @@ Accepts an object (e.g. {"project": "uteke"}). |
 | `source` | any | No | Source provenance — set via set_source() after storage. |
 | `source_type` | any | No | Source type (defaults to "user"). |
 | `tags` | ``string``[] | No |  |
-| `type` | any | No |  |
+| `type` | any | No | Memory type — validated against the MemoryType vocabulary and stored
+as-is (no silent normalization, #1302). Unknown values are rejected
+with 400 listing the valid types. Omit to let auto-inference decide. |
 | `valid_from` | any | No |  |
 | `valid_until` | any | No |  |
 
