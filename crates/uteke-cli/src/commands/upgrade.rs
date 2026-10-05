@@ -76,11 +76,23 @@ pub fn run(yes: bool) -> Result<(), String> {
 
     println!("[INFO] Downloading {archive_name} ...");
 
-    let temp_dir = std::env::temp_dir().join(format!("uteke-update-{latest_version}"));
-    fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    // Private temp dir (random suffix, 0700): a predictable shared path like
+    // /tmp/uteke-update-{version} lets a local attacker pre-create it as a
+    // symlink and clobber arbitrary files during extraction; TempDir also
+    // removes leftovers on every early-return path (cora scan #1307).
+    let temp = tempfile::Builder::new()
+        .prefix("uteke-update-")
+        .tempdir()
+        .map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    let temp_dir = temp.path().to_path_buf();
     let archive_path = temp_dir.join(&archive_name);
 
-    let client = reqwest::blocking::Client::new();
+    // Bounded timeouts so a stalled connection cannot hang the upgrade.
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {e}"))?;
     let mut resp = client
         .get(&download_url)
         .send()
@@ -118,7 +130,6 @@ pub fn run(yes: bool) -> Result<(), String> {
 
         if !checksums_resp.status().is_success() {
             let status = checksums_resp.status();
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(format!(
                 "Failed to download checksums (HTTP {status}). \
                  Refusing to install unverified binary. \
@@ -131,7 +142,6 @@ pub fn run(yes: bool) -> Result<(), String> {
             .map_err(|e| format!("Failed to read checksums body: {e}"))?;
 
         let expected = parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
-            let _ = fs::remove_dir_all(&temp_dir);
             format!(
                 "Checksum for '{archive_name}' not found in checksums file. \
                  Refusing to install unverified binary. \
@@ -141,7 +151,6 @@ pub fn run(yes: bool) -> Result<(), String> {
 
         let actual = sha256_file(&archive_path)?;
         if actual != expected {
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(format!(
                 "Checksum mismatch! Expected: {expected}, got: {actual}"
             ));
@@ -165,7 +174,6 @@ pub fn run(yes: bool) -> Result<(), String> {
             .map_err(|e| format!("Archive path error: {e}"))?;
         let path_str = path.to_string_lossy();
         if path_str.starts_with('/') || path_str.contains("..") {
-            let _ = fs::remove_dir_all(&temp_dir);
             return Err(
                 "Archive contains unsafe paths (absolute or directory traversal) — refusing to extract"
                     .to_string(),
@@ -204,8 +212,7 @@ pub fn run(yes: bool) -> Result<(), String> {
     // Bundled ONNX Runtime shared libs — refresh from the archive when present.
     refresh_ort_libs(&temp_dir, install_dir)?;
 
-    // 12. Cleanup
-    let _ = fs::remove_dir_all(&temp_dir);
+    // TempDir cleans itself up on drop — no manual removal needed.
 
     println!("[INFO] Update complete. ({current_version} → {latest_version})");
 
@@ -452,7 +459,9 @@ fn is_valid_version_tag(tag: &str) -> bool {
 fn parse_checksum(checksums_text: &str, archive_name: &str) -> Option<String> {
     for line in checksums_text.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() >= 2 && parts[1].contains(archive_name) {
+        // Exact filename match — substring matching can pick a different
+        // artifact's line (e.g. a `.sig` companion of the same archive).
+        if parts.len() >= 2 && parts[1] == archive_name {
             return Some(parts[0].to_string());
         }
     }
@@ -472,6 +481,21 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn parse_checksum_requires_exact_filename() {
+        let text = concat!(
+            "aaaa  uteke-x86_64-unknown-linux-gnu-v0.19.0.tar.gz.sig\n",
+            "bbbb  uteke-x86_64-unknown-linux-gnu-v0.19.0.tar.gz\n",
+            "cccc  uteke-aarch64-unknown-linux-gnu-v0.19.0.tar.gz\n",
+        );
+        // Substring candidates (the `.sig` companion) must not win.
+        assert_eq!(
+            parse_checksum(text, "uteke-x86_64-unknown-linux-gnu-v0.19.0.tar.gz"),
+            Some("bbbb".to_string())
+        );
+        assert_eq!(parse_checksum(text, "missing.tar.gz"), None);
+    }
 
     #[test]
     fn test_parse_tag_from_location_absolute() {

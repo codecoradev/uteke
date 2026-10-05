@@ -7,11 +7,19 @@
 /// Entry point: returns a `JoinHandle` that the caller should `.join()`
 /// at the end of `main()` to ensure the thread isn't killed prematurely.
 ///
+/// - Respects `update_check = false` from `uteke.toml` (CLI-only) on every
+///   path — opt-out users never see a banner, cached or not.
 /// - If cache is fresh, prints immediately and returns `None` (no thread).
 /// - If cache is stale/missing, spawns a background thread and returns
 ///   `Some(handle)`.
-/// - Respects `update_check = false` from `uteke.toml` (CLI-only).
 pub fn spawn() -> Option<std::thread::JoinHandle<()>> {
+    // Respect config opt-out on every path. Previously only the
+    // background-thread path checked it, so opt-out users still saw the
+    // banner whenever the 24h cache was fresh (cora scan finding, #1307).
+    if !enabled() {
+        return None;
+    }
+
     // Try cache first — if fresh, print immediately and skip network.
     if let Some(info) = uteke_core::update_check::check_cached() {
         if info.is_update_available() {
@@ -20,15 +28,9 @@ pub fn spawn() -> Option<std::thread::JoinHandle<()>> {
         return None;
     }
 
-    // Cache stale or missing — spawn background check.
-    // Config opt-out check happens inside the thread to avoid
-    // synchronous disk I/O on the main thread.
+    // Cache stale or missing — spawn background network check.
     let handle = std::thread::spawn(move || {
         let _ = std::panic::catch_unwind(|| {
-            // Respect config opt-out (checked in background thread).
-            if !enabled() {
-                return;
-            }
             if let Ok(info) = uteke_core::update_check::check_network() {
                 if info.is_update_available() {
                     eprintln!("\n{}\n", info.banner());
