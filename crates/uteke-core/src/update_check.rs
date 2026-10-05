@@ -202,14 +202,26 @@ pub(crate) fn get_latest_version() -> Result<String, String> {
         .build()
         .map_err(|e| format!("HTTP client build failed: {e}"))?;
     let api_url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let resp = api_client
+    let mut req = api_client
         .get(&api_url)
         .header("User-Agent", "uteke-update-check")
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .map_err(|e| format!("GitHub API failed: {e}"))?;
+        .header("Accept", "application/vnd.github+json");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            req = req.bearer_auth(&token);
+        }
+    }
+    let resp = req.send().map_err(|e| format!("GitHub API failed: {e}"))?;
 
     if matches!(resp.status().as_u16(), 403 | 429) {
+        if std::env::var("GITHUB_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+            return Err(
+                "GitHub API rate limit exceeded even with GITHUB_TOKEN set. \
+                 Retry later — the 302-redirect primary path needs no token."
+                    .into(),
+            );
+        }
         return Err(
             "GitHub API rate limit exceeded (unauthenticated: 60 req/h per IP). \
              Retry later or set GITHUB_TOKEN to raise the limit."
