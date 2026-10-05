@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.19.1] - 2026-10-05
+
+Patch release. Theme: **upgrade-path reliability** — `uteke upgrade` and the
+startup update check resolve the latest release through the 302 redirect again
+instead of hammering the rate-limited GitHub API, the API fallback honors
+`GITHUB_TOKEN`, and the upgrade workspace is hardened against local tampering.
+Also ships the committed Hermes plugin package (#1301) and the plain
+`/remember` explicit-type fix (#1303) that were merged after v0.19.0 was tagged.
+
+### Fixed
+
+- **`uteke upgrade` / update check fail with "Failed to determine latest version" under GitHub API rate limiting (#1307, #1308)** - the primary resolution path (HEAD `/releases/latest`, read the 302 `location` header) was dead code because reqwest follows redirects by default and landed on the tag page (200, no header); every check fell through to the unauthenticated GitHub API (60 req/h per IP) and failed hard once exhausted. The probe now disables redirect following, validates the extracted tag (v-prefix, numeric major.minor.patch, query strings stripped), and the API fallback got clearer 403/429 messaging.
+- **GitHub API fallback ignores `GITHUB_TOKEN` (#1307, #1309)** - the rate-limit error advised setting `GITHUB_TOKEN` while the request never sent it; the fallback now attaches it as a bearer token (raises the cap to 5,000 req/h) and the 403/429 message distinguishes whether a token was in play.
+- **Upgrade workspace hardening (#1307, #1310)** - the temp dir is a private `tempfile::TempDir` (random suffix, 0700) instead of the predictable shared `/tmp/uteke-update-{version}` (symlink-attack + collision surface), and it self-cleans on every early-return path; the archive download client gained 10s connect / 300s overall timeouts; `parse_checksum` requires an exact filename match so a companion artifact (e.g. `.sig`) can never satisfy the lookup.
+- **`update_check = false` opt-out now honored on the fresh-cache path (#1307, #1310)** - previously the config opt-out was only checked inside the background thread, so opt-out users still saw the update banner whenever the 24h cache was fresh.
+- **Plain `/remember` honors explicit `type` (#1302, #1303)** - an explicit memory `type` on the plain (non-room) remember path is respected, unknown types are rejected with a loud 400, and room-path behavior is unchanged.
+
+### Added
+
+- **Committed Hermes plugin package + drift guard (#1301)** - `integrations/hermes/` ships the rendered plugin package so Hermes Desktop detects the repo in its "Install plugin" dialog and catalog; template edits require re-rendering via `scripts/render-hermes-integration.sh` (byte-parity guard test).
+
+---
 ## [0.19.0] - 2026-09-29
 
 Minor release. Theme: **agent-facing API surface + audit-grade history** —
