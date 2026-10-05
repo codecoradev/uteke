@@ -477,6 +477,60 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  update-tap:
+    name: Update homebrew-tap formula
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap repository
+        uses: actions/checkout@v7
+        with:
+          repository: codecoradev/homebrew-tap
+          ref: main
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+
+      - name: Download published checksums
+        run: |
+          curl -fsSL -o checksums-sha256.txt \
+            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/checksums-sha256.txt"
+          cat checksums-sha256.txt
+
+      - name: Regenerate formula
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          python3 tap/scripts/update_formula.py \
+            --version "$VER" \
+            --checksums checksums-sha256.txt \
+            --out tap/Formula/uteke.rb
+          cat tap/Formula/uteke.rb
+
+      - name: Create update branch and pull request
+        working-directory: tap
+        env:
+          VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          git config user.name "uteke-release-bot"
+          git config user.email "bot@codecora.dev"
+          BRANCH="chore/formula-${VERSION}"
+          git checkout -b "$BRANCH"
+          git add Formula/uteke.rb
+          if git diff --cached --quiet; then
+            echo "Formula unchanged — nothing to update."
+            exit 0
+          fi
+          git commit --no-verify -m "uteke ${VERSION}: update formula (automated from release ${VERSION})"
+          git push origin "$BRANCH"
+          gh pr create \
+            --repo codecoradev/homebrew-tap \
+            --base main \
+            --head "$BRANCH" \
+            --title "uteke ${VERSION}: update formula" \
+            --body "Automated formula update from uteke release ${VERSION}.\n\nChecksums verified against the published checksums-sha256.txt. CI (brew audit + brew test on macOS ARM and Linux) must pass before merge."
+          echo "PR created for ${VERSION}"
+
+
   docker:
     name: Build & Push Docker Image
     needs: [build-release]
