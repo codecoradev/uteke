@@ -56,6 +56,7 @@ Want your agent (Claude Code, Cursor, Hermes) to use it? One line:
 
 | Method | Command |
 |--------|---------|
+| **Homebrew** | `brew install codecoradev/tap/uteke` (macOS Apple Silicon & Linux) |
 | **Cargo** | `cargo install uteke-cli` |
 | **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest` |
 | **Binary** | [GitHub Releases](https://github.com/codecoradev/uteke/releases) (macOS, Linux, Windows) |

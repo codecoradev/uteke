@@ -24,6 +24,19 @@ Pin a specific version:
 UTEKE_VERSION=v0.18.1 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
+## Install via Homebrew (macOS Apple Silicon & Linux)
+
+```bash
+brew install codecoradev/tap/uteke
+```
+
+The formula ships the bundled ONNX Runtime libraries next to the binaries, so
+semantic embeddings work with no extra setup — verify with `uteke doctor`.
+
+> There is no macOS Intel prebuilt; Intel Mac users should use the quick-install
+> script or Cargo. While installed via Homebrew, upgrade with
+> `brew upgrade codecoradev/tap/uteke` instead of the built-in `uteke upgrade`.
+
 ## Install via Cargo
 
 If you have [Rust](https://rustup.rs) 1.85+ installed:
