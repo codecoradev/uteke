@@ -175,53 +175,91 @@ fn write_cache(latest: &str) {
 /// Primary: follow the `/releases/latest` 302 redirect (no API call, no rate limit).
 /// Fallback: GitHub REST API.
 pub(crate) fn get_latest_version() -> Result<String, String> {
+    // Primary: HEAD /releases/latest returns a 302 whose `location` header
+    // carries the latest tag — no API call, no rate limit. reqwest follows
+    // redirects by default, which lands on the tag page (200, no location
+    // header), so redirect following must be disabled for this probe (#1307).
     let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| format!("HTTP client build failed: {e}"))?;
 
-    // Primary: parse 302 redirect (no API call, no rate limit).
-    let resp = client
+    if let Ok(resp) = client
         .head(format!("https://github.com/{REPO}/releases/latest"))
         .send()
-        .map_err(|e| format!("Failed to check latest release: {e}"))?;
-
-    if let Some(location) = resp.headers().get("location") {
-        let loc = location.to_str().unwrap_or_default();
-        // GitHub returns absolute URLs (https://github.com/codecoradev/uteke/releases/tag/v0.13.1).
-        // split_after the tag marker handles both absolute and relative formats safely.
-        let tag_marker = format!("/{REPO}/releases/tag/");
-        if let Some((_, tag)) = loc.split_once(&tag_marker) {
-            return Ok(tag.trim_end_matches('?').to_string());
-        }
-        // Fallback: last path segment (works for any URL format).
-        if let Some(tag) = loc.rsplit('/').next() {
-            if !tag.is_empty() {
-                return Ok(tag.trim_end_matches('?').to_string());
+    {
+        if let Some(location) = resp.headers().get("location") {
+            if let Some(tag) = parse_tag_from_location(location.to_str().unwrap_or_default()) {
+                return Ok(tag);
             }
         }
     }
 
-    // Fallback: GitHub API
+    // Fallback: GitHub API (60 req/h unauthenticated — best effort only).
+    let api_client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("HTTP client build failed: {e}"))?;
     let api_url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let resp = client
+    let resp = api_client
         .get(&api_url)
         .header("User-Agent", "uteke-update-check")
+        .header("Accept", "application/vnd.github+json")
         .send()
         .map_err(|e| format!("GitHub API failed: {e}"))?;
+
+    if matches!(resp.status().as_u16(), 403 | 429) {
+        return Err(
+            "GitHub API rate limit exceeded (unauthenticated: 60 req/h per IP). \
+             Retry later or set GITHUB_TOKEN to raise the limit."
+                .into(),
+        );
+    }
 
     if resp.status().is_success() {
         let json: serde_json::Value = resp
             .json()
             .map_err(|e| format!("Failed to parse GitHub API response: {e}"))?;
         if let Some(tag) = json["tag_name"].as_str() {
-            return Ok(tag.to_string());
+            if is_valid_version_tag(tag) {
+                return Ok(tag.to_string());
+            }
         }
     }
 
     Err(format!(
         "Failed to determine latest version. Check https://github.com/{REPO}/releases"
     ))
+}
+
+/// Extract a version tag from a `releases/tag/<tag>` URL (absolute or relative).
+fn parse_tag_from_location(loc: &str) -> Option<String> {
+    let tag_marker = format!("/{REPO}/releases/tag/");
+    if let Some((_, tag)) = loc.split_once(&tag_marker) {
+        let tag = tag.split('?').next().unwrap_or_default();
+        if is_valid_version_tag(tag) {
+            return Some(tag.to_string());
+        }
+    }
+    // Mirror-style alternate URL: last path segment when it looks like a tag.
+    let last = loc.rsplit('/').next()?;
+    let tag = last.split('?').next().unwrap_or_default();
+    if tag.starts_with('v') && is_valid_version_tag(tag) {
+        return Some(tag.to_string());
+    }
+    None
+}
+
+/// A version tag looks like `v0.19.0` / `0.19.0` (optional suffix after `-`).
+fn is_valid_version_tag(tag: &str) -> bool {
+    let numeric = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let mut parts = tag.trim_start_matches('v').split('.');
+    let major = parts.next().unwrap_or_default();
+    let minor = parts.next().unwrap_or_default();
+    let patch_raw = parts.next().unwrap_or_default();
+    let (patch, _) = patch_raw.split_once('-').unwrap_or((patch_raw, ""));
+    numeric(major) && numeric(minor) && numeric(patch)
 }
 
 /// Compare semver-ish versions. Returns true if `latest` > `current`.
@@ -248,6 +286,65 @@ fn is_newer(latest: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_tag_from_location_absolute() {
+        assert_eq!(
+            parse_tag_from_location("https://github.com/codecoradev/uteke/releases/tag/v0.19.0"),
+            Some("v0.19.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_tag_from_location_relative() {
+        assert_eq!(
+            parse_tag_from_location("/codecoradev/uteke/releases/tag/v0.18.1"),
+            Some("v0.18.1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_tag_from_location_with_query() {
+        assert_eq!(
+            parse_tag_from_location(
+                "https://github.com/codecoradev/uteke/releases/tag/v0.19.0?utm_source=test"
+            ),
+            Some("v0.19.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_tag_from_location_rejects_non_tag() {
+        // Not a tag URL at all.
+        assert_eq!(
+            parse_tag_from_location("https://github.com/codecoradev/uteke/releases"),
+            None
+        );
+        // Tag marker present but segment is not a version.
+        assert_eq!(
+            parse_tag_from_location("/codecoradev/uteke/releases/tag/latest"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_parse_tag_from_location_mirror_last_segment() {
+        assert_eq!(
+            parse_tag_from_location("https://mirror.example.com/uteke/v0.19.0?sig=abc"),
+            Some("v0.19.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_valid_version_tag() {
+        assert!(is_valid_version_tag("v0.19.0"));
+        assert!(is_valid_version_tag("0.19.0"));
+        assert!(is_valid_version_tag("v1.0.0-rc.1"));
+        assert!(!is_valid_version_tag("latest"));
+        assert!(!is_valid_version_tag(""));
+        assert!(!is_valid_version_tag("v1"));
+        assert!(!is_valid_version_tag("v.alpha"));
+    }
 
     #[test]
     fn test_is_newer_true() {
