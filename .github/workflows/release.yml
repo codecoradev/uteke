@@ -491,9 +491,12 @@ jobs:
           path: tap
 
       - name: Download published checksums
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
         run: |
           curl -fsSL -o checksums-sha256.txt \
-            "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/checksums-sha256.txt"
+            "https://github.com/${REPO}/releases/download/${TAG}/checksums-sha256.txt"
           cat checksums-sha256.txt
 
       - name: Regenerate formula
