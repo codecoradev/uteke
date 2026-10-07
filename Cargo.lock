@@ -2756,9 +2756,9 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usearch"
-version = "2.26.2"
+version = "2.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b43f3a7c8d3b100d53c1a34e9ce4cd76cc83627bdb4fcd035d4e82102778aeee"
+checksum = "3ae1c08a924aecdf8280c6d14f8bcc3677092a1f33d7c254f0f70fdc632ae694"
 dependencies = [
  "cxx",
  "cxx-build",
