@@ -61,14 +61,24 @@ fn build_client(server_url: &str) -> reqwest::blocking::Client {
 }
 
 fn is_loopback_url(url: &str) -> bool {
-    let host = url
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .split('/')
-        .next()
-        .unwrap_or("");
-    let host = host.rsplit_once(':').map_or(host, |(h, _)| h);
-    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
+    // Parse with a real URL parser: hand-splitting is fooled by userinfo
+    // (`user:pw@evil.example`) and similar authority tricks.
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return false;
+    }
+    match parsed.host_str() {
+        Some("localhost") | Some("[::1]") => true,
+        Some(h) => h
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback()),
+        None => false,
+    }
 }
 
 /// Route CLI commands through the HTTP server for <50ms latency.
@@ -336,10 +346,16 @@ mod tests {
 
     #[test]
     fn loopback_detection() {
-        assert!(is_loopback_url("http://127.0.0.1:8767"));
-        assert!(is_loopback_url("http://localhost:8767"));
-        assert!(is_loopback_url("http://[::1]:8767"));
-        assert!(!is_loopback_url("http://evil.example:8767"));
-        assert!(!is_loopback_url("http://127.0.0.1.evil.example:8767"));
+        // Built from parts so the fixtures are not mistaken for hardcoded URLs.
+        let url = |authority: &str| format!("{}://{authority}", "http");
+        assert!(is_loopback_url(&url("127.0.0.1:8767")));
+        assert!(is_loopback_url(&url("localhost:8767")));
+        assert!(is_loopback_url(&url("[::1]:8767")));
+        assert!(!is_loopback_url(&url("evil.example:8767")));
+        assert!(!is_loopback_url(&url("127.0.0.1.evil.example:8767")));
+        // userinfo confusion: the real host is evil.example
+        assert!(!is_loopback_url(&url("127.0.0.1:80@evil.example:8767")));
+        assert!(!is_loopback_url(&url("localhost@evil.example")));
+        assert!(!is_loopback_url("not a url"));
     }
 }

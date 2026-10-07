@@ -212,29 +212,18 @@ impl super::Store {
             return Ok(0);
         }
         let now = chrono::Utc::now().to_rfc3339();
-        // Chunked + transactional: stays under SQLite's bound-parameter limit
-        // (2 fixed params + up to CHUNK ids per statement).
-        const CHUNK: usize = 500;
-        let tx = self
+        // Ids are passed as ONE JSON-array parameter and expanded with
+        // json_each(): no dynamic SQL and no bound-parameter limit.
+        let ids_json =
+            serde_json::to_string(ids).map_err(|e| Error::db("database operation", e))?;
+        let count = self
             .conn
-            .unchecked_transaction()
-            .map_err(|e| Error::db("database operation", e))?;
-        let mut count = 0;
-        for chunk in ids.chunks(CHUNK) {
-            let placeholders: String = (0..chunk.len())
-                .map(|i| format!("?{}", i + 3))
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!(
-                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id IN ({placeholders}) AND deprecated = 0"
-            );
-            let mut params_vec: Vec<&dyn rusqlite::types::ToSql> = vec![&now, &reason];
-            params_vec.extend(chunk.iter().map(|id| id as &dyn rusqlite::types::ToSql));
-            count += tx
-                .execute(&sql, rusqlite::params_from_iter(params_vec))
-                .map_err(|e| Error::db("database operation", e))?;
-        }
-        tx.commit()
+            .execute(
+                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, \
+                 updated_at = ?1, deprecated_at = ?1 \
+                 WHERE id IN (SELECT value FROM json_each(?3)) AND deprecated = 0",
+                params![now, reason, ids_json],
+            )
             .map_err(|e| Error::db("database operation", e))?;
         Ok(count)
     }
@@ -327,27 +316,16 @@ impl super::Store {
         if ids.is_empty() {
             return Ok(0);
         }
-        // Chunk the id list so large batches never exceed SQLite's bound
-        // parameter limit (999 on older builds); one transaction keeps the
-        // whole delete atomic.
-        const CHUNK: usize = 500;
-        let tx = self
+        // Single statement (atomic) with the ids as one JSON-array parameter:
+        // no dynamic SQL and no bound-parameter limit.
+        let ids_json =
+            serde_json::to_string(ids).map_err(|e| Error::db("database operation", e))?;
+        let deleted = self
             .conn
-            .unchecked_transaction()
-            .map_err(|e| Error::db("database operation", e))?;
-        let mut deleted = 0;
-        for chunk in ids.chunks(CHUNK) {
-            // Parameterized IN clause: "WHERE id IN (?1, ?2, ?3)"
-            let placeholders: String = (1..=chunk.len())
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!("DELETE FROM memories WHERE id IN ({placeholders})");
-            deleted += tx
-                .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
-                .map_err(|e| Error::db("database operation", e))?;
-        }
-        tx.commit()
+            .execute(
+                "DELETE FROM memories WHERE id IN (SELECT value FROM json_each(?1))",
+                params![ids_json],
+            )
             .map_err(|e| Error::db("database operation", e))?;
         Ok(deleted)
     }
