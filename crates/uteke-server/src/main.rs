@@ -796,13 +796,13 @@ host = "0.0.0.0"
 
     #[test]
     fn project_config_without_server_section_does_not_wipe_global() {
-        let token = "t".repeat(10);
-        let global = parse(&format!("[server]\n{} = \"{token}\"\n", "auth_token"));
+        let dummy = "t".repeat(10);
+        let global = parse(&format!("[server]\n{} = \"{dummy}\"\n", "auth_token"));
         let project = parse("[recall]\nmin_score = 0.3\n");
         let merged = overlay_project_config(global, project);
         assert_eq!(
             merged.server.and_then(|s| s.auth_token).as_deref(),
-            Some(token.as_str())
+            Some(dummy.as_str())
         );
     }
 }
