@@ -1017,7 +1017,7 @@ mod tests {
     #[test]
     fn test_save_keeps_exclusive_lock_on_published_file() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("lock.usearch");
+        let path = dir.path().join(format!("lock.{INDEX_EXT}"));
         let mut idx = VectorIndex::load_or_create(&path, 8).unwrap();
         idx.insert("a", &make_vec(8, 0)).unwrap();
         idx.save().unwrap();
