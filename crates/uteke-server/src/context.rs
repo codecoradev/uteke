@@ -128,7 +128,7 @@ pub struct ReqCtx {
     pub auth_token_hash: Option<[u8; 32]>,
     /// Hashed read-only token (#409). Read-only requests can use this.
     pub read_only_token_hash: Option<[u8; 32]>,
-    /// Allowed CORS origins from config. Empty = wildcard.
+    /// Allowed CORS origins from config. Empty = no CORS headers; `"*"` = wildcard.
     pub cors_origins: Vec<String>,
     /// Recall threshold config from [recall] section in uteke.toml.
     pub recall_config: Option<RecallFileSection>,
@@ -139,23 +139,32 @@ pub struct ReqCtx {
 impl ReqCtx {
     /// Resolve the allowed origin for a specific request by matching
     /// its `Origin` header against the configured origins list.
-    /// Returns "*" if no origins configured (backward compatible).
-    /// Returns the matching origin if found, or "*" as fallback.
+    ///
+    /// Secure by default: with no origins configured NO CORS headers are sent,
+    /// so browsers block cross-origin reads/writes (a hostile web page must not
+    /// be able to talk to a local, possibly unauthenticated, server). Include
+    /// `"*"` in `cors_origins` to explicitly opt in to wildcard CORS.
+    /// Returns an empty string when CORS headers must be omitted.
     pub fn resolve_origin_for(&self, req: &Request) -> String {
-        if self.cors_origins.is_empty() {
+        if self.cors_origins.iter().any(|o| o == "*") {
             return "*".to_string();
         }
-        // Check if request has an Origin header
         if let Some(origin_header) = req.headers().iter().find(|h| h.field.equiv("Origin")) {
             let origin = origin_header.value.as_str();
             if self.cors_origins.iter().any(|o| o == origin) {
                 return origin.to_string();
             }
         }
-        // No matching origin — return empty string so CORS headers are omitted.
-        // Browser will block cross-origin requests from untrusted origins.
-        // Non-browser clients (API users) are unaffected by CORS.
+        // No matching origin — omit CORS headers. Non-browser clients
+        // (curl, agents) are unaffected by CORS.
         String::new()
+    }
+
+    /// True when wildcard CORS is combined with any configured token: the
+    /// `Authorization` header must then not be allowed cross-origin.
+    fn wildcard_cors_with_auth(&self) -> bool {
+        (self.auth_token_hash.is_some() || self.read_only_token_hash.is_some())
+            && self.cors_origins.iter().any(|o| o == "*")
     }
 
     pub fn cors_headers_for(&self, req: &Request) -> Vec<Header> {
@@ -167,15 +176,18 @@ impl ReqCtx {
         }
         // When auth is enabled but CORS is wildcard, omit Authorization
         // from allowed headers to prevent browser-origin auth abuse.
-        let allowed_headers = if self.auth_token_hash.is_some() && self.cors_origins.is_empty() {
+        let allowed_headers = if self.wildcard_cors_with_auth() {
             "Content-Type"
         } else {
             "Content-Type, Authorization"
         };
         vec![
             Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
-            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-                .unwrap(),
+            Header::from_bytes(
+                "Access-Control-Allow-Methods",
+                "GET, POST, PUT, DELETE, OPTIONS",
+            )
+            .unwrap(),
             Header::from_bytes("Access-Control-Allow-Headers", allowed_headers).unwrap(),
         ]
     }
@@ -190,17 +202,16 @@ impl ReqCtx {
         }
         // Fixed allowlist of headers we accept in cross-origin requests
         // When auth is enabled but CORS is wildcard, restrict to prevent browser abuse
-        let allowed_headers_set: &[&str] =
-            if self.auth_token_hash.is_some() && self.cors_origins.is_empty() {
-                &["Content-Type", "Accept", "X-Requested-With"]
-            } else {
-                &[
-                    "Content-Type",
-                    "Authorization",
-                    "Accept",
-                    "X-Requested-With",
-                ]
-            };
+        let allowed_headers_set: &[&str] = if self.wildcard_cors_with_auth() {
+            &["Content-Type", "Accept", "X-Requested-With"]
+        } else {
+            &[
+                "Content-Type",
+                "Authorization",
+                "Accept",
+                "X-Requested-With",
+            ]
+        };
         let allow_headers = req
             .headers()
             .iter()
@@ -224,8 +235,11 @@ impl ReqCtx {
         // Access-Control-Allow-Headers — it will block the request as intended.
         vec![
             Header::from_bytes("Access-Control-Allow-Origin", origin).unwrap(),
-            Header::from_bytes("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-                .unwrap(),
+            Header::from_bytes(
+                "Access-Control-Allow-Methods",
+                "GET, POST, PUT, DELETE, OPTIONS",
+            )
+            .unwrap(),
             Header::from_bytes("Access-Control-Allow-Headers", allow_headers).unwrap(),
         ]
     }
@@ -267,5 +281,62 @@ impl ReqCtx {
             None,
             None,
         )
+    }
+}
+
+#[cfg(test)]
+mod cors_tests {
+    use super::*;
+    use tiny_http::{Method, TestRequest};
+
+    fn ctx(origins: &[&str], auth: bool, read_only: bool) -> ReqCtx {
+        ReqCtx {
+            auth_token_hash: auth.then(|| Sha256::digest("t").into()),
+            read_only_token_hash: read_only.then(|| Sha256::digest("r").into()),
+            cors_origins: origins.iter().map(|s| s.to_string()).collect(),
+            recall_config: None,
+            extraction_config: None,
+        }
+    }
+
+    fn request(origin: &str) -> Request {
+        TestRequest::new()
+            .with_method(Method::Get)
+            .with_path("/health")
+            .with_header(Header::from_bytes("Origin", origin).unwrap())
+            .into()
+    }
+
+    #[test]
+    fn no_origins_configured_sends_no_cors_headers() {
+        let c = ctx(&[], false, false);
+        assert!(
+            c.cors_headers_for(&request("https://evil.example"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn explicit_origin_is_allowed_others_are_not() {
+        let c = ctx(&["https://app.example"], false, false);
+        assert!(
+            !c.cors_headers_for(&request("https://app.example"))
+                .is_empty()
+        );
+        assert!(
+            c.cors_headers_for(&request("https://evil.example"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn wildcard_requires_explicit_opt_in_and_hides_authorization_with_any_token() {
+        let c = ctx(&["*"], false, true); // only a read-only token configured
+        let headers = c.cors_headers_for(&request("https://x.example"));
+        let allow = headers
+            .iter()
+            .find(|h| h.field.equiv("Access-Control-Allow-Headers"))
+            .unwrap();
+        assert_eq!(allow.value.as_str(), "Content-Type");
     }
 }

@@ -527,6 +527,15 @@ impl Default for LimitsConfig {
     }
 }
 
+/// Opt-in escape hatch: allow the project-local `.uteke/uteke.toml` to set
+/// endpoints, API keys and the server address.
+fn project_config_trusted() -> bool {
+    matches!(
+        std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
 impl Config {
     /// Load config with layered resolution:
     /// 1. Defaults
@@ -547,15 +556,56 @@ impl Config {
         }
 
         // Layer 2: project .uteke/uteke.toml
+        // A project file lives in the (possibly untrusted) working tree, so it
+        // must not redirect where credentials or memory text are sent.
         if let Ok(cwd) = std::env::current_dir() {
             let project_path = cwd.join(".uteke").join("uteke.toml");
+            let trusted = config.clone();
             config = config.merge_from_file(&project_path);
+            if !project_config_trusted() {
+                config.restore_sensitive_from(&trusted, &project_path);
+            }
         }
 
         // Layer 3: environment variables (override config file)
         config = config.apply_env_overrides();
 
         config
+    }
+
+    /// Undo any override of credential/endpoint/server-address fields coming
+    /// from the project-local config, keeping the values from `trusted`
+    /// (global config). Warns when something was actually reverted.
+    fn restore_sensitive_from(&mut self, trusted: &Config, source: &std::path::Path) {
+        let mut reverted: Vec<&str> = Vec::new();
+        macro_rules! keep {
+            ($($path:ident).+, $name:literal) => {
+                if self.$($path).+ != trusted.$($path).+ {
+                    self.$($path).+ = trusted.$($path).+.clone();
+                    reverted.push($name);
+                }
+            };
+        }
+        keep!(embedding.api_key, "embedding.api_key");
+        keep!(embedding.base_url, "embedding.base_url");
+        keep!(embedding.endpoint_path, "embedding.endpoint_path");
+        keep!(embed_fallback.api_key, "embed_fallback.api_key");
+        keep!(embed_fallback.base_url, "embed_fallback.base_url");
+        keep!(embed_fallback.endpoint_path, "embed_fallback.endpoint_path");
+        keep!(extraction.api_key, "extraction.api_key");
+        keep!(extraction.base_url, "extraction.base_url");
+        keep!(extraction.endpoint_path, "extraction.endpoint_path");
+        keep!(server.host, "server.host");
+        keep!(server.port, "server.port");
+        keep!(server.enabled, "server.enabled");
+        if !reverted.is_empty() {
+            tracing::warn!(
+                "Ignoring {} from project config {} (untrusted: set them in the global config, \
+                 or set UTEKE_TRUST_PROJECT_CONFIG=1 to allow)",
+                reverted.join(", "),
+                source.display()
+            );
+        }
     }
 
     /// Merge values from a TOML file on top of this config.
@@ -1608,6 +1658,46 @@ port = 9999
         assert!(merged.server.enabled);
         assert_eq!(merged.server.host, "0.0.0.0");
         assert_eq!(merged.server.port, 9999);
+    }
+
+    #[test]
+    fn project_config_cannot_redirect_endpoints() {
+        let toml = r#"
+[embedding]
+backend = "openai"
+model = "evil-model"
+base_url = "https://evil.example/v1"
+endpoint_path = "/steal"
+api_key = "sk-evil"
+
+[extraction]
+base_url = "https://evil.example/x"
+
+[server]
+enabled = true
+host = "evil.example"
+port = 1
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_project_untrusted.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let trusted = Config::default();
+        let mut merged = trusted.clone().merge_from_file(&tmp);
+        merged.restore_sensitive_from(&trusted, &tmp);
+        std::fs::remove_file(&tmp).ok();
+
+        // Sensitive fields are reverted to the trusted (global) values...
+        assert_eq!(merged.embedding.base_url, trusted.embedding.base_url);
+        assert_eq!(
+            merged.embedding.endpoint_path,
+            trusted.embedding.endpoint_path
+        );
+        assert_eq!(merged.embedding.api_key, trusted.embedding.api_key);
+        assert_eq!(merged.extraction.base_url, trusted.extraction.base_url);
+        assert_eq!(merged.server.host, trusted.server.host);
+        assert_eq!(merged.server.port, trusted.server.port);
+        assert_eq!(merged.server.enabled, trusted.server.enabled);
+        // ...while harmless tuning from the project file still applies.
+        assert_eq!(merged.embedding.model, "evil-model");
     }
 
     #[test]

@@ -13,8 +13,6 @@ mod types;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use std::path::PathBuf;
-
 use sha2::{Digest, Sha256};
 use tiny_http::Server;
 use tracing::{error, info, warn};
@@ -325,12 +323,15 @@ fn main() {
     let read_only_token_hash = read_only_token.as_deref().map(|t| Sha256::digest(t).into());
 
     // Build request context
-    // Warn if auth is configured but CORS origins are not — this is safe for
-    // non-browser clients (curl, SDKs, agents) but risky if browser access is needed.
-    if auth_token_hash.is_some() && cors_origins.is_empty() {
-        warn!("Security: auth token is set but cors_origins is not configured.");
-        warn!("  For browser access, set cors_origins in uteke.toml or --cors-origin.");
-        warn!("  Non-browser clients (curl, agents) are unaffected by CORS.");
+    // CORS is off unless origins are configured. Wildcard is an explicit opt-in
+    // and is dangerous without auth: any web page could read/write memories.
+    if cors_origins.iter().any(|o| o == "*")
+        && auth_token_hash.is_none()
+        && read_only_token_hash.is_none()
+    {
+        warn!("Security: cors_origins contains \"*\" and authentication is disabled —");
+        warn!("  any website opened in a local browser can read and modify memories.");
+        warn!("  Set an auth token or list explicit origins.");
     }
     let ctx = context::ReqCtx {
         auth_token_hash,
@@ -551,7 +552,9 @@ fn main() {
 
         let method = req.method().clone();
         let url = req.url().to_string();
-        info!("{method} {url}");
+        // Log the path only: query strings can carry memory text / search
+        // phrases (PII, secrets) that must not land in server logs.
+        info!("{method} {}", url.split('?').next().unwrap_or(&url));
 
         let uteke = Arc::clone(&uteke);
         let ctx = ctx.clone();
@@ -683,23 +686,118 @@ struct ServerFileSection {
 fn load_uteke_toml() -> ServerFileConfig {
     let mut config = ServerFileConfig::default();
 
-    let mut paths: Vec<PathBuf> = vec![match uteke_core::uteke_home() {
-        Ok(h) => h.join("uteke.toml"),
-        Err(_) => PathBuf::new(),
-    }];
-    if let Ok(cwd) = std::env::current_dir() {
-        paths.push(cwd.join(".uteke").join("uteke.toml"));
-    }
+    let global = match uteke_core::uteke_home() {
+        Ok(h) => Some(h.join("uteke.toml")),
+        Err(_) => None,
+    };
+    let project = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
 
-    for path in paths {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(parsed) = toml::from_str::<ServerFileConfig>(&content) {
-                    config = parsed;
-                }
-            }
-        }
+    if let Some(parsed) = global.as_deref().and_then(read_server_toml) {
+        config = parsed;
+    }
+    if let Some(parsed) = project.as_deref().and_then(read_server_toml) {
+        config = overlay_project_config(config, parsed);
     }
 
     config
+}
+
+fn read_server_toml(path: &std::path::Path) -> Option<ServerFileConfig> {
+    let content = std::fs::read_to_string(path).ok()?;
+    toml::from_str::<ServerFileConfig>(&content).ok()
+}
+
+/// Overlay a project-local config (`$CWD/.uteke/uteke.toml`) on the global one.
+///
+/// Sections are merged one by one (a project file that only tunes `[recall]`
+/// must not wipe the global `[server]` auth settings), and the project file is
+/// never allowed to set `[server]` (host, auth tokens, CORS origins) or
+/// `[extraction]` (LLM endpoint + key): it lives in the working tree, which
+/// may be an untrusted clone.
+fn overlay_project_config(
+    mut base: ServerFileConfig,
+    project: ServerFileConfig,
+) -> ServerFileConfig {
+    if project.server.is_some() {
+        warn!(
+            "Ignoring [server] section in project .uteke/uteke.toml (set it in the global config)"
+        );
+    }
+    if project.extraction.is_some() {
+        warn!(
+            "Ignoring [extraction] section in project .uteke/uteke.toml (set it in the global config)"
+        );
+    }
+    if project.recall.is_some() {
+        base.recall = project.recall;
+    }
+    if project.maintenance.is_some() {
+        base.maintenance = project.maintenance;
+    }
+    if project.aging.is_some() {
+        base.aging = project.aging;
+    }
+    if project.dream.is_some() {
+        base.dream = project.dream;
+    }
+    if project.lifecycle.is_some() {
+        base.lifecycle = project.lifecycle;
+    }
+    base
+}
+
+#[cfg(test)]
+mod config_overlay_tests {
+    use super::*;
+
+    fn parse(s: &str) -> ServerFileConfig {
+        toml::from_str(s).unwrap()
+    }
+
+    #[test]
+    fn project_config_keeps_global_server_auth() {
+        let global = parse(
+            r#"
+[server]
+host = "0.0.0.0"
+auth_token = "global-secret"
+cors_origins = ["https://app.example"]
+"#,
+        );
+        // Project file only tunes recall but also tries to override [server].
+        let project = parse(
+            r#"
+[recall]
+min_score = 0.5
+
+[server]
+auth_token = "attacker"
+host = "0.0.0.0"
+"#,
+        );
+        let merged = overlay_project_config(global, project);
+        let server = merged.server.expect("global [server] must survive");
+        assert_eq!(server.auth_token.as_deref(), Some("global-secret"));
+        assert_eq!(
+            server.cors_origins.as_deref(),
+            Some(&["https://app.example".to_string()][..])
+        );
+        assert!(
+            merged.recall.is_some(),
+            "project recall tuning still applies"
+        );
+    }
+
+    #[test]
+    fn project_config_without_server_section_does_not_wipe_global() {
+        let global = parse("[server]\nauth_token = \"t\"\n");
+        let project = parse("[recall]\nmin_score = 0.3\n");
+        let merged = overlay_project_config(global, project);
+        assert_eq!(
+            merged.server.and_then(|s| s.auth_token).as_deref(),
+            Some("t")
+        );
+    }
 }

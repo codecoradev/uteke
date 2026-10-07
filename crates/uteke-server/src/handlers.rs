@@ -708,7 +708,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── List ────────────────────────────────────────────────────────
         (Method::Post, "/list") => match read_body::<ListParams>(req.as_reader()) {
-            Ok(req_data) => {
+            Ok(mut req_data) => {
+                req_data.limit = req_data.limit.min(MAX_LIST_LIMIT);
                 // Time-travel mode: parse --at and use list_at_time
                 let list_result = match req_data.at.as_deref() {
                     Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
@@ -922,7 +923,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let limit: u32 = params
                 .get("limit")
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(100);
+                .unwrap_or(100)
+                .min(MAX_LIST_LIMIT as u32);
             match uteke.store().list_deprecated(ns_param, limit) {
                 Ok(items) => {
                     #[derive(serde::Serialize)]
@@ -1089,7 +1091,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let query = path.split('?').nth(1).unwrap_or("");
             let limit = parse_query_param(query, "limit")
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(20);
+                .unwrap_or(20)
+                .min(MAX_LIST_LIMIT);
             let offset = parse_query_param(query, "offset")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(0);
@@ -2256,7 +2259,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── Document: List ─────────────────────────────────────────────
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
-            Ok(params) => {
+            Ok(mut params) => {
+                params.limit = params.limit.min(MAX_LIST_LIMIT);
                 let result = if params.roots_only {
                     uteke.doc_list_roots(params.namespace.as_deref(), params.limit)
                 } else if let Some(ref parent) = params.parent {
@@ -2512,7 +2516,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let ns = parse_query_namespace(&path);
             let limit = parse_query_param(query, "limit")
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(50);
+                .unwrap_or(50)
+                .min(MAX_LIST_LIMIT);
             match uteke.contradiction_resolutions(ns.as_deref(), limit) {
                 Ok(resolutions) => ctx.ok_response_for(req, &resolutions),
                 Err(e) => {
@@ -2742,12 +2747,18 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // (pitfall 0f lock contention).
         (Method::Post, "/verify") => match uteke.verify() {
             Ok(r) => ctx.ok_response_for(req, &r),
-            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+            Err(e) => {
+                error!("Request failed: {e}");
+                ctx.error_response_for(req, 500, "Internal server error")
+            }
         },
 
         (Method::Post, "/repair") => match uteke.repair() {
             Ok(r) => ctx.ok_response_for(req, &r),
-            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+            Err(e) => {
+                error!("Request failed: {e}");
+                ctx.error_response_for(req, 500, "Internal server error")
+            }
         },
 
         (Method::Post, "/prune") => match read_body::<PruneRequest>(req.as_reader()) {
@@ -2756,7 +2767,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     uteke.prune(req_data.ttl_days, ns(&req_data.namespace), req_data.dry_run);
                 match result {
                     Ok(r) => ctx.ok_response_for(req, &r),
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2769,14 +2783,20 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     let pairs = uteke.find_duplicates(ns(&req_data.namespace), req_data.threshold);
                     match pairs {
                         Ok(p) => ctx.ok_response_for(req, &p),
-                        Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                        Err(e) => {
+                            error!("Request failed: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 } else {
                     let result =
                         uteke.consolidate(ns(&req_data.namespace), req_data.threshold, false);
                     match result {
                         Ok(r) => ctx.ok_response_for(req, &r),
-                        Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                        Err(e) => {
+                            error!("Request failed: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 }
             }
@@ -2845,7 +2865,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 };
                 match result {
                     Ok(r) => ctx.ok_response_for(req, &r),
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2855,7 +2878,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/importance") => match read_body::<ImportanceRequest>(req.as_reader()) {
             Ok(_req_data) => match uteke.recompute_importance() {
                 Ok(count) => ctx.ok_response_for(req, &serde_json::json!({ "updated": count })),
-                Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                Err(e) => {
+                    error!("Request failed: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
             },
             Err(e) => ctx.error_response_for(req, 400, e),
         },
@@ -2869,7 +2895,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     req_data.limit,
                 ) {
                     Ok(orphans) => ctx.ok_response_for(req, &orphans),
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2882,7 +2911,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     Ok(count) => {
                         ctx.ok_response_for(req, &serde_json::json!({ "backlinks_created": count }))
                     }
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 },
                 Err(e) => ctx.error_response_for(req, 400, e),
             }
@@ -2916,7 +2948,9 @@ fn resolve_extraction_config(
         api_key: req_api_key.map(String::from).unwrap_or(base.api_key),
         base_url: base.base_url,
         endpoint_path: base.endpoint_path,
-        max_facts: req_max_facts.unwrap_or(base.max_facts),
+        max_facts: req_max_facts
+            .unwrap_or(base.max_facts)
+            .min(MAX_EXTRACT_FACTS),
     }
 }
 

@@ -71,7 +71,7 @@ server {
 |------|--------|---------|
 | TLS encryption | ✅ Via reverse proxy | Caddy (auto) or Nginx (manual Let's Encrypt) |
 | Authentication | ✅ Built-in | `--auth-token` flag or `uteke.toml [server] auth_token` |
-| CORS | ✅ Built-in | `--cors-origin` or `uteke.toml [server] cors_origins` |
+| CORS | ✅ Built-in (off by default; `"*"` opts in to wildcard) | `--cors-origin` or `uteke.toml [server] cors_origins` |
 | Bind address | ✅ Configurable | `--host 127.0.0.1` for local-only access |
 | Rate limiting | ⚠️ Via reverse proxy | Configure in Caddy/Nginx |
 | File permissions | ✅ Built-in | Owner-only (0700/0600) on data directories |
