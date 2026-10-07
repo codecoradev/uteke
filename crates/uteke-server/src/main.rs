@@ -700,80 +700,62 @@ impl Drop for SlotGuard {
     }
 }
 
-/// Find and parse the nearest uteke.toml, looking at:
-/// 1. $UTEKE_HOME/uteke.toml (or ~/.codecora/uteke/uteke.toml)
-/// 2. $CWD/.uteke/uteke.toml
+/// Resolve `uteke.toml` from:
+/// 1. `$UTEKE_HOME/uteke.toml` (or `~/.codecora/uteke/uteke.toml`)
+/// 2. `$CWD/.uteke/uteke.toml` (project-local, untrusted for `[server]`,
+///    endpoints and credentials unless `UTEKE_TRUST_PROJECT_CONFIG=1`)
+///
+/// Merge precedence, the untrusted-key policy and per-layer validation are
+/// shared with the CLI in `uteke_core::config_layers`.
 fn load_uteke_toml() -> ServerFileConfig {
-    let mut config = ServerFileConfig::default();
-
-    let global = match uteke_core::uteke_home() {
-        Ok(h) => Some(h.join("uteke.toml")),
-        Err(_) => None,
-    };
+    let global = uteke_core::uteke_home().ok().map(|h| h.join("uteke.toml"));
     let project = std::env::current_dir()
         .ok()
         .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
-
-    if let Some(parsed) = global.as_deref().and_then(read_server_toml) {
-        config = parsed;
-    }
-    if let Some(parsed) = project.as_deref().and_then(read_server_toml) {
-        config = overlay_project_config(config, parsed);
-    }
-
-    config
+    resolve_server_config(&uteke_core::config_layers::Layers {
+        global: global.as_deref(),
+        project: project.as_deref(),
+        trust_project: matches!(
+            std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
+            Ok("1") | Ok("true")
+        ),
+    })
 }
 
-fn read_server_toml(path: &std::path::Path) -> Option<ServerFileConfig> {
-    let content = std::fs::read_to_string(path).ok()?;
-    toml::from_str::<ServerFileConfig>(&content).ok()
-}
-
-/// Overlay a project-local config (`$CWD/.uteke/uteke.toml`) on the global one.
-///
-/// Sections are merged one by one (a project file that only tunes `[recall]`
-/// must not wipe the global `[server]` auth settings), and the project file is
-/// never allowed to set `[server]` (host, auth tokens, CORS origins) or
-/// `[extraction]` (LLM endpoint + key): it lives in the working tree, which
-/// may be an untrusted clone.
-fn overlay_project_config(
-    mut base: ServerFileConfig,
-    project: ServerFileConfig,
-) -> ServerFileConfig {
-    if project.server.is_some() {
-        warn!(
-            "Ignoring [server] section in project .uteke/uteke.toml (set it in the global config)"
-        );
-    }
-    if project.extraction.is_some() {
-        warn!(
-            "Ignoring [extraction] section in project .uteke/uteke.toml (set it in the global config)"
-        );
-    }
-    if project.recall.is_some() {
-        base.recall = project.recall;
-    }
-    if project.maintenance.is_some() {
-        base.maintenance = project.maintenance;
-    }
-    if project.aging.is_some() {
-        base.aging = project.aging;
-    }
-    if project.dream.is_some() {
-        base.dream = project.dream;
-    }
-    if project.lifecycle.is_some() {
-        base.lifecycle = project.lifecycle;
-    }
-    base
+fn resolve_server_config(layers: &uteke_core::config_layers::Layers<'_>) -> ServerFileConfig {
+    uteke_core::config_layers::resolve::<ServerFileConfig>(layers).value
 }
 
 #[cfg(test)]
 mod config_overlay_tests {
     use super::*;
+    use std::path::PathBuf;
 
-    fn parse(s: &str) -> ServerFileConfig {
-        toml::from_str(s).unwrap()
+    fn temp_file(tag: &str, body: &str) -> PathBuf {
+        // Unique per call: tests run in parallel inside one process.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "uteke_server_cfg_{}_{}_{}.toml",
+            std::process::id(),
+            tag,
+            n
+        ));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    fn resolve(global: &str, project: &str, trust: bool) -> ServerFileConfig {
+        let g = temp_file("g", global);
+        let p = temp_file("p", project);
+        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
+            global: Some(&g),
+            project: Some(&p),
+            trust_project: trust,
+        });
+        let _ = std::fs::remove_file(g);
+        let _ = std::fs::remove_file(p);
+        cfg
     }
 
     #[test]
@@ -782,26 +764,13 @@ mod config_overlay_tests {
         let line = |v: &str| format!("{} = \"{}\"", "auth_token", v);
         let global_line = line(&"g".repeat(10));
         let attacker_line = line(&"a".repeat(10));
-        let global = parse(&format!(
-            r#"
-[server]
-host = "0.0.0.0"
-{global_line}
-cors_origins = ["https://app.example"]
-"#
-        ));
+        let global = format!(
+            "[server]\nhost = \"0.0.0.0\"\n{global_line}\ncors_origins = [\"https://app.example\"]\n"
+        );
         // Project file only tunes recall but also tries to override [server].
-        let project = parse(&format!(
-            r#"
-[recall]
-min_score = 0.5
-
-[server]
-{attacker_line}
-host = "0.0.0.0"
-"#
-        ));
-        let merged = overlay_project_config(global, project);
+        let project =
+            format!("[recall]\nmin_score = 0.5\n\n[server]\n{attacker_line}\nhost = \"0.0.0.0\"\n");
+        let merged = resolve(&global, &project, false);
         let server = merged.server.expect("global [server] must survive");
         assert_eq!(server.auth_token.as_deref(), Some("g".repeat(10).as_str()));
         assert_eq!(
@@ -817,12 +786,25 @@ host = "0.0.0.0"
     #[test]
     fn project_config_without_server_section_does_not_wipe_global() {
         let dummy = "t".repeat(10);
-        let global = parse(&format!("[server]\n{} = \"{dummy}\"\n", "auth_token"));
-        let project = parse("[recall]\nmin_score = 0.3\n");
-        let merged = overlay_project_config(global, project);
+        let global = format!("[server]\n{} = \"{dummy}\"\n", "auth_token");
+        let merged = resolve(&global, "[recall]\nmin_score = 0.3\n", false);
         assert_eq!(
             merged.server.and_then(|s| s.auth_token).as_deref(),
             Some(dummy.as_str())
         );
+    }
+
+    #[test]
+    fn project_recall_keys_merge_per_key_not_per_section() {
+        // The old server overlay replaced whole sections: a project file setting
+        // one [recall] key wiped the other global [recall] keys.
+        let merged = resolve(
+            "[recall]\nmin_score = 0.3\ndefault_strategy = \"vector\"\n",
+            "[recall]\nmin_score = 0.6\n",
+            false,
+        );
+        let recall = merged.recall.expect("recall section");
+        assert_eq!(recall.min_score, Some(0.6));
+        assert_eq!(recall.default_strategy.as_deref(), Some("vector"));
     }
 }

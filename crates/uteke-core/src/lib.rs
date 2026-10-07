@@ -10,6 +10,7 @@
 //! ```
 
 pub mod chunker;
+pub mod config_layers;
 mod consolidate;
 pub mod consolidation_api;
 pub mod consolidation_exec;

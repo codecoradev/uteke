@@ -2809,6 +2809,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokenizers",
+ "toml",
  "tracing",
  "usearch",
  "uuid",
