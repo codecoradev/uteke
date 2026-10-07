@@ -222,6 +222,28 @@ pub fn run(yes: bool) -> Result<(), String> {
 /// Verify a freshly extracted binary runs, then atomically move it into
 /// `install_dir`. With `required = false`, a missing artifact is skipped
 /// with a warning (companion binaries absent from older bundles).
+/// Run `<binary> --version`, retrying while the kernel reports the freshly
+/// written file as busy.
+///
+/// Executing a binary right after writing it can fail with `ETXTBSY`
+/// ("Text file busy", os error 26) when another thread/process forks while
+/// our write descriptor is still open — the child briefly inherits it. The
+/// condition clears as soon as that child execs, so a short retry is enough.
+fn run_version_check(binary: &std::path::Path) -> std::io::Result<std::process::Output> {
+    const ETXTBSY: i32 = 26;
+    const MAX_ATTEMPTS: u32 = 8;
+    let mut attempt = 0;
+    loop {
+        match std::process::Command::new(binary).arg("--version").output() {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt + 1 < MAX_ATTEMPTS => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)));
+            }
+            other => return other,
+        }
+    }
+}
+
 fn replace_binary(
     temp_dir: &std::path::Path,
     name: &str,
@@ -242,10 +264,7 @@ fn replace_binary(
     fs::copy(&extracted, &temp_new).map_err(|e| format!("Failed to copy new {name}: {e}"))?;
 
     // Verify the new binary runs
-    match std::process::Command::new(&temp_new)
-        .arg("--version")
-        .output()
-    {
+    match run_version_check(&temp_new) {
         Ok(output) if output.status.success() => {
             let new_version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             // Extract version from clap output like "uteke 0.6.7"
