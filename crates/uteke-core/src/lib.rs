@@ -1625,15 +1625,42 @@ impl Uteke {
             has_children: false,
         };
 
-        // Capture old chunk IDs BEFORE upsert (upsert_document deletes chunks
-        // internally as part of its transaction, so querying after returns empty).
+        // Embed-then-commit: chunk and embed with NO transaction open and NO index
+        // lock held (embedding is slow and can fail), then write the document and
+        // every chunk in ONE SQLite transaction, then mirror the result into the
+        // vector index. A failure before the commit leaves the previous version
+        // of the document, its chunks and the index untouched.
+        let chunk_doc_id = self
+            .store
+            .get_document_by_slug(&doc.slug)?
+            .map(|existing| existing.id)
+            .unwrap_or_else(|| doc.id.clone());
+        let tag_strings: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        let chunks = self.embed_document_chunks(&chunk_doc_id, content, &tag_strings)?;
+
+        // Old chunk ids must be read BEFORE the upsert replaces them.
         let old_chunk_ids = self
             .store
-            .get_chunk_ids_for_documents(std::slice::from_ref(&doc.id))?;
+            .get_chunk_ids_for_documents(std::slice::from_ref(&chunk_doc_id))?;
 
-        let doc_id = self.store.upsert_document(&doc)?;
+        let doc_id = self.store.upsert_document_with_chunks(&doc, &chunks)?;
+        self.sync_document_chunks_to_index(&old_chunk_ids, &chunks)?;
 
-        // Chunk and embed the content.
+        tracing::info!("Document '{slug}' upserted: {} chunks", chunks.len());
+
+        Ok(doc_id)
+    }
+
+    /// Chunk `content` and embed every chunk.
+    ///
+    /// Deliberately takes no index lock and opens no transaction: embedding is
+    /// slow and may fail, and must not block recall or leave partial writes.
+    fn embed_document_chunks(
+        &self,
+        doc_id: &str,
+        content: &str,
+        tags: &[String],
+    ) -> Result<Vec<(DocumentChunk, Vec<f32>)>, Error> {
         self.ensure_embedder()?;
         let embedder = self
             .embedder
@@ -1643,55 +1670,55 @@ impl Uteke {
 
         let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
         let chunks = crate::chunker::chunk_markdown(content, max_chars);
+        chunks
+            .iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                let embedding = embedder.embed(&chunk.content)?;
+                Ok((
+                    DocumentChunk {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        document_id: doc_id.to_string(),
+                        chunk_index: i as i64,
+                        heading: chunk.heading.clone(),
+                        content: chunk.content.clone(),
+                        char_start: chunk.char_start as i64,
+                        char_end: chunk.char_end as i64,
+                        tags: tags.to_vec(),
+                    },
+                    embedding,
+                ))
+            })
+            .collect()
+    }
 
-        // Acquire usearch write lock for chunk index inserts.
+    /// Mirror a committed chunk replacement into the vector index
+    /// (`chunk:<id>` keys): drop the replaced chunks, add the new ones, save
+    /// once. SQLite is already committed, so index trouble only warns —
+    /// `uteke repair` rebuilds chunk vectors from SQLite.
+    fn sync_document_chunks_to_index(
+        &self,
+        old_chunk_ids: &[String],
+        new_chunks: &[(DocumentChunk, Vec<f32>)],
+    ) -> Result<(), Error> {
         let mut index = self
             .index
             .write()
             .map_err(|_| Error::lock("index write lock during doc chunking"))?;
-
-        // Remove old chunk entries from usearch.
-        for old_id in &old_chunk_ids {
-            let key = format!("chunk:{}", old_id);
-            index.remove(&key);
+        let policy = index_sync::SyncPolicy::STANDARD;
+        for old_id in old_chunk_ids {
+            index_sync::remove_unsaved(&mut *index, &format!("chunk:{old_id}"));
         }
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            let chunk_id = uuid::Uuid::now_v7().to_string();
-            let embedding = embedder.embed(&chunk.content)?;
-
-            self.store.insert_document_chunk(
-                &DocumentChunk {
-                    id: chunk_id.clone(),
-                    document_id: doc_id.clone(),
-                    chunk_index: i as i64,
-                    heading: chunk.heading.clone(),
-                    content: chunk.content.clone(),
-                    char_start: chunk.char_start as i64,
-                    char_end: chunk.char_end as i64,
-                    tags: tags.iter().map(|t| t.to_string()).collect(),
-                },
-                &embedding,
-            )?;
-
-            // Insert chunk embedding into usearch with "chunk:" prefix.
-            let index_key = format!("chunk:{}", chunk_id);
-            if let Err(e) = index.insert(&index_key, &embedding) {
-                tracing::warn!(
-                    "Failed to insert chunk {} into vector index: {}",
-                    chunk_id,
-                    e
-                );
+        for (chunk, embedding) in new_chunks {
+            let key = format!("chunk:{}", chunk.id);
+            if let Err(e) = index_sync::insert_unsaved(&mut *index, &key, embedding, &policy) {
+                tracing::warn!("Failed to insert chunk {} into vector index: {e}", chunk.id);
             }
         }
-
-        if let Err(e) = index.save() {
-            tracing::warn!("Failed to persist vector index after doc chunking: {}", e);
+        if let Err(e) = index_sync::persist(&mut *index, &policy) {
+            tracing::warn!("Failed to persist vector index after doc chunking: {e}");
         }
-
-        tracing::info!("Document '{slug}' upserted: {} chunks", chunks.len());
-
-        Ok(doc_id)
+        Ok(())
     }
 
     /// Get a document by ID or slug.
@@ -1723,74 +1750,31 @@ impl Uteke {
         };
         let doc_id = doc.id.clone();
 
-        // Partial update in SQLite.
-        let updated = self
-            .store
-            .update_document(&doc_id, title, content, tags, metadata)?;
-
-        let updated = match updated {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-
-        // If content was changed, rebuild chunks.
-        if let Some(content_text) = content {
-            let old_chunk_ids = self
+        // Content change: embed first (no locks, no transaction), then update the
+        // document and replace its chunks atomically, then mirror into the index.
+        let updated = if let Some(content_text) = content {
+            let chunk_tags: Vec<String> =
+                tags.map(|t| t.to_vec()).unwrap_or_else(|| doc.tags.clone());
+            let chunks = self.embed_document_chunks(&doc_id, content_text, &chunk_tags)?;
+            match self
                 .store
-                .delete_chunks_for_documents(std::slice::from_ref(&doc_id))?;
-
-            self.ensure_embedder()?;
-            let embedder = self
-                .embedder
-                .lock()
-                .map_err(|_| Error::lock("embedder lock during document update"))?;
-            let embedder = embedder.as_ref().expect("embedder ensured above");
-
-            let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
-            let chunks = crate::chunker::chunk_markdown(content_text, max_chars);
-
-            let mut index = self
-                .index
-                .write()
-                .map_err(|_| Error::lock("index write lock during doc update"))?;
-
-            for old_id in &old_chunk_ids {
-                let key = format!("chunk:{}", old_id);
-                index.remove(&key);
-            }
-
-            for (i, chunk) in chunks.iter().enumerate() {
-                let chunk_id = uuid::Uuid::now_v7().to_string();
-                let embedding = embedder.embed(&chunk.content)?;
-
-                self.store.insert_document_chunk(
-                    &DocumentChunk {
-                        id: chunk_id.clone(),
-                        document_id: doc_id.clone(),
-                        chunk_index: i as i64,
-                        heading: chunk.heading.clone(),
-                        content: chunk.content.clone(),
-                        char_start: chunk.char_start as i64,
-                        char_end: chunk.char_end as i64,
-                        tags: updated.tags.clone(),
-                    },
-                    &embedding,
-                )?;
-
-                let index_key = format!("chunk:{}", chunk_id);
-                if let Err(e) = index.insert(&index_key, &embedding) {
-                    tracing::warn!(
-                        "Failed to insert chunk {} into index during update: {}",
-                        chunk_id,
-                        e
-                    );
+                .update_document_with_chunks(&doc_id, title, content, tags, metadata, &chunks)?
+            {
+                Some((updated, old_chunk_ids)) => {
+                    self.sync_document_chunks_to_index(&old_chunk_ids, &chunks)?;
+                    updated
                 }
+                None => return Ok(None),
             }
-
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to persist index after doc update: {}", e);
+        } else {
+            match self
+                .store
+                .update_document(&doc_id, title, content, tags, metadata)?
+            {
+                Some(updated) => updated,
+                None => return Ok(None),
             }
-        }
+        };
 
         tracing::info!("Document '{id_or_slug}' updated");
         Ok(Some(updated))
@@ -1924,11 +1908,13 @@ impl Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during doc delete"))?;
-            for chunk_id in &chunk_ids {
-                let key = format!("chunk:{}", chunk_id);
-                index.remove(&key);
-            }
-            let _ = index.save();
+            let keys: Vec<String> = chunk_ids.iter().map(|c| format!("chunk:{c}")).collect();
+            index_sync::remove_ids(
+                &mut *index,
+                keys.iter().map(String::as_str),
+                &index_sync::SyncPolicy::STANDARD,
+            )
+            .warn_if_stale("doc_delete");
         }
 
         Ok((deleted, subtree_size))
@@ -4003,6 +3989,156 @@ mod uuidv7_tests {
         let v7 = uuid::Uuid::now_v7();
         assert_eq!(v4.get_version_num(), 4);
         assert_eq!(v7.get_version_num(), 7);
+    }
+}
+
+#[cfg(test)]
+mod doc_atomicity_tests {
+    //! #1341 — document upsert/update is embed-then-commit: a failure while
+    //! embedding must leave the previous version, its chunks and the index
+    //! untouched.
+    use super::*;
+    use crate::embed::Embedder;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    /// Succeeds for `ok_calls` embeds, then fails every embed.
+    struct BudgetEmbedder {
+        ok_calls: Arc<AtomicI64>,
+    }
+
+    impl Embedder for BudgetEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            if self.ok_calls.fetch_sub(1, Ordering::SeqCst) > 0 {
+                Ok(vec![0.1f32, 0.2, 0.3, 0.4])
+            } else {
+                Err(Error::Validation("simulated embed failure".to_string()))
+            }
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "budget-test-embedder"
+        }
+    }
+
+    fn open(budget: &Arc<AtomicI64>) -> Uteke {
+        let (_db, store) = Uteke::open_store(":memory:").expect("open_store");
+        Uteke::finish_open_full(
+            store,
+            Some(Box::new(BudgetEmbedder {
+                ok_calls: Arc::clone(budget),
+            })),
+            "test-budget".to_string(),
+            TierConfig::default(),
+            RecallConfig::default(),
+            EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    const V1: &str =
+        "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n\n# Gamma\ngamma body text\n";
+    const V2: &str =
+        "# One\nfirst replacement\n\n# Two\nsecond replacement\n\n# Three\nthird replacement\n";
+
+    fn chunk_ids(u: &Uteke, doc_id: &str) -> Vec<String> {
+        let mut ids = u
+            .store
+            .get_chunk_ids_for_documents(&[doc_id.to_string()])
+            .unwrap();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn upsert_failing_mid_document_keeps_previous_version_and_index() {
+        let budget = Arc::new(AtomicI64::new(1_000));
+        let u = open(&budget);
+        let doc_id = u.doc_upsert("doc-a", "Title", V1, &[], None).unwrap();
+        let before_chunks = chunk_ids(&u, &doc_id);
+        assert!(
+            before_chunks.len() >= 2,
+            "fixture must produce several chunks"
+        );
+        let before_index = u.index.read().unwrap().len();
+        let before = u.doc_get("doc-a").unwrap().unwrap();
+
+        // Allow exactly one embed of the replacement, then fail: the old code
+        // had already replaced the document by the time chunk 2 failed.
+        budget.store(1, Ordering::SeqCst);
+        let err = u.doc_upsert("doc-a", "Title", V2, &[], None);
+        assert!(err.is_err(), "embed failure must fail the upsert");
+
+        let after = u.doc_get("doc-a").unwrap().unwrap();
+        assert_eq!(after.content, before.content, "document content untouched");
+        assert_eq!(after.version, before.version, "version untouched");
+        assert_eq!(chunk_ids(&u, &doc_id), before_chunks, "old chunks intact");
+        assert_eq!(
+            u.index.read().unwrap().len(),
+            before_index,
+            "index untouched"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn upsert_success_replaces_chunks_in_store_and_index() {
+        let budget = Arc::new(AtomicI64::new(1_000));
+        let u = open(&budget);
+        let doc_id = u.doc_upsert("doc-b", "Title", V1, &[], None).unwrap();
+        let old = chunk_ids(&u, &doc_id);
+
+        u.doc_upsert("doc-b", "Title", V2, &[], None).unwrap();
+        let new = chunk_ids(&u, &doc_id);
+        assert!(!new.is_empty());
+        assert!(
+            new.iter().all(|id| !old.contains(id)),
+            "old chunks replaced"
+        );
+        assert_eq!(
+            u.index.read().unwrap().len(),
+            new.len(),
+            "index holds exactly the new chunk vectors"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn update_failing_mid_document_keeps_previous_content_and_chunks() {
+        let budget = Arc::new(AtomicI64::new(1_000));
+        let u = open(&budget);
+        let doc_id = u.doc_upsert("doc-c", "Title", V1, &[], None).unwrap();
+        let before_chunks = chunk_ids(&u, &doc_id);
+        let before = u.doc_get("doc-c").unwrap().unwrap();
+
+        budget.store(1, Ordering::SeqCst);
+        let res = u.doc_update("doc-c", None, Some(V2), None, None);
+        assert!(res.is_err());
+
+        let after = u.doc_get("doc-c").unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(chunk_ids(&u, &doc_id), before_chunks);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn upsert_without_a_working_embedder_writes_nothing() {
+        let budget = Arc::new(AtomicI64::new(0));
+        let u = open(&budget);
+        assert!(u.doc_upsert("doc-d", "Title", V1, &[], None).is_err());
+        assert!(
+            u.doc_get("doc-d").unwrap().is_none(),
+            "no half-written document row when embedding is impossible"
+        );
     }
 }
 
