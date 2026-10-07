@@ -23,6 +23,7 @@ pub mod graph;
 pub mod graph_rerank;
 pub mod guide;
 mod import_export;
+mod index_sync;
 mod jaccard;
 mod maintenance;
 pub mod memory;
@@ -636,11 +637,20 @@ impl Uteke {
             .index
             .write()
             .map_err(|_| Error::lock("index write lock during consolidation insert"))?;
-        index.insert(id, embedding)?;
-        if let Err(e) = index.save() {
-            tracing::warn!("failed to persist vector index after insert id={id}: {e}");
+        let sync = index_sync::upsert(
+            &mut *index,
+            id,
+            embedding,
+            &index_sync::SyncPolicy::STANDARD,
+        );
+        match sync.insert_error {
+            Some(e) => Err(Error::embed_msg(format!(
+                "vector insert failed for id={id}: {e}"
+            ))),
+            // A failed persist is already logged by index_sync; the entry is
+            // in the in-memory index and `uteke repair` can resync the file.
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// Remove an entry from the vector index (compensating action for a
@@ -650,10 +660,9 @@ impl Uteke {
         let Ok(mut index) = self.index.write() else {
             return;
         };
-        if index.remove(id) {
-            if let Err(e) = index.save() {
-                tracing::warn!("failed to persist vector index after remove id={id}: {e}");
-            }
+        let sync = index_sync::remove_ids(&mut *index, [id], &index_sync::SyncPolicy::STANDARD);
+        if let Some(msg) = sync.error_message() {
+            tracing::warn!("failed to persist vector index after remove id={id}: {msg}");
         }
     }
 
