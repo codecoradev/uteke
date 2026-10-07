@@ -1663,19 +1663,36 @@ impl Uteke {
         tags: &[String],
     ) -> Result<Vec<(DocumentChunk, Vec<f32>)>, Error> {
         self.ensure_embedder()?;
-        let embedder = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during document chunking"))?;
-        let embedder = embedder.as_ref().expect("embedder ensured above");
-
-        let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
+        // The embedder mutex is shared with recall/remember (query embedding),
+        // so take it per call, never across the whole loop: a long document
+        // must not make every other embed wait for all of its chunks (#1323).
+        let max_chars = {
+            let guard = self
+                .embedder
+                .lock()
+                .map_err(|_| Error::lock("embedder lock during document chunking"))?;
+            guard
+                .as_ref()
+                .expect("embedder ensured above")
+                .max_seq_len()
+                .saturating_mul(4)
+                .max(1024)
+        };
         let chunks = crate::chunker::chunk_markdown(content, max_chars);
         chunks
             .iter()
             .enumerate()
             .map(|(i, chunk)| {
-                let embedding = embedder.embed(&chunk.content)?;
+                let embedding = {
+                    let guard = self
+                        .embedder
+                        .lock()
+                        .map_err(|_| Error::lock("embedder lock during chunk embedding"))?;
+                    guard
+                        .as_ref()
+                        .expect("embedder ensured above")
+                        .embed(&chunk.content)?
+                };
                 Ok((
                     DocumentChunk {
                         id: uuid::Uuid::now_v7().to_string(),
