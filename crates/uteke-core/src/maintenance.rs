@@ -1,6 +1,7 @@
 //! Maintenance operations: doctor, verify, repair, stats, aging, prune, shutdown.
 
 use crate::error::{Error, format_bytes};
+use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::{
     AgingStatus, CleanupResult, LifecycleCycleResult, Memory, PruneResult, StoreStats,
 };
@@ -167,8 +168,8 @@ impl crate::Uteke {
                 .write()
                 .map_err(|_| Error::lock("index write lock during repair (rebuild)"))?;
             index.build(&items)?;
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to save index: {e}");
+            if let Err(e) = index_sync::persist(&mut *index, &SyncPolicy::STANDARD) {
+                tracing::warn!("Failed to save index after repair rebuild: {e}");
             }
         }
 
@@ -255,11 +256,13 @@ impl crate::Uteke {
                 .write()
                 .map_err(|_| Error::lock("index write during reembed"))?;
             for (id, vec) in &new_items {
-                if let Err(e) = index.insert(id, vec) {
+                if let Err(e) =
+                    index_sync::insert_unsaved(&mut *index, id, vec, &SyncPolicy::STANDARD)
+                {
                     tracing::warn!(id = %id, error = %e, "Failed to add to index");
                 }
             }
-            if let Err(e) = index.save() {
+            if let Err(e) = index_sync::persist(&mut *index, &SyncPolicy::STANDARD) {
                 tracing::warn!(error = %e, "Failed to save index after reembed");
             }
         }
@@ -407,12 +410,12 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during aging_cleanup"))?;
-                for id in &ids {
-                    index.remove(id);
-                }
-                if let Err(e) = index.save() {
-                    tracing::warn!("Failed to save index: {e}");
-                }
+                index_sync::remove_ids(
+                    &mut *index,
+                    ids.iter().map(String::as_str),
+                    &SyncPolicy::STANDARD,
+                )
+                .warn_if_stale("aging_cleanup (soft-delete)");
             }
 
             tracing::info!(
@@ -433,12 +436,12 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during aging_cleanup"))?;
-                for id in &ids {
-                    index.remove(id);
-                }
-                if let Err(e) = index.save() {
-                    tracing::warn!("Failed to save index: {e}");
-                }
+                index_sync::remove_ids(
+                    &mut *index,
+                    ids.iter().map(String::as_str),
+                    &SyncPolicy::STANDARD,
+                )
+                .warn_if_stale("aging_cleanup (hard delete)");
             }
 
             tracing::info!(
@@ -481,12 +484,12 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during prune"))?;
-            for id in &ids {
-                index.remove(id);
-            }
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to save index: {e}");
-            }
+            index_sync::remove_ids(
+                &mut *index,
+                ids.iter().map(String::as_str),
+                &SyncPolicy::STANDARD,
+            )
+            .warn_if_stale("prune");
         }
 
         Ok(PruneResult {
@@ -540,12 +543,12 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during lifecycle_cycle"))?;
-            for id in &to_deprecate {
-                index.remove(id);
-            }
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to persist index after lifecycle deprecate: {e}");
-            }
+            index_sync::remove_ids(
+                &mut *index,
+                to_deprecate.iter().map(String::as_str),
+                &SyncPolicy::STANDARD,
+            )
+            .warn_if_stale("lifecycle_cycle deprecate");
         }
 
         // Invalidate recall cache.
@@ -581,12 +584,12 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during lifecycle prune"))?;
-                for id in &expired_ids {
-                    index.remove(id);
-                }
-                if let Err(e) = index.save() {
-                    tracing::warn!("Failed to persist index after lifecycle prune: {e}");
-                }
+                index_sync::remove_ids(
+                    &mut *index,
+                    expired_ids.iter().map(String::as_str),
+                    &SyncPolicy::STANDARD,
+                )
+                .warn_if_stale("lifecycle_cycle prune");
                 tracing::info!(
                     "Lifecycle cycle: pruned {} expired deprecated memories (ttl={}d)",
                     pruned_count,
@@ -616,7 +619,7 @@ impl crate::Uteke {
             .write()
             .map_err(|_| Error::lock("index write lock during shutdown"))?;
         if index.is_dirty() {
-            index.save()?;
+            index_sync::persist(&mut *index, &SyncPolicy::STANDARD)?;
         }
         Ok(())
     }

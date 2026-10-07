@@ -98,6 +98,14 @@ impl SyncOutcome {
             .map(|e| format!("index persist failed{after}: {e}"))
     }
 
+    /// Log a warning when the on-disk index could not be saved; for callers
+    /// where a stale file is repairable and not worth failing the operation.
+    pub(crate) fn warn_if_stale(&self, what: &str) {
+        if let Some(msg) = self.error_message() {
+            tracing::warn!("{what}: {msg}. `uteke repair` / `verify` resync the index.");
+        }
+    }
+
     /// For operations whose SQLite change is already committed and where an
     /// unsaved index must be surfaced to the caller as an error.
     pub(crate) fn into_delete_result(self, what: &str) -> Result<(), Error> {
@@ -189,6 +197,32 @@ pub(crate) fn upsert<I: IndexWriter>(
         outcome.persist_error = Some(e.to_string());
     }
     outcome
+}
+
+/// Insert without persisting, for batch paths that save once at the end
+/// (import, re-embed). Deterministic dimension errors are not retried.
+pub(crate) fn insert_unsaved<I: IndexWriter>(
+    index: &mut I,
+    id: &str,
+    embedding: &[f32],
+    policy: &SyncPolicy,
+) -> Result<(), Error> {
+    if embedding.len() != index.dims() {
+        return Err(Error::embed_msg(format!(
+            "embedding has {} dimensions, index expects {}",
+            embedding.len(),
+            index.dims()
+        )));
+    }
+    retry(policy, &format!("vector insert id={id}"), || {
+        index.insert(id, embedding)
+    })
+}
+
+/// Remove without persisting (batch paths and rollbacks). Returns `false`
+/// when `id` was not in the index.
+pub(crate) fn remove_unsaved<I: IndexWriter>(index: &mut I, id: &str) -> bool {
+    index.remove(id)
 }
 
 /// Remove every id from the index and persist once.
@@ -381,6 +415,31 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("uteke repair"), "{err}");
+    }
+
+    #[test]
+    fn insert_unsaved_never_saves_and_rejects_wrong_dims() {
+        let mut idx = FakeIndex::new(2);
+        insert_unsaved(&mut idx, "a", &[0.0, 1.0], &FAST).unwrap();
+        assert_eq!((idx.insert_calls, idx.save_calls), (1, 0));
+        assert!(idx.present.contains("a"));
+
+        let err = insert_unsaved(&mut idx, "b", &[0.0], &FAST).unwrap_err();
+        assert!(err.to_string().contains("dimensions"));
+        assert_eq!(
+            idx.insert_calls, 1,
+            "wrong dimension: no insert attempt, no retries"
+        );
+    }
+
+    #[test]
+    fn insert_unsaved_retries_transient_failures_then_persist_saves_once() {
+        let mut idx = FakeIndex::new(2);
+        idx.insert_failures_left = 2;
+        insert_unsaved(&mut idx, "a", &[0.0, 1.0], &FAST).unwrap();
+        assert_eq!(idx.insert_calls, 3);
+        persist(&mut idx, &FAST).unwrap();
+        assert_eq!(idx.save_calls, 1);
     }
 
     #[test]

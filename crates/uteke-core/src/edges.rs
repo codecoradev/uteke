@@ -14,6 +14,7 @@
 //! indexed SQL queries instead of the old O(n) JSON scan.
 
 use crate::error::Error;
+use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::Memory;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -2092,15 +2093,8 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during supersede"))?;
-            if !index.remove(&old.id) {
-                tracing::debug!(
-                    "Vector index entry not found during supersede for id={} (ok if never embedded)",
-                    old.id
-                );
-            }
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to persist vector index after supersede: {e}");
-            }
+            index_sync::remove_ids(&mut *index, [old.id.as_str()], &SyncPolicy::STANDARD)
+                .warn_if_stale("supersede");
         }
         self.recall_cache.invalidate_namespace(&old.namespace);
 
@@ -2180,13 +2174,13 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during undo_supersession"))?;
-                if let Err(e) = index.insert(&memory.id, &memory.embedding) {
-                    tracing::warn!(
-                        "Failed to re-insert memory id={} into vector index during undo_supersession: {e}",
-                        memory.id
-                    );
-                }
-                let _ = index.save();
+                let sync = index_sync::upsert(
+                    &mut *index,
+                    &memory.id,
+                    &memory.embedding,
+                    &SyncPolicy::STANDARD,
+                );
+                sync.warn_if_stale("undo_supersession");
             }
             self.recall_cache.invalidate_namespace(&memory.namespace);
         }

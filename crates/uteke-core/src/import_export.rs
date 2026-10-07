@@ -1,6 +1,7 @@
 //! Import and export memories in JSONL format.
 
 use crate::error::Error;
+use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::{ExportEntry, ImportResult, Memory};
 
 impl crate::Uteke {
@@ -138,7 +139,7 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during import"))?;
-                index.insert(&id, &embedding)?;
+                index_sync::insert_unsaved(&mut *index, &id, &embedding, &SyncPolicy::STANDARD)?;
                 // Don't save per-item — we'll persist once after the full import.
             }
 
@@ -148,7 +149,7 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during import rollback"))?;
-                index.remove(&id);
+                index_sync::remove_unsaved(&mut *index, &id);
                 // Note: don't save per-entry — save once at end of import.
                 // If process crashes, orphan entry is harmless and cleaned by repair.
                 tracing::warn!("Skipping import entry (id={id}): {e}");
@@ -169,7 +170,7 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during import save"))?;
-            index.save()?;
+            index_sync::persist(&mut *index, &SyncPolicy::STANDARD)?;
         }
 
         if skipped > 0 || deduped > 0 {
