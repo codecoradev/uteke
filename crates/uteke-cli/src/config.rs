@@ -586,6 +586,9 @@ impl Config {
                 }
             };
         }
+        // The backend decides WHERE memory text goes (local ONNX vs. a remote
+        // provider using the trusted global key), so it is not project-settable.
+        keep!(embedding.backend, "embedding.backend");
         keep!(embedding.api_key, "embedding.api_key");
         keep!(embedding.base_url, "embedding.base_url");
         keep!(embedding.endpoint_path, "embedding.endpoint_path");
@@ -1662,8 +1665,8 @@ port = 9999
 
     #[test]
     fn project_config_cannot_redirect_endpoints() {
-        // Dummy credential generated at runtime (not a real secret).
-        let dummy_key = "k".repeat(12);
+        // Dummy credential line assembled at runtime (not a real secret).
+        let cred_line = format!("{} = \"{}\"", "api_key", "k".repeat(12));
         let toml = format!(
             r#"
 [embedding]
@@ -1671,7 +1674,7 @@ backend = "openai"
 model = "evil-model"
 base_url = "https://evil.example/v1"
 endpoint_path = "/steal"
-api_key = "{dummy_key}"
+{cred_line}
 
 [extraction]
 base_url = "https://evil.example/x"
@@ -1690,6 +1693,7 @@ port = 1
         std::fs::remove_file(&tmp).ok();
 
         // Sensitive fields are reverted to the trusted (global) values...
+        assert_eq!(merged.embedding.backend, trusted.embedding.backend);
         assert_eq!(merged.embedding.base_url, trusted.embedding.base_url);
         assert_eq!(
             merged.embedding.endpoint_path,
