@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. Zero unsafe code.
+Version: **0.19.1** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "forbid"` workspace-wide.
 
 > This skill ships with each release — its version tracks the CLI version
 > (a CI gate fails when they drift, see `skill-version-parity` test).
@@ -22,7 +22,7 @@ Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 
 | Flag | Description |
 |------|-------------|
-| `--store <PATH>` | Override store path (default: `~/.uteke`) |
+| `--store <PATH>` | Override store path (default: `~/.codecora/uteke`) |
 | `--namespace <NS>` | Multi-agent isolation (default: `"default"`) |
 | `--json` | Machine-readable JSON output |
 | `--verbose` | Debug logging |
@@ -34,10 +34,14 @@ Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `uteke remember <TEXT>` | Store a new memory | `--tags`, `--type`, `--entity`, `--category`, `--meta`, `--room`, `--author`, `--source`, `--source-type`, `--detect-contradiction` |
-| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience`, `--recency`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter) |
+| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience`, `--recency`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter), `--explain` (real vector similarity), `--budget`, `--pack`, `--strict`, `--enrich`, `--exclude-ids`, `--content-format`, `--no-salience`, `--no-recency` |
 | `uteke search <QUERY>` | Keyword text search | `--limit`, `--tags` |
 | `uteke list` | List memories with filters | `--tag`, `--entity`, `--category`, `--limit`, `--offset`, `--at` |
 | `uteke get <ID>` | Get single memory by UUID | |
+| `uteke update <ID>` | Update a memory in place | `--content`, `--tags` (replaces set), `--importance`, `--pinned`, `--type` |
+| `uteke context` | Project context summary (counts, top tags, recent activity) | `--namespace` |
+| `uteke guide` | Print the agent-facing memory tools guide for system-prompt injection | |
+| `uteke feedback <ID> <helpful\|unhelpful>` | Record usefulness (importance +0.05 / −0.10) | |
 | `uteke forget <ID>` | Delete memory by ID, tag, tier, or all | `--tag`, `--cold`, `--all`, `--confirm` |
 
 ### Documents (Wiki / Knowledge Base)
@@ -79,12 +83,29 @@ Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `uteke room create <ID>` | Create a room | `--title` |
+| `uteke room update <ID>` | Update title/description | `--title`, `--description` |
+| `uteke room rename <OLD> <NEW>` | Rename a room (members and document links move too) | |
+| `uteke room move-memory <MEMORY_ID>` | Move a memory between rooms, keeping link provenance | `--from`, `--to` |
+| `uteke room add-document <ROOM> <SLUG>` | Link a document to a room | |
+| `uteke room remove-document <ROOM> <SLUG>` | Unlink a document | |
+| `uteke room list-documents <ROOM>` | List documents linked to a room | |
+| `uteke room list-rooms <SLUG>` | List rooms that reference a document | |
+| `uteke room consolidate <ID>` | Merge a room's memories into denser records (dry-run unless `--apply`; uses LLM calls) | `--apply`, `--max-calls` |
 | `uteke room list` | List all rooms | `--namespace` |
 | `uteke room stats <ID>` | Room statistics and participants | |
 | `uteke room recall <ID>` | Recall room memories | `--query`, `--author`, `--limit`, `--min` |
 | `uteke room summary <ID>` | Topic clustering summary | |
 | `uteke room document <ID>` | Generate structured document from room | |
 | `uteke room delete <ID>` | Delete room (memories preserved) | `--confirm` |
+
+### Conflict Resolution
+
+| Command | Description |
+|---------|-------------|
+| `uteke supersede <OLD> <NEW>` | Mark `OLD` superseded by `NEW` (resolves a contradiction) |
+| `uteke contradictions list` | Resolution ledger: superseded-but-not-restored memories |
+| `uteke contradictions undo <ID>` | Restore a superseded memory (undoes the pair) |
+| `uteke provenance <ID>` | Full provenance report for a memory |
 
 ### Pinning & Importance
 
@@ -115,6 +136,9 @@ Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 | `uteke namespace list` | List all namespaces with counts |
 | `uteke namespace stats <name>` | Stats for a specific namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
+| `uteke namespace move <ID> <NS>` | Move a memory to another namespace |
+| `uteke namespace rename <FROM> <TO>` | Rename a namespace (merges if the target exists) |
+| `uteke namespace delete <NAME>` | Delete with `--strategy refuse\|merge\|deprecate` (`--target` for merge, `--confirm` required) |
 
 ### Memory Aging
 
@@ -132,13 +156,15 @@ Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 | `uteke doctor` | Full health check: DB, index, embedding model, consistency |
 | `uteke verify` | Compare DB count vs vector index count |
 | `uteke verify-checksums` | Verify binary integrity against SHA256 checksums |
-| `uteke repair` | Rebuild vector index from SQLite |
+| `uteke repair` | Rebuild vector index from SQLite (`--rebuild` deletes corrupt index files first, `--reembed` regenerates missing embeddings) |
 
-> **Stale-index symptom (pitfall 0g):** a memory is recallable via
+> **Stale-index symptom:** a memory is recallable via
 > `--strategy fts5` but missing under the default fusion/hybrid — that is a
 > vector-index desync, not data loss. Run `uteke verify`, then `uteke repair`.
 > On uteke-serve, use `POST /verify` / `POST /repair` (HTTP) or the
 > `uteke_verify` / `uteke_repair` MCP tools — no restart needed.
+> A held index lock (another `uteke`/`uteke-serve` process) never deletes the
+> index in builds after 0.19.1: the CLI falls back to an in-memory index instead.
 > Run `verify` after every serve upgrade (#1245 class: CLI upgraded, serve left
 > behind → index written by the old binary reads as mismatched).
 >
@@ -175,13 +201,13 @@ Version: **0.19.1** — SQLite + usearch HNSW + FTS5 hybrid search (RRF k=60); `
 ## Architecture
 
 - **Storage:** SQLite (WAL mode) with namespace column + FTS5 virtual table
-- **Vector index:** usearch persistent HNSW (768d, cosine similarity)
+- **Vector index:** usearch persistent HNSW (default) or vecq (quantized, no C++ dependency), 768d cosine. Select with `UTEKE_VECTOR_BACKEND=usearch|vecq` or `[vector] backend` in `uteke.toml`; switching engines on an existing store rebuilds the index from SQLite
 - **Hybrid search:** RRF (k=60) merges vector + FTS5 results; graph strategy adds graph-signal reranking
 - **Fusion (default since 0.16.0):** weighted RRF of the vector and hybrid rankings — LongMemEval 500Q R@5 0.946
 - **Embedding:** ONNX EmbeddingGemma Q4 (768d), auto-downloaded
 - **Tiered memory:** Hot (<7d, +0.1 boost), Warm (<30d), Cold (>30d)
 - **Schema versioning:** Integer counter, auto-migration on upgrade
-- **Zero unsafe code** (`unsafe_code = "forbid"`)
+- **`unsafe_code = "forbid"`** at the workspace level
 - **Project-scoped stores:** `uteke --store .uteke remember "..."`
 
 ## Usage Patterns
@@ -330,3 +356,10 @@ uteke-serve --port 8767
 ```
 
 Endpoints mirror CLI commands (e.g., `POST /remember`, `POST /recall`). Supports read-only API tokens for restricted access.
+
+Security defaults (builds after 0.19.1):
+
+- **Auth:** `--auth-token` / `UTEKE_AUTH_TOKEN` (admin) and `UTEKE_READ_ONLY_TOKEN`. When the CLI routes through the server (`[server] enabled = true`) it forwards `UTEKE_AUTH_TOKEN` as a bearer token, to loopback servers only.
+- **CORS is off unless configured:** set `cors_origins` in `uteke.toml` / `--cors-origin`. `"*"` is an explicit opt-in — avoid it without auth.
+- **Project config is not trusted for endpoints:** a `.uteke/uteke.toml` in the working directory cannot set `[server]`, `[extraction]`, embedding/extraction `base_url`, `endpoint_path`, `api_key`, `embedding.backend`, or `server.host/port` (set them in the global config). `UTEKE_TRUST_PROJECT_CONFIG=1` overrides this.
+- List-style endpoints cap `limit` at 1000; `/extract` caps `max_facts` at 100.
