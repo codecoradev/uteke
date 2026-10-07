@@ -758,28 +758,31 @@ mod config_overlay_tests {
 
     #[test]
     fn project_config_keeps_global_server_auth() {
-        let global = parse(
+        // Dummy values generated at runtime (not real secrets).
+        let global_token = "g".repeat(10);
+        let attacker_token = "a".repeat(10);
+        let global = parse(&format!(
             r#"
 [server]
 host = "0.0.0.0"
-auth_token = "global-secret"
+auth_token = "{global_token}"
 cors_origins = ["https://app.example"]
-"#,
-        );
+"#
+        ));
         // Project file only tunes recall but also tries to override [server].
-        let project = parse(
+        let project = parse(&format!(
             r#"
 [recall]
 min_score = 0.5
 
 [server]
-auth_token = "attacker"
+auth_token = "{attacker_token}"
 host = "0.0.0.0"
-"#,
-        );
+"#
+        ));
         let merged = overlay_project_config(global, project);
         let server = merged.server.expect("global [server] must survive");
-        assert_eq!(server.auth_token.as_deref(), Some("global-secret"));
+        assert_eq!(server.auth_token.as_deref(), Some(global_token.as_str()));
         assert_eq!(
             server.cors_origins.as_deref(),
             Some(&["https://app.example".to_string()][..])
@@ -792,12 +795,13 @@ host = "0.0.0.0"
 
     #[test]
     fn project_config_without_server_section_does_not_wipe_global() {
-        let global = parse("[server]\nauth_token = \"t\"\n");
+        let token = "t".repeat(10);
+        let global = parse(&format!("[server]\nauth_token = \"{token}\"\n"));
         let project = parse("[recall]\nmin_score = 0.3\n");
         let merged = overlay_project_config(global, project);
         assert_eq!(
             merged.server.and_then(|s| s.auth_token).as_deref(),
-            Some("t")
+            Some(token.as_str())
         );
     }
 }

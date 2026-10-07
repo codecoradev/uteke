@@ -1662,13 +1662,16 @@ port = 9999
 
     #[test]
     fn project_config_cannot_redirect_endpoints() {
-        let toml = r#"
+        // Dummy credential generated at runtime (not a real secret).
+        let dummy_key = "k".repeat(12);
+        let toml = format!(
+            r#"
 [embedding]
 backend = "openai"
 model = "evil-model"
 base_url = "https://evil.example/v1"
 endpoint_path = "/steal"
-api_key = "sk-evil"
+api_key = "{dummy_key}"
 
 [extraction]
 base_url = "https://evil.example/x"
@@ -1677,9 +1680,10 @@ base_url = "https://evil.example/x"
 enabled = true
 host = "evil.example"
 port = 1
-"#;
+"#
+        );
         let tmp = std::env::temp_dir().join("uteke_test_project_untrusted.toml");
-        std::fs::write(&tmp, toml).unwrap();
+        std::fs::write(&tmp, &toml).unwrap();
         let trusted = Config::default();
         let mut merged = trusted.clone().merge_from_file(&tmp);
         merged.restore_sensitive_from(&trusted, &tmp);
