@@ -549,6 +549,10 @@ fn main() {
                 if let Err(e) = u.flush_index() {
                     warn!("Periodic index flush failed: {e}");
                 }
+                // vecq only: rebuild once dead rows pass 25% of the index (#1324).
+                if let Err(e) = u.compact_index_if_needed(false) {
+                    warn!("Index compaction failed: {e}");
+                }
             }
         }
     });

@@ -51,6 +51,10 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// vecq compaction (#1324) only kicks in for indexes at least this many rows
+/// large, so tiny indexes do not churn.
+const COMPACT_MIN_ROWS: usize = 128;
+
 /// Per-operation saves are deferred until this many mutations pile up (#1322).
 const SAVE_EVERY_OPS: u32 = 64;
 /// ...or until the last save is this old, whichever comes first.
@@ -914,6 +918,33 @@ impl VectorIndex {
         self.saves
     }
 
+    /// Physical rows in the engine, dead ones included (diagnostics, compaction).
+    pub fn physical_rows(&self) -> usize {
+        self.engine.len()
+    }
+
+    /// Dead (tombstoned) rows: physically present, no longer in the key map.
+    /// Only vecq is append-only; usearch removes in place, so it has none.
+    pub fn dead_rows(&self) -> usize {
+        if self.backend == VectorBackend::Vecq {
+            self.engine.len().saturating_sub(self.key_to_id.len())
+        } else {
+            0
+        }
+    }
+
+    /// Whether a rebuild from the live rows is worth doing (#1324): a vecq
+    /// index of at least `COMPACT_MIN_ROWS` rows with more than a quarter of
+    /// them dead. Dead rows cost file size and make every search over-fetch
+    /// `k + dead` from an O(N) scan.
+    pub fn needs_compaction(&self) -> bool {
+        let total = self.engine.len();
+        self.backend == VectorBackend::Vecq
+            && !self.key_to_id.is_empty()
+            && total >= COMPACT_MIN_ROWS
+            && self.dead_rows().saturating_mul(4) > total
+    }
+
     /// Whether the index has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.dirty
@@ -1534,5 +1565,64 @@ mod tests {
         let before = idx.save_count();
         idx.save_if_due().unwrap();
         assert_eq!(idx.save_count(), before);
+    }
+
+    // ── #1324: vecq compaction ─────────────────────────────────────────────
+
+    #[cfg(feature = "vecq")]
+    #[test]
+    fn vecq_dead_rows_trigger_compaction_threshold() {
+        let mut idx = VectorIndex::with_backend(VectorBackend::Vecq, 64).unwrap();
+        for i in 0..200 {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i % 64))
+                .unwrap();
+        }
+        assert_eq!((idx.dead_rows(), idx.needs_compaction()), (0, false));
+
+        // 25% dead exactly is not enough ("more than a quarter").
+        for i in 0..50 {
+            assert!(idx.remove(&format!("mem-{i}")));
+        }
+        assert_eq!(idx.dead_rows(), 50);
+        assert!(!idx.needs_compaction());
+
+        assert!(idx.remove("mem-50"));
+        assert!(idx.needs_compaction(), "51/200 dead is over a quarter");
+
+        // Rebuilding from the live rows drops every dead row.
+        let live: Vec<(String, Vec<f32>)> = (51..200)
+            .map(|i| (format!("mem-{i}"), make_vec(64, i % 64)))
+            .collect();
+        idx.build(&live).unwrap();
+        assert_eq!((idx.physical_rows(), idx.dead_rows()), (149, 0));
+        assert!(!idx.needs_compaction());
+    }
+
+    #[cfg(feature = "vecq")]
+    #[test]
+    fn small_vecq_indexes_never_compact() {
+        let mut idx = VectorIndex::with_backend(VectorBackend::Vecq, 64).unwrap();
+        for i in 0..40 {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i)).unwrap();
+        }
+        for i in 0..39 {
+            idx.remove(&format!("mem-{i}"));
+        }
+        assert!(!idx.needs_compaction(), "below COMPACT_MIN_ROWS");
+    }
+
+    #[cfg(feature = "usearch")]
+    #[test]
+    fn usearch_has_no_dead_rows() {
+        let mut idx = VectorIndex::with_backend(VectorBackend::Usearch, 64).unwrap();
+        for i in 0..200 {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i % 64))
+                .unwrap();
+        }
+        for i in 0..150 {
+            idx.remove(&format!("mem-{i}"));
+        }
+        assert_eq!(idx.dead_rows(), 0);
+        assert!(!idx.needs_compaction());
     }
 }

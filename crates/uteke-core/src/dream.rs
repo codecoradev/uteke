@@ -611,7 +611,7 @@ impl crate::Uteke {
         // Prune deprecated memories older than 30 days.
         const TTL_DAYS: u32 = 30;
         let result = self.prune(TTL_DAYS, namespace, dry_run)?;
-        let summary = if dry_run {
+        let mut summary = if dry_run {
             format!(
                 "✓ {} memories would be pruned ({} deprecated)",
                 result.pruned, result.deprecated
@@ -622,6 +622,17 @@ impl crate::Uteke {
                 result.pruned, result.deprecated
             )
         };
+        // Pruning leaves tombstoned rows in an append-only vecq index (#1324).
+        // The index is store-wide, so this ignores the namespace filter.
+        if let Some(c) = self.compact_index_if_needed(dry_run)? {
+            summary.push_str(&format!(
+                "; index {} {} dead rows ({} → {} rows)",
+                if dry_run { "would drop" } else { "dropped" },
+                c.dead_before,
+                c.rows_before,
+                c.rows_after
+            ));
+        }
         Ok(PhaseResult {
             phase: DreamPhase::Compact.as_str().to_string(),
             status: PhaseStatus::Ok,

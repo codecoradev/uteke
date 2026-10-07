@@ -57,6 +57,19 @@ pub struct RepairReport {
     pub chunk_count: usize,
 }
 
+/// Result of compacting the vector index (#1324).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactionReport {
+    /// Physical rows in the index before compaction.
+    pub rows_before: usize,
+    /// Dead (tombstoned) rows among them.
+    pub dead_before: usize,
+    /// Physical rows after compaction (the live set; `rows_before` when dry-run).
+    pub rows_after: usize,
+    /// True when nothing was changed (`dry_run`).
+    pub dry_run: bool,
+}
+
 /// Result of `uteke repair --reembed`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReembedReport {

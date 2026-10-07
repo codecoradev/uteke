@@ -81,7 +81,8 @@ pub use embed::Embedder;
 pub use embed::OnnxEmbedder;
 pub use error::{Error, format_bytes};
 pub use types::{
-    DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport, VerifyReport,
+    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
+    VerifyReport,
 };
 
 /// Maximum memory content length (characters) — default, overridable via config (#404).
@@ -3117,6 +3118,85 @@ mod tests {
             u.shutdown().unwrap();
             drop(u);
         }
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+    }
+
+    /// #1324: after many deletes a vecq index is mostly tombstones. Compaction
+    /// rebuilds it from SQLite so the file and the search over-fetch shrink
+    /// back to the live set.
+    #[cfg(feature = "vecq")]
+    #[test]
+    #[serial_test::serial]
+    fn vecq_compaction_shrinks_file_and_drops_dead_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("uteke.db");
+        unsafe { std::env::set_var("UTEKE_VECTOR_BACKEND", "vecq") };
+
+        let u = Uteke::open(&db).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..200usize {
+            let mut v = vec![0.0f32; 768];
+            v[i] = 1.0;
+            ids.push(
+                u.remember_precomputed(
+                    &format!("compaction probe {i}"),
+                    &[],
+                    None,
+                    None,
+                    "fact",
+                    "text",
+                    &v,
+                )
+                .unwrap(),
+            );
+        }
+        for id in &ids[..150] {
+            u.forget(id).unwrap();
+        }
+        u.flush_index().unwrap();
+        let file = dir.path().join("uteke_index.vecq");
+        let size_before = std::fs::metadata(&file).unwrap().len();
+        {
+            let idx = u.index.read().unwrap();
+            assert_eq!((idx.physical_rows(), idx.dead_rows()), (200, 150));
+            assert!(idx.needs_compaction());
+        }
+
+        // Dry run reports without touching anything.
+        let dry = u.compact_index_if_needed(true).unwrap().unwrap();
+        assert!(dry.dry_run);
+        assert_eq!((dry.rows_before, dry.dead_before), (200, 150));
+        assert_eq!(u.index.read().unwrap().physical_rows(), 200);
+
+        let report = u.compact_index_if_needed(false).unwrap().unwrap();
+        assert_eq!(
+            (report.rows_before, report.dead_before, report.rows_after),
+            (200, 150, 50)
+        );
+        {
+            let idx = u.index.read().unwrap();
+            assert_eq!((idx.physical_rows(), idx.dead_rows()), (50, 0));
+            assert!(!idx.needs_compaction());
+        }
+        assert!(
+            std::fs::metadata(&file).unwrap().len() < size_before,
+            "index file must shrink"
+        );
+        assert!(
+            u.compact_index_if_needed(false).unwrap().is_none(),
+            "nothing left to compact"
+        );
+
+        // A surviving memory is still found; reopening keeps the compacted index.
+        let mut q = vec![0.0f32; 768];
+        q[199] = 1.0;
+        let hits = u.index.read().unwrap().search(&q, 3, 50);
+        assert_eq!(hits.first().map(|h| h.0.as_str()), Some(ids[199].as_str()));
+        u.shutdown().unwrap();
+        drop(u);
+        let u = Uteke::open(&db).unwrap();
+        assert_eq!(u.index.read().unwrap().physical_rows(), 50);
+        u.shutdown().unwrap();
         unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
     }
 

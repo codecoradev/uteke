@@ -6,9 +6,13 @@ use crate::memory::types::{
     AgingStatus, CleanupResult, LifecycleCycleResult, Memory, PruneResult, StoreStats,
 };
 use crate::types::{
-    DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport, VerifyReport,
+    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
+    VerifyReport,
 };
 use crate::uteke_home;
+
+/// `(index key, embedding)` pairs the vector index is (re)built from.
+type IndexItems = Vec<(String, Vec<f32>)>;
 
 impl crate::Uteke {
     /// Check system health: DB, index, model, consistency.
@@ -134,27 +138,7 @@ impl crate::Uteke {
             index.len()
         };
 
-        // Load all from SQLite and rebuild index (NULL embeddings filtered in load_all)
-        let all_memories = self.store.load_all(None)?;
-        let mut items: Vec<(String, Vec<f32>)> = all_memories
-            .iter()
-            .filter(|m| !m.embedding.is_empty())
-            .map(|m| (m.id.clone(), m.embedding.clone()))
-            .collect();
-
-        // Document chunk vectors live in the index under "chunk:<id>" keys.
-        // load_all returns memories only — without this the rebuild silently
-        // evicts every chunk entry (#1110). Chunk embeddings are persisted in
-        // document_chunks, so no re-embedding is needed.
-        let chunk_count = {
-            let chunks = self.store.load_all_chunk_embeddings()?;
-            let n = chunks.len();
-            items.extend(chunks.into_iter().map(|(id, emb)| {
-                let key = format!("chunk:{id}");
-                (key, emb)
-            }));
-            n
-        };
+        let (items, chunk_count) = self.load_index_items()?;
         if chunk_count > 0 {
             tracing::info!(
                 chunks = chunk_count,
@@ -179,6 +163,106 @@ impl crate::Uteke {
             index_after: items.len(),
             chunk_count,
         })
+    }
+
+    /// Every vector the index should hold, straight from SQLite: memories
+    /// (NULL embeddings filtered in `load_all`) plus document chunks under
+    /// `chunk:<id>` keys. Returns the items and how many are chunks.
+    ///
+    /// Without the chunks a rebuild silently evicts every chunk entry (#1110);
+    /// their embeddings are persisted in `document_chunks`, so nothing is
+    /// re-embedded.
+    fn load_index_items(&self) -> Result<(IndexItems, usize), Error> {
+        let all_memories = self.store.load_all(None)?;
+        let mut items: IndexItems = all_memories
+            .iter()
+            .filter(|m| !m.embedding.is_empty())
+            .map(|m| (m.id.clone(), m.embedding.clone()))
+            .collect();
+        let chunks = self.store.load_all_chunk_embeddings()?;
+        let chunk_count = chunks.len();
+        items.extend(
+            chunks
+                .into_iter()
+                .map(|(id, emb)| (format!("chunk:{id}"), emb)),
+        );
+        Ok((items, chunk_count))
+    }
+
+    /// Rebuild a vecq index from SQLite when more than a quarter of its rows
+    /// are dead (#1324). vecq is append-only, so updates and deletes leave
+    /// tombstoned rows that grow the files and force every search to
+    /// over-fetch `k + dead`. Returns `None` when no compaction is due.
+    ///
+    /// The index write lock is held across the SQLite read and the rebuild:
+    /// a concurrent writer has either committed before we load (so its row is
+    /// rebuilt in) or blocks on the lock until we are done (so its insert
+    /// lands in the compacted index). `dry_run` only reports.
+    pub fn compact_index_if_needed(
+        &self,
+        dry_run: bool,
+    ) -> Result<Option<CompactionReport>, Error> {
+        // Cheap check under a read lock: the server calls this every second.
+        {
+            let index = self
+                .index
+                .read()
+                .map_err(|_| Error::lock("index read lock during compaction check"))?;
+            if !index.needs_compaction() {
+                return Ok(None);
+            }
+        }
+        let mut index = self
+            .index
+            .write()
+            .map_err(|_| Error::lock("index write lock during compaction"))?;
+        // Re-check: another thread may have compacted while we waited.
+        if !index.needs_compaction() {
+            return Ok(None);
+        }
+        let rows_before = index.physical_rows();
+        let dead_before = index.dead_rows();
+        if dry_run {
+            return Ok(Some(CompactionReport {
+                rows_before,
+                dead_before,
+                rows_after: rows_before,
+                dry_run: true,
+            }));
+        }
+
+        let (mut items, _chunks) = self.load_index_items()?;
+        // `build` resets the index before validating, so never hand it a
+        // vector of the wrong width.
+        let dims = index.dims();
+        let before = items.len();
+        items.retain(|(_, emb)| emb.len() == dims);
+        if items.len() != before {
+            tracing::warn!(
+                skipped = before - items.len(),
+                "skipping vectors with the wrong dimensionality during index compaction"
+            );
+        }
+        if items.is_empty() {
+            return Ok(None);
+        }
+        index.build(&items)?;
+        let rows_after = index.physical_rows();
+        if let Err(e) = index_sync::persist(&mut *index, &SyncPolicy::STANDARD) {
+            tracing::warn!("Failed to save index after compaction: {e}");
+        }
+        tracing::info!(
+            rows_before,
+            dead_before,
+            rows_after,
+            "Compacted vecq index (dead rows dropped)"
+        );
+        Ok(Some(CompactionReport {
+            rows_before,
+            dead_before,
+            rows_after,
+            dry_run: false,
+        }))
     }
 
     /// Re-embed memories that have missing or empty embedding vectors.
