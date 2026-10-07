@@ -510,6 +510,9 @@ impl VectorIndex {
         let mut key_to_id = HashMap::new();
         let mut id_to_key = HashMap::new();
         let mut next_key = 0u64;
+        // Digest of the index bytes this sidecar was written against (#1325).
+        // `None` for sidecars written before the header existed.
+        let mut sidecar_digest: Option<String> = None;
 
         let mapping_path = path.with_extension("keys");
         match std::fs::read_to_string(&mapping_path) {
@@ -517,6 +520,10 @@ impl VectorIndex {
                 for line in data.lines() {
                     let line = line.trim();
                     if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(header) = line.strip_prefix(KEYS_HEADER_PREFIX) {
+                        sidecar_digest = header.split('\t').next().map(str::to_string);
                         continue;
                     }
                     if let Some((key_str, id)) = line.split_once('\t') {
@@ -533,6 +540,14 @@ impl VectorIndex {
             }
             Err(e) => return Err(Error::embed("read key mapping", e)),
         }
+
+        verify_pair_consistency(
+            &engine,
+            backend,
+            &key_to_id,
+            sidecar_digest.as_deref(),
+            &buffer,
+        )?;
 
         Ok(Self {
             engine,
@@ -665,6 +680,15 @@ impl VectorIndex {
             // Save key→id mapping as sidecar file using atomic write
             let mapping_path = path.with_extension("keys");
             let mut lines = Vec::new();
+            // First line ties this sidecar to the exact index bytes just
+            // published, so a crash between the two renames is detected on the
+            // next load instead of leaving a silently stale key map (#1325).
+            // Older binaries skip it (it does not parse as `<key>\t<id>`).
+            lines.push(format!(
+                "{KEYS_HEADER_PREFIX}{}\t{}",
+                index_digest(&buffer),
+                self.engine.len()
+            ));
             for (&key, id) in &self.key_to_id {
                 lines.push(format!("{key}\t{id}"));
             }
@@ -928,6 +952,73 @@ fn acquire_file_lock(path: &Path) -> Result<File, Error> {
 
 /// Write `data` to `path` and fsync before returning, so a following rename
 /// can never publish a zero-length or partial file after power loss.
+/// Marks the first line of a `.keys` sidecar: `#uteke-keys\t<sha256 of index
+/// bytes>\t<engine rows>`. `#` cannot start a numeric key, so older readers
+/// ignore the line.
+const KEYS_HEADER_PREFIX: &str = "#uteke-keys\t";
+
+/// Hex SHA-256 of the serialized index bytes.
+fn index_digest(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Reject an index file / `.keys` sidecar pair that cannot be trusted (#1325).
+///
+/// The two files are published by separate renames, so a crash between them
+/// leaves a mismatched pair. Returning an error makes the caller discard both
+/// files and rebuild from SQLite, instead of serving a stale key map (live
+/// rows that look dead, or a `next_key` that restarts too low and collides).
+fn verify_pair_consistency(
+    engine: &Engine,
+    backend: VectorBackend,
+    key_to_id: &HashMap<u64, String>,
+    sidecar_digest: Option<&str>,
+    index_bytes: &[u8],
+) -> Result<(), Error> {
+    let rows = engine.len();
+
+    // Exact check: the sidecar names the index it was written against.
+    if let Some(expected) = sidecar_digest {
+        if expected != index_digest(index_bytes) {
+            return Err(Error::embed_msg(
+                "vector index and .keys sidecar do not match (interrupted save?)",
+            ));
+        }
+    }
+
+    // Structural checks that also cover sidecars without a header (written by
+    // older binaries) and a missing sidecar.
+    if rows > 0 && key_to_id.is_empty() {
+        return Err(Error::embed_msg(
+            "vector index has entries but the .keys sidecar is empty or missing",
+        ));
+    }
+    match backend {
+        // vecq: a key IS a physical row, so no live key may point past the end
+        // and there cannot be more live keys than rows.
+        VectorBackend::Vecq => {
+            if key_to_id.len() > rows || key_to_id.keys().any(|&k| k >= rows as u64) {
+                return Err(Error::embed_msg(
+                    "vecq .keys sidecar references rows that are not in the index",
+                ));
+            }
+        }
+        // usearch: size() counts live entries, so the key map cannot hold more.
+        VectorBackend::Usearch => {
+            if key_to_id.len() > rows {
+                return Err(Error::embed_msg(
+                    "usearch .keys sidecar holds more keys than the index has entries",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn write_synced(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::fs::File::create(path)?;
@@ -1221,6 +1312,131 @@ mod tests {
             assert_eq!(loaded.len(), 1);
             let results = loaded.search(&v, 1, 50);
             assert_eq!(results.len(), 1);
+        }
+    }
+
+    // ── #1325: index file / .keys sidecar consistency ──────────────────────
+
+    fn compiled_backends() -> Vec<VectorBackend> {
+        [VectorBackend::Usearch, VectorBackend::Vecq]
+            .into_iter()
+            .filter(|b| b.is_compiled_in())
+            .collect()
+    }
+
+    /// Save `n` items, return (index path, index with the lock still held).
+    fn saved_index(
+        dir: &std::path::Path,
+        backend: VectorBackend,
+        n: usize,
+    ) -> (PathBuf, VectorIndex) {
+        let path = dir.join(format!("idx.{}", index_ext_for(backend)));
+        let mut idx = VectorIndex::with_backend(backend, 64).unwrap();
+        idx.path = Some(path.clone());
+        for i in 0..n {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i)).unwrap();
+        }
+        idx.save().unwrap();
+        (path, idx)
+    }
+
+    #[test]
+    fn stale_sidecar_after_interrupted_save_is_rejected() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, mut idx) = saved_index(dir.path(), backend, 2);
+            let keys = path.with_extension("keys");
+            let stale = std::fs::read(&keys).unwrap();
+
+            // Next save publishes the new index, then "crashes" before the
+            // sidecar rename: put the previous sidecar back.
+            idx.insert("mem-2", &make_vec(64, 2)).unwrap();
+            idx.save().unwrap();
+            std::fs::write(&keys, stale).unwrap();
+
+            let err = VectorIndex::load(&path)
+                .err()
+                .unwrap_or_else(|| panic!("{backend:?}: stale sidecar must not load"));
+            assert!(
+                err.to_string().contains("do not match"),
+                "{backend:?}: unexpected error: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn matching_pair_survives_load_and_resave() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 3);
+            drop(idx);
+
+            let mut loaded = VectorIndex::load(&path).unwrap();
+            assert_eq!(loaded.len(), 3, "{backend:?}");
+            loaded.path = Some(path.clone());
+            loaded.save().unwrap();
+            let again = VectorIndex::load(&path).unwrap();
+            assert_eq!(again.len(), 3, "{backend:?}");
+        }
+    }
+
+    #[test]
+    fn sidecar_without_header_still_loads() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 2);
+            drop(idx);
+
+            // A sidecar from a binary that predates the header.
+            let keys = path.with_extension("keys");
+            let body: String = std::fs::read_to_string(&keys)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with(KEYS_HEADER_PREFIX))
+                .collect::<Vec<_>>()
+                .join("\n");
+            std::fs::write(&keys, body).unwrap();
+
+            let loaded = VectorIndex::load(&path).unwrap();
+            assert_eq!(loaded.len(), 2, "{backend:?}");
+        }
+    }
+
+    #[test]
+    fn missing_or_empty_sidecar_with_entries_is_rejected() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 2);
+            drop(idx);
+            let keys = path.with_extension("keys");
+
+            std::fs::remove_file(&keys).unwrap();
+            assert!(
+                VectorIndex::load(&path).is_err(),
+                "{backend:?}: missing sidecar must be rejected"
+            );
+
+            std::fs::write(&keys, "").unwrap();
+            assert!(
+                VectorIndex::load(&path).is_err(),
+                "{backend:?}: empty sidecar must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn headerless_sidecar_with_out_of_range_keys_is_rejected() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 2);
+            drop(idx);
+            let keys = path.with_extension("keys");
+            // Legacy-style sidecar claiming three entries for a two-entry index.
+            std::fs::write(&keys, "0\tmem-0\n1\tmem-1\n2\tmem-2").unwrap();
+            assert!(
+                VectorIndex::load(&path).is_err(),
+                "{backend:?}: extra keys must be rejected"
+            );
         }
     }
 }
