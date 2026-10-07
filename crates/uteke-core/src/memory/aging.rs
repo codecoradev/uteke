@@ -1,6 +1,7 @@
 //! Aging and access tracking — touch access, find/cleanup aged, tier counts.
 
 use crate::Error;
+use crate::memory::store::memory_columns;
 use crate::memory::types::{DEFAULT_NAMESPACE, Memory};
 use rusqlite::params;
 
@@ -145,8 +146,10 @@ impl super::Store {
         // causing lexicographic comparison to fail.
         let cutoff =
             (chrono::Utc::now() - chrono::Duration::days(older_than_days as i64)).to_rfc3339();
-        let sql = r#"
-            SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type
+        let sql = concat!(
+            "SELECT ",
+            memory_columns!(),
+            r#"
                  FROM memories
             WHERE namespace = ?1
               AND deprecated = 0
@@ -155,7 +158,8 @@ impl super::Store {
               AND access_count <= ?3
               AND (last_accessed IS NULL OR last_accessed < ?4)
             ORDER BY created_at ASC
-        "#;
+        "#
+        );
 
         let mut stmt = self
             .conn

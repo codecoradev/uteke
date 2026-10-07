@@ -1,6 +1,7 @@
 //! Bulk operations — bulk delete, deprecation, TTL pruning, similarity search.
 
 use crate::Error;
+use crate::memory::store::memory_columns;
 use crate::memory::types::{DEFAULT_NAMESPACE, Memory};
 use crate::timeline::TimelineEventType;
 use rusqlite::params;
@@ -251,8 +252,8 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type
-                 FROM memories WHERE namespace = ?1 AND deprecated = 0 ORDER BY created_at DESC LIMIT ?2",
+                concat!("SELECT ", memory_columns!(), "
+                 FROM memories WHERE namespace = ?1 AND deprecated = 0 ORDER BY created_at DESC LIMIT ?2"),
             )
             .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
@@ -293,13 +294,15 @@ impl super::Store {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(ttl_days as i64)).to_rfc3339();
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type
+            .prepare(concat!(
+                "SELECT ",
+                memory_columns!(),
+                "
                  FROM memories WHERE namespace = ?1
                  AND deprecated = 1
                  AND updated_at < ?2
-                 ORDER BY updated_at ASC",
-            )
+                 ORDER BY updated_at ASC"
+            ))
             .map_err(|e| Error::db("database operation", e))?;
         let rows = stmt
             .query_map(params![ns, cutoff], row_to_memory)

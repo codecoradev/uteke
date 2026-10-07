@@ -457,6 +457,35 @@ pub(crate) fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc
     parse_datetime_flexible(s, 0).ok()
 }
 
+/// Canonical column list decoded **by position** by [`row_to_memory`].
+///
+/// Every `SELECT` that feeds `row_to_memory` must use this macro (or
+/// [`memory_columns_m`] for queries aliasing `memories AS m`) instead of
+/// hand-writing the list: a SELECT that drifts from this order or stops short
+/// silently yields wrong `slug` / `source` / `source_type` / `author_type` /
+/// `deprecated_at` values. It expands to a string literal, so it composes with
+/// `concat!` into a compile-time SQL constant (no runtime formatting).
+macro_rules! memory_columns {
+    () => {
+        "id, content, embedding, tags, metadata, created_at, updated_at, namespace, \
+         access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, \
+         importance, pinned, content_type, slug, source, source_type, author_type, \
+         deprecated_at"
+    };
+}
+
+/// [`memory_columns`] with every column qualified by the `m.` alias.
+macro_rules! memory_columns_m {
+    () => {
+        "m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, \
+         m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, \
+         m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, \
+         m.source, m.source_type, m.author_type, m.deprecated_at"
+    };
+}
+
+pub(crate) use {memory_columns, memory_columns_m};
+
 /// Convert a database row to a Memory.
 pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
     let id: String = row.get(0)?;
@@ -1214,6 +1243,80 @@ mod tests {
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0], "1");
         assert_eq!(store.count(Some("ns-b")).unwrap(), 1);
+    }
+
+    /// Every read path must hand back the full row: queries that stop short
+    /// of the shared column list silently default slug/source/source_type/
+    /// author_type (row_to_memory decodes by position).
+    #[test]
+    fn test_every_memory_reader_returns_full_row() {
+        let store = Store::open(":memory:").unwrap();
+        let mut m = make_test_memory("full-row", "fullrowterm", &["t1"]);
+        m.slug = Some("my-slug".to_string());
+        m.source = Some("notes.md".to_string());
+        m.source_type = "file".to_string();
+        m.author_type = "human".to_string();
+        store.insert(&m).unwrap();
+
+        let check = |what: &str, got: &Memory| {
+            assert_eq!(got.slug.as_deref(), Some("my-slug"), "{what}: slug");
+            assert_eq!(got.source.as_deref(), Some("notes.md"), "{what}: source");
+            assert_eq!(got.source_type, "file", "{what}: source_type");
+            assert_eq!(got.author_type, "human", "{what}: author_type");
+        };
+        let one = |what: &str, v: Vec<Memory>| {
+            assert_eq!(v.len(), 1, "{what}: expected exactly the inserted row");
+            check(what, &v[0]);
+        };
+
+        check("get_by_id", &store.get_by_id("full-row").unwrap().unwrap());
+        one("get_by_ids", store.get_by_ids(&["full-row"]).unwrap());
+        check(
+            "get_by_id_in_namespace",
+            &store
+                .get_by_id_in_namespace("full-row", Some(crate::memory::types::DEFAULT_NAMESPACE))
+                .unwrap()
+                .unwrap(),
+        );
+        one("load_all", store.load_all(None).unwrap());
+        one("list", store.list(None, None, 10, 0).unwrap());
+        one("list(tag)", store.list(Some("t1"), None, 10, 0).unwrap());
+        one(
+            "search_content",
+            store.search_content("fullrowterm", None, 10).unwrap(),
+        );
+        let future = chrono::Utc::now() + chrono::Duration::days(1);
+        one(
+            "list_at_time",
+            store.list_at_time(None, None, 10, 0, future).unwrap(),
+        );
+        one(
+            "list_at_time(tag)",
+            store.list_at_time(Some("t1"), None, 10, 0, future).unwrap(),
+        );
+        one("find_similar", store.find_similar("default", 10).unwrap());
+        one("find_aged", store.find_aged(0, u32::MAX, None).unwrap());
+
+        // deprecated_at is the last column (index 21): it must survive too.
+        store.deprecate("full-row").unwrap();
+        let got = store.get_by_id("full-row").unwrap().unwrap();
+        assert!(
+            got.deprecated && got.deprecated_at.is_some(),
+            "deprecated_at"
+        );
+        check("get_by_id after deprecate", &got);
+    }
+
+    /// The `m.`-aliased macro must stay in lockstep with the plain one.
+    #[test]
+    fn test_memory_column_macros_agree() {
+        let plain: Vec<&str> = memory_columns!().split(',').map(str::trim).collect();
+        let aliased: Vec<&str> = memory_columns_m!().split(',').map(str::trim).collect();
+        assert_eq!(plain.len(), 22, "row_to_memory decodes 22 columns");
+        assert_eq!(plain.len(), aliased.len());
+        for (p, a) in plain.iter().zip(&aliased) {
+            assert_eq!(format!("m.{p}"), *a);
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! FTS5 full-text search for memories.
 
 use crate::Error;
+use crate::memory::store::memory_columns_m;
 use crate::memory::types::Memory;
 use rusqlite::params;
 
@@ -91,18 +92,26 @@ impl super::Store {
 
         let sql = match namespace {
             Some(_) => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, m.source, m.source_type, m.author_type, m.deprecated_at, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.namespace = ?2 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?3"#
+                )
             }
             None => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, m.source, m.source_type, m.author_type, m.deprecated_at, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?2"#
+                )
             }
         };
 
@@ -174,18 +183,26 @@ impl super::Store {
 
         let sql = match namespace {
             Some(_) => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, m.source, m.source_type, m.author_type, m.deprecated_at, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.namespace = ?2 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?3"#
+                )
             }
             None => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, m.source, m.source_type, m.author_type, m.deprecated_at, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?2"#
+                )
             }
         };
 

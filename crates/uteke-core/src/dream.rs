@@ -17,6 +17,7 @@
 //! All phases are idempotent and safe to re-run.
 
 use crate::error::Error;
+use crate::memory::store::memory_columns;
 use serde::{Deserialize, Serialize};
 
 /// A single phase of the dream cycle.
@@ -497,20 +498,22 @@ impl crate::Uteke {
     ) -> Result<Vec<crate::memory::Memory>, Error> {
         let sql = match namespace {
             Some(_ns) => {
-                "SELECT id, content, embedding, tags, metadata, \
-                 created_at, updated_at, namespace, access_count, \
-                 last_accessed, deprecated, valid_from, valid_until, \
-                 memory_type, importance, pinned, content_type, slug \
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " \
                  FROM memories WHERE namespace = ?1 AND deprecated = 0 \
                  ORDER BY updated_at DESC LIMIT ?2"
+                )
             }
             None => {
-                "SELECT id, content, embedding, tags, metadata, \
-                 created_at, updated_at, namespace, access_count, \
-                 last_accessed, deprecated, valid_from, valid_until, \
-                 memory_type, importance, pinned, content_type, slug \
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " \
                  FROM memories WHERE deprecated = 0 \
                  ORDER BY updated_at DESC LIMIT ?1"
+                )
             }
         };
 
