@@ -280,6 +280,14 @@ uteke orphans --threshold 0.2         # Find disconnected
    - `/home/user/repos/my-saas-app/` → `project:my-saas-app`
 2. From file paths mentioned in the conversation
 3. From the project name the user mentions
+4. If the project has a registry (a doc such as `uteke-project-registry`), use the
+   canonical name from it, resolving aliases (e.g. a folder `api-v2` that the
+   registry lists as `recruitment-api`).
+
+**Never derive a tag from a generic folder name** (`development`, `projects`,
+`documents`, `desktop`, `downloads`, `tmp`, `src`, `code`, `work`, `workspace`,
+`repos`, or your home folder). Those are not projects; when `cwd` is one of them
+and the conversation names no project, add no `project:` tag.
 
 ### Rules
 
@@ -288,7 +296,40 @@ uteke orphans --threshold 0.2         # Find disconnected
 | **REMEMBER** | Always include `project:<name>` in `--tags` when the memory is project-specific |
 | **RECALL** | Always include `--tags project:<name>` to scope recall to the current project |
 | **NO PROJECT** | If the conversation is not about any specific project (e.g., general chat), do NOT add a `project:` tag |
-| **TAG FORMAT** | Always lowercase: `project:bond`, `project:uteke` (not `project:Bond`) |
+| **TAG FORMAT** | Lowercase with hyphens only — no uppercase, underscores, or spaces: `project:bond`, `project:my-saas-app` |
+| **HIERARCHY** | A component of a larger project carries two tags, the component and its parent (`project:samson-mobile` + `project:samson`): the component matches the folder name, the parent recalls the whole project |
+| **NO GENERIC TAGS** | No tags from generic folder names, no tags that act as ids, no tags that mimic a field (use `--type`, not `qtype:`) |
+
+## Namespace, Room and Tag Conventions
+
+Keep the three axes distinct so recall stays filterable:
+
+| Axis | Means | Rule |
+|------|-------|------|
+| **Namespace** | Workspace / whose area | Few and coarse (e.g. one per agent family or tool). Not one per project: project identity lives in the room and tags. Avoid `repo-*` / `project:*` namespaces. Do not keep writing to `default` once you have chosen real ones |
+| **Room** | One project or discussion | One room per parent project named `<name>` (lowercase, hyphens; no `project:` / `repo-` prefix, no `-dev` suffix). Discussions `disc:<topic>`, research `riset:<topic>`. Always set `--title` |
+| **Tag** | Search aid | `project:<name>` (registry names only), `tool:<name>` for items about a specific tool or agent (`tool:claude-code`), `agent:<role>` only for the origin of a multi-profile agent |
+
+- **A room's namespace cannot be changed after creation** (#1352) and merging
+  namespaces does not relabel rooms: create the room in the right namespace
+  from the start.
+- `uteke update --tags` **replaces** the whole tag set — read the memory first
+  and write back the merged list; there is no bulk add-tag operation.
+- `uteke namespace rename` changes only the memories' namespace, not the `rooms` table.
+
+### What to store
+
+Store only what is worth recalling again: decisions with their reason, causes of
+non-obvious bugs, gotchas, procedures — one fact per memory. Never store tokens,
+passwords, or other credentials. Do not auto-save every prompt; automatic writers
+produce noise and junk tags.
+
+### Destructive cleanup needs the owner's go-ahead
+
+Writing bulk changes (tag deletes, namespace merges/deletes, room deletes, memory
+moves) is not reversible in general. Take a backup first (`uteke export`, plus a
+map of ids before/after), do a dry run and a small pilot, and ask for explicit
+confirmation per step. `uteke room delete` keeps the memories; `uteke forget` does not.
 
 ### Examples
 
