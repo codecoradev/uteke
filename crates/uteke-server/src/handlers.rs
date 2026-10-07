@@ -2143,18 +2143,28 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let content_length = req
                 .headers()
                 .iter()
-                .find(|h| h.field.as_str() == "content-length")
+                .find(|h| h.field.equiv("Content-Length"))
                 .and_then(|h| h.value.as_str().parse::<u64>().ok())
                 .unwrap_or(0);
             if content_length > MAX_MCP_BODY {
                 return ctx.error_response_for(req, 413, "Payload too large");
             }
+            // Read one byte past the cap so a chunked/unsized oversized body is
+            // a 413 instead of a silently truncated JSON parse error (#1328).
             let mut body = String::new();
-            if let Err(e) = req.as_reader().take(MAX_MCP_BODY).read_to_string(&mut body) {
+            if let Err(e) = req
+                .as_reader()
+                .take(MAX_MCP_BODY + 1)
+                .read_to_string(&mut body)
+            {
                 return ctx.error_response_for(req, 400, format!("Failed to read body: {e}"));
             }
+            if body.len() as u64 > MAX_MCP_BODY {
+                return ctx.error_response_for(req, 413, "Payload too large");
+            }
+            let cors = ctx.cors_headers_for(req);
             // None = notification (no response per JSON-RPC 2.0 §4.1) → 204 No Content
-            match uteke_mcp::handle_jsonrpc(&uteke, &body) {
+            let mut resp = match uteke_mcp::handle_jsonrpc(&uteke, &body) {
                 Some(response) => tiny_http::Response::from_string(response)
                     .with_header(
                         tiny_http::Header::from_bytes(
@@ -2179,7 +2189,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         )
                         .unwrap(),
                     ),
+            };
+            for h in cors {
+                resp.add_header(h);
             }
+            resp
         }
 
         // ── Document: Create / Upsert ────────────────────────────────────
@@ -2697,8 +2711,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Import (JSONL) ──────────────────────────────────────────────
         (Method::Post, "/import") => match read_body::<ImportRequest>(req.as_reader()) {
             Ok(req_data) => {
-                if validate_content_size(&req_data.content, 5_242_880).is_err() {
-                    return ctx.error_response_for(req, 413, "Content too large (max 5MB)");
+                // Same ceiling `read_body` enforces on the whole request, so the
+                // limit the caller is told about is the limit that applies (#1328).
+                let max_import = uteke_core::MAX_PAYLOAD_SIZE;
+                if validate_content_size(&req_data.content, max_import).is_err() {
+                    return ctx.error_response_for(
+                        req,
+                        413,
+                        format!("Content too large (max {}MB)", max_import / 1_048_576),
+                    );
                 }
 
                 // Merge request tags into the JSONL entries.
@@ -4820,5 +4841,63 @@ mod host_guard_route_tests {
         let listed = HostGuard::new("0.0.0.0", &["uteke".to_string()]);
         assert_eq!(status(listed.clone(), Some("uteke:8767"), "/health"), 200);
         assert_eq!(status(listed, Some("evil.example"), "/health"), 403);
+    }
+}
+
+#[cfg(test)]
+mod mcp_http_hardening_tests {
+    use super::*;
+    use tiny_http::{Header, TestRequest};
+
+    fn app() -> Mutex<Uteke> {
+        Mutex::new(
+            Uteke::open_with_backend(":memory:", None)
+                .expect("open in-memory uteke without embedder"),
+        )
+    }
+
+    fn ctx(origins: Vec<String>) -> ReqCtx {
+        ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: origins,
+            recall_config: None,
+            extraction_config: None,
+        }
+    }
+
+    // #1328: an oversized /mcp body is a 413, not a truncated JSON parse error.
+    #[test]
+    fn mcp_oversized_body_is_413() {
+        let big: &'static str = Box::leak("x".repeat(1024 * 1024 + 8).into_boxed_str());
+        let mut req = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/mcp")
+            .with_body(big)
+            .into();
+        let resp = route(&app(), &ctx(Vec::new()), &mut req);
+        assert_eq!(resp.status_code().0, 413);
+    }
+
+    // #1328: /mcp responses carry CORS headers like every other endpoint.
+    #[test]
+    fn mcp_response_has_cors_headers() {
+        let origin = "https://app.example";
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let mut req = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/mcp")
+            .with_header(Header::from_bytes(&b"Origin"[..], origin.as_bytes()).unwrap())
+            .with_body(body)
+            .into();
+        let resp = route(&app(), &ctx(vec![origin.to_string()]), &mut req);
+        assert!(
+            resp.headers()
+                .iter()
+                .any(|h| h.field.equiv("Access-Control-Allow-Origin")
+                    && h.value.as_str() == origin),
+            "missing ACAO on /mcp: {:?}",
+            resp.headers()
+        );
     }
 }

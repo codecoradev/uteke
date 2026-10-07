@@ -1389,8 +1389,17 @@ fn display_id(id: &str, full: bool) -> &str {
 /// printed by recall/list). Errors loudly on ambiguous prefixes instead of
 /// silently no-oping. Exact UUIDs skip the prefix scan.
 fn resolve_id<'a>(uteke: &'a Uteke, id: &'a str) -> Result<String, String> {
-    if id.len() == 36 {
-        return Ok(id.to_string());
+    // Ids are UUIDs: hex digits and dashes only. Rejecting anything else up
+    // front also keeps LIKE wildcards (`%`, `_`) out of the prefix scan (#1328).
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(format!(
+            "Invalid memory id '{id}' (expected a UUID or hex prefix)"
+        ));
+    }
+    // A well-formed full UUID skips the prefix scan; anything else (including a
+    // 36-char non-UUID string) takes the prefix path so it errors the same way.
+    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
+        return Ok(uuid.hyphenated().to_string());
     }
     match uteke.resolve_id_prefix(id) {
         Ok(Some(full)) => Ok(full),
@@ -2883,6 +2892,27 @@ mod id_resolution_tests {
         assert_eq!(
             v["content"].as_str().unwrap(),
             "id resolution probe content"
+        );
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_id_rejects_malformed_ids() {
+        let (uteke, dir) = scratch();
+        // 36 chars but not a UUID: must not be passed through as a full id.
+        let fake = "z".repeat(36);
+        assert!(resolve_id(&uteke, &fake).unwrap_err().contains("Invalid"));
+        // LIKE wildcards never reach the prefix scan.
+        assert!(resolve_id(&uteke, "%").is_err());
+        assert!(resolve_id(&uteke, "ab_").is_err());
+        assert!(resolve_id(&uteke, "").is_err());
+        // 36 hex/dash chars that are not a UUID shape fall to the prefix path.
+        let almost = "0".repeat(36);
+        assert!(
+            resolve_id(&uteke, &almost)
+                .unwrap_err()
+                .contains("No memory matches")
         );
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
