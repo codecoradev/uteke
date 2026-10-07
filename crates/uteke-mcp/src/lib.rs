@@ -301,7 +301,8 @@ fn tool_recall() -> Value {
                 "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." },
                 "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
                 "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
-                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." }
+                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             },
             "required": ["query"]
         }
@@ -318,7 +319,8 @@ fn tool_list() -> Value {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
                 "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
+                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             }
         }
     })
@@ -754,7 +756,8 @@ fn tool_room_memories() -> Value {
             "properties": {
                 "room_id": { "type": "string", "description": "Room identifier" },
                 "author": { "type": "string", "description": "Optional author filter" },
-                "limit": { "type": "integer", "description": "Max results (default 100)", "default": 100 }
+                "limit": { "type": "integer", "description": "Max results (default 100)", "default": 100 },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             },
             "required": ["room_id"]
         }
@@ -1138,6 +1141,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
     let namespace = args["namespace"].as_str();
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let tags_filter: Option<Vec<&str>> = args["tags"]
         .as_array()
@@ -1292,7 +1296,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             uteke_core::SearchResultType::Memory => r
                 .memory_id
                 .as_ref()
-                .map(|id| format!(" (id: {})", &id[..id.len().min(8)]))
+                .map(|id| format!(" (id: {})", display_id(id, full_ids)))
                 .unwrap_or_default(),
             uteke_core::SearchResultType::Document => r
                 .doc_slug
@@ -1339,6 +1343,7 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let namespace = args["namespace"].as_str();
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let memories = uteke
         .list(tag, limit, offset, namespace)
@@ -1357,8 +1362,8 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let lines: Vec<String> = memories
         .iter()
         .map(|m| {
-            let short_id = m.id.get(..8).unwrap_or(&m.id);
-            format!("[{short_id}] {} ({})", m.content, m.tags.join(", "))
+            let id = display_id(&m.id, full_ids);
+            format!("[{id}] {} ({})", m.content, m.tags.join(", "))
         })
         .collect();
 
@@ -1369,6 +1374,13 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         }],
         is_error: false,
     })
+}
+
+/// Render a memory id for tool output: the 8-char prefix, or the full UUID
+/// when `full_ids` is set. IDs are UUIDv7, so memories written within the same
+/// ~65s share their first 8 chars and the prefix alone can be ambiguous (#1357).
+fn display_id(id: &str, full: bool) -> &str {
+    if full { id } else { id.get(..8).unwrap_or(id) }
 }
 
 /// Resolve an id argument to a full UUID (#1048).
@@ -2174,6 +2186,7 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let author = args["author"].as_str();
     let limit = args["limit"].as_u64().unwrap_or(100) as usize;
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let memories = uteke
         .recall_room(room_id, author, limit)
@@ -2195,8 +2208,8 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
             // #1052/#1048: include the short id so the next tool call
             // (pin/forget/graph edges) can act on the row directly.
             let created = m.created_at.format("%Y-%m-%d %H:%M");
-            let short_id: String = m.id.chars().take(8).collect();
-            format!("[{created} | {} | {}] {}", short_id, m.namespace, m.content)
+            let id = display_id(&m.id, full_ids);
+            format!("[{created} | {} | {}] {}", id, m.namespace, m.content)
         })
         .collect();
     Ok(ToolResult {
@@ -2901,6 +2914,39 @@ mod id_resolution_tests {
                 .unwrap_err()
                 .contains("No memory matches")
         );
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn display_id_prefix_or_full() {
+        let id = "01a115a7-aaaa-7bbb-8ccc-0123456789ab";
+        assert_eq!(display_id(id, false), "01a115a7");
+        assert_eq!(display_id(id, true), id);
+        assert_eq!(display_id("abc", false), "abc");
+    }
+
+    #[test]
+    fn list_and_room_memories_full_ids_round_trip() {
+        let (uteke, dir) = scratch();
+        let id = seed(&uteke);
+        let short = &id[..8];
+
+        let text = |r: ToolResult| match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+            #[allow(unreachable_patterns)]
+            _ => String::new(),
+        };
+
+        let default = text(exec_list(&uteke, &serde_json::json!({})).unwrap());
+        assert!(default.contains(&format!("[{short}]")), "{default}");
+        assert!(!default.contains(&id));
+
+        let full = text(exec_list(&uteke, &serde_json::json!({"full_ids": true})).unwrap());
+        assert!(full.contains(&format!("[{id}]")), "{full}");
+
+        // The full id printed by the tool is accepted by resolve_id as-is.
+        assert_eq!(resolve_id(&uteke, &id).unwrap(), id);
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
     }
