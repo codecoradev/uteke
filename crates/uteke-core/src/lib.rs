@@ -896,6 +896,19 @@ impl Uteke {
         let mut index = match &index_path {
             Some(path) => match VectorIndex::load_or_create_for(path, dims, vector_backend) {
                 Ok(idx) => idx,
+                // Lock contention / IO failure says nothing about the index
+                // content: another process (uteke-serve) may be holding a
+                // perfectly good index. Never delete it; run in-memory and
+                // rebuild from SQLite instead.
+                Err(e @ (Error::Lock { .. } | Error::Io(_))) => {
+                    tracing::warn!(
+                        "Vector index at {} could not be opened ({}). \
+                         Using an in-memory index rebuilt from SQLite; index files left untouched.",
+                        path.display(),
+                        e
+                    );
+                    VectorIndex::new(dims)?
+                }
                 Err(e) => {
                     // Index file is corrupt (dim mismatch, truncated, etc).
                     // Instead of crashing, discard the bad index and rebuild

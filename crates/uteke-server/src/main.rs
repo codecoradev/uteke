@@ -564,15 +564,23 @@ fn main() {
         }
 
         let result = std::thread::Builder::new().spawn(move || {
-            let response = handlers::route(&uteke, &ctx, &mut req);
+            // RAII: the slot is released even if the handler panics, so a
+            // single bad request can never leak capacity.
+            let _slot = SlotGuard(pair);
+            let routed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handlers::route(&uteke, &ctx, &mut req)
+            }));
+            let response = match routed {
+                Ok(r) => r,
+                Err(_) => {
+                    error!("Request handler panicked: {method} {url}");
+                    tiny_http::Response::from_data(b"Internal server error".to_vec())
+                        .with_status_code(500)
+                }
+            };
             if let Err(e) = req.respond(response) {
                 warn!("Response error: {e}");
             }
-            // Release slot and notify the waiting accept loop.
-            let (lock, cvar) = &*pair;
-            let mut active = lock.lock().unwrap();
-            *active -= 1;
-            cvar.notify_one();
         });
 
         if let Err(e) = result {
@@ -675,6 +683,18 @@ struct ServerFileSection {
     /// Set to specific origins like ["http://localhost:3000"] for production.
     /// Each request's `Origin` header is matched against this list.
     cors_origins: Option<Vec<String>>,
+}
+
+/// Releases one concurrency slot (and wakes the accept loop) on drop.
+struct SlotGuard(Arc<(std::sync::Mutex<usize>, std::sync::Condvar)>);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        let (lock, cvar) = &*self.0;
+        let mut active = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *active = active.saturating_sub(1);
+        cvar.notify_one();
+    }
 }
 
 /// Find and parse the nearest uteke.toml, looking at:

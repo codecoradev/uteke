@@ -212,25 +212,29 @@ impl super::Store {
             return Ok(0);
         }
         let now = chrono::Utc::now().to_rfc3339();
-        let placeholders: String = ids
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", i + 3))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!(
-            "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id IN ({placeholders}) AND deprecated = 0"
-        );
-        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> =
-            vec![Box::new(now), Box::new(reason.to_string())];
-        for id in ids {
-            params_vec.push(Box::new(id.clone()));
-        }
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params_vec.iter().map(|p| p.as_ref()).collect();
-        let count = self
+        // Chunked + transactional: stays under SQLite's bound-parameter limit
+        // (2 fixed params + up to CHUNK ids per statement).
+        const CHUNK: usize = 500;
+        let tx = self
             .conn
-            .execute(&sql, rusqlite::params_from_iter(param_refs))
+            .unchecked_transaction()
+            .map_err(|e| Error::db("database operation", e))?;
+        let mut count = 0;
+        for chunk in ids.chunks(CHUNK) {
+            let placeholders: String = (0..chunk.len())
+                .map(|i| format!("?{}", i + 3))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id IN ({placeholders}) AND deprecated = 0"
+            );
+            let mut params_vec: Vec<&dyn rusqlite::types::ToSql> = vec![&now, &reason];
+            params_vec.extend(chunk.iter().map(|id| id as &dyn rusqlite::types::ToSql));
+            count += tx
+                .execute(&sql, rusqlite::params_from_iter(params_vec))
+                .map_err(|e| Error::db("database operation", e))?;
+        }
+        tx.commit()
             .map_err(|e| Error::db("database operation", e))?;
         Ok(count)
     }
@@ -323,23 +327,27 @@ impl super::Store {
         if ids.is_empty() {
             return Ok(0);
         }
-        // Build parameterized IN clause: "WHERE id IN (?1, ?2, ?3)"
-        let placeholders: String = ids
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("?{}", i + 1))
-            .collect::<Vec<_>>()
-            .join(",");
-        let sql = format!("DELETE FROM memories WHERE id IN ({placeholders})");
-        let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
-            .iter()
-            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>)
-            .collect();
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
-            params.iter().map(|p| p.as_ref()).collect();
-        let deleted = self
+        // Chunk the id list so large batches never exceed SQLite's bound
+        // parameter limit (999 on older builds); one transaction keeps the
+        // whole delete atomic.
+        const CHUNK: usize = 500;
+        let tx = self
             .conn
-            .execute(&sql, rusqlite::params_from_iter(param_refs))
+            .unchecked_transaction()
+            .map_err(|e| Error::db("database operation", e))?;
+        let mut deleted = 0;
+        for chunk in ids.chunks(CHUNK) {
+            // Parameterized IN clause: "WHERE id IN (?1, ?2, ?3)"
+            let placeholders: String = (1..=chunk.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!("DELETE FROM memories WHERE id IN ({placeholders})");
+            deleted += tx
+                .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
+                .map_err(|e| Error::db("database operation", e))?;
+        }
+        tx.commit()
             .map_err(|e| Error::db("database operation", e))?;
         Ok(deleted)
     }

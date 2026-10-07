@@ -579,7 +579,7 @@ impl VectorIndex {
 
             // Write buffer to disk via atomic write (temp file + rename)
             let tmp_path = path.with_extension(format!("{}.tmp", index_ext_for(self.backend)));
-            std::fs::write(&tmp_path, &buffer)
+            write_synced(&tmp_path, &buffer)
                 .map_err(|e| Error::embed("write temp index file", e))?;
 
             // On Windows, `std::fs::rename` fails with `ERROR_ACCESS_DENIED` if
@@ -696,15 +696,6 @@ impl VectorIndex {
             )));
         }
 
-        // Guard: remove old entry if ID already exists (prevents duplicate + stale slot)
-        if let Some(old_key) = self.id_to_key.get(id) {
-            let old_key = *old_key;
-            self.key_to_id.remove(&old_key);
-            self.engine.remove(old_key);
-            // vecq has no incremental delete — the dead row is filtered out of
-            // search via the key map (key_to_id no longer contains old_key).
-        }
-
         let key = if self.backend == VectorBackend::Vecq {
             // vecq rows are append-only: the new entry lands at physical row
             // `len()`, and search maps rows back via key_to_id — so the
@@ -725,18 +716,27 @@ impl VectorIndex {
             }
             key
         } else {
+            // Auto-grow usearch capacity when full (fallible — runs before any
+            // state is touched so a failure leaves the index unchanged).
+            self.engine.ensure_capacity()?;
             let key = self.next_key;
             self.next_key = self.next_key.saturating_add(1);
-            // Auto-grow usearch capacity when full.
-            self.engine.ensure_capacity()?;
             key
         };
 
+        // vecq assigns rows sequentially; row == key by construction.
+        // Add first: if it fails, the previous entry for `id` is still intact.
+        self.engine.add(key, embedding)?;
+
+        // Replace the old entry only once the new vector is in the engine.
+        if let Some(old_key) = self.id_to_key.get(id).copied() {
+            self.key_to_id.remove(&old_key);
+            self.engine.remove(old_key);
+            // vecq has no incremental delete — the dead row is filtered out of
+            // search via the key map (key_to_id no longer contains old_key).
+        }
         self.key_to_id.insert(key, id.to_string());
         self.id_to_key.insert(id.to_string(), key);
-
-        // vecq assigns rows sequentially; row == key by construction.
-        self.engine.add(key, embedding)?;
 
         self.dirty = true;
         Ok(())
@@ -882,12 +882,14 @@ fn acquire_file_lock(path: &Path) -> Result<File, Error> {
         }
 
         if std::time::Instant::now() >= deadline {
-            return Err(Error::embed_msg(format!(
-                "Could not acquire lock on {} after {MAX_WAIT:?}. \
-                 Another uteke process (uteke-serve or CLI) may be running. \
-                 Stop it and retry.",
-                path.display()
-            )));
+            return Err(Error::Lock {
+                context: format!(
+                    "Could not acquire lock on {} after {MAX_WAIT:?}. \
+                     Another uteke process (uteke-serve or CLI) may be running. \
+                     Stop it and retry.",
+                    path.display()
+                ),
+            });
         }
 
         tracing::trace!(
@@ -898,12 +900,21 @@ fn acquire_file_lock(path: &Path) -> Result<File, Error> {
     }
 }
 
+/// Write `data` to `path` and fsync before returning, so a following rename
+/// can never publish a zero-length or partial file after power loss.
+fn write_synced(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(data)?;
+    f.sync_all()
+}
+
 /// Atomic file write: write to temp file then rename.
 /// Prevents corruption if process crashes mid-write.
 /// POSIX guarantees rename() is atomic on the same filesystem.
 fn atomic_write(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
     let tmp_path = path.with_extension("keys.tmp");
-    std::fs::write(&tmp_path, data).map_err(|e| Error::embed("write temp key mapping", e))?;
+    write_synced(&tmp_path, data).map_err(|e| Error::embed("write temp key mapping", e))?;
     std::fs::rename(&tmp_path, path)
         .map_err(|e| Error::embed("rename temp to final key mapping", e))?;
     Ok(())

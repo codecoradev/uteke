@@ -108,12 +108,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // Lock the Uteke instance for the duration of this request.
     // This serializes requests but prevents data races on the SQLite connection.
     // Future: use rwlock for read-heavy workloads.
-    let uteke = match uteke.lock() {
-        Ok(u) => u,
-        Err(e) => {
-            return ctx.error_response_for(req, 500, format!("Internal error: {e}").as_str());
-        }
-    };
+    // A handler panic poisons the mutex; recover the guard instead of failing
+    // every later request. SQLite transactions roll back on unwind, so the
+    // underlying state stays consistent.
+    let uteke = uteke.lock().unwrap_or_else(|e| e.into_inner());
 
     match (method, route_path) {
         // ── Health ──────────────────────────────────────────────────────

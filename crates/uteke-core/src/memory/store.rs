@@ -604,6 +604,21 @@ mod tests {
     }
 
     #[test]
+    fn test_bulk_ids_exceed_sqlite_param_limit() {
+        let store = Store::open(":memory:").unwrap();
+        let ids: Vec<String> = (0..1200).map(|i| format!("bulk-{i}")).collect();
+        for id in &ids {
+            store.insert(&make_test_memory(id, "x", &[])).unwrap();
+        }
+
+        let deprecated = store.deprecate_by_ids(&ids, "test").unwrap();
+        assert_eq!(deprecated, 1200);
+
+        let deleted = store.delete_by_ids(&ids).unwrap();
+        assert_eq!(deleted, 1200);
+    }
+
+    #[test]
     fn test_store_crud() {
         let store = Store::open(":memory:").unwrap();
 
