@@ -579,8 +579,31 @@ impl VectorIndex {
 
             // Write buffer to disk via atomic write (temp file + rename)
             let tmp_path = path.with_extension(format!("{}.tmp", index_ext_for(self.backend)));
+            // Windows: the existing locked handle is refreshed after the rename
+            // (below). Elsewhere the rename replaces the inode our flock lives
+            // on, so lock the NEW file before it is published: the exclusive
+            // lock then follows the inode onto `path` with no unlocked window,
+            // and a second process can never lock a different inode.
+            #[cfg(windows)]
             write_synced(&tmp_path, &buffer)
                 .map_err(|e| Error::embed("write temp index file", e))?;
+            #[cfg(not(windows))]
+            let new_lock = {
+                use std::io::Write;
+                let mut f = File::options()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&tmp_path)
+                    .map_err(|e| Error::embed("create temp index file", e))?;
+                f.try_lock_exclusive()
+                    .map_err(|e| Error::embed("lock temp index file", e))?;
+                f.write_all(&buffer)
+                    .and_then(|()| f.sync_all())
+                    .map_err(|e| Error::embed("write temp index file", e))?;
+                f
+            };
 
             // On Windows, `std::fs::rename` fails with `ERROR_ACCESS_DENIED` if
             // the destination file is locked by `LockFileEx` via fs2 (#926).
@@ -614,6 +637,9 @@ impl VectorIndex {
             {
                 std::fs::rename(&tmp_path, path)
                     .map_err(|e| Error::embed("rename temp to final index file", e))?;
+                // The old (now orphaned) inode's lock is released when the
+                // previous handle drops; the new handle holds the live lock.
+                self._lock_file = Some(new_lock);
             }
 
             // On Windows, reopen the file after rename to refresh the lock
@@ -982,6 +1008,30 @@ mod tests {
         // Search should only return m2
         let results = idx.search(&v1, 5, 50);
         assert!(results.iter().all(|(id, _)| id != "m1"));
+    }
+
+    /// Regression: after `save()` renames a new file over the index, the
+    /// exclusive lock must live on the file now at `path` (not the orphaned
+    /// inode), so a second opener cannot lock it.
+    #[cfg(unix)]
+    #[test]
+    fn test_save_keeps_exclusive_lock_on_published_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock.usearch");
+        let mut idx = VectorIndex::load_or_create(&path, 8).unwrap();
+        idx.insert("a", &make_vec(8, 0)).unwrap();
+        idx.save().unwrap();
+        idx.insert("b", &make_vec(8, 1)).unwrap();
+        idx.save().unwrap(); // second save: lock must survive repeated renames
+
+        let other = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(
+            other.try_lock_exclusive().is_err(),
+            "published index file must still be exclusively locked by its owner"
+        );
+        drop(idx);
+        let other = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(other.try_lock_exclusive().is_ok(), "lock released on drop");
     }
 
     #[test]

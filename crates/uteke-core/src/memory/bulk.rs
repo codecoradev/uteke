@@ -60,6 +60,7 @@ impl super::Store {
     }
 
     /// Bulk delete all cold memories (not accessed in warm_days+ days or never accessed).
+    /// Pinned memories are never cold: they "never decay" and are skipped.
     ///
     /// Uses a single DELETE query with `RETURNING id` for efficiency.
     pub fn bulk_delete_cold(
@@ -72,7 +73,7 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "DELETE FROM memories WHERE namespace = ?1 AND (last_accessed < ?2 OR last_accessed IS NULL) RETURNING id",
+                "DELETE FROM memories WHERE namespace = ?1 AND pinned = 0 AND (last_accessed < ?2 OR last_accessed IS NULL) RETURNING id",
             )
             .map_err(|e| Error::db("database operation", e))?;
         let ids: Vec<String> = stmt
@@ -123,7 +124,7 @@ impl super::Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id FROM memories WHERE namespace = ?1 AND deprecated = 0 AND (last_accessed < ?2 OR last_accessed IS NULL)",
+                "SELECT id FROM memories WHERE namespace = ?1 AND deprecated = 0 AND pinned = 0 AND (last_accessed < ?2 OR last_accessed IS NULL)",
             )
             .map_err(|e| Error::db("database operation", e))?;
         let ids: Vec<String> = stmt

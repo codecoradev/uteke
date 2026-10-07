@@ -1217,6 +1217,24 @@ mod tests {
     }
 
     #[test]
+    fn test_bulk_cold_skips_pinned() {
+        let store = Store::open(":memory:").unwrap();
+        let mut pinned = make_test_memory("pinned-cold", "keep me", &[]);
+        pinned.pinned = true; // last_accessed None => otherwise "cold"
+        store.insert(&pinned).unwrap();
+        store
+            .insert(&make_test_memory("plain-cold", "drop me", &[]))
+            .unwrap();
+
+        let found = store.find_ids_cold(None, 30).unwrap();
+        assert_eq!(found, vec!["plain-cold".to_string()]);
+
+        let deleted = store.bulk_delete_cold(None, 30).unwrap();
+        assert_eq!(deleted, vec!["plain-cold".to_string()]);
+        assert!(store.get_by_id("pinned-cold").unwrap().is_some());
+    }
+
+    #[test]
     fn test_bulk_delete_cold() {
         let store = Store::open(":memory:").unwrap();
         store.insert(&make_test_memory("1", "cold-1", &[])).unwrap();

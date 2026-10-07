@@ -2031,10 +2031,10 @@ impl Uteke {
             (DocumentSummary, String, String, f32),
         > = std::collections::HashMap::new();
 
-        for ((_chunk_key, distance), (_chunk_id, doc_id, heading, content)) in
-            chunk_hits.iter().zip(chunks.iter())
+        for (distance, (_chunk_id, doc_id, heading, content)) in
+            pair_chunk_hits(&chunk_hits, &chunks)
         {
-            let score = crate::memory::vector::cosine_distance_to_similarity(*distance);
+            let score = crate::memory::vector::cosine_distance_to_similarity(distance);
 
             // Get document summary from store.
             if let Ok(Some(doc)) = self.store.get_document(doc_id) {
@@ -2669,29 +2669,60 @@ pub struct GraphData {
 }
 
 /// Resolve a path to a database string.
+/// `(chunk_id, doc_id, heading, content)` as returned by `get_chunks_by_ids_ordered`.
+type ChunkRow = (String, String, String, String);
+
+/// Pair each `chunk:<id>` vector hit with its SQLite chunk row by id.
+///
+/// `get_chunks_by_ids_ordered` silently drops ids missing from SQLite, so the
+/// two lists can differ in length; zipping them would attribute every later
+/// distance to the wrong chunk. Hits without a row are skipped.
+fn pair_chunk_hits<'a>(
+    hits: &'a [(String, f32)],
+    chunks: &'a [ChunkRow],
+) -> Vec<(f32, &'a ChunkRow)> {
+    let by_id: std::collections::HashMap<&str, &ChunkRow> =
+        chunks.iter().map(|c| (c.0.as_str(), c)).collect();
+    hits.iter()
+        .filter_map(|(key, distance)| {
+            let id = key.strip_prefix("chunk:")?;
+            by_id.get(id).map(|c| (*distance, *c))
+        })
+        .collect()
+}
+
 fn resolve_db_path(db_path: &Path) -> Result<String, Error> {
     if db_path.to_str() == Some(":memory:") {
         return Ok(":memory:".to_string());
     }
 
     if db_path.is_dir() || db_path.extension().is_none() {
+        let existed = db_path.exists();
         std::fs::create_dir_all(db_path).map_err(Error::Io)?;
-        // Set directory permissions to owner-only (0700) on Unix
-        #[cfg(unix)]
-        {
-            let p: &std::path::Path = db_path;
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).ok();
+        if !existed {
+            restrict_dir_permissions(db_path);
         }
         Ok(db_path.join("uteke.db").to_string_lossy().to_string())
     } else {
         if let Some(parent) = db_path.parent() {
+            let existed = parent.exists();
             std::fs::create_dir_all(parent).map_err(Error::Io)?;
-            // Set directory permissions to owner-only (0700) on Unix
-            #[cfg(unix)]
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).ok();
+            if !existed {
+                restrict_dir_permissions(parent);
+            }
         }
         Ok(db_path.to_string_lossy().to_string())
     }
+}
+
+/// Owner-only (0700) permissions on Unix for a directory this process just
+/// created. Pre-existing directories (e.g. `$HOME` or a shared dir that
+/// merely contains the db file) are never touched.
+fn restrict_dir_permissions(dir: &Path) {
+    #[cfg(unix)]
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).ok();
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 #[cfg(test)]
@@ -3095,6 +3126,40 @@ mod tests {
         let restored: StoreStats = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.total_memories, 42);
         assert_eq!(restored.unique_tags, 5);
+    }
+
+    #[test]
+    fn pair_chunk_hits_survives_missing_rows() {
+        let hits = vec![
+            ("chunk:a".to_string(), 0.1_f32),
+            ("chunk:gone".to_string(), 0.2),
+            ("chunk:c".to_string(), 0.3),
+        ];
+        let row = |id: &str| (id.to_string(), format!("doc-{id}"), "h".into(), "c".into());
+        let chunks = vec![row("a"), row("c")];
+        let paired = pair_chunk_hits(&hits, &chunks);
+        assert_eq!(paired.len(), 2);
+        // 0.3 must stay with chunk "c", not shift onto a neighbour.
+        assert_eq!((paired[1].0, paired[1].1.0.as_str()), (0.3, "c"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_db_path_only_restricts_dirs_it_created() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        // Pre-existing shared directory holding the db file: must stay 0755.
+        let shared = base.path().join("shared");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        resolve_db_path(&shared.join("x.db")).unwrap();
+        let mode = std::fs::metadata(&shared).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+        // A directory created by the call is owner-only.
+        let fresh = base.path().join("fresh");
+        resolve_db_path(&fresh).unwrap();
+        let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[test]
