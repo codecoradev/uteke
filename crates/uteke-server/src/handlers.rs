@@ -4863,6 +4863,7 @@ mod mcp_http_hardening_tests {
             cors_origins: origins,
             recall_config: None,
             extraction_config: None,
+            host_guard: Default::default(),
         }
     }
 
