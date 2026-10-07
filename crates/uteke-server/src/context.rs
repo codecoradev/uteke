@@ -134,6 +134,74 @@ pub struct ReqCtx {
     pub recall_config: Option<RecallFileSection>,
     /// Extraction config from [extraction] section in uteke.toml.
     pub extraction_config: Option<uteke_core::extraction::ExtractionConfig>,
+    /// `Host` header allowlist against DNS rebinding (#1326).
+    pub host_guard: HostGuard,
+}
+
+/// `Host` header policy against DNS rebinding (#1326).
+///
+/// A rebinding page makes the browser resolve an attacker-controlled name to
+/// 127.0.0.1, so the request reaches the local server (even with CORS off) but
+/// still carries `Host: <attacker name>`. When the server is bound to a
+/// loopback address only loopback `Host` values (plus `allowed_hosts`) are
+/// accepted. A non-loopback bind (e.g. Docker, where the service name is the
+/// `Host`) keeps accepting everything unless `allowed_hosts` is set.
+#[derive(Clone, Debug, Default)]
+pub struct HostGuard {
+    enforce: bool,
+    allowed: Vec<String>,
+}
+
+impl HostGuard {
+    /// Build the policy for a bind address and configured extra hosts.
+    pub fn new(bind_host: &str, allowed_hosts: &[String]) -> Self {
+        let allowed: Vec<String> = allowed_hosts
+            .iter()
+            .map(|h| h.trim().to_ascii_lowercase())
+            .filter(|h| !h.is_empty())
+            .collect();
+        Self {
+            enforce: is_loopback_host(bind_host) || !allowed.is_empty(),
+            allowed,
+        }
+    }
+
+    /// Whether a request's `Host` header value is acceptable. A missing header
+    /// (HTTP/1.0 clients) is allowed: rebinding browsers always send one.
+    pub fn allows(&self, host_header: Option<&str>) -> bool {
+        if !self.enforce {
+            return true;
+        }
+        let Some(raw) = host_header else {
+            return true;
+        };
+        let raw = raw.trim().to_ascii_lowercase();
+        let name = host_without_port(&raw);
+        is_loopback_host(name) || self.allowed.iter().any(|a| *a == raw || a == name)
+    }
+}
+
+/// Strip an optional `:port` (and IPv6 brackets) from a lowercase host value.
+fn host_without_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    match host.rsplit_once(':') {
+        // More than one ':' without brackets is a bare IPv6 literal, not host:port.
+        Some((name, _)) if !name.contains(':') => name,
+        _ => host,
+    }
+}
+
+/// `localhost`, `*.localhost`, `127.0.0.0/8` and `::1` (port and brackets ignored).
+pub fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    let name = host_without_port(&host);
+    name == "localhost"
+        || name.ends_with(".localhost")
+        || name
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 impl ReqCtx {
@@ -296,6 +364,7 @@ mod cors_tests {
             cors_origins: origins.iter().map(|s| s.to_string()).collect(),
             recall_config: None,
             extraction_config: None,
+            host_guard: HostGuard::default(),
         }
     }
 
@@ -338,5 +407,67 @@ mod cors_tests {
             .find(|h| h.field.equiv("Access-Control-Allow-Headers"))
             .unwrap();
         assert_eq!(allow.value.as_str(), "Content-Type");
+    }
+}
+
+#[cfg(test)]
+mod host_guard_tests {
+    use super::*;
+
+    fn loopback() -> HostGuard {
+        HostGuard::new("127.0.0.1", &[])
+    }
+
+    #[test]
+    fn loopback_bind_accepts_only_loopback_hosts() {
+        let g = loopback();
+        for ok in [
+            "localhost",
+            "localhost:8767",
+            "127.0.0.1:8767",
+            "127.0.0.1",
+            "[::1]:8767",
+            "::1",
+            "app.localhost:3000",
+            "LOCALHOST:8767",
+        ] {
+            assert!(g.allows(Some(ok)), "{ok} must be allowed");
+        }
+        for bad in [
+            "evil.example",
+            "evil.example:8767",
+            "127.0.0.1.evil.example",
+            "192.168.1.5:8767",
+            "localhost.evil.example",
+        ] {
+            assert!(!g.allows(Some(bad)), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn missing_host_header_is_allowed() {
+        assert!(loopback().allows(None));
+    }
+
+    #[test]
+    fn allowed_hosts_extend_a_loopback_bind() {
+        let g = HostGuard::new("127.0.0.1", &["Uteke.Internal".to_string()]);
+        assert!(g.allows(Some("uteke.internal:8767")));
+        assert!(g.allows(Some("localhost")));
+        assert!(!g.allows(Some("evil.example")));
+    }
+
+    #[test]
+    fn docker_style_bind_without_allowlist_accepts_any_host() {
+        let g = HostGuard::new("0.0.0.0", &[]);
+        assert!(g.allows(Some("uteke:8767")));
+        assert!(g.allows(Some("evil.example")));
+    }
+
+    #[test]
+    fn docker_style_bind_with_allowlist_enforces_it() {
+        let g = HostGuard::new("0.0.0.0", &["uteke".to_string()]);
+        assert!(g.allows(Some("uteke:8767")));
+        assert!(!g.allows(Some("evil.example")));
     }
 }

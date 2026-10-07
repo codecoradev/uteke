@@ -32,6 +32,7 @@ fn main() {
     let mut cli_auth_token: Option<String> = None;
     let mut cli_read_only_token: Option<String> = None;
     let mut cli_cors_origins: Vec<String> = Vec::new();
+    let mut cli_allowed_hosts: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -75,6 +76,15 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--allowed-host" => {
+                i += 1;
+                if i < args.len() {
+                    cli_allowed_hosts.push(args[i].clone());
+                } else {
+                    eprintln!("Error: --allowed-host requires a value");
+                    std::process::exit(1);
+                }
+            }
             "--cors-origin" => {
                 i += 1;
                 if i < args.len() {
@@ -99,6 +109,9 @@ fn main() {
                 println!("  --port <PORT>        Port number (default: 8767)");
                 println!("  --auth-token <TOKEN> Bearer token for API auth");
                 println!("  --cors-origin <URL>  Allowed CORS origin (repeatable)");
+                println!(
+                    "  --allowed-host <H>   Extra accepted Host header value (repeatable, #1326)"
+                );
                 println!("  --read-only-token <T> Read-only API token (GET endpoints only) (#409)");
                 println!("  -V, --version        Show version");
                 println!("  -h, --help           Show this help");
@@ -204,6 +217,17 @@ fn main() {
         cli_cors_origins
     } else {
         config_cors_origins
+    };
+
+    // Merge allowed Host values: CLI flags override config (#1326)
+    let allowed_hosts = if !cli_allowed_hosts.is_empty() {
+        cli_allowed_hosts
+    } else {
+        config
+            .server
+            .as_ref()
+            .and_then(|s| s.allowed_hosts.clone())
+            .unwrap_or_default()
     };
 
     let host = cli_host.unwrap_or(config_host);
@@ -360,6 +384,7 @@ fn main() {
             recall
         },
         extraction_config: config.extraction.clone(),
+        host_guard: context::HostGuard::new(&host, &allowed_hosts),
     };
 
     // Start server
@@ -686,6 +711,11 @@ struct ServerFileSection {
     /// Set to specific origins like ["http://localhost:3000"] for production.
     /// Each request's `Origin` header is matched against this list.
     cors_origins: Option<Vec<String>>,
+    /// Extra accepted `Host` header values (#1326). On a loopback bind only
+    /// loopback hosts are accepted by default (DNS-rebinding guard); list
+    /// additional names here. On a non-loopback bind (Docker) every `Host`
+    /// is accepted unless this list is set.
+    allowed_hosts: Option<Vec<String>>,
 }
 
 /// Releases one concurrency slot (and wakes the accept loop) on drop.
