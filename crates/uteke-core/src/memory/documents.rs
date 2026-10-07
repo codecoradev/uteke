@@ -185,7 +185,78 @@ impl super::Store {
             .conn
             .unchecked_transaction()
             .map_err(|e| Error::db("begin document upsert transaction", e))?;
+        let doc_id = self.upsert_document_in(&tx, doc)?;
+        tx.commit()
+            .map_err(|e| Error::db("commit document upsert", e))?;
+        Ok(doc_id)
+    }
 
+    /// Upsert a document and replace its chunks in ONE transaction.
+    ///
+    /// `chunks` must already be embedded (embedding is slow and must not run
+    /// under a transaction or the index lock). Either the new document row and
+    /// all of its chunks are committed, or nothing changes. Returns the
+    /// document id (the existing id when the slug already exists).
+    pub fn upsert_document_with_chunks(
+        &self,
+        doc: &Document,
+        chunks: &[(DocumentChunk, Vec<f32>)],
+    ) -> Result<String, Error> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin document upsert transaction", e))?;
+        let doc_id = self.upsert_document_in(&tx, doc)?;
+        for (chunk, embedding) in chunks {
+            debug_assert_eq!(
+                chunk.document_id, doc_id,
+                "chunk must belong to the upserted document"
+            );
+            self.insert_document_chunk(chunk, embedding)?;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit document upsert", e))?;
+        Ok(doc_id)
+    }
+
+    /// Partial update plus chunk replacement in ONE transaction (content
+    /// changed). Returns the updated document and the ids of the chunks that
+    /// were replaced (so the caller can drop them from the vector index), or
+    /// `None` if the document does not exist (nothing is written).
+    pub fn update_document_with_chunks(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+        chunks: &[(DocumentChunk, Vec<f32>)],
+    ) -> Result<Option<(Document, Vec<String>)>, Error> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin document update transaction", e))?;
+        // update_document / delete_chunks_for_documents / insert_document_chunk
+        // all run on this connection, so they join the open transaction.
+        let Some(updated) = self.update_document(id, title, content, tags, metadata)? else {
+            return Ok(None);
+        };
+        let old_chunk_ids =
+            self.delete_chunks_for_documents(std::slice::from_ref(&id.to_string()))?;
+        for (chunk, embedding) in chunks {
+            self.insert_document_chunk(chunk, embedding)?;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit document update", e))?;
+        Ok(Some((updated, old_chunk_ids)))
+    }
+
+    /// Body of [`Self::upsert_document`], run inside the caller's transaction.
+    fn upsert_document_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        doc: &Document,
+    ) -> Result<String, Error> {
         // Check if document exists (by slug — globally unique).
         let existing: Option<String> = tx
             .query_row(
@@ -262,9 +333,6 @@ impl super::Store {
             }
             doc.id.clone()
         };
-
-        tx.commit()
-            .map_err(|e| Error::db("commit document upsert", e))?;
 
         Ok(doc_id)
     }
