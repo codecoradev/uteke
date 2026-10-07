@@ -3022,6 +3022,43 @@ mod tests {
         unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
     }
 
+    /// #1322: a burst of `remember` calls saves the index a handful of times,
+    /// not once per call, and nothing is lost once the store closes.
+    #[test]
+    #[serial_test::serial]
+    fn bulk_remember_batches_index_saves_without_losing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("uteke.db");
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+
+        let u = Uteke::open(&db).unwrap();
+        for i in 0..100usize {
+            let mut v = vec![0.0f32; 768];
+            v[i % 768] = 1.0;
+            u.remember_precomputed(
+                &format!("bulk probe {i}"),
+                &[],
+                None,
+                None,
+                "fact",
+                "text",
+                &v,
+            )
+            .unwrap();
+        }
+        let saves = u.index.read().unwrap().save_count();
+        assert!(
+            saves <= 5,
+            "100 writes should batch into a few saves, got {saves}"
+        );
+        u.shutdown().unwrap();
+        drop(u);
+
+        let u = Uteke::open(&db).unwrap();
+        assert_eq!(u.index.read().unwrap().len(), 100, "no entry lost");
+        u.shutdown().unwrap();
+    }
+
     /// #1168: invalid / not-compiled-in UTEKE_VECTOR_BACKEND falls back to the
     /// default engine without failing the open.
     #[test]

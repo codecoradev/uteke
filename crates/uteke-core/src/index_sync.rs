@@ -29,6 +29,11 @@ pub(crate) trait IndexWriter {
     /// Returns `false` when `id` was not in the index.
     fn remove(&mut self, id: &str) -> bool;
     fn save(&mut self) -> Result<(), Error>;
+    /// Save only if enough has accumulated (per-operation hot paths, #1322).
+    /// Adapters without batching just save every time.
+    fn save_deferred(&mut self) -> Result<(), Error> {
+        self.save()
+    }
     fn dims(&self) -> usize;
 }
 
@@ -41,6 +46,9 @@ impl IndexWriter for VectorIndex {
     }
     fn save(&mut self) -> Result<(), Error> {
         VectorIndex::save(self)
+    }
+    fn save_deferred(&mut self) -> Result<(), Error> {
+        VectorIndex::save_if_due(self)
     }
     fn dims(&self) -> usize {
         VectorIndex::dims(self)
@@ -134,7 +142,9 @@ fn retry<T>(
     loop {
         match op() {
             Ok(v) => return Ok(v),
-            Err(e) if attempt < policy.attempts => {
+            // Deterministic failures (bad input) can never succeed on retry, and
+            // the backoff sleeps while the caller holds the index lock (#1322).
+            Err(e) if attempt < policy.attempts && !matches!(e, Error::Validation(_)) => {
                 tracing::warn!(
                     "{what}: attempt {attempt}/{} failed: {e}. Retrying...",
                     policy.attempts
@@ -151,6 +161,17 @@ fn retry<T>(
 /// error after all attempts.
 pub(crate) fn persist<I: IndexWriter>(index: &mut I, policy: &SyncPolicy) -> Result<(), Error> {
     retry(policy, "index save", || index.save())
+}
+
+/// Like [`persist`] but lets the index batch: used by per-operation paths
+/// (`remember`, `forget`) so a burst of writes does not rewrite the whole
+/// index each time (#1322). Pending changes are flushed by `shutdown()`,
+/// the index's `Drop`, and the server's periodic flush.
+pub(crate) fn persist_deferred<I: IndexWriter>(
+    index: &mut I,
+    policy: &SyncPolicy,
+) -> Result<(), Error> {
+    retry(policy, "index save", || index.save_deferred())
 }
 
 /// Insert (or replace) `id` and persist the index.
@@ -189,7 +210,7 @@ pub(crate) fn upsert<I: IndexWriter>(
         outcome.insert_error = Some(e.to_string());
         return outcome;
     }
-    if let Err(e) = persist(index, policy) {
+    if let Err(e) = persist_deferred(index, policy) {
         tracing::warn!(
             "Failed to persist vector index after insert id={id}: {e}. \
              The entry can be rebuilt via `uteke repair`."
@@ -247,7 +268,7 @@ pub(crate) fn remove_ids<'a, I: IndexWriter>(
             if outcome.missing == 1 { "y" } else { "ies" }
         );
     }
-    if let Err(e) = persist(index, policy) {
+    if let Err(e) = persist_deferred(index, policy) {
         outcome.persist_error = Some(e.to_string());
     }
     outcome
@@ -272,6 +293,7 @@ mod tests {
         save_calls: u32,
         insert_failures_left: u32,
         save_failures_left: u32,
+        insert_validation_error: bool,
     }
 
     impl FakeIndex {
@@ -286,6 +308,9 @@ mod tests {
     impl IndexWriter for FakeIndex {
         fn insert(&mut self, id: &str, _e: &[f32]) -> Result<(), Error> {
             self.insert_calls += 1;
+            if self.insert_validation_error {
+                return Err(Error::validation("deterministic"));
+            }
             if self.insert_failures_left > 0 {
                 self.insert_failures_left -= 1;
                 return Err(Error::embed_msg("insert boom"));
@@ -307,6 +332,18 @@ mod tests {
         fn dims(&self) -> usize {
             self.dims
         }
+    }
+
+    // #1322: a deterministic (validation) error is never retried, so the
+    // backoff sleep cannot run under the index lock for something that can
+    // never succeed.
+    #[test]
+    fn upsert_does_not_retry_validation_errors() {
+        let mut idx = FakeIndex::new(2);
+        idx.insert_validation_error = true;
+        let out = upsert(&mut idx, "a", &[0.0, 1.0], &FAST);
+        assert!(out.insert_error.is_some());
+        assert_eq!(idx.insert_calls, 1, "validation errors must not be retried");
     }
 
     #[test]

@@ -612,16 +612,33 @@ impl crate::Uteke {
         })
     }
 
-    /// Graceful shutdown — save dirty index to disk.
-    pub fn shutdown(&self) -> Result<(), Error> {
+    /// Write any pending vector-index changes to disk. Per-operation saves
+    /// are batched (#1322); long-lived hosts call this on a timer so a single
+    /// write followed by idle time still reaches disk.
+    pub fn flush_index(&self) -> Result<(), Error> {
+        // Cheap read-lock peek first: the server calls this every second and
+        // must not take the write lock (blocking recall) when nothing is pending.
+        if !self
+            .index
+            .read()
+            .map_err(|_| Error::lock("index read lock during flush"))?
+            .is_dirty()
+        {
+            return Ok(());
+        }
         let mut index = self
             .index
             .write()
-            .map_err(|_| Error::lock("index write lock during shutdown"))?;
+            .map_err(|_| Error::lock("index write lock during flush"))?;
         if index.is_dirty() {
             index_sync::persist(&mut *index, &SyncPolicy::STANDARD)?;
         }
         Ok(())
+    }
+
+    /// Graceful shutdown — save dirty index to disk.
+    pub fn shutdown(&self) -> Result<(), Error> {
+        self.flush_index()
     }
 }
 

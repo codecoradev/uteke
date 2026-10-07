@@ -535,6 +535,24 @@ fn main() {
         }
     });
 
+    // Vector-index flusher (#1322): per-operation index saves are batched, so
+    // a single write followed by idle time would otherwise sit in memory until
+    // the next write or a clean shutdown (SIGTERM does not run the handler).
+    let flush_uteke = Arc::clone(&uteke);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if SHUTDOWN.load(Ordering::SeqCst) {
+                return;
+            }
+            if let Ok(u) = flush_uteke.lock() {
+                if let Err(e) = u.flush_index() {
+                    warn!("Periodic index flush failed: {e}");
+                }
+            }
+        }
+    });
+
     // SIGINT handler
     ctrlc::set_handler(|| {
         if SHUTDOWN.load(Ordering::SeqCst) {

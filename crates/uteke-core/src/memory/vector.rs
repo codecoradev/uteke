@@ -49,6 +49,12 @@ use fs2::FileExt;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// Per-operation saves are deferred until this many mutations pile up (#1322).
+const SAVE_EVERY_OPS: u32 = 64;
+/// ...or until the last save is this old, whichever comes first.
+const SAVE_MAX_AGE: Duration = Duration::from_secs(2);
 
 #[cfg(feature = "usearch")]
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
@@ -383,6 +389,12 @@ pub struct VectorIndex {
     path: Option<PathBuf>,
     /// Whether the index has unsaved changes.
     dirty: bool,
+    /// Mutations since the last successful save (#1322).
+    unsaved_ops: u32,
+    /// When the index was last written to disk (or loaded/created).
+    last_saved: Instant,
+    /// Successful `save()` calls over this instance's lifetime (diagnostics, tests).
+    saves: u64,
     /// Cross-process file lock on the index file (#543).
     /// Held until the VectorIndex is dropped.
     _lock_file: Option<File>,
@@ -410,6 +422,9 @@ impl VectorIndex {
             next_key: 0,
             path: None,
             dirty: false,
+            unsaved_ops: 0,
+            last_saved: Instant::now(),
+            saves: 0,
             _lock_file: None,
         })
     }
@@ -542,6 +557,9 @@ impl VectorIndex {
             next_key,
             path: None,
             dirty: false,
+            unsaved_ops: 0,
+            last_saved: Instant::now(),
+            saves: 0,
             _lock_file: None,
         })
     }
@@ -671,6 +689,29 @@ impl VectorIndex {
             atomic_write(&mapping_path, lines.join("\n").as_bytes())?;
 
             self.dirty = false;
+            self.unsaved_ops = 0;
+            self.last_saved = Instant::now();
+            self.saves += 1;
+        }
+        Ok(())
+    }
+
+    /// Save only when enough has piled up since the last save (#1322).
+    ///
+    /// `save()` rewrites the whole index and the whole `.keys` sidecar, so
+    /// saving on every write makes bulk ingest O(N²). Per-operation paths call
+    /// this instead: it writes once `SAVE_EVERY_OPS` mutations or
+    /// `SAVE_MAX_AGE` have accumulated. Nothing is lost for good in between —
+    /// SQLite already holds every row, and `shutdown()`, `Drop`, and the
+    /// server's periodic flush write whatever is still pending. After a hard
+    /// kill the on-disk index can trail SQLite by up to that window;
+    /// `uteke verify` / `repair` resync it.
+    pub fn save_if_due(&mut self) -> Result<(), Error> {
+        if !self.dirty {
+            return Ok(());
+        }
+        if self.unsaved_ops >= SAVE_EVERY_OPS || self.last_saved.elapsed() >= SAVE_MAX_AGE {
+            return self.save();
         }
         Ok(())
     }
@@ -765,6 +806,7 @@ impl VectorIndex {
         self.id_to_key.insert(id.to_string(), key);
 
         self.dirty = true;
+        self.unsaved_ops = self.unsaved_ops.saturating_add(1);
         Ok(())
     }
 
@@ -776,6 +818,7 @@ impl VectorIndex {
             // vecq: tombstone is implicit — the key vanishes from the map, so
             // search results referencing that row are filtered out below.
             self.dirty = true;
+            self.unsaved_ops = self.unsaved_ops.saturating_add(1);
             true
         } else {
             false
@@ -841,9 +884,27 @@ impl VectorIndex {
         self.len() == 0
     }
 
+    /// Successful saves over this instance's lifetime (diagnostics, tests).
+    #[allow(dead_code)]
+    pub(crate) fn save_count(&self) -> u64 {
+        self.saves
+    }
+
     /// Whether the index has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+}
+
+/// Flush pending mutations when the index goes away, so a process that exits
+/// without calling `shutdown()` (CLI, MCP stdio) still persists its writes.
+impl Drop for VectorIndex {
+    fn drop(&mut self) {
+        if self.dirty && self.path.is_some() {
+            if let Err(e) = self.save() {
+                tracing::warn!("Failed to save vector index on drop: {e}");
+            }
+        }
     }
 }
 
@@ -1222,5 +1283,53 @@ mod tests {
             let results = loaded.search(&v, 1, 50);
             assert_eq!(results.len(), 1);
         }
+    }
+
+    // ── #1322: deferred saves ──────────────────────────────────────────────
+
+    fn deferred_backends() -> Vec<VectorBackend> {
+        [VectorBackend::Usearch, VectorBackend::Vecq]
+            .into_iter()
+            .filter(|b| b.is_compiled_in())
+            .collect()
+    }
+
+    #[test]
+    fn save_if_due_batches_writes_and_drop_flushes_the_rest() {
+        for backend in deferred_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(format!("idx.{}", index_ext_for(backend)));
+            let mut idx = VectorIndex::with_backend(backend, 64).unwrap();
+            idx.path = Some(path.clone());
+
+            // 130 per-operation writes: a save at op 64 and 128, not 130 saves.
+            for i in 0..130 {
+                idx.insert(&format!("mem-{i}"), &make_vec(64, i % 64))
+                    .unwrap();
+                idx.save_if_due().unwrap();
+            }
+            assert_eq!(idx.save_count(), 2, "{backend:?}: expected batched saves");
+            assert!(idx.is_dirty(), "{backend:?}: two ops are still pending");
+
+            // Going away flushes the pending tail.
+            drop(idx);
+            let loaded = VectorIndex::load(&path).unwrap();
+            assert_eq!(loaded.len(), 130, "{backend:?}: pending ops lost on drop");
+        }
+    }
+
+    #[test]
+    fn save_if_due_is_a_noop_when_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir
+            .path()
+            .join(format!("idx.{}", index_ext_for(deferred_backends()[0])));
+        let mut idx = VectorIndex::with_backend(deferred_backends()[0], 64).unwrap();
+        idx.path = Some(path);
+        idx.insert("mem-0", &make_vec(64, 0)).unwrap();
+        idx.save().unwrap();
+        let before = idx.save_count();
+        idx.save_if_due().unwrap();
+        assert_eq!(idx.save_count(), before);
     }
 }
