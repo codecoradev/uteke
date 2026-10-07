@@ -862,6 +862,11 @@ pub(crate) fn run_verify_checksums(
                         "match": expected_hash == actual_hash
                     })
                 );
+                // Exit code must reflect the result in --json mode too, or
+                // scripts treat a tampered binary as verified.
+                if expected_hash != actual_hash {
+                    return Err("Checksum verification failed".into());
+                }
             } else if expected_hash == actual_hash {
                 println!("OK Checksum verified for {}", binary_filename);
             } else {

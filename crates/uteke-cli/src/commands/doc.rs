@@ -139,8 +139,8 @@ pub(crate) fn run(
                             };
                             println!(
                                 "{prefix}{tree_char} {:<20} {:<30} v{}",
-                                &parent.slug[..parent.slug.len().min(20)],
-                                &parent.title[..parent.title.len().min(30)],
+                                output::char_prefix(&parent.slug, 20),
+                                output::char_prefix(&parent.title, 30),
                                 parent.version
                             );
                         }
@@ -159,10 +159,10 @@ pub(crate) fn run(
                         };
                         println!(
                             "  {:<20} {:<30} v{}  {}{}",
-                            &d.slug[..d.slug.len().min(20)],
-                            &d.title[..d.title.len().min(30)],
+                            output::char_prefix(&d.slug, 20),
+                            output::char_prefix(&d.title, 30),
                             d.version,
-                            &d.updated_at[..10],
+                            output::char_prefix(&d.updated_at, 10),
                             depth_indicator
                         );
                     }
@@ -186,10 +186,10 @@ pub(crate) fn run(
                 for d in &docs {
                     println!(
                         "  {:<20} {:<30} v{}  {}",
-                        &d.slug[..d.slug.len().min(20)],
-                        &d.title[..d.title.len().min(30)],
+                        output::char_prefix(&d.slug, 20),
+                        output::char_prefix(&d.title, 30),
                         d.version,
-                        &d.updated_at[..10]
+                        output::char_prefix(&d.updated_at, 10)
                     );
                 }
                 println!();
@@ -204,8 +204,12 @@ pub(crate) fn run(
                 .map_err(|e| format!("Failed to move document: {e}"))?;
             if cli.json {
                 println!(
-                    r#"{{"moved": "{id_or_slug}", "parent": "{}", "affected": {affected}}}"#,
-                    new_parent.unwrap_or("(root)")
+                    "{}",
+                    serde_json::json!({
+                        "moved": id_or_slug,
+                        "parent": new_parent.unwrap_or("(root)"),
+                        "affected": affected,
+                    })
                 );
             } else {
                 let dest = new_parent.unwrap_or("(root)");
@@ -260,8 +264,8 @@ pub(crate) fn run(
                     let indent = "  ".repeat(d.depth as usize);
                     println!(
                         "{indent}{:<20} {:<30} d{}",
-                        &d.slug[..d.slug.len().min(20)],
-                        &d.title[..d.title.len().min(30)],
+                        output::char_prefix(&d.slug, 20),
+                        output::char_prefix(&d.title, 30),
                         d.depth
                     );
                 }
@@ -289,19 +293,16 @@ pub(crate) fn run(
                     };
                     println!(
                         "  {:<20} {:<30} {:.3} {}",
-                        &r.document.slug[..r.document.slug.len().min(20)],
-                        &r.document.title[..r.document.title.len().min(30)],
+                        output::char_prefix(&r.document.slug, 20),
+                        output::char_prefix(&r.document.title, 30),
                         r.score,
                         depth_indicator
                     );
                     if !r.chunk_heading.is_empty() {
-                        println!(
-                            "    ↳ {}",
-                            &r.chunk_heading[..r.chunk_heading.len().min(60)]
-                        );
+                        println!("    ↳ {}", output::char_prefix(&r.chunk_heading, 60));
                     }
                     if !r.chunk_snippet.is_empty() {
-                        let snippet = &r.chunk_snippet[..r.chunk_snippet.len().min(80)];
+                        let snippet = output::char_prefix(&r.chunk_snippet, 80);
                         println!("    \"{}\"", snippet);
                     }
                 }
@@ -390,11 +391,13 @@ pub(crate) fn run(
 
                     if cli.json {
                         println!(
-                            r#"{{"slug": "{}", "title": "{}", "version": {}, "updated_fields": {}}}"#,
-                            d.slug,
-                            d.title,
-                            d.version,
-                            serde_json::to_string(&changed).unwrap_or_default()
+                            "{}",
+                            serde_json::json!({
+                                "slug": d.slug,
+                                "title": d.title,
+                                "version": d.version,
+                                "updated_fields": changed,
+                            })
                         );
                     } else {
                         println!("✓ Document '{id_or_slug}' updated (v{})", d.version);

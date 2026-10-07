@@ -715,9 +715,47 @@ impl Config {
             if aging.contains_key("max_age_days") {
                 self.aging.max_age_days = overlay.aging.max_age_days;
             }
+            if aging.contains_key("max_access_count") {
+                self.aging.max_access_count = overlay.aging.max_access_count;
+            }
             if aging.contains_key("max_cold_count") {
                 self.aging.max_cold_count = overlay.aging.max_cold_count;
             }
+        }
+
+        // Merge lifecycle section (#928): only keys explicitly present override.
+        if let Some(lc) = table.get("lifecycle").and_then(|v| v.as_table()) {
+            macro_rules! merge_lifecycle {
+                ($($key:ident),+ $(,)?) => {
+                    $(
+                        if lc.contains_key(stringify!($key)) {
+                            self.lifecycle.$key = overlay.lifecycle.$key.clone();
+                        }
+                    )+
+                };
+            }
+            merge_lifecycle!(
+                soft_delete_only,
+                auto_aging_enabled,
+                auto_aging_interval_hours,
+                min_age_days,
+                max_access_count,
+                max_deprecate_percent,
+                min_deprecate_per_cycle,
+                max_deprecate_per_cycle,
+                deprecated_ttl_days,
+                auto_prune_enabled,
+                dream_dedup_soft_delete,
+                dream_compact_soft_delete,
+            );
+        }
+
+        // Top-level switches.
+        if table.contains_key("update_check") {
+            self.update_check = overlay.update_check;
+        }
+        if table.contains_key("doctor_footer") {
+            self.doctor_footer = overlay.doctor_footer;
         }
 
         // Merge recall section
@@ -1706,6 +1744,43 @@ port = 1
         assert_eq!(merged.server.enabled, trusted.server.enabled);
         // ...while harmless tuning from the project file still applies.
         assert_eq!(merged.embedding.model, "evil-model");
+    }
+
+    #[test]
+    fn merge_applies_lifecycle_toplevel_and_aging_access_count() {
+        let toml = r#"
+update_check = false
+doctor_footer = false
+
+[aging]
+max_access_count = 7
+
+[lifecycle]
+soft_delete_only = false
+min_age_days = 11
+deprecated_ttl_days = 5
+"#;
+        let tmp = std::env::temp_dir().join("uteke_test_lifecycle_merge.toml");
+        std::fs::write(&tmp, toml).unwrap();
+        let defaults = Config::default();
+        let merged = Config::default().merge_from_file(&tmp);
+        std::fs::remove_file(&tmp).ok();
+
+        assert!(!merged.update_check);
+        assert!(!merged.doctor_footer);
+        assert_eq!(merged.aging.max_access_count, 7);
+        assert!(!merged.lifecycle.soft_delete_only);
+        assert_eq!(merged.lifecycle.min_age_days, 11);
+        assert_eq!(merged.lifecycle.deprecated_ttl_days, 5);
+        // Keys absent from the file keep their defaults.
+        assert_eq!(
+            merged.lifecycle.max_deprecate_per_cycle,
+            defaults.lifecycle.max_deprecate_per_cycle
+        );
+        assert_eq!(
+            merged.lifecycle.auto_aging_enabled,
+            defaults.lifecycle.auto_aging_enabled
+        );
     }
 
     #[test]

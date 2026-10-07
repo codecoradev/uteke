@@ -386,3 +386,30 @@ pub(crate) fn print_room_document_human(doc: &uteke_core::RoomDocument) {
         println!();
     }
 }
+
+/// First `n` characters of `s` (never splits a multibyte character).
+///
+/// Display truncation must not byte-slice user text: `&s[..n]` panics when
+/// `n` lands inside a multibyte UTF-8 sequence.
+pub(crate) fn char_prefix(s: &str, n: usize) -> &str {
+    s.char_indices().nth(n).map_or(s, |(i, _)| &s[..i])
+}
+
+#[cfg(test)]
+mod char_prefix_tests {
+    use super::char_prefix;
+
+    #[test]
+    fn ascii_and_short_strings() {
+        assert_eq!(char_prefix("abcdef", 3), "abc");
+        assert_eq!(char_prefix("ab", 5), "ab");
+        assert_eq!(char_prefix("", 3), "");
+    }
+
+    #[test]
+    fn multibyte_never_panics() {
+        // Each of these chars is 3 bytes; byte index 8 would be mid-char.
+        assert_eq!(char_prefix("日本語のタイトル", 4), "日本語の");
+        assert_eq!(char_prefix("héllo wörld", 5), "héllo");
+    }
+}
