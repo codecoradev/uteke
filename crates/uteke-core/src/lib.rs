@@ -3059,6 +3059,67 @@ mod tests {
         u.shutdown().unwrap();
     }
 
+    /// #1325: a crash between the index rename and the `.keys` rename leaves a
+    /// stale sidecar. Reopening must rebuild from SQLite so the newest memory
+    /// is still searchable, not silently drop it from the key map.
+    #[test]
+    #[serial_test::serial]
+    fn interrupted_save_pair_is_rebuilt_not_lost() {
+        let backends: Vec<&str> = [
+            ("usearch", cfg!(feature = "usearch")),
+            ("vecq", cfg!(feature = "vecq")),
+        ]
+        .into_iter()
+        .filter(|(_, on)| *on)
+        .map(|(n, _)| n)
+        .collect();
+        for name in backends {
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join("uteke.db");
+            unsafe { std::env::set_var("UTEKE_VECTOR_BACKEND", name) };
+
+            let mk = |i: usize| {
+                let mut v = vec![0.0f32; 768];
+                v[i] = 1.0;
+                v
+            };
+            let remember = |u: &Uteke, text: &str, i: usize| {
+                u.remember_precomputed(text, &[], None, None, "fact", "text", &mk(i))
+                    .unwrap()
+            };
+
+            let u = Uteke::open(&db).unwrap();
+            remember(&u, "first interrupted save probe", 0);
+            remember(&u, "second interrupted save probe", 1);
+            u.shutdown().unwrap();
+            drop(u);
+            let keys = dir.path().join("uteke_index.keys");
+            let keys = if keys.exists() {
+                keys
+            } else {
+                dir.path().join(format!("uteke_index.{}.keys", name))
+            };
+            let stale = std::fs::read(&keys).unwrap();
+
+            let u = Uteke::open(&db).unwrap();
+            let newest = remember(&u, "third interrupted save probe", 2);
+            u.shutdown().unwrap();
+            drop(u);
+            // Crash after the index rename, before the sidecar rename.
+            std::fs::write(&keys, stale).unwrap();
+
+            let u = Uteke::open(&db).unwrap();
+            let hits = u.index.read().unwrap().search(&mk(2), 3, 50);
+            assert!(
+                hits.iter().any(|(id, _)| *id == newest),
+                "{name}: newest memory lost after interrupted save: {hits:?}"
+            );
+            u.shutdown().unwrap();
+            drop(u);
+        }
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+    }
+
     /// #1168: invalid / not-compiled-in UTEKE_VECTOR_BACKEND falls back to the
     /// default engine without failing the open.
     #[test]
