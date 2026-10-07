@@ -1088,6 +1088,98 @@ mod tests {
         doc
     }
 
+    fn fts_titles(store: &Store, query: &str) -> Vec<String> {
+        store
+            .search_documents_fts(query, 10)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.title)
+            .collect()
+    }
+
+    /// #1349: updating a document's title (partial update and upsert) must work
+    /// and keep the external-content FTS index in step.
+    #[test]
+    fn test_document_title_change_keeps_fts_in_sync() {
+        let store = Store::open(":memory:").unwrap();
+        let mut doc = make_doc("doc-t", "fts-title", "Zeppelin Handbook");
+        doc.content = "body about airships".to_string();
+        store.upsert_document(&doc).unwrap();
+        assert_eq!(fts_titles(&store, "zeppelin"), vec!["Zeppelin Handbook"]);
+
+        // Partial update with a new title.
+        store
+            .update_document("doc-t", Some("Dirigible Handbook"), None, None, None)
+            .unwrap()
+            .expect("document exists");
+        assert!(
+            fts_titles(&store, "zeppelin").is_empty(),
+            "old title gone from FTS"
+        );
+        assert_eq!(fts_titles(&store, "dirigible"), vec!["Dirigible Handbook"]);
+
+        // Upsert on the same slug with yet another title and new content.
+        let mut again = make_doc("doc-t", "fts-title", "Blimp Handbook");
+        again.content = "body about balloons".to_string();
+        store.upsert_document(&again).unwrap();
+        assert!(fts_titles(&store, "dirigible").is_empty());
+        assert_eq!(fts_titles(&store, "blimp"), vec!["Blimp Handbook"]);
+        assert_eq!(fts_titles(&store, "balloons"), vec!["Blimp Handbook"]);
+    }
+
+    /// #1349: deleting a document must remove it from FTS and must not leave
+    /// the index in a state where later writes fail.
+    #[test]
+    fn test_document_delete_removes_fts_entry() {
+        let store = Store::open(":memory:").unwrap();
+        let mut doc = make_doc("doc-d", "fts-delete", "Gazebo Plans");
+        doc.content = "plans for a gazebo".to_string();
+        store.upsert_document(&doc).unwrap();
+        assert_eq!(fts_titles(&store, "gazebo").len(), 1);
+
+        store.delete_document("doc-d").unwrap();
+        assert!(fts_titles(&store, "gazebo").is_empty(), "no stale FTS hit");
+
+        // The slug can be reused and updated afterwards.
+        let again = make_doc("doc-d2", "fts-delete", "Pergola Plans");
+        store.upsert_document(&again).unwrap();
+        store
+            .update_document("doc-d2", Some("Pergola Plans v2"), None, None, None)
+            .unwrap();
+        assert_eq!(fts_titles(&store, "pergola"), vec!["Pergola Plans v2"]);
+    }
+
+    /// #1349: reopening a database that still has the old triggers heals it.
+    #[test]
+    fn test_reopening_store_heals_old_documents_fts_triggers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("heal.db");
+        {
+            let store = Store::open(path.to_str().unwrap()).unwrap();
+            store
+                .conn
+                .execute_batch(
+                    "DROP TRIGGER documents_fts_update;
+                     DROP TRIGGER documents_fts_delete;
+                     CREATE TRIGGER documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug, content = new.content WHERE rowid = new.rowid; END;
+                     CREATE TRIGGER documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        for name in ["documents_fts_update", "documents_fts_delete"] {
+            let sql: String = store
+                .conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(sql.contains("'delete'"), "{name} healed on open: {sql}");
+        }
+    }
+
     #[test]
     fn test_document_crud() {
         let store = open_test_store();

@@ -4005,3 +4005,108 @@ mod uuidv7_tests {
         assert_eq!(v7.get_version_num(), 7);
     }
 }
+
+#[cfg(test)]
+mod documents_fts_heal_tests {
+    //! #1349 — databases created with the old plain-UPDATE/DELETE
+    //! `documents_fts_*` triggers must heal and stop failing title changes.
+    use super::*;
+    use crate::embed::Embedder;
+
+    struct FixedEmbedder;
+    impl Embedder for FixedEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            Ok(vec![0.1, 0.2, 0.3, 0.4])
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "fixed-test-embedder"
+        }
+    }
+
+    fn open() -> Uteke {
+        let (_db, store) = Uteke::open_store(":memory:").expect("open_store");
+        Uteke::finish_open_full(
+            store,
+            Some(Box::new(FixedEmbedder)),
+            "test-fixed".to_string(),
+            TierConfig::default(),
+            RecallConfig::default(),
+            EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    const BODY: &str = "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n";
+
+    fn title_hits(u: &Uteke, q: &str) -> Vec<String> {
+        u.store
+            .search_documents_fts(q, 10)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.title)
+            .collect()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn title_change_works_and_fts_follows() {
+        let u = open();
+        u.doc_upsert("doc-t", "Zeppelin Guide", BODY, &[], None)
+            .unwrap();
+        assert_eq!(title_hits(&u, "zeppelin"), vec!["Zeppelin Guide"]);
+
+        u.doc_update("doc-t", Some("Dirigible Guide"), None, None, None)
+            .unwrap()
+            .expect("document exists");
+        u.doc_upsert("doc-t", "Blimp Guide", "# One\nfirst\n", &[], None)
+            .unwrap();
+
+        assert!(title_hits(&u, "zeppelin").is_empty());
+        assert!(title_hits(&u, "dirigible").is_empty());
+        assert_eq!(title_hits(&u, "blimp"), vec!["Blimp Guide"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn old_triggers_are_healed() {
+        let u = open();
+        // Recreate a pre-fix database: plain UPDATE / DELETE on the
+        // external-content FTS table.
+        u.store
+            .conn
+            .execute_batch(
+                "DROP TRIGGER documents_fts_update;
+                 DROP TRIGGER documents_fts_delete;
+                 CREATE TRIGGER documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug, content = new.content WHERE rowid = new.rowid; END;
+                 CREATE TRIGGER documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END;",
+            )
+            .unwrap();
+        u.doc_upsert("doc-h", "Original Title", BODY, &[], None)
+            .unwrap();
+        let broken = u.doc_update("doc-h", Some("Changed Title"), None, None, None);
+        assert!(
+            broken.is_err() || !title_hits(&u, "original").is_empty(),
+            "fixture must reproduce the bug (error, or a stale FTS entry) before healing"
+        );
+
+        // Healing replaces the triggers and rebuilds the FTS index.
+        u.store.heal_documents_fts_triggers().unwrap();
+        u.doc_update("doc-h", Some("Changed Title"), None, None, None)
+            .unwrap()
+            .expect("document exists");
+        assert_eq!(title_hits(&u, "changed"), vec!["Changed Title"]);
+        assert!(
+            title_hits(&u, "original").is_empty(),
+            "stale pre-fix FTS entries are gone after the rebuild"
+        );
+        u.store.heal_documents_fts_triggers().unwrap(); // idempotent
+    }
+}
