@@ -613,9 +613,15 @@ impl Store {
         let mut neighbors_stmt = self
             .conn
             .prepare(
-                "SELECT target_id FROM memory_edges WHERE source_id = ?1
+                // Neighbours must be live: a deprecated memory is neither
+                // returned nor traversed through (soft delete keeps its edges).
+                "SELECT e.target_id FROM memory_edges e
+                 JOIN memories m ON m.id = e.target_id AND m.deprecated = 0
+                 WHERE e.source_id = ?1
                  UNION
-                 SELECT source_id FROM memory_edges WHERE target_id = ?1",
+                 SELECT e.source_id FROM memory_edges e
+                 JOIN memories m ON m.id = e.source_id AND m.deprecated = 0
+                 WHERE e.target_id = ?1",
             )
             .map_err(|e| Error::db("prepare bfs neighbors", e))?;
 
@@ -2580,5 +2586,55 @@ mod resupersession_ledger_tests {
 
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod deprecated_edge_reader_tests {
+    //! #1367 — soft delete keeps `memory_edges` rows; readers that feed
+    //! ranking/traversal must ignore the retired side, while the audit view
+    //! (`edges_for`, the supersession ledger) keeps showing them.
+    use crate::Uteke;
+
+    fn mem(u: &Uteke, text: &str, k: usize) -> String {
+        // Orthogonal vectors: no auto-created similar_to edges, so the chain
+        // below consists only of the explicit edges the test adds.
+        let mut v = vec![0.0_f32; 768];
+        v[k] = 1.0;
+        u.remember_precomputed(text, &[], None, Some("d"), "fact", "text", &v)
+            .unwrap()
+    }
+
+    #[test]
+    fn bfs_skips_deprecated_memories_but_edges_for_keeps_history() {
+        let u = Uteke::open(":memory:").unwrap();
+        let a = mem(&u, "a", 1);
+        let b = mem(&u, "b", 2);
+        let c = mem(&u, "c", 3);
+        // chain a - b - c with an explicit relation type that is not auto-linked
+        u.link_memories(&a, &b, "references").unwrap();
+        u.link_memories(&b, &c, "references").unwrap();
+        u.store.deprecate(&b).unwrap();
+
+        let related: Vec<String> = u
+            .related_via_edges(&a, 3)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert!(!related.contains(&b), "deprecated b must not be returned");
+        assert!(
+            !related.contains(&c),
+            "c is only reachable through the deprecated b"
+        );
+
+        // The audit view still lists the edge to the deprecated memory.
+        let outgoing = u.edges_for(&a).unwrap().outgoing;
+        assert!(
+            outgoing
+                .iter()
+                .any(|e| e.target_id == b && e.edge_type == "references"),
+            "history must stay visible: {outgoing:?}"
+        );
     }
 }

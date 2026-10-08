@@ -117,9 +117,14 @@ pub fn compute_graph_signals(
     let placeholders = std::iter::repeat_n("?", unique_ids.len())
         .collect::<Vec<_>>()
         .join(", ");
+    // Only edges between LIVE memories count. soft_delete_only is the default,
+    // so forget/deprecate leaves edges pointing at deprecated memories behind;
+    // counting them would boost a result for links to things the user retired.
     let sql = format!(
-        "SELECT source_id, target_id, edge_type FROM memory_edges
-         WHERE source_id IN ({src}) OR target_id IN ({tgt})",
+        "SELECT e.source_id, e.target_id, e.edge_type FROM memory_edges e
+         JOIN memories s ON s.id = e.source_id AND s.deprecated = 0
+         JOIN memories t ON t.id = e.target_id AND t.deprecated = 0
+         WHERE e.source_id IN ({src}) OR e.target_id IN ({tgt})",
         src = placeholders,
         tgt = placeholders,
     );
@@ -255,6 +260,18 @@ mod tests {
     /// list of `(source, target, edge_type)` tuples.
     fn db_with_edges(edges: &[(&str, &str, &str)]) -> Connection {
         let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE memories (id TEXT PRIMARY KEY, deprecated INTEGER NOT NULL DEFAULT 0)",
+            [],
+        )
+        .unwrap();
+        // Every endpoint is a live memory unless a test deprecates it.
+        for (s, t, _) in edges {
+            for id in [s, t] {
+                conn.execute("INSERT OR IGNORE INTO memories (id) VALUES (?1)", [id])
+                    .unwrap();
+            }
+        }
         conn.execute(
             "CREATE TABLE memory_edges (
                 source_id TEXT NOT NULL,
@@ -491,5 +508,25 @@ mod tests {
             "compute_graph_signals took {:?}, expected < 50ms",
             elapsed
         );
+    }
+
+    #[test]
+    fn edges_to_deprecated_memories_do_not_count() {
+        // A has edges to B (live), C (deprecated) and D → A from a deprecated D.
+        let conn = db_with_edges(&[
+            ("A", "B", "references"),
+            ("A", "C", "references"),
+            ("D", "A", "tagged_as"),
+        ]);
+        conn.execute(
+            "UPDATE memories SET deprecated = 1 WHERE id IN ('C', 'D')",
+            [],
+        )
+        .unwrap();
+        let sigs = compute_graph_signals(&conn, &["A".to_string()]).unwrap();
+        let a = sigs.get("A").unwrap();
+        assert_eq!(a.edge_count, 1, "only the edge to live B counts");
+        assert_eq!(a.outgoing_count, 1);
+        assert_eq!(a.incoming_count, 0);
     }
 }
