@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.20.0] - 2026-10-08
+
+Minor release. Theme: **one write policy for the vector index, atomic documents,
+shared config resolution, and a security/robustness sweep** — every index
+mutation now goes through a single module, document upserts are
+embed-then-commit, `uteke.toml` is resolved by one implementation for the CLI and
+the server, `GET /graph` finally serves the data `remember` writes, and the
+validated findings of the v0.19.1 review (#1319) are fixed. 29 PRs since v0.19.1.
+
+### ⚠️ Behavior Change
+
+- **List `limit` is capped at 1000** on `/list`, `/recent`, `/contradictions`, `/doc/list` and deprecated listings (#1321); `/extract` `max_facts` is capped at 100. Defaults are unchanged.
+- **CORS is off by default** (a wildcard `*` is opt-in), 500 responses carry a generic body, and request query strings are no longer logged (#1321).
+- **Project-local `.uteke/uteke.toml` can no longer set credentials, endpoints or `[server]`** (`embedding.{backend,api_key,base_url,endpoint_path}`, `embed_fallback.*` and `extraction.*` credentials/endpoints, the whole `[server]` section); set them in the global config, or `UTEKE_TRUST_PROJECT_CONFIG=1` to trust the file (#1321, #1354). The server now applies the same rule and merges project sections per key instead of replacing whole sections.
+- **`GET /graph` node ids are memory ids** (they were graph-node ids), edges are the live `memory_edges` plus explicit graph edges, and the response gains `node_id`/`limit` query parameters and a `truncated` flag; edges also carry `source`/`target` (#1366, #1370). `POST /graph/edge` still returns the node ids it created and both id kinds are accepted.
+- **Document upsert/update is atomic**: if embedding fails (or no embedder is available) nothing is written, instead of leaving a half-written document (#1350). Re-parenting through `doc upsert` now moves the whole subtree and rejects cycles and results deeper than 10 levels (#1378).
+- **Bulk "cold" forget skips pinned memories** (#1333).
+- **List/search/`list_at_time` payloads carry the stored `slug`, `source`, `source_type`, `author_type`, `deprecated_at`** instead of defaults (#1346, #1333). Shape unchanged.
+- **Auto-created `similar_to` / `possible_duplicate` links** no longer point at deprecated memories and small namespaces inside a large index now get their own links (#1371). The default `fusion` recall does not read edges; LongMemEval fast50 (default strategy) is unchanged: recall@5 0.980, recall@10 1.000.
+
+### Security
+
+- **Host header validation blocks DNS rebinding** (#1326, #1360).
+- **`/import` size limit, `/mcp` body limit and CORS, and `resolve_id` hardened** (#1328, #1359): the import cap and its 413 message agree with the body limit, an oversized `/mcp` body returns 413, and ids accept only hex digits and dashes (no LIKE wildcards in the prefix scan).
+- **A lock timeout no longer deletes the index files of another process; the server releases its request slot on panic; the CLI sends `UTEKE_AUTH_TOKEN` to the local server** (#1320).
+- **LIKE wildcards in document paths are escaped** (#1378): `_` and `%` in a stored path used to match unrelated documents, so moving or deleting `/my_doc/` could rewrite or remove `/myxdoc/...`.
+
+### Added
+
+- **`full_ids` option for MCP `uteke_list`, `uteke_recall` and `uteke_room_memories`** (#1357, #1358): prints full UUIDs instead of the 8-character prefix, which is ambiguous for UUIDv7 ids written within ~65 s.
+- **`GET /graph?node_id=&limit=`** and an MCP `uteke_graph` that lists the latest edges and takes `limit` (#1370).
+- **Vector index sidecar consistency check on load** (#1325, #1362): the `.keys` file carries a digest and row count of the index; a mismatch (crash between the two renames, missing sidecar) rebuilds the index from SQLite.
+- **`doc export` writes every document** to `--output` and honours the namespace; JSON export is an array of full documents (#1376).
+- **Namespace/room/tag conventions in the bundled skill** (#1356) and a refreshed skill with a command-coverage test (#1329).
+- Configuration docs: what a project config may not set.
+
+### Changed
+
+- **`index_sync`: one module owns every vector index write** (#1340, #1347, #1348): a single retry/persist policy, deterministic dimension errors are not retried, and an outcome that says what actually landed. 60 hand-written call sites across 7 modules went away.
+- **Index saves are batched** (#1322, #1363): a save happens after 64 mutations or 2 s, with flushes on shutdown and drop, instead of rewriting the whole index on every write.
+- **vecq index is compacted when dead rows pass 25 %** (#1324, #1364).
+- **The embedder lock is released between document chunks** (#1323, #1361).
+- **`remember` no longer scans the namespace** for dedup and auto-linking (one query over the candidates) and no longer holds the index write lock while wiring edges (#1368, #1371).
+- **`uteke.toml` is resolved by one module for the CLI and the server** (#1342, #1354): per-key merge, one untrusted-key policy, per-layer validation; adding a config key now needs only a struct field.
+- **All `memory` SELECTs share one column list** with the row decoder (#1339, #1346).
+- Edges to deprecated memories no longer count in graph rerank or edge traversal (#1367, #1373).
+
+### Fixed
+
+- **FTS5 results had shifted metadata columns** (#1333): `slug`, `source`, `source_type`, `author_type`, `deprecated_at` were misread on hybrid recall and `recall_explain`.
+- **The exclusive index lock was lost after the first save on Unix** (#1333): the flock stayed on the replaced inode.
+- **`doc_search` paired chunk scores with the wrong rows** when a chunk row was missing (#1333); `resolve_db_path` no longer `chmod`s a directory it did not create (#1333).
+- **Changing a document title failed with "database corruption"** or left stale tokens in the search index (#1349, #1351): the `documents_fts` update/delete triggers now use the FTS5 `'delete'` command; existing stores are healed and the index rebuilt on open.
+- **MCP `uteke_graph_add_edge` and `dream` contradiction edges violated the graph FK** (#1365, #1370).
+- **Documents**: `has_children` stays in sync on delete and re-parent, `move` of a legacy row with an empty path no longer rewrites every document (#1375); a re-parenting upsert carries its descendants (#1377, #1378).
+- **`tags rename` onto an existing tag duplicated it**, `VectorIndex::build` on an empty store reset the dimension to 768, and `recompute_importance` loaded every embedding and committed per row (#1375).
+- **CLI**: `verify-checksums --json` exits 1 on a mismatch and matches the file name exactly; `[lifecycle]`, `[aging] max_access_count`, `update_check` and `doctor_footer` in config files are honoured; non-ASCII titles no longer panic; `doc move/update --json` is valid JSON (#1334, #1376).
+- **CLI recall flags** the server cannot honour fall back to the local store instead of being dropped; `list --entity/--category` paginates the matches; `doc list --tree` prints descendants; `upgrade` verifies every new binary before installing any; the batch-import bail-out and `onboard` TOML escaping and legacy `migrate_content` are fixed (#1376).
+- **`uteke upgrade` verification no longer fails with "Text file busy"** on a freshly written binary (#1338).
+
+### Docs
+
+- Benchmark tooling: `make_fast_eval.py` finds its id list, `modal_fanout.py` takes `LMEVAL_MODEL_DIR`/`UTEKE_RELEASE`, dataset size corrected (#1374).
+
+### Dependencies
+
+- uuid 1.27.0, usearch 2.26.3.
+
+---
 ## [0.19.1] - 2026-10-05
 
 Patch release. Theme: **upgrade-path reliability** — `uteke upgrade` and the
