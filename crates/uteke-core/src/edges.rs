@@ -2739,7 +2739,10 @@ mod auto_link_hot_path_tests {
         // A deprecated memory still in the index is not a dedup target (#1210).
         u.store.deprecate(&first).unwrap();
         assert_eq!(u.check_duplicate(&v, Some("ns-a")).unwrap(), None);
+    }
+}
 
+#[cfg(test)]
 mod deprecated_edge_reader_tests {
     //! #1367 — soft delete keeps `memory_edges` rows; readers that feed
     //! ranking/traversal must ignore the retired side, while the audit view
