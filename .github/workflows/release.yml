@@ -508,12 +508,55 @@ jobs:
             --out tap/Formula/uteke.rb
           cat tap/Formula/uteke.rb
 
+      - name: Verify formula checksums against the release
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Every url/sha256 pair in the generated formula must point at THIS
+          # release and carry the SHA256 published in checksums-sha256.txt, so the
+          # PR description's "verified" claim is checked, not asserted.
+          python3 - <<'PY'
+          import os, re, sys
+
+          tag = os.environ["TAG"]
+          formula = open("tap/Formula/uteke.rb").read()
+          sums = {}
+          for line in open("checksums-sha256.txt"):
+              parts = line.split()
+              if len(parts) == 2:
+                  sums[parts[1].lstrip("*")] = parts[0]
+
+          pairs = re.findall(r'url "([^"]+)"\s*\n\s*sha256 "([0-9a-f]{64})"', formula)
+          if not pairs:
+              sys.exit("::error::no url/sha256 pairs found in the generated formula")
+          bad = 0
+          for url, sha in pairs:
+              name = url.rsplit("/", 1)[-1]
+              if f"/download/{tag}/" not in url:
+                  print(f"::error::{name}: URL does not point at release {tag}")
+                  bad += 1
+              elif name not in sums:
+                  print(f"::error::{name} is not listed in checksums-sha256.txt")
+                  bad += 1
+              elif sums[name] != sha:
+                  print(f"::error::{name}: formula has {sha}, release publishes {sums[name]}")
+                  bad += 1
+              else:
+                  print(f"ok  {name}")
+          sys.exit(1 if bad else 0)
+          PY
+
       - name: Create update branch and pull request
         working-directory: tap
         env:
           VERSION: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
+          # The tap enforces Conventional Commits on the PR title, a branch prefix
+          # and "## What / ## Why / ## Testing" in the body (pr-checks.yml), so the
+          # PR is generated to pass them without manual edits.
+          TITLE="chore: update formula for uteke ${VERSION#v}"
           git config user.name "uteke-release-bot"
           git config user.email "bot@codecora.dev"
           BRANCH="chore/formula-${VERSION}"
@@ -523,14 +566,26 @@ jobs:
             echo "Formula unchanged — nothing to update."
             exit 0
           fi
-          git commit --no-verify -m "uteke ${VERSION}: update formula (automated from release ${VERSION})"
+          git commit --no-verify -m "$TITLE"
           git push origin "$BRANCH"
+          cat > "$RUNNER_TEMP/pr-body.md" <<EOF
+          ## What
+          Update Formula/uteke.rb for uteke ${VERSION}: the release URLs and SHA256 values for every supported platform (macOS arm64, Linux arm64, Linux x86_64) and the version in the unsupported-platform messages.
+
+          ## Why
+          Automated formula update from the uteke release workflow: https://github.com/${REPO}/releases/tag/${VERSION}
+
+          ## Testing
+          - Every SHA256 in this formula was re-verified against checksums-sha256.txt of the published ${VERSION} release before this PR was opened (the job fails otherwise).
+          - CI on this PR: brew audit (macOS), brew install + test on Linux x86_64 and macOS ARM.
+          - Merge manually once the checks pass (no auto-merge). Cora may return an empty result on formula-only diffs; accept it only after confirming the checksum verification above.
+          EOF
           gh pr create \
             --repo codecoradev/homebrew-tap \
             --base main \
             --head "$BRANCH" \
-            --title "uteke ${VERSION}: update formula" \
-            --body "Automated formula update from uteke release ${VERSION}.\n\nChecksums verified against the published checksums-sha256.txt. CI (brew audit + brew test on macOS ARM and Linux) must pass before merge."
+            --title "$TITLE" \
+            --body-file "$RUNNER_TEMP/pr-body.md"
           echo "PR created for ${VERSION}"
 
 
