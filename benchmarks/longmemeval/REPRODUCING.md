@@ -126,7 +126,7 @@ preemption). Same harness, bigger loop:
 ```bash
 cd benchmarks/longmemeval
 
-# dataset (full S split, ~50 MB)
+# dataset (full S split, ~277 MB)
 curl -L -o data/longmemeval_s_cleaned.json \
   https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json
 
@@ -134,6 +134,12 @@ curl -L -o data/longmemeval_s_cleaned.json \
 # do not skip this — an untagged image silently measures whatever it was built with)
 export UTEKE_GIT_REF=<commit-sha-or-tag>     # e.g. the v0.19.0 release tag
 export MODAL_TOKEN_ID=... MODAL_TOKEN_SECRET=...
+
+# modal_fanout.py bakes the embedding model from a local directory (default is the
+# Hermes box path) and reuses libonnxruntime from a published release; override both
+# on any other machine:
+export LMEVAL_MODEL_DIR=$HOME/.codecora/uteke/models/embeddinggemma-q4
+export UTEKE_RELEASE=v0.19.1          # release whose libonnxruntime is reused
 
 modal run scripts/modal_fanout.py --strategy default --num-shards 10
 
