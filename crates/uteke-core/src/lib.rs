@@ -22,6 +22,7 @@ mod error;
 pub mod extraction;
 pub mod graph;
 pub mod graph_rerank;
+pub mod graph_view;
 pub mod guide;
 mod import_export;
 mod index_sync;

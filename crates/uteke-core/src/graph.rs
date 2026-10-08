@@ -395,6 +395,39 @@ impl<'a> GraphStore<'a> {
         Ok(row.filter(|s| !s.trim().is_empty()))
     }
 
+    /// Create an edge between two **memories** (#1365).
+    ///
+    /// `graph_edges.source_id/target_id` reference `graph_nodes(id)`, so raw
+    /// memory ids violate the FK (and fail with "FOREIGN KEY constraint
+    /// failed"). This ensures a node for each memory first, exactly like the
+    /// HTTP `POST /graph/edge` handler does (#1180).
+    pub fn add_edge_for_memories(
+        &self,
+        source_memory_id: &str,
+        target_memory_id: &str,
+        relation: &str,
+        weight: f64,
+    ) -> Result<(), Error> {
+        let src = self.ensure_node_for_memory(source_memory_id)?;
+        let tgt = self.ensure_node_for_memory(target_memory_id)?;
+        self.add_edge(&src, &tgt, relation, weight)
+    }
+
+    /// Remove the edge between two ids that may each be a memory id or a
+    /// graph node id. Returns `false` when either side or the edge is unknown.
+    pub fn remove_edge_between(&self, a: &str, b: &str) -> Result<bool, Error> {
+        let resolve = |id: &str| -> Result<Option<String>, Error> {
+            if let Some(nid) = self.node_id_for_memory(id)? {
+                return Ok(Some(nid));
+            }
+            Ok(self.get_node(id)?.map(|n| n.id))
+        };
+        match (resolve(a)?, resolve(b)?) {
+            (Some(src), Some(tgt)) => self.remove_edge(&src, &tgt),
+            _ => Ok(false),
+        }
+    }
+
     /// Create an edge between two nodes. Ignores if edge already exists (INSERT OR IGNORE).
     pub fn add_edge(
         &self,

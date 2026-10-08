@@ -1117,7 +1117,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Graph Visualization (#408) ───────────────────────────────────
         (Method::Get, "/graph") => {
             let ns = parse_query_namespace(&path);
-            match uteke.graph_data(ns.as_deref()) {
+            let query = path.split('?').nth(1).unwrap_or("");
+            // `node_id` = memory id whose neighbourhood to return (viewers);
+            // `limit` bounds the number of edges (default 500, max 5000).
+            let node_id = parse_query_param(query, "node_id").filter(|s| !s.is_empty());
+            let limit = parse_query_param(query, "limit")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(uteke_core::graph_view::GRAPH_VIEW_DEFAULT_LIMIT);
+            match uteke.graph_view(ns.as_deref(), node_id.as_deref(), limit) {
                 Ok(data) => ctx.ok_response_for(req, &data),
                 Err(e) => {
                     error!("Graph data error: {e}");
@@ -3367,34 +3374,73 @@ mod room_recall_at_tests {
         let (status, resp) = app.add_edge(&id1, &id2);
         assert_eq!(status, 200, "{resp}");
 
-        let src_node = resp["source_node"].as_str().expect("source_node id");
-        let tgt_node = resp["target_node"].as_str().expect("target_node id");
+        // POST still reports the graph-node ids it created (#1180)...
+        assert!(resp["source_node"].as_str().is_some());
+        assert!(resp["target_node"].as_str().is_some());
 
-        // The resolved nodes must exist in GET /graph and carry the memory
-        // link, so visualization can map edges back to memories.
+        // ...but GET /graph keys nodes by MEMORY id (#1366) so a viewer can
+        // open them, and keeps `memory_id` for clients that map back.
         let (_, graph) = app.call(Method::Get, "/graph", None);
         let nodes = graph["nodes"].as_array().expect("nodes array");
-        assert!(
-            nodes.iter().any(|n| n["id"] == serde_json::json!(src_node)
-                && n["memory_id"] == serde_json::json!(id1)),
-            "source node must link back to memory {id1}: {graph}"
-        );
-        assert!(
-            nodes.iter().any(|n| n["id"] == serde_json::json!(tgt_node)
-                && n["memory_id"] == serde_json::json!(id2)),
-            "target node must link back to memory {id2}: {graph}"
-        );
+        for (id, text) in [(&id1, "alpha memory"), (&id2, "beta memory")] {
+            assert!(
+                nodes.iter().any(|n| n["id"] == serde_json::json!(id)
+                    && n["memory_id"] == serde_json::json!(id)
+                    && n["label"].as_str().is_some_and(|l| l.starts_with(text))),
+                "node for memory {id} missing: {graph}"
+            );
+        }
 
-        // The edge itself must be visible in the graph payload.
+        // The edge is visible with both long and short endpoint names.
         let edges = graph["edges"].as_array().expect("edges array");
         assert!(
             edges
                 .iter()
-                .any(|e| e["source_id"] == serde_json::json!(src_node)
-                    && e["target_id"] == serde_json::json!(tgt_node)
+                .any(|e| e["source_id"] == serde_json::json!(id1)
+                    && e["target_id"] == serde_json::json!(id2)
+                    && e["source"] == serde_json::json!(id1)
+                    && e["target"] == serde_json::json!(id2)
                     && e["relation"] == serde_json::json!("related")),
             "edge must appear in GET /graph: {graph}"
         );
+        assert_eq!(graph["truncated"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn graph_node_id_and_limit_query_params() {
+        let app = GraphEdgeApp::new();
+        let a = app.remember("hub memory");
+        let b = app.remember("spoke one");
+        let c = app.remember("spoke two");
+        let d = app.remember("elsewhere one");
+        let e = app.remember("elsewhere two");
+        for (s, t) in [(&a, &b), (&a, &c), (&d, &e)] {
+            let (status, resp) = app.add_edge(s, t);
+            assert_eq!(status, 200, "{resp}");
+        }
+
+        let hood_url = format!("/graph?node_id={a}");
+        let (_, hood) = app.call(Method::Get, &hood_url, None);
+        let touching: Vec<&serde_json::Value> = hood["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["relation"] == serde_json::json!("related"))
+            .collect();
+        assert!(
+            touching
+                .iter()
+                .all(|e| e["source"] == serde_json::json!(a) || e["target"] == serde_json::json!(a)),
+            "node_id must restrict to that memory's edges: {hood}"
+        );
+        assert!(touching.len() >= 2, "{hood}");
+
+        // URL built separately so the api_registry route scanner does not
+        // mistake this test call for a handler route arm.
+        let capped_url = "/graph?limit=1";
+        let (_, capped) = app.call(Method::Get, capped_url, None);
+        assert_eq!(capped["edges"].as_array().unwrap().len(), 1, "{capped}");
+        assert_eq!(capped["truncated"], serde_json::json!(true));
     }
 
     #[test]

@@ -676,11 +676,12 @@ fn tool_doc_move() -> Value {
 fn tool_graph() -> Value {
     serde_json::json!({
         "name": "uteke_graph",
-        "description": "Get knowledge graph data (nodes + edges + stats) for visualization.",
+        "description": "Get the memory graph: nodes (live memories), edges (auto-links, supersession, explicit edges), stats, and the most recent edges.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (optional)" }
+                "namespace": { "type": "string", "description": "Filter by namespace (optional)" },
+                "limit": { "type": "integer", "description": "Max edges (default 500, max 5000)" }
             }
         }
     })
@@ -1864,17 +1865,44 @@ fn exec_doc_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
+    let limit = args["limit"]
+        .as_u64()
+        .map(|v| v as usize)
+        .unwrap_or(uteke_core::graph_view::GRAPH_VIEW_DEFAULT_LIMIT);
 
-    let data = uteke
-        .graph_data(namespace)
+    let view = uteke
+        .graph_view(namespace, None, limit)
         .map_err(|e| format!("Failed: {e}"))?;
 
-    let text = format!(
-        "Graph: {} nodes, {} edges, {} relation types",
-        data.nodes.len(),
-        data.edges.len(),
-        data.stats.relation_types.len()
+    let mut text = format!(
+        "Graph: {} nodes, {} edges, {} relation types{}",
+        view.stats.node_count,
+        view.stats.edge_count,
+        view.stats.relation_types.len(),
+        if view.truncated {
+            " (truncated; raise 'limit')"
+        } else {
+            ""
+        }
     );
+    // Show the most recent edges so the agent can actually use the graph.
+    let label: std::collections::HashMap<&str, &str> = view
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n.label.as_str()))
+        .collect();
+    for e in view.edges.iter().take(15) {
+        text.push_str(&format!(
+            "\n- {} -[{}]-> {}",
+            label
+                .get(e.source_id.as_str())
+                .unwrap_or(&e.source_id.as_str()),
+            e.relation,
+            label
+                .get(e.target_id.as_str())
+                .unwrap_or(&e.target_id.as_str())
+        ));
+    }
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -1933,7 +1961,7 @@ fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
 
     let conn = uteke.graph_store();
     let gs = uteke_core::graph::GraphStore::new(conn);
-    gs.add_edge(&source, &target, edge_type, weight)
+    gs.add_edge_for_memories(&source, &target, edge_type, weight)
         .map_err(|e| format!("Failed: {e}"))?;
 
     Ok(ToolResult {
@@ -1954,7 +1982,7 @@ fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
     let conn = uteke.graph_store();
     let gs = uteke_core::graph::GraphStore::new(conn);
     let removed = gs
-        .remove_edge(&source, &target)
+        .remove_edge_between(&source, &target)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if removed {
