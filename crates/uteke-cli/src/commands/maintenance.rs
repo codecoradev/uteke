@@ -721,9 +721,12 @@ pub(crate) fn run_import_batch(
         }
         result.skipped_files = memory_files.len();
     } else if !memory_files.is_empty() {
+        // Counted over THIS loop only: `result.imported`/`result.errors` also
+        // include the documents imported above, so once any document succeeded
+        // the old `imported == 0` guard could never fire (#1332).
+        let mut bail = ExtractionBail::default();
         for (i, path) in memory_files.iter().enumerate() {
-            // Bail after 5 consecutive errors with zero success
-            if result.errors > 5 && result.imported == 0 {
+            if bail.should_stop() {
                 eprintln!("\nStopping: too many consecutive errors. Check your extraction config.");
                 break;
             }
@@ -732,6 +735,7 @@ pub(crate) fn run_import_batch(
                 Ok(c) => c,
                 Err(e) => {
                     result.errors += 1;
+                    bail.record(false);
                     if !cli.json {
                         println!("  ✗ [read] {} — {}", path.display(), e);
                     }
@@ -747,6 +751,7 @@ pub(crate) fn run_import_batch(
 
             match import_with_extraction(uteke, &content, &tag_refs, ns, &extract_opts) {
                 Ok(import_result) => {
+                    bail.record(true);
                     result.total_items += import_result.imported;
                     result.imported += 1;
                     result.skipped_facts += import_result.skipped;
@@ -762,6 +767,7 @@ pub(crate) fn run_import_batch(
                 }
                 Err(e) => {
                     result.errors += 1;
+                    bail.record(false);
                     if !cli.json {
                         println!("  ✗ [memory]{} {} — {}", progress_suffix, path.display(), e);
                     }
@@ -827,6 +833,49 @@ fn import_single_document(
     Ok(chunk_count)
 }
 
+/// Stops a batch extraction import that is clearly misconfigured: this many
+/// failures in a row with not a single success so far.
+#[derive(Default)]
+struct ExtractionBail {
+    consecutive_errors: usize,
+    successes: usize,
+}
+
+impl ExtractionBail {
+    const MAX_CONSECUTIVE_ERRORS: usize = 5;
+
+    fn record(&mut self, ok: bool) {
+        if ok {
+            self.successes += 1;
+            self.consecutive_errors = 0;
+        } else {
+            self.consecutive_errors += 1;
+        }
+    }
+
+    fn should_stop(&self) -> bool {
+        self.successes == 0 && self.consecutive_errors >= Self::MAX_CONSECUTIVE_ERRORS
+    }
+}
+
+/// Pick the checksum line whose FILE NAME is exactly `filename`.
+///
+/// `sha256sum` format: `<hash>  <name>` (or `<hash> *<name>` in binary mode;
+/// a leading `./` is tolerated). Matching by substring would let
+/// `uteke-x86_64.tar.gz.sig` or `my-uteke` satisfy a lookup for `uteke`, so the
+/// wrong hash could be compared against (#1332).
+fn find_checksum_line<'a>(checksums: &'a str, filename: &str) -> Option<&'a str> {
+    checksums.lines().find(|line| {
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let (Some(hash), Some(rest)) = (parts.next(), parts.next()) else {
+            return false;
+        };
+        let name = rest.trim_start().trim_start_matches('*');
+        let name = name.strip_prefix("./").unwrap_or(name);
+        !hash.is_empty() && name.trim_end() == filename
+    })
+}
+
 pub(crate) fn run_verify_checksums(
     cli: &Cli,
     checksums_file: &str,
@@ -840,7 +889,7 @@ pub(crate) fn run_verify_checksums(
         .and_then(|n| n.to_str())
         .unwrap_or("binary");
 
-    let expected_line = checksums.lines().find(|l| l.contains(binary_filename));
+    let expected_line = find_checksum_line(&checksums, binary_filename);
 
     match expected_line {
         Some(line) => {
@@ -1194,5 +1243,65 @@ mod tests {
         assert_eq!(title_from_slug("subfolder-my-file"), "Subfolder My File");
         assert_eq!(title_from_slug("hello-world"), "Hello World");
         assert_eq!(title_from_slug(""), "");
+    }
+}
+
+#[cfg(test)]
+mod checksum_line_tests {
+    use super::find_checksum_line;
+
+    const SUMS: &str = "\
+aaaa  uteke-x86_64-unknown-linux-gnu-v1.tar.gz.sig
+bbbb  uteke-x86_64-unknown-linux-gnu-v1.tar.gz
+cccc *uteke
+dddd  ./uteke-mcp
+eeee  not-uteke
+";
+
+    #[test]
+    fn exact_file_name_only() {
+        assert_eq!(
+            find_checksum_line(SUMS, "uteke-x86_64-unknown-linux-gnu-v1.tar.gz"),
+            Some("bbbb  uteke-x86_64-unknown-linux-gnu-v1.tar.gz"),
+            "the .sig line contains the name as a substring and must not win"
+        );
+        assert_eq!(find_checksum_line(SUMS, "uteke"), Some("cccc *uteke"));
+        assert_eq!(
+            find_checksum_line(SUMS, "uteke-mcp"),
+            Some("dddd  ./uteke-mcp")
+        );
+    }
+
+    #[test]
+    fn substring_and_unknown_names_do_not_match() {
+        assert_eq!(find_checksum_line(SUMS, "uteke-x86_64"), None);
+        assert_eq!(find_checksum_line("", "uteke"), None);
+        assert_eq!(find_checksum_line("eeee  not-uteke\n", "uteke"), None);
+    }
+}
+
+#[cfg(test)]
+mod extraction_bail_tests {
+    use super::ExtractionBail;
+
+    #[test]
+    fn stops_after_five_failures_with_no_success() {
+        let mut b = ExtractionBail::default();
+        for _ in 0..4 {
+            b.record(false);
+            assert!(!b.should_stop());
+        }
+        b.record(false);
+        assert!(b.should_stop(), "5 consecutive failures, zero successes");
+    }
+
+    #[test]
+    fn a_success_in_this_loop_disarms_it() {
+        let mut b = ExtractionBail::default();
+        b.record(true);
+        for _ in 0..50 {
+            b.record(false);
+        }
+        assert!(!b.should_stop(), "the run is partly working: keep going");
     }
 }

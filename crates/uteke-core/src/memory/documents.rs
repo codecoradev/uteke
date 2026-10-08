@@ -521,6 +521,32 @@ impl super::Store {
         Ok(docs)
     }
 
+    /// One page of documents (newest first, ties broken by id so pages never
+    /// overlap), optionally scoped to a namespace. `limit` is clamped to 1000
+    /// per page; callers that need everything (export) loop on `offset`.
+    pub fn list_documents_page(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.clamp(1, 1000) as i64;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, slug, title, namespace, author, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE (?1 IS NULL OR namespace = ?1) \
+                 ORDER BY updated_at DESC, id ASC LIMIT ?2 OFFSET ?3",
+            )
+            .map_err(|e| Error::db("prepare list documents page", e))?;
+        let rows = stmt
+            .query_map(params![namespace, limit, offset as i64], row_to_summary)
+            .map_err(|e| Error::db("list documents page query", e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("read documents page", e))
+    }
+
     /// List root documents (parent_id IS NULL), global.
     pub fn list_root_documents(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
         self.list_root_documents_ns(None, limit)
@@ -1246,6 +1272,31 @@ mod tests {
                 .unwrap();
             assert!(sql.contains("'delete'"), "{name} healed on open: {sql}");
         }
+    }
+
+    #[test]
+    fn test_list_documents_page_walks_every_document_once() {
+        let store = open_test_store();
+        for i in 0..7 {
+            let mut d = make_doc(&format!("d{i}"), &format!("slug-{i}"), &format!("T{i}"));
+            // identical timestamps: only the id tie-breaker keeps pages stable
+            d.updated_at = "2026-10-08T00:00:00+00:00".to_string();
+            store.upsert_document(&d).unwrap();
+        }
+        let mut seen = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = store.list_documents_page(None, 3, offset).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len();
+            seen.extend(page.into_iter().map(|d| d.id));
+        }
+        seen.sort();
+        let mut want: Vec<String> = (0..7).map(|i| format!("d{i}")).collect();
+        want.sort();
+        assert_eq!(seen, want, "every document exactly once");
     }
 
     #[test]

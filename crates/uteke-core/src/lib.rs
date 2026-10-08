@@ -1812,6 +1812,18 @@ impl Uteke {
         self.store.list_documents_ns(namespace, limit)
     }
 
+    /// One page of documents for callers that must see ALL of them (export).
+    /// Pages are stable (newest first, id tie-break); `limit` is capped at
+    /// 1000 per page.
+    pub fn doc_list_page(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_documents_page(namespace, limit, offset)
+    }
+
     /// List root documents, optionally scoped to a namespace (#1268).
     pub fn doc_list_roots(
         &self,

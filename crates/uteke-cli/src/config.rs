@@ -938,46 +938,65 @@ fn migrate_legacy_global() {
 }
 
 /// Convert old `config.toml` content to new `uteke.toml` format.
+///
+/// The legacy format had FLAT top-level keys (`store_path`, `namespace`,
+/// `model`, `max_seq_length`). Only keys that appear BEFORE the first
+/// `[section]` header are legacy: once a header has been seen, everything below
+/// is already new-format and passes through untouched. (Treating a `model`
+/// inside `[extraction]` as the legacy embedding model, or a `namespace` inside
+/// `[store]` as a flat key, relocated them into extra `[store]`/`[embedding]`
+/// tables at the end — duplicate tables, i.e. invalid TOML — #1332.)
 fn migrate_content(old: &str) -> String {
-    // Old format had flat keys like `store_path`, `namespace`.
-    // New format uses sections. Attempt best-effort conversion.
     let mut out = String::from("# Migrated from config.toml\n");
     let mut store_section = String::new();
     let mut embedding_section = String::new();
 
+    let has_section = |name: &str| old.lines().any(|l| l.trim() == format!("[{name}]"));
+    let (has_store, has_embedding) = (has_section("store"), has_section("embedding"));
+
+    let mut in_section = false;
     for line in old.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.starts_with('[') && !in_section && trimmed.ends_with(']') {
+            in_section = true;
+        }
+        if in_section || trimmed.is_empty() || trimmed.starts_with('#') {
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            match key {
-                "store_path" => {
-                    store_section.push_str(&format!("path = {value}\n"));
-                }
-                "namespace" => {
-                    store_section.push_str(&format!("namespace = {value}\n"));
-                }
-                "model" => {
-                    embedding_section.push_str(&format!("model = {value}\n"));
-                }
-                "max_seq_length" => {
-                    embedding_section.push_str(&format!("max_seq_length = {value}\n"));
-                }
-                _ => {
-                    // Unknown key — pass through
-                    out.push_str(line);
-                    out.push('\n');
-                }
-            }
-        } else if trimmed.starts_with('[') {
-            // Section header — pass through (new-format sections)
+        let Some((key, value)) = trimmed.split_once('=') else {
+            // Continuation of a multi-line value, or a stray line: keep it.
             out.push_str(line);
             out.push('\n');
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        let (target, has_target, new_key, table) = match key {
+            "store_path" => (&mut store_section, has_store, "path", "store"),
+            "namespace" => (&mut store_section, has_store, "namespace", "store"),
+            "model" => (&mut embedding_section, has_embedding, "model", "embedding"),
+            "max_seq_length" => (
+                &mut embedding_section,
+                has_embedding,
+                "max_seq_length",
+                "embedding",
+            ),
+            _ => {
+                // Unknown top-level key — pass through
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        };
+        if has_target {
+            // The file already defines that table: the new-format value wins and
+            // we must not emit the table a second time.
+            out.push_str(&format!(
+                "# legacy `{key}` ignored: a [{table}] section already exists\n"
+            ));
+        } else {
+            target.push_str(&format!("{new_key} = {value}\n"));
         }
     }
 
@@ -1243,6 +1262,47 @@ orphan_importance_threshold = 0.10
 
         let no_tilde = Config::expand_tilde("/absolute/path");
         assert_eq!(no_tilde, "/absolute/path");
+    }
+
+    /// #1332: a flat file that ALSO has sections used to gain a second
+    /// `[store]`/`[embedding]` table (invalid TOML) and misplace `model`.
+    #[test]
+    fn migrate_content_mixed_flat_and_sectioned_stays_valid_toml() {
+        let old = r#"namespace = "legacy-ns"
+model = "legacy-model"
+
+[store]
+path = "/data/mem"
+namespace = "new-ns"
+
+[embedding]
+model = "new-model"
+
+[extraction]
+model = "gpt-4o"
+"#;
+        let migrated = migrate_content(old);
+        let parsed: toml::Value = toml::from_str(&migrated)
+            .unwrap_or_else(|e| panic!("migrated config must parse: {e}\n{migrated}"));
+        assert_eq!(parsed["store"]["namespace"].as_str(), Some("new-ns"));
+        assert_eq!(parsed["store"]["path"].as_str(), Some("/data/mem"));
+        assert_eq!(parsed["embedding"]["model"].as_str(), Some("new-model"));
+        assert_eq!(
+            parsed["extraction"]["model"].as_str(),
+            Some("gpt-4o"),
+            "a model key inside [extraction] is not the legacy embedding model"
+        );
+    }
+
+    #[test]
+    fn migrate_content_keeps_multiline_values_and_unknown_keys() {
+        let old = "custom = 1\nlist = [\n  \"a\",\n  \"b\",\n]\nnamespace = \"x\"\n";
+        let migrated = migrate_content(old);
+        let parsed: toml::Value =
+            toml::from_str(&migrated).unwrap_or_else(|e| panic!("must parse: {e}\n{migrated}"));
+        assert_eq!(parsed["custom"].as_integer(), Some(1));
+        assert_eq!(parsed["list"].as_array().map(|a| a.len()), Some(2));
+        assert_eq!(parsed["store"]["namespace"].as_str(), Some("x"));
     }
 
     #[test]
