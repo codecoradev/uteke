@@ -735,13 +735,19 @@ fn tool_repair() -> Value {
 fn tool_room_recall() -> Value {
     serde_json::json!({
         "name": "uteke_room_recall",
-        "description": "Semantic recall within a room context. Requires an EXISTING room_id (create via uteke_room_create first) — unknown room ids error at call time. Searches across all namespaces in the room using hybrid RRF ranking.",
+        "description": "Semantic recall within a room context. Requires an EXISTING room_id (create via uteke_room_create first) — unknown room ids error at call time. Searches across all namespaces in the room using hybrid RRF ranking. Optional min_score, tags (any-of), pack/budget_chars/exclude_ids (budgeted context pack) mirror uteke_recall; every result carries its memory id.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "room_id": { "type": "string", "description": "Room identifier" },
                 "query": { "type": "string", "description": "Search query" },
-                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 }
+                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
+                "min_score": { "type": "number", "description": "Minimum score; weaker results are dropped (default 0.0)" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Keep only memories that carry at least one of these tags (optional)" },
+                "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
+                "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
+                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix in the id line (ids are UUIDv7, prefixes collide, #1357).", "default": false }
             },
             "required": ["room_id", "query"]
         }
@@ -2177,37 +2183,103 @@ fn exec_dream(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
+/// Parsed arguments of `uteke_room_recall` (same names and defaults as
+/// `uteke_recall` where they overlap).
+#[derive(Debug, PartialEq)]
+struct RoomRecallArgs {
+    limit: usize,
+    min_score: f32,
+    tags: Vec<String>,
+    pack: bool,
+    budget_chars: usize,
+    exclude_ids: Vec<String>,
+    full_ids: bool,
+}
+
+fn parse_room_recall_args(args: &Value) -> RoomRecallArgs {
+    let strings = |key: &str| -> Vec<String> {
+        args[key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    RoomRecallArgs {
+        limit: args["limit"].as_u64().unwrap_or(5) as usize,
+        min_score: args["min_score"].as_f64().unwrap_or(0.0).max(0.0) as f32,
+        tags: strings("tags"),
+        pack: args["pack"].as_bool().unwrap_or(false),
+        budget_chars: args["budget_chars"].as_u64().unwrap_or(4000) as usize,
+        exclude_ids: strings("exclude_ids"),
+        full_ids: args["full_ids"].as_bool().unwrap_or(false),
+    }
+}
+
+/// Plain-list output: the historical `[score] content` line, followed by an
+/// indented `(id: …)` line so the result can be passed to `uteke_provenance`,
+/// `uteke_get` or `exclude_ids`.
+fn format_room_recall_lines(results: &[uteke_core::SearchResult], full_ids: bool) -> Vec<String> {
+    let mut lines = Vec::with_capacity(results.len() * 2);
+    for sr in results {
+        lines.push(format!("[{:.2}] {}", sr.score, sr.memory.content));
+        lines.push(format!(
+            "       (id: {})",
+            display_id(&sr.memory.id, full_ids)
+        ));
+    }
+    lines
+}
+
 fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
-    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+    let a = parse_room_recall_args(args);
+    let tag_refs: Vec<&str> = a.tags.iter().map(String::as_str).collect();
+    let tags = (!tag_refs.is_empty()).then_some(tag_refs.as_slice());
+
+    let text_result = |text: String| ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    };
+
+    // Budgeted context pack (#1335, same envelope as uteke_recall #1281).
+    if a.pack {
+        let pack = uteke
+            .recall_room_packed(
+                room_id,
+                query,
+                a.limit,
+                None,
+                a.min_score,
+                tags,
+                a.budget_chars,
+                &a.exclude_ids,
+            )
+            .map_err(|e| format!("Failed: {e}"))?;
+        if pack.selected.is_empty() {
+            return Ok(text_result("No results fit the budget.".to_string()));
+        }
+        return Ok(text_result(
+            serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string()),
+        ));
+    }
 
     let results = uteke
-        .recall_room_semantic(room_id, query, limit, None, 0.0)
+        .recall_room_semantic_filtered(room_id, query, a.limit, None, a.min_score, tags)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if results.is_empty() {
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text: "No memories found in room.".to_string(),
-            }],
-            is_error: false,
-        });
+        return Ok(text_result("No memories found in room.".to_string()));
     }
-
-    let lines: Vec<String> = results
-        .iter()
-        .map(|sr| format!("[{:.2}] {}", sr.score, sr.memory.content))
-        .collect();
-
-    Ok(ToolResult {
-        content: vec![McpContent::Text {
-            r#type: "text".to_string(),
-            text: lines.join("\n"),
-        }],
-        is_error: false,
-    })
+    Ok(text_result(
+        format_room_recall_lines(&results, a.full_ids).join("\n"),
+    ))
 }
 
 fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
@@ -3206,5 +3278,114 @@ mod contradiction_mcp_tests {
 
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod room_recall_tests {
+    //! #1335 — `uteke_room_recall` parity with `uteke_recall`.
+    use super::*;
+    use uteke_core::SearchResult;
+    use uteke_core::memory::types::Memory;
+
+    fn sr(id: &str, content: &str, score: f32) -> SearchResult {
+        SearchResult {
+            memory: Memory {
+                id: id.to_string(),
+                content: content.to_string(),
+                embedding: vec![],
+                tags: vec![],
+                metadata: serde_json::json!({}),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                namespace: "ns".to_string(),
+                access_count: 0,
+                last_accessed: None,
+                deprecated: false,
+                deprecated_at: None,
+                valid_from: None,
+                valid_until: None,
+                memory_type: "fact".to_string(),
+                importance: 0.5,
+                pinned: false,
+                content_type: "text".to_string(),
+                slug: None,
+                source: None,
+                source_type: "user".to_string(),
+                author_type: "agent".to_string(),
+            },
+            score,
+        }
+    }
+
+    #[test]
+    fn defaults_are_unchanged() {
+        let a = parse_room_recall_args(&serde_json::json!({"room_id": "r", "query": "q"}));
+        assert_eq!(
+            a,
+            RoomRecallArgs {
+                limit: 5,
+                min_score: 0.0,
+                tags: vec![],
+                pack: false,
+                budget_chars: 4000,
+                exclude_ids: vec![],
+                full_ids: false,
+            }
+        );
+    }
+
+    #[test]
+    fn all_new_parameters_are_parsed() {
+        let a = parse_room_recall_args(&serde_json::json!({
+            "room_id": "r", "query": "q", "limit": 3, "min_score": 0.25,
+            "tags": ["a", "b"], "pack": true, "budget_chars": 900,
+            "exclude_ids": ["x", "y"], "full_ids": true
+        }));
+        assert_eq!(a.limit, 3);
+        assert!((a.min_score - 0.25).abs() < 1e-6);
+        assert_eq!(a.tags, ["a", "b"]);
+        assert!(a.pack && a.full_ids);
+        assert_eq!(a.budget_chars, 900);
+        assert_eq!(a.exclude_ids, ["x", "y"]);
+        // negative min_score is clamped, non-string array items ignored
+        let a = parse_room_recall_args(&serde_json::json!({"min_score": -1.0, "tags": ["a", 7]}));
+        assert_eq!(a.min_score, 0.0);
+        assert_eq!(a.tags, ["a"]);
+    }
+
+    #[test]
+    fn schema_advertises_every_new_parameter() {
+        let tool = tool_room_recall();
+        let props = tool["inputSchema"]["properties"].as_object().unwrap();
+        for k in [
+            "room_id",
+            "query",
+            "limit",
+            "min_score",
+            "tags",
+            "pack",
+            "budget_chars",
+            "exclude_ids",
+            "full_ids",
+        ] {
+            assert!(props.contains_key(k), "missing {k}");
+        }
+        // required fields did not change
+        assert_eq!(
+            tool["inputSchema"]["required"],
+            serde_json::json!(["room_id", "query"])
+        );
+    }
+
+    #[test]
+    fn every_result_carries_its_memory_id_and_the_score_line_is_unchanged() {
+        let id = "01a11a97-1814-747a-bff1-98db63fb137f";
+        let lines = format_room_recall_lines(&[sr(id, "hello world", 0.8123)], false);
+        assert_eq!(lines[0], "[0.81] hello world", "historical first line");
+        assert_eq!(lines[1], "       (id: 01a11a97)");
+        let full = format_room_recall_lines(&[sr(id, "hello world", 0.5)], true);
+        assert_eq!(full[1], format!("       (id: {id})"));
+        assert!(format_room_recall_lines(&[], false).is_empty());
     }
 }

@@ -228,6 +228,39 @@ pub struct UnifiedSearchResult {
     pub linked_memory_ids: Option<Vec<String>>,
 }
 
+impl UnifiedSearchResult {
+    /// Build the unified (memory-typed) form of a ranked memory result.
+    /// Shared by unified recall and room recall so both report the same
+    /// fields, including `memory_id`.
+    pub fn from_memory_result(sr: &SearchResult) -> Self {
+        let m = &sr.memory;
+        UnifiedSearchResult {
+            result_type: SearchResultType::Memory,
+            score: sr.score,
+            content: m.content.clone(),
+            memory_id: Some(m.id.clone()),
+            tags: m.tags.clone(),
+            doc_slug: None,
+            doc_title: None,
+            chunk_heading: None,
+            chunk_snippet: None,
+            metadata: Some(m.metadata.clone()),
+            memory_type: Some(m.memory_type.clone()),
+            namespace: Some(m.namespace.clone()),
+            source: m.source.clone(),
+            source_type: Some(m.source_type.clone()),
+            importance: Some(m.importance),
+            pinned: Some(m.pinned),
+            access_count: Some(m.access_count),
+            last_accessed: m.last_accessed,
+            created_at: Some(m.created_at),
+            updated_at: Some(m.updated_at),
+            linked_doc_slugs: None,
+            linked_memory_ids: None,
+        }
+    }
+}
+
 /// Filter for unified search — which sources to query (#531).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

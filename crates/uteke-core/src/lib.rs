@@ -2365,33 +2365,7 @@ impl Uteke {
                 }
                 true
             })
-            .map(|sr| {
-                let m = &sr.memory;
-                UnifiedSearchResult {
-                    result_type: SearchResultType::Memory,
-                    score: sr.score,
-                    content: m.content.clone(),
-                    memory_id: Some(m.id.clone()),
-                    tags: m.tags.clone(),
-                    doc_slug: None,
-                    doc_title: None,
-                    chunk_heading: None,
-                    chunk_snippet: None,
-                    metadata: Some(m.metadata.clone()),
-                    memory_type: Some(m.memory_type.clone()),
-                    namespace: Some(m.namespace.clone()),
-                    source: m.source.clone(),
-                    source_type: Some(m.source_type.clone()),
-                    importance: Some(m.importance),
-                    pinned: Some(m.pinned),
-                    access_count: Some(m.access_count),
-                    last_accessed: m.last_accessed,
-                    created_at: Some(m.created_at),
-                    updated_at: Some(m.updated_at),
-                    linked_doc_slugs: None,
-                    linked_memory_ids: None,
-                }
-            })
+            .map(|sr| UnifiedSearchResult::from_memory_result(&sr))
             .take(limit)
             .collect();
         Ok(results)

@@ -105,6 +105,23 @@ impl crate::Uteke {
         author: Option<&str>,
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
+        self.recall_room_semantic_filtered(room_id, query, limit, author, min_score, None)
+    }
+
+    /// [`Self::recall_room_semantic`] with an optional tag filter.
+    ///
+    /// `tags` keeps a memory when it carries AT LEAST ONE of the given tags
+    /// (same semantics as the tag filter of `recall`). The filter runs before
+    /// the final truncation, so `limit` counts matching memories.
+    pub fn recall_room_semantic_filtered(
+        &self,
+        room_id: &str,
+        query: &str,
+        limit: usize,
+        author: Option<&str>,
+        min_score: f32,
+        tags: Option<&[&str]>,
+    ) -> Result<Vec<SearchResult>, Error> {
         // 1. Get room memory IDs (cheap — IDs only)
         let room_ids = self.store.get_room_memory_ids(room_id, author)?;
         if room_ids.is_empty() {
@@ -181,9 +198,16 @@ impl crate::Uteke {
             }
         }
 
-        // 5. Apply min_score filter
+        // 5. Apply min_score and tag filters
         if min_score > 0.0 {
             results.retain(|sr| sr.score >= min_score);
+        }
+        if let Some(filter) = tags.filter(|t| !t.is_empty()) {
+            results.retain(|sr| {
+                filter
+                    .iter()
+                    .any(|ft| sr.memory.tags.iter().any(|t| t == ft))
+            });
         }
 
         // 6. Sort by score descending
@@ -199,6 +223,33 @@ impl crate::Uteke {
         }
 
         Ok(results)
+    }
+
+    /// Room recall packed into a character budget (#1335): the room
+    /// counterpart of `recall_unified_packed`. Rank order is preserved,
+    /// `exclude_ids` are memory ids already injected this turn.
+    #[allow(clippy::too_many_arguments)]
+    pub fn recall_room_packed(
+        &self,
+        room_id: &str,
+        query: &str,
+        limit: usize,
+        author: Option<&str>,
+        min_score: f32,
+        tags: Option<&[&str]>,
+        budget_chars: usize,
+        exclude_ids: &[String],
+    ) -> Result<crate::pack_mode::ContextPack, Error> {
+        let unified: Vec<crate::memory::types::UnifiedSearchResult> = self
+            .recall_room_semantic_filtered(room_id, query, limit, author, min_score, tags)?
+            .iter()
+            .map(crate::memory::types::UnifiedSearchResult::from_memory_result)
+            .collect();
+        Ok(crate::pack_mode::pack_context(
+            unified,
+            budget_chars,
+            exclude_ids,
+        ))
     }
 
     /// Delete a room (unlink-only).
@@ -493,6 +544,182 @@ mod tests {
             "small room must return semantic results (#894)"
         );
         assert!(results.iter().any(|r| r.memory.content.contains("Rust")));
+    }
+
+    // ── Room recall filters + packing (#1335) ───────────────────────
+
+    /// Deterministic bag-of-words embedder (hashed into 64 dims) so recall can
+    /// run without the ONNX model: texts sharing words get similar vectors.
+    struct KeywordEmbedder;
+
+    impl crate::embed::Embedder for KeywordEmbedder {
+        fn embed(&self, text: &str) -> Result<Vec<f32>, crate::Error> {
+            let mut v = vec![0.0_f32; 64];
+            for w in text
+                .to_lowercase()
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+            {
+                let h = w.bytes().fold(2166136261_u32, |h, b| {
+                    (h ^ u32::from(b)).wrapping_mul(16777619)
+                });
+                v[(h % 64) as usize] += 1.0;
+            }
+            let n = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-6);
+            Ok(v.into_iter().map(|x| x / n).collect())
+        }
+        fn dims(&self) -> usize {
+            64
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "keyword-test-embedder"
+        }
+    }
+
+    fn open_keyword() -> crate::Uteke {
+        let (_db, store) = crate::Uteke::open_store(":memory:").expect("open_store");
+        crate::Uteke::finish_open_full(
+            store,
+            Some(Box::new(KeywordEmbedder)),
+            "test-keyword".to_string(),
+            crate::TierConfig::default(),
+            crate::RecallConfig::default(),
+            crate::EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    /// Room "r1" with three memories: m1 (best match for "alpha beta"),
+    /// m2 (shares "alpha"), m3 (unrelated). Tags: m1 t-a, m2 t-b, m3 t-a+t-b.
+    fn seeded_room() -> (crate::Uteke, [String; 3]) {
+        let u = open_keyword();
+        u.create_room("r1", Some("Room one"), "default").unwrap();
+        let mut ids = Vec::new();
+        for (content, tags) in [
+            ("alpha beta gamma delta", &["t-a"][..]),
+            ("alpha epsilon zeta eta", &["t-b"][..]),
+            ("omega sigma tau upsilon", &["t-a", "t-b"][..]),
+        ] {
+            let out = u
+                .remember_in_room(content, tags, None, Some("default"), "fact", "r1", "alice")
+                .unwrap();
+            ids.push(out.id);
+        }
+        let [a, b, c]: [String; 3] = ids.try_into().unwrap();
+        (u, [a, b, c])
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_ranks_the_best_match_first() {
+        let (u, [m1, ..]) = seeded_room();
+        let res = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 10, None, 0.0, None)
+            .unwrap();
+        assert!(res.len() >= 2, "fixture must return several results");
+        assert_eq!(res[0].memory.id, m1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_min_score_drops_weaker_results() {
+        let (u, [m1, ..]) = seeded_room();
+        let all = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 10, None, 0.0, None)
+            .unwrap();
+        let (s0, s1) = (all[0].score, all[1].score);
+        assert!(s0 > s1, "need a gap between the first two scores");
+        let thr = (s0 + s1) / 2.0;
+        let kept = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 10, None, thr, None)
+            .unwrap();
+        assert!(!kept.is_empty() && kept.iter().all(|r| r.score >= thr));
+        assert_eq!(kept[0].memory.id, m1);
+        assert!(kept.len() < all.len());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_tag_filter_is_any_of_and_applies_before_limit() {
+        let (u, [m1, m2, m3]) = seeded_room();
+        let ids = |res: Vec<crate::memory::types::SearchResult>| -> Vec<String> {
+            res.into_iter().map(|r| r.memory.id).collect()
+        };
+        // t-b: m2 and m3, never m1
+        let got = ids(u
+            .recall_room_semantic_filtered("r1", "alpha beta", 10, None, 0.0, Some(&["t-b"]))
+            .unwrap());
+        assert!(
+            got.contains(&m2) && got.contains(&m3) && !got.contains(&m1),
+            "{got:?}"
+        );
+        // limit counts MATCHING memories: asking for 1 with t-b still returns one
+        let one = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 1, None, 0.0, Some(&["t-b"]))
+            .unwrap();
+        assert_eq!(one.len(), 1);
+        assert_ne!(one[0].memory.id, m1);
+        // several tags = any of them
+        let any = ids(u
+            .recall_room_semantic_filtered(
+                "r1",
+                "alpha beta",
+                10,
+                None,
+                0.0,
+                Some(&["t-a", "nonexistent"]),
+            )
+            .unwrap());
+        assert!(
+            any.contains(&m1) && any.contains(&m3) && !any.contains(&m2),
+            "{any:?}"
+        );
+        // empty filter = no filter
+        let none = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 10, None, 0.0, Some(&[]))
+            .unwrap();
+        assert!(none.len() >= 3);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_packed_respects_budget_and_exclude_ids_and_reports_ids() {
+        let (u, [m1, m2, _m3]) = seeded_room();
+        // each item costs content (~23 chars) + 24 overhead = ~47; budget 60 fits one
+        let pack = u
+            .recall_room_packed("r1", "alpha beta", 10, None, 0.0, None, 60, &[])
+            .unwrap();
+        assert_eq!(pack.selected.len(), 1);
+        assert_eq!(pack.selected[0].memory_id.as_deref(), Some(m1.as_str()));
+        assert!(pack.skipped.iter().all(|s| s.reason == "budget"));
+        assert!(pack.budget_used <= 60 && pack.budget_chars == 60);
+
+        // exclude the best match: it is reported as skipped(excluded) and the
+        // next one is packed instead
+        let pack = u
+            .recall_room_packed(
+                "r1",
+                "alpha beta",
+                10,
+                None,
+                0.0,
+                None,
+                60,
+                std::slice::from_ref(&m1),
+            )
+            .unwrap();
+        assert_eq!(pack.selected.len(), 1);
+        assert_eq!(pack.selected[0].memory_id.as_deref(), Some(m2.as_str()));
+        assert!(
+            pack.skipped
+                .iter()
+                .any(|s| s.reason == "excluded" && s.memory_id.as_deref() == Some(m1.as_str()))
+        );
     }
 
     // ── Room rename / update / memory room-move (#1202) ─────────────
