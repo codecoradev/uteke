@@ -748,8 +748,11 @@ impl VectorIndex {
     /// Used for migration from old HNSW or full rebuild.
     pub fn build(&mut self, items: &[(String, Vec<f32>)]) -> Result<(), Error> {
         // Reset (same engine, fresh instance)
+        // An empty rebuild keeps the index's CURRENT dimensionality: resetting
+        // to DEFAULT_DIMS (768) broke the next insert of a non-768 embedder
+        // after `repair()` on an empty store (#1332).
         let dims = if items.is_empty() {
-            DEFAULT_DIMS
+            self.engine.dims()
         } else {
             items[0].1.len()
         };
@@ -1624,5 +1627,17 @@ mod tests {
         }
         assert_eq!(idx.dead_rows(), 0);
         assert!(!idx.needs_compaction());
+    }
+
+    /// #1332: an empty rebuild (e.g. `repair()` on an empty store) must keep the
+    /// index's dimensionality instead of resetting it to 768.
+    #[test]
+    fn test_build_empty_keeps_current_dims() {
+        let mut idx = VectorIndex::new(384).unwrap();
+        idx.build(&[]).unwrap();
+        assert_eq!(idx.dims(), 384);
+        idx.insert("a", &vec![0.5_f32; 384])
+            .expect("a 384-dim embedding must still be accepted after build(&[])");
+        assert_eq!(idx.len(), 1);
     }
 }

@@ -127,6 +127,20 @@ pub struct DocumentSearchResult {
     pub mode: String,
 }
 
+/// Recompute a document's denormalized `has_children` flag from the actual
+/// rows. Used wherever a parent can gain or lose a child so the flag cannot go
+/// stale (#1332).
+fn refresh_has_children(conn: &rusqlite::Connection, doc_id: &str) -> Result<(), Error> {
+    conn.execute(
+        "UPDATE documents SET has_children = \
+         EXISTS(SELECT 1 FROM documents c WHERE c.parent_id = documents.id) \
+         WHERE id = ?1",
+        params![doc_id],
+    )
+    .map_err(|e| Error::db("refresh has_children", e))?;
+    Ok(())
+}
+
 /// Row mapper for Document (full document queries).
 /// Columns: id, slug, title, content, namespace, author, tags, metadata, version,
 ///          content_type, created_at, updated_at, parent_id, path, depth, sort_order, has_children
@@ -268,6 +282,17 @@ impl super::Store {
             .map_err(|e| Error::db("query existing document", e))?;
 
         let doc_id = if let Some(id) = existing {
+            // Remember the previous parent: a re-parenting upsert must fix the
+            // flag on BOTH the old and the new parent (#1332).
+            let old_parent: Option<String> = tx
+                .query_row(
+                    "SELECT parent_id FROM documents WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| Error::db("read previous parent", e))?
+                .flatten();
             // Update existing document.
             let version = doc.version + 1;
             tx.execute(
@@ -296,6 +321,9 @@ impl super::Store {
                 params![id],
             )
             .map_err(|e| Error::db("delete old document chunks", e))?;
+            for parent in old_parent.iter().chain(doc.parent_id.iter()) {
+                refresh_has_children(tx, parent)?;
+            }
             id
         } else {
             // Insert new document.
@@ -747,6 +775,11 @@ impl super::Store {
             None => return Ok(0),
         };
 
+        // Legacy pre-v12 rows have an empty `path` (the migration never
+        // backfilled it). `"" + "/%"` would match EVERY document and rewrite all
+        // their paths/depths, so such a document is moved on its own: it has no
+        // addressable descendants (#1332).
+        let has_path = !old_path.is_empty();
         let (old_path_exact, old_prefix) = if old_path.ends_with('/') {
             (old_path.clone(), format!("{}%", old_path))
         } else {
@@ -779,14 +812,17 @@ impl super::Store {
                 )
                 .unwrap_or(0);
             let new_depth = parent_depth + 1;
-            let max_child_depth: i64 = tx
-                .query_row(
+            let max_child_depth: i64 = if has_path {
+                tx.query_row(
                     "SELECT MAX(depth) FROM documents WHERE path LIKE ?1",
                     params![old_prefix],
                     |row| row.get::<_, Option<i64>>(0),
                 )
                 .unwrap_or(None)
-                .unwrap_or(old_depth);
+                .unwrap_or(old_depth)
+            } else {
+                old_depth
+            };
             let depth_diff = new_depth - old_depth;
             if max_child_depth + depth_diff > MAX_DEPTH {
                 return Err(Error::validation("move would exceed maximum depth of 10"));
@@ -834,13 +870,16 @@ impl super::Store {
         // Use substr() to replace ONLY the prefix portion (not all occurrences),
         // avoiding corruption when old_path appears multiple times in a descendant path.
         // length(old_path) is the offset where the suffix begins.
-        let n = tx
-            .execute(
+        let n = if has_path {
+            tx.execute(
                 "UPDATE documents SET path = ?2 || substr(path, length(?1) + 1), depth = depth + ?3 \
                  WHERE path LIKE ?4 AND id != ?5",
                 params![old_path_exact, new_path, depth_diff, old_prefix, doc_id,],
             )
-            .map_err(|e| Error::db("update descendant paths", e))?;
+            .map_err(|e| Error::db("update descendant paths", e))?
+        } else {
+            0
+        };
 
         // Update new parent's has_children flag.
         if let Some(parent) = new_parent_id {
@@ -880,6 +919,17 @@ impl super::Store {
     /// Returns (deleted, subtree_size).
     pub fn delete_document(&self, id: &str) -> Result<(bool, usize), Error> {
         let subtree_size = self.count_descendants(id)?;
+        // The parent may lose its last child: remember it to refresh the flag.
+        let parent_id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT parent_id FROM documents WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("read parent before delete", e))?
+            .flatten();
         // Fetch the document's path for cascade delete.
         let path: String = self
             .conn
@@ -915,6 +965,9 @@ impl super::Store {
                 params![id, cascade_prefix],
             )
             .map_err(|e| Error::db("delete document", e))?;
+        if let Some(parent) = parent_id {
+            refresh_has_children(&self.conn, &parent)?;
+        }
         Ok((n > 0, subtree_size))
     }
 
@@ -1246,6 +1299,101 @@ mod tests {
                 .unwrap();
             assert!(sql.contains("'delete'"), "{name} healed on open: {sql}");
         }
+    }
+
+    fn has_children(store: &Store, id: &str) -> bool {
+        store.get_document(id).unwrap().unwrap().has_children
+    }
+
+    /// #1332: deleting a child must clear the parent's denormalized flag.
+    #[test]
+    fn test_delete_document_refreshes_parent_has_children() {
+        let store = open_test_store();
+        let parent = make_doc("p", "parent", "Parent");
+        store.upsert_document(&parent).unwrap();
+        store
+            .upsert_document(&make_child_doc("c1", "child-1", "C1", "p", "/p/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("c2", "child-2", "C2", "p", "/p/"))
+            .unwrap();
+        assert!(has_children(&store, "p"));
+
+        store.delete_document("c1").unwrap();
+        assert!(has_children(&store, "p"), "c2 is still a child");
+        store.delete_document("c2").unwrap();
+        assert!(
+            !has_children(&store, "p"),
+            "last child deleted: flag cleared"
+        );
+    }
+
+    /// #1332: an upsert that changes the parent must fix BOTH parents' flags.
+    #[test]
+    fn test_upsert_reparent_updates_old_and_new_parent_flags() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store.upsert_document(&make_doc("b", "b", "B")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        assert!(has_children(&store, "a") && !has_children(&store, "b"));
+
+        // Same slug, new parent.
+        let moved = make_child_doc("k", "kid", "Kid", "b", "/b/");
+        store.upsert_document(&moved).unwrap();
+        assert!(!has_children(&store, "a"), "old parent lost its only child");
+        assert!(has_children(&store, "b"), "new parent gained a child");
+    }
+
+    /// #1332: a legacy row with an empty `path` made `old_prefix = "/%"` match
+    /// every document, rewriting all paths and depths.
+    #[test]
+    fn test_move_document_with_empty_legacy_path_leaves_others_alone() {
+        let store = open_test_store();
+        store
+            .upsert_document(&make_doc("legacy", "legacy", "Legacy"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("target", "target", "Target"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("bystander", "bystander", "By"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc(
+                "deep",
+                "deep",
+                "Deep",
+                "bystander",
+                "/bystander/",
+            ))
+            .unwrap();
+        // pre-v12 row: no path
+        store
+            .conn
+            .execute("UPDATE documents SET path = '' WHERE id = 'legacy'", [])
+            .unwrap();
+
+        let before_by = store.get_document("bystander").unwrap().unwrap();
+        let before_deep = store.get_document("deep").unwrap().unwrap();
+        store.move_document("legacy", Some("target"), None).unwrap();
+
+        let moved = store.get_document("legacy").unwrap().unwrap();
+        assert_eq!(moved.parent_id.as_deref(), Some("target"));
+        assert_eq!(moved.path, "/target/legacy/");
+        assert_eq!(moved.depth, 1);
+        let after_by = store.get_document("bystander").unwrap().unwrap();
+        let after_deep = store.get_document("deep").unwrap().unwrap();
+        assert_eq!(
+            (after_by.path, after_by.depth),
+            (before_by.path, before_by.depth)
+        );
+        assert_eq!(
+            (after_deep.path, after_deep.depth),
+            (before_deep.path, before_deep.depth),
+            "unrelated documents must not be rewritten"
+        );
     }
 
     #[test]

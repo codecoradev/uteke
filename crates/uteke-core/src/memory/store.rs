@@ -321,19 +321,62 @@ impl Store {
     /// Recalculate importance for all memories.
     /// importance = 0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
     pub fn recompute_importance(&self) -> Result<usize, Error> {
-        let memories = self.load_all(None)?;
+        // Only the columns the formula needs: the old `load_all` pulled every
+        // embedding blob into memory for no reason (#1332). Same predicate as
+        // `load_all(None)`: live memories that have an embedding.
+        struct Row {
+            id: String,
+            importance: f64,
+            pinned: bool,
+            access_count: i64,
+            last_accessed: Option<chrono::DateTime<chrono::Utc>>,
+            metadata: serde_json::Value,
+        }
+        let rows: Vec<Row> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, importance, pinned, access_count, last_accessed, metadata \
+                     FROM memories WHERE embedding IS NOT NULL AND deprecated = 0",
+                )
+                .map_err(|e| Error::db("prepare recompute_importance", e))?;
+            stmt.query_map([], |r| {
+                let last: Option<String> = r.get(4)?;
+                let meta: Option<String> = r.get(5)?;
+                Ok(Row {
+                    id: r.get(0)?,
+                    importance: r.get::<_, f64>(1)?,
+                    pinned: r.get::<_, i64>(2)? != 0,
+                    access_count: r.get(3)?,
+                    last_accessed: last.as_deref().and_then(parse_datetime_opt),
+                    metadata: meta
+                        .and_then(|m| serde_json::from_str(&m).ok())
+                        .unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .map_err(|e| Error::db("query recompute_importance", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("read recompute_importance", e))?
+        };
+
+        // One transaction for the whole pass: per-row autocommit made this one
+        // fsync per memory.
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin recompute_importance", e))?;
+        let mut update = tx
+            .prepare("UPDATE memories SET importance = ?1 WHERE id = ?2")
+            .map_err(|e| Error::db("prepare importance update", e))?;
         let mut updated = 0;
         let now = chrono::Utc::now();
 
-        for m in &memories {
+        for m in &rows {
             // Skip pinned — they stay at 1.0
             if m.pinned {
                 if (m.importance - 1.0).abs() > f64::EPSILON {
-                    self.conn
-                        .execute(
-                            "UPDATE memories SET importance = 1.0 WHERE id = ?1",
-                            rusqlite::params![m.id],
-                        )
+                    update
+                        .execute(rusqlite::params![1.0_f64, m.id])
                         .map_err(|e| Error::db("update importance", e))?;
                     updated += 1;
                 }
@@ -359,22 +402,20 @@ impl Store {
                 .unwrap_or(0) as f64;
             let connectivity = (rel_count / 5.0).min(1.0);
 
-            let importance = 0.3 * access_score
-                + 0.3 * recency_score
-                + 0.2 * connectivity
-                + 0.2 * if m.pinned { 1.0 } else { 0.0 };
+            // (pinned rows `continue`d above, so the pinned term is always 0 here.)
+            let importance = 0.3 * access_score + 0.3 * recency_score + 0.2 * connectivity;
             let importance = importance.clamp(0.0_f64, 1.0_f64);
 
             if (m.importance - importance).abs() > f64::EPSILON {
-                self.conn
-                    .execute(
-                        "UPDATE memories SET importance = ?1 WHERE id = ?2",
-                        rusqlite::params![importance, m.id],
-                    )
+                update
+                    .execute(rusqlite::params![importance, m.id])
                     .map_err(|e| Error::db("update importance", e))?;
                 updated += 1;
             }
         }
+        drop(update);
+        tx.commit()
+            .map_err(|e| Error::db("commit recompute_importance", e))?;
         Ok(updated)
     }
 
@@ -1064,6 +1105,57 @@ mod tests {
 
         let new_matches = store.list(Some("new-tag"), None, 10, 0).unwrap();
         assert_eq!(new_matches.len(), 2);
+    }
+
+    /// #1332: renaming onto a tag the memory already has must not duplicate it.
+    #[test]
+    fn test_rename_tag_onto_existing_tag_does_not_duplicate() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "has both", &["alpha", "beta"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "only old", &["alpha"]))
+            .unwrap();
+
+        store.rename_tag("alpha", "beta", None).unwrap();
+
+        let both = store.get_by_id("1").unwrap().unwrap();
+        assert_eq!(both.tags, vec!["beta".to_string()], "no duplicate entry");
+        let only = store.get_by_id("2").unwrap().unwrap();
+        assert_eq!(only.tags, vec!["beta".to_string()]);
+        assert_eq!(store.list(Some("beta"), None, 10, 0).unwrap().len(), 2);
+        assert_eq!(store.list(Some("alpha"), None, 10, 0).unwrap().len(), 0);
+    }
+
+    /// recompute_importance keeps its formula after the rewrite (#1332).
+    #[test]
+    fn test_recompute_importance_formula_and_pinned() {
+        let store = Store::open(":memory:").unwrap();
+        // 10+ accesses, accessed just now, no relationships: 0.3*1 + 0.3*~1.
+        let mut hot = make_test_memory("hot", "hot", &[]);
+        hot.access_count = 10;
+        hot.last_accessed = Some(chrono::Utc::now());
+        hot.importance = 0.5;
+        store.insert(&hot).unwrap();
+        // never accessed, no relationships: 0.3*0 + 0.3*e^(-ln2*365/30) ~ 0.
+        let mut cold = make_test_memory("cold", "cold", &[]);
+        cold.importance = 0.5;
+        store.insert(&cold).unwrap();
+        // pinned memories are forced to 1.0.
+        let mut pin = make_test_memory("pin", "pin", &[]);
+        pin.pinned = true;
+        pin.importance = 0.2;
+        store.insert(&pin).unwrap();
+
+        let changed = store.recompute_importance().unwrap();
+        assert_eq!(changed, 3);
+        let imp = |id: &str| store.get_by_id(id).unwrap().unwrap().importance;
+        assert!((imp("hot") - 0.6).abs() < 0.01, "hot = {}", imp("hot"));
+        assert!(imp("cold") < 0.001, "cold = {}", imp("cold"));
+        assert!((imp("pin") - 1.0).abs() < f64::EPSILON);
+        // a second pass changes nothing
+        assert_eq!(store.recompute_importance().unwrap(), 0);
     }
 
     #[test]
