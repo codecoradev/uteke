@@ -62,3 +62,14 @@ The canonical workflow SOP (merge gate, release flow, governance) lives in the
 uteke room `codecora-workflow-standard` (namespace `codecora`) on the shared
 store. This file is the repo-enforced subset — when rules disagree, the room
 wins, and this file gets updated in the same commit that changes the rule.
+
+## Uteke memory conventions (Uteke Conventions v1, 2026-10-07)
+
+**Standard**: read Uteke room `uteke-conventions` (namespace `important`; full
+docs: slugs `uteke-conventions` and `uteke-project-registry`) BEFORE reading or
+writing any memory. Claude Code sessions write to namespace `macmini`; never
+write to `default`. Tag project memories `project:<nama>` per the registry
+(component + parent tags when both apply, e.g. `project:samson-mobile` +
+`project:samson`), plus `tool:<nama>` when the memory is specific to a tool.
+The uteke project room is `uteke` (namespace `hermes`). No tokens or
+credentials in memories.
