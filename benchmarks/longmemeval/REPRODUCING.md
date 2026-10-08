@@ -14,13 +14,15 @@ the computer tell you the truth yourself. Three budgets, pick one:
 disk. The embedding model (~200 MB) downloads once on first run. Everything else is
 in this repo.
 
-> **Published numbers (v0.19.0, 500 questions, LongMemEval-S):**
+> **Published numbers (v0.20.0, 500 questions, LongMemEval-S):**
 > recall_any@5 **98.2%** · recall_any@10 98.8% · strict recall_all@5 88.0% ·
-> coverage@5 94.3% — all on the full 500-question basis. On the 470
+> coverage@5 94.4% — all on the full 500-question basis. On the 470
 > non-abstention questions (the 30 `_abs` questions are reported separately:
 > they measure answering, not retrieval), strict recall_all@5 is 88.3% and
-> coverage@5 is 94.6%. Per-release any@5: v0.16.0 98.2% · v0.17.0 98.4% ·
-> v0.19.0 98.2% — the strict family (88.0/95.4) is unchanged across all three.
+> coverage@5 is 94.7%. Per-release any@5: v0.16.0 98.2% · v0.17.0 98.4% ·
+> v0.19.0 98.2% · v0.20.0 98.2% — strict@5 (88.0) is unchanged across all four;
+> strict@10 moved 95.4% → 95.2% on a single top-10 boundary flip (gold remains
+> inside the top-50).
 > What these metric names mean: [docs/benchmarks.md](../../docs/benchmarks.md) and
 > [`RESULTS.md`](RESULTS.md#reading-the-metrics).
 
@@ -28,7 +30,8 @@ in this repo.
 
 | File | Run | Headline |
 |---|---|---|
-| [`results/default-500q-v0.19.0.jsonl`](results/default-500q-v0.19.0.jsonl) | v0.19.0 (current release binary) | any@5 **98.2%** |
+| [`results/default-500q-v0.20.0.jsonl`](results/default-500q-v0.20.0.jsonl) | v0.20.0 (current release binary) | any@5 **98.2%** |
+| [`results/default-500q-v0.19.0.jsonl`](results/default-500q-v0.19.0.jsonl) | v0.19.0 | any@5 98.2% |
 | [`results/default-500q-v017.jsonl`](results/default-500q-v017.jsonl) | v0.17.0 | any@5 98.4% |
 | [`results/default-500q.jsonl`](results/default-500q.jsonl) | v0.16.0 (canonical validation) | any@5 98.2% |
 
@@ -72,7 +75,7 @@ print(f"total-miss@50  = {sum(1 for q in non_abs if not (gold[q] & set(rows[q][:
 EOF
 ```
 
-Expected output — `recall_any@5` = **0.9820** (v0.19.0 file), **0.9840** (v0.17.0)
+Expected output — `recall_any@5` = **0.9820** (v0.20.0 / v0.19.0 files), **0.9840** (v0.17.0)
 or **0.9820** (v0.16.0 file), `total-miss@50 = 0`: every question has all its gold
 sessions somewhere in the top-50; everything below perfect is ranking order, not missing
 data.
