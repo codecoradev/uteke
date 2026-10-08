@@ -33,3 +33,8 @@ jobs:
           cora-api-key: ${{ secrets.CORA_API_KEY }}
           cora-base-url: ${{ secrets.CORA_BASE_URL }}
           cora-model: ${{ secrets.CORA_MODEL }}
+          # The action defaults to origin/develop. For a PR into main that makes
+          # `git diff origin/develop...HEAD` empty (release PRs carry develop's
+          # tree), so Cora reported "empty result" and never reviewed the diff.
+          # Diff against the PR's real base branch.
+          base-branch: origin/${{ github.base_ref }}
