@@ -849,7 +849,13 @@ impl crate::Uteke {
     ) {
         const SIMILAR_THRESHOLD: f32 = 0.80;
         const DUPLICATE_THRESHOLD: f32 = 0.92;
+        // Candidates that may become edges.
         const TOP_K: usize = 20;
+        // The index is shared by every namespace and by document chunks, and
+        // the namespace / liveness filter below runs AFTER the search. Fetch
+        // extra so a small namespace inside a big index still finds its own
+        // neighbours instead of being crowded out by other namespaces.
+        const FETCH_K: usize = TOP_K * 4;
 
         let index = match self.index.read() {
             Ok(i) => i,
@@ -859,38 +865,36 @@ impl crate::Uteke {
             }
         };
 
-        let results = index.search(embedding, TOP_K, 100);
+        let results = index.search(embedding, FETCH_K, 100);
         drop(index); // Release read lock ASAP
 
         if results.is_empty() {
             return;
         }
 
-        // Filter by namespace if specified (#401 cora finding: cross-namespace links are wrong).
-        let ns_set: Option<std::collections::HashSet<String>> = if let Some(ns) = namespace {
-            match self.store.memories_in_namespace(ns) {
-                Ok(ids) => Some(ids.into_iter().collect()),
-                Err(e) => {
-                    tracing::warn!("auto_link_cosine: failed to get namespace ids: {e}");
-                    return;
-                }
+        // Keep only live memories of this namespace (#401: cross-namespace links
+        // are wrong). One query over the candidates — not a scan of the whole
+        // namespace per write. `chunk:<id>` document-chunk keys and deprecated
+        // memories are not in the result, so they never become link targets.
+        let candidate_ids: Vec<&str> = results
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .filter(|id| *id != source_id)
+            .collect();
+        let live = match self.store.live_ids_in_namespace(&candidate_ids, namespace) {
+            Ok(set) => set,
+            Err(e) => {
+                tracing::warn!("auto_link_cosine: failed to check candidates: {e}");
+                return;
             }
-        } else {
-            None
         };
 
         // usearch returns distances (lower = more similar for cosine).
         // Convert distance to similarity: sim = 1.0 - dist.
         let edges: Vec<(String, String)> = results
             .iter()
-            .filter(|(id, _)| id != source_id) // skip self
-            .filter(|(id, _)| {
-                // Skip memories outside our namespace.
-                match &ns_set {
-                    Some(set) => set.contains(id),
-                    None => true,
-                }
-            })
+            .filter(|(id, _)| live.contains(id)) // also drops self
+            .take(TOP_K)
             .filter_map(|(id, dist)| {
                 // Cosine distance → similarity (clamp to [0, 1]).
                 let sim = (1.0 - dist).clamp(0.0, 1.0);
@@ -2580,5 +2584,154 @@ mod resupersession_ledger_tests {
 
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod auto_link_hot_path_tests {
+    //! #1368 — the remember() hot path must not scan a whole namespace, must
+    //! not be crowded out by other namespaces, and must never link to
+    //! deprecated memories.
+    use crate::Uteke;
+
+    const DIMS: usize = 768;
+
+    /// Unit-ish vectors sharing axis 0 with a private perturbation on axis
+    /// `k`: pairwise cosine = 1 / (1 + eps^2) ≈ 0.89 — above the similar_to
+    /// threshold (0.80), below possible_duplicate (0.92) and the remember()
+    /// dedup threshold (0.95), so every one of them is stored and linkable.
+    fn vec_k(k: usize) -> Vec<f32> {
+        let mut v = vec![0.0_f32; DIMS];
+        v[0] = 1.0;
+        v[k + 1] = 0.35;
+        v
+    }
+
+    fn mem(u: &Uteke, text: &str, ns: &str, k: usize) -> String {
+        u.remember_precomputed(text, &[], None, Some(ns), "fact", "text", &vec_k(k))
+            .unwrap()
+    }
+
+    fn similar_targets(u: &Uteke, id: &str) -> Vec<String> {
+        u.edges_for(id)
+            .unwrap()
+            .outgoing
+            .into_iter()
+            .filter(|e| e.edge_type == "similar_to")
+            .map(|e| e.target_id)
+            .collect()
+    }
+
+    /// `e0 + 0.35*e_hot + 0.05*e_k`: sim to `e0 + 0.35*e_hot` is ~0.999.
+    fn near_hot(hot: usize, k: usize) -> Vec<f32> {
+        let mut v = vec![0.0_f32; DIMS];
+        v[0] = 1.0;
+        v[hot + 1] = 0.35;
+        v[k + 1] = 0.05;
+        v
+    }
+
+    #[test]
+    fn small_namespace_inside_a_big_index_still_gets_its_own_links() {
+        let u = Uteke::open(":memory:").unwrap();
+        let hot = 300;
+        // 60 memories of ANOTHER namespace that are much closer (~0.999) to the
+        // newcomer than its own neighbours (~0.89). A plain top-20 search
+        // followed by a namespace filter is filled entirely by them and the
+        // newcomer gets no links at all.
+        for k in 0..60 {
+            u.remember_precomputed(
+                &format!("big {k}"),
+                &[],
+                None,
+                Some("big"),
+                "fact",
+                "text",
+                &near_hot(hot, k),
+            )
+            .unwrap();
+        }
+        let s1 = mem(&u, "small one", "small", 100);
+        let s2 = mem(&u, "small two", "small", 101);
+        let s3 = mem(&u, "small three", "small", 102);
+        let new = u
+            .remember_precomputed(
+                "small four",
+                &[],
+                None,
+                Some("small"),
+                "fact",
+                "text",
+                &vec_k(hot),
+            )
+            .unwrap();
+
+        let targets = similar_targets(&u, &new);
+        for s in [&s1, &s2, &s3] {
+            assert!(targets.contains(s), "missing link to {s}: {targets:?}");
+        }
+        // never across namespaces
+        let all = u.store.list(None, None, 1000, 0).unwrap();
+        for t in &targets {
+            let m = all.iter().find(|m| &m.id == t).unwrap();
+            assert_eq!(m.namespace, "small", "cross-namespace link to {t}");
+        }
+    }
+
+    #[test]
+    fn deprecated_memories_are_never_link_targets() {
+        let u = Uteke::open(":memory:").unwrap();
+        let live = mem(&u, "live neighbour", "ns", 1);
+        let dead = mem(&u, "deprecated neighbour", "ns", 2);
+        // Deprecate in SQLite only: the vector stays in the index, exactly
+        // like a stale entry after a crash or an old binary (#1210).
+        u.store.deprecate(&dead).unwrap();
+
+        let new = mem(&u, "newcomer", "ns", 3);
+        let targets = similar_targets(&u, &new);
+        assert!(targets.contains(&live));
+        assert!(!targets.contains(&dead), "linked to a deprecated memory");
+    }
+
+    #[test]
+    fn live_ids_in_namespace_filters_candidates_only() {
+        let u = Uteke::open(":memory:").unwrap();
+        let a = mem(&u, "a", "one", 1);
+        let b = mem(&u, "b", "two", 2);
+        let gone = mem(&u, "gone", "one", 3);
+        u.store.deprecate(&gone).unwrap();
+
+        let ids = [a.as_str(), b.as_str(), gone.as_str(), "chunk:xyz", "nope"];
+        let in_one = u.store.live_ids_in_namespace(&ids, Some("one")).unwrap();
+        assert_eq!(in_one, [a.clone()].into_iter().collect());
+        let anywhere = u.store.live_ids_in_namespace(&ids, None).unwrap();
+        assert_eq!(anywhere, [a, b].into_iter().collect());
+        assert!(
+            u.store
+                .live_ids_in_namespace::<&str>(&[], Some("one"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn dedup_stays_scoped_to_the_namespace_and_ignores_deprecated() {
+        let u = Uteke::open(":memory:").unwrap();
+        let v = vec_k(7);
+        let first = u
+            .remember_precomputed("same text", &[], None, Some("ns-a"), "fact", "text", &v)
+            .unwrap();
+        // Same namespace: the near-duplicate is found.
+        assert_eq!(
+            u.check_duplicate(&v, Some("ns-a")).unwrap(),
+            Some(first.clone())
+        );
+        // Another namespace holds nothing similar.
+        assert_eq!(u.check_duplicate(&v, Some("ns-b")).unwrap(), None);
+        // No namespace filter: any live memory counts.
+        assert_eq!(u.check_duplicate(&v, None).unwrap(), Some(first.clone()));
+        // A deprecated memory still in the index is not a dedup target (#1210).
+        u.store.deprecate(&first).unwrap();
+        assert_eq!(u.check_duplicate(&v, Some("ns-a")).unwrap(), None);
     }
 }

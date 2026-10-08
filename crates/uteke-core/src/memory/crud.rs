@@ -783,6 +783,39 @@ impl super::Store {
         Ok(ids)
     }
 
+    /// Which of `ids` are live (not deprecated) memories, optionally limited
+    /// to `namespace`? One query over the candidates only, so the cost is
+    /// O(candidates) instead of O(memories in the namespace) — the hot
+    /// `remember` path (dedup + cosine auto-link) used to load every id of the
+    /// namespace on each write. Ids that are not memories (e.g. `chunk:<id>`
+    /// document-chunk index keys) simply do not appear in the result.
+    pub fn live_ids_in_namespace<S: AsRef<str>>(
+        &self,
+        ids: &[S],
+        namespace: Option<&str>,
+    ) -> Result<std::collections::HashSet<String>, Error> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let json = serde_json::to_string(&ids.iter().map(|s| s.as_ref()).collect::<Vec<_>>())
+            .map_err(|e| Error::Validation(format!("candidate id list: {e}")))?;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id FROM memories \
+                 WHERE id IN (SELECT value FROM json_each(?1)) \
+                   AND deprecated = 0 \
+                   AND (?2 IS NULL OR namespace = ?2)",
+            )
+            .map_err(|e| Error::db("prepare live_ids_in_namespace", e))?;
+        let found = stmt
+            .query_map(params![json, namespace], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::db("query live_ids_in_namespace", e))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read live_ids_in_namespace", e))?;
+        Ok(found)
+    }
+
     /// Count memories grouped by memory_type in a namespace.
     pub fn memory_type_counts(&self, namespace: &str) -> Result<Vec<(String, usize)>, Error> {
         let mut stmt = self

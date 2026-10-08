@@ -340,14 +340,16 @@ impl crate::Uteke {
             return Ok(None);
         }
 
-        // Filter by namespace if specified.
-        let ns_set: Option<std::collections::HashSet<String>> = if let Some(ns) = namespace {
-            match self.store.memories_in_namespace(ns) {
-                Ok(ids) => Some(ids.into_iter().collect()),
-                Err(_) => return Ok(None),
-            }
-        } else {
-            None
+        // Namespace + liveness filter over the (few) candidates only; the old
+        // code loaded every id of the namespace on each remember.
+        let candidate_ids: Vec<&str> = results
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .filter(|id| !id.starts_with("chunk:"))
+            .collect();
+        let live = match self.store.live_ids_in_namespace(&candidate_ids, namespace) {
+            Ok(set) => set,
+            Err(_) => return Ok(None),
         };
 
         for (id, dist) in &results {
@@ -355,11 +357,9 @@ impl crate::Uteke {
             if id.starts_with("chunk:") {
                 continue;
             }
-            // Namespace filter.
-            if let Some(ref set) = ns_set {
-                if !set.contains(id) {
-                    continue;
-                }
+            // Namespace + liveness filter.
+            if !live.contains(id) {
+                continue;
             }
             let sim = (1.0 - dist).clamp(0.0, 1.0);
             if sim >= DEDUP_THRESHOLD {
@@ -458,14 +458,12 @@ impl crate::Uteke {
             author_type: "agent".to_string(),
         };
 
-        // Acquire index write lock BEFORE any writes so lock failures are detected early.
-        // If SQLite commit fails after index insert, the orphan index entry is harmless
-        // and will be cleaned up by verify/repair.
-        let mut index = self
-            .index
-            .write()
-            .map_err(|_| Error::lock("index write lock during remember"))?;
-
+        // SQLite is the source of truth and is written first, WITHOUT holding the
+        // index write lock: the timeline / provenance / edge wiring below issue
+        // many queries and would otherwise block every concurrent recall for
+        // their whole duration. The vector is mirrored afterwards under a short
+        // write lock; if that fails the row stays FTS5-only and the outcome says
+        // so (#1273), `uteke repair` can backfill.
         self.store.insert(&memory)?;
 
         // Provenance: record the content hash at write time (#1172 Fase 1).
@@ -510,14 +508,23 @@ impl crate::Uteke {
         let mut vector_error = embedding_error;
         // One policy for insert + persist (retry, deterministic errors not
         // retried) lives in `index_sync`; the outcome says what landed (#1273).
-        let sync = index_sync::upsert(&mut *index, &id, embedding, &SyncPolicy::STANDARD);
-        if let Some(msg) = sync.error_message() {
-            vector_error = Some(msg);
+        // An empty embedding means "no embedder": nothing to mirror, no lock.
+        if !embedding.is_empty() {
+            match self.index.write() {
+                Ok(mut index) => {
+                    let sync =
+                        index_sync::upsert(&mut *index, &id, embedding, &SyncPolicy::STANDARD);
+                    if let Some(msg) = sync.error_message() {
+                        vector_error = Some(msg);
+                    }
+                    // The write lock must be dropped BEFORE auto_link_cosine
+                    // (it takes a read lock on the same index, #442).
+                }
+                Err(_) => {
+                    vector_error = Some("index write lock poisoned; vector not written".into());
+                }
+            }
         }
-        // Drop the write lock BEFORE auto_link_cosine to prevent deadlock.
-        // auto_link_cosine needs a read lock on the same index — holding
-        // the write lock here would deadlock (#442).
-        drop(index);
 
         // Cosine-similarity auto-linking (#401).
         // Must run AFTER index.insert() so the new memory is searchable.
