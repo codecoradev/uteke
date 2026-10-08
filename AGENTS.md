@@ -21,21 +21,62 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
 - **Branch naming**: `feat/`, `fix/`, `docs/`, `chore/`, `perf/`, `security/`,
   `refactor/`, `test/`, `build/`, `ci/`. `release/x` and bare names are rejected.
 - **main only accepts PRs from** `develop` or `chore/release-*` (Source Branch check).
-- **POST-RELEASE SYNC IS MANDATORY**: after a release tag is cut from main, merge
-  `main` back into `develop` immediately (PR if develop is protected). Skipping this
-  makes the next develop→main PR conflict — paid on 0.17.0 (2026-09-06).
+- **No main→develop sync PR.** The repository rejects merge commits and `main` only
+  receives squash commits, so `main` never becomes an ancestor of `develop` through a
+  PR (a squash/rebase merge drops the `-s ours` merge and changes nothing, #1381).
+  The divergence is resolved inside each release branch instead — see
+  "Release procedure" below. Skipping that makes the develop→main PR conflict in
+  ~30 files (merge-base stays at v0.13.2).
 - **PR body**: `## What` / `## Why` / `## Testing` headers are REQUIRED (CI enforces).
-- **CI is green + Cora bot clean** before merge; never trust one gate alone.
+- **CI is green + Cora bot clean** before merge; never trust one gate alone. "Clean"
+  means a REAL verdict ("✅ No issues found" or concrete findings): "Review could not
+  complete" / "empty result" is a blocker. Since #1386 the Cora job diffs against the
+  PR's own base branch (`base-branch: origin/${{ github.base_ref }}`); before that it
+  defaulted to `origin/develop`, so PRs into `main` were reviewed against an empty
+  diff. Re-run the job once; if it is still empty, investigate instead of accepting.
 - Version: single workspace version in root Cargo.toml; internal deps (uteke-core/
   uteke-mcp) must be bumped to the same version in the release commit.
 - `docs/api-reference.md` is GENERATED (`cargo run -p docgen`) — never hand-edit.
 
-## Conflicts at release time
+## Release procedure (develop → main)
 
-When develop→main conflicts, do NOT hand-resolve server-side (protected branch
-rejects direct pushes). Instead: branch from the release commit, `git merge main`,
-resolve keeping develop's side (unless main carries unique content — verify), push
-the branch as `chore/release-*`, and open the release PR from it.
+1. **Pre-flight.** The owner approves the version number: propose minor vs patch with
+   the rationale and wait (never decide and tag in the same run). Check the CORE
+   contract: every CORE behaviour change in the release needs a uteke-cloud contract
+   issue, and its answer should be read first. Run the pre-release mutation gate
+   (owner rule 2026-08-19, local only, CI skips it for PRs):
+   `cargo mutants -p uteke-core -j 2` (check `df -h` first, it needs many GB); if the
+   owner explicitly releases without it, say so in the PR body.
+2. **Release-prep PR into `develop`** (`chore(release): vX.Y.Z - version bump,
+   changelog, docs sync`): workspace `Cargo.toml`, the internal deps in the three
+   crates, `Cargo.lock`, both READMEs' version line, the version line of both skill
+   copies (`.agents/skills/uteke-memory/SKILL.md` and
+   `crates/uteke-cli/assets/uteke-memory-skill.md`, enforced by tests),
+   `docs/core-contract.json` (regenerate with `cargo run -p docgen`), and the
+   CHANGELOG entry. Merge it with the normal merge gate.
+3. **Release branch.** `git checkout -b chore/release-vX.Y.Z-main origin/develop`, then
+   merge `main` keeping develop's side. First prove `main` has no content `develop`
+   lacks: `git diff <develop's previous release commit> origin/main` is empty and
+   `git diff --name-status origin/develop origin/main | awk '$1=="A"'` lists nothing.
+   Then `git merge -s ours origin/main` and check `git diff origin/develop HEAD` is
+   empty. If `main` DOES carry unique content, resolve by hand instead (never
+   server-side: protected branch). Push the branch.
+4. **PR into `main`** (`chore: release vX.Y.Z to main`), **squash** merge (the ruleset
+   rejects merge commits). Apply the full merge gate; do not accept an empty Cora
+   result without a written justification on the PR.
+5. **Tag only after the merge.** Verify `origin/main` is the merge commit and its tree
+   equals `develop`, then create an ANNOTATED tag on that commit
+   (`git tag -a vX.Y.Z <sha>`) and push it. Tagging before the merge once pointed
+   the tag at the previous release (v0.15.0). The Release workflow takes ~35 min
+   (the legacy-ORT build is the long pole) and publishes GitHub assets, crates.io
+   (uteke-core/cli/mcp), Docker tags and opens the Homebrew tap PR.
+6. **After the tag.** Merge the homebrew-tap PR the workflow opened (its title/body
+   follow the tap's rules since #1384, and the job already re-verified every SHA256
+   against `checksums-sha256.txt`; Cora there was fixed in homebrew-tap#6), then
+   `brew update && brew upgrade codecoradev/tap/uteke`. Verify crates.io and the
+   Docker tags, upgrade the production server and run `uteke verify` (repair if
+   `consistent` is false). Do not run `uteke-mcp --version` / `uteke-serve --version`
+   in a shell: they start a server and hang.
 
 ## CORE/LAB contract — source of truth (MUST READ before API-surface work)
 
@@ -55,6 +96,10 @@ anti-drift mechanism, backlog) lives in the PROD uteke document tree
   unprompted.
 - Changing CORE semantics in OSS requires a contract issue on uteke-cloud FIRST.
   Execution backlog: cloud #81–#85; analysis archive: cloud issue #69.
+- **uteke-cloud's tracker is Gitea** (`codecoradev/uteke-cloud` on
+  gitea.azfirazka.com, e.g. `tea issues list --login <your-gitea-login> --repo
+  codecoradev/uteke-cloud`). The GitHub repo of the same name is a stale mirror
+  whose issue numbers do not match.
 
 ## Source of truth for workflow standards
 
