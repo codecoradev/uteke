@@ -127,6 +127,59 @@ pub struct DocumentSearchResult {
     pub mode: String,
 }
 
+/// `(exact, like-prefix)` that select a subtree by `path`: the document itself
+/// is `exact`, its descendants match `prefix`.
+fn subtree_selectors(path: &str) -> (String, String) {
+    if path.ends_with('/') {
+        (path.to_string(), format!("{path}%"))
+    } else {
+        (path.to_string(), format!("{path}/%"))
+    }
+}
+
+/// Rewrite the `path`/`depth` of every descendant of the document at
+/// `old_path` after that document moved to `new_path` (`depth_diff` = new depth
+/// minus old depth). The document itself (`skip_id`) is not touched. A document
+/// with an empty legacy `path` has no addressable descendants (matching
+/// `"" + "/%"` would hit every row), so nothing is rewritten. Returns the
+/// number of descendants updated. Shared by `move_document` and the re-parenting
+/// branch of `upsert_document` (#1377).
+fn rewrite_descendants(
+    conn: &rusqlite::Connection,
+    old_path: &str,
+    new_path: &str,
+    depth_diff: i64,
+    skip_id: &str,
+) -> Result<usize, Error> {
+    if old_path.is_empty() {
+        return Ok(0);
+    }
+    let (old_exact, old_prefix) = subtree_selectors(old_path);
+    // Replace ONLY the leading prefix (substr), never other occurrences of the
+    // old path inside a descendant's path.
+    conn.execute(
+        "UPDATE documents SET path = ?2 || substr(path, length(?1) + 1), depth = depth + ?3 \
+         WHERE path LIKE ?4 AND id != ?5",
+        params![old_exact, new_path, depth_diff, old_prefix, skip_id],
+    )
+    .map_err(|e| Error::db("update descendant paths", e))
+}
+
+/// Deepest `depth` found in the subtree rooted at `old_path` (itself included),
+/// or `None` for a legacy row without a path.
+fn max_subtree_depth(conn: &rusqlite::Connection, old_path: &str) -> Option<i64> {
+    if old_path.is_empty() {
+        return None;
+    }
+    let (_, prefix) = subtree_selectors(old_path);
+    conn.query_row(
+        "SELECT MAX(depth) FROM documents WHERE path LIKE ?1",
+        params![prefix],
+        |row| row.get::<_, Option<i64>>(0),
+    )
+    .unwrap_or(None)
+}
+
 /// Recompute a document's denormalized `has_children` flag from the actual
 /// rows. Used wherever a parent can gain or lose a child so the flag cannot go
 /// stale (#1332).
@@ -284,15 +337,33 @@ impl super::Store {
         let doc_id = if let Some(id) = existing {
             // Remember the previous parent: a re-parenting upsert must fix the
             // flag on BOTH the old and the new parent (#1332).
-            let old_parent: Option<String> = tx
+            let (old_parent, old_path, old_depth): (Option<String>, String, i64) = tx
                 .query_row(
-                    "SELECT parent_id FROM documents WHERE id = ?1",
+                    "SELECT parent_id, path, depth FROM documents WHERE id = ?1",
                     params![id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .optional()
                 .map_err(|e| Error::db("read previous parent", e))?
-                .flatten();
+                .unwrap_or((None, String::new(), 0));
+            // A re-parenting upsert moves the whole subtree: refuse a cycle and
+            // a result deeper than MAX_DEPTH BEFORE writing anything (#1377).
+            let moved = doc.path != old_path;
+            if moved && !old_path.is_empty() {
+                let (_, old_prefix) = subtree_selectors(&old_path);
+                let inside_old_subtree =
+                    doc.path.starts_with(old_prefix.trim_end_matches('%')) && doc.path != old_path;
+                if inside_old_subtree {
+                    return Err(Error::validation(
+                        "cannot move document into its own descendant",
+                    ));
+                }
+                if let Some(deepest) = max_subtree_depth(tx, &old_path) {
+                    if deepest + (doc.depth - old_depth) > MAX_DEPTH {
+                        return Err(Error::validation("move would exceed maximum depth of 10"));
+                    }
+                }
+            }
             // Update existing document.
             let version = doc.version + 1;
             tx.execute(
@@ -321,6 +392,9 @@ impl super::Store {
                 params![id],
             )
             .map_err(|e| Error::db("delete old document chunks", e))?;
+            if moved {
+                rewrite_descendants(tx, &old_path, &doc.path, doc.depth - old_depth, &id)?;
+            }
             for parent in old_parent.iter().chain(doc.parent_id.iter()) {
                 refresh_has_children(tx, parent)?;
             }
@@ -806,11 +880,7 @@ impl super::Store {
         // their paths/depths, so such a document is moved on its own: it has no
         // addressable descendants (#1332).
         let has_path = !old_path.is_empty();
-        let (old_path_exact, old_prefix) = if old_path.ends_with('/') {
-            (old_path.clone(), format!("{}%", old_path))
-        } else {
-            (old_path.to_string(), format!("{}/%", old_path))
-        };
+        let (_, old_prefix) = subtree_selectors(&old_path);
 
         // Safety checks.
         if let Some(parent) = new_parent_id {
@@ -896,16 +966,7 @@ impl super::Store {
         // Use substr() to replace ONLY the prefix portion (not all occurrences),
         // avoiding corruption when old_path appears multiple times in a descendant path.
         // length(old_path) is the offset where the suffix begins.
-        let n = if has_path {
-            tx.execute(
-                "UPDATE documents SET path = ?2 || substr(path, length(?1) + 1), depth = depth + ?3 \
-                 WHERE path LIKE ?4 AND id != ?5",
-                params![old_path_exact, new_path, depth_diff, old_prefix, doc_id,],
-            )
-            .map_err(|e| Error::db("update descendant paths", e))?
-        } else {
-            0
-        };
+        let n = rewrite_descendants(&tx, &old_path, &new_path, depth_diff, doc_id)?;
 
         // Update new parent's has_children flag.
         if let Some(parent) = new_parent_id {
@@ -1445,6 +1506,143 @@ mod tests {
         let mut want: Vec<String> = (0..7).map(|i| format!("d{i}")).collect();
         want.sort();
         assert_eq!(seen, want, "every document exactly once");
+    }
+
+    fn path_depth(store: &Store, id: &str) -> (String, i64) {
+        let d = store.get_document(id).unwrap().unwrap();
+        (d.path, d.depth)
+    }
+
+    /// #1377: an upsert that re-parents a document must carry its whole subtree.
+    #[test]
+    fn test_upsert_reparent_rewrites_descendant_paths_and_depth() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store.upsert_document(&make_doc("b", "b", "B")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/a/k/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("gg", "great", "Great", "g", "/a/k/g/"))
+            .unwrap();
+        // unrelated sibling subtree that shares a textual prefix with "/a/k/"
+        store.upsert_document(&make_doc("ak", "ak", "AK")).unwrap();
+
+        // Same slug, new parent.
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "b", "/b/"))
+            .unwrap();
+
+        assert_eq!(path_depth(&store, "k"), ("/b/k/".to_string(), 1));
+        assert_eq!(path_depth(&store, "g"), ("/b/k/g/".to_string(), 2));
+        assert_eq!(path_depth(&store, "gg"), ("/b/k/g/gg/".to_string(), 3));
+        assert_eq!(path_depth(&store, "a"), ("/a/".to_string(), 0));
+        assert_eq!(path_depth(&store, "ak"), ("/ak/".to_string(), 0));
+    }
+
+    /// Dropping the parent (upsert without one) moves the subtree to the root.
+    #[test]
+    fn test_upsert_to_root_rewrites_descendants() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/a/k/"))
+            .unwrap();
+
+        store.upsert_document(&make_doc("k", "kid", "Kid")).unwrap();
+
+        assert_eq!(path_depth(&store, "k"), ("/k/".to_string(), 0));
+        assert_eq!(path_depth(&store, "g"), ("/k/g/".to_string(), 1));
+    }
+
+    /// Deleting the old parent must no longer take the moved subtree with it.
+    #[test]
+    fn test_delete_old_parent_after_reparent_keeps_moved_subtree() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store.upsert_document(&make_doc("b", "b", "B")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/a/k/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "b", "/b/"))
+            .unwrap();
+
+        store.delete_document("a").unwrap();
+        assert!(store.get_document("k").unwrap().is_some());
+        assert!(
+            store.get_document("g").unwrap().is_some(),
+            "g moved with k and must survive the deletion of a"
+        );
+    }
+
+    #[test]
+    fn test_upsert_reparent_into_own_descendant_is_rejected_atomically() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("k", "kid", "Kid")).unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/k/"))
+            .unwrap();
+
+        // k under its own child g.
+        let cyc = make_child_doc("k", "kid", "Kid2", "g", "/k/g/");
+        assert!(store.upsert_document(&cyc).is_err());
+        assert_eq!(path_depth(&store, "k"), ("/k/".to_string(), 0));
+        assert_eq!(path_depth(&store, "g"), ("/k/g/".to_string(), 1));
+        assert_eq!(store.get_document("k").unwrap().unwrap().title, "Kid");
+    }
+
+    #[test]
+    fn test_upsert_reparent_exceeding_max_depth_is_rejected() {
+        let store = open_test_store();
+        // target chain t0..t4 (depths 0..4)
+        store.upsert_document(&make_doc("t0", "t0", "T0")).unwrap();
+        let mut path = "/t0/".to_string();
+        for i in 1..=4 {
+            let id = format!("t{i}");
+            store
+                .upsert_document(&make_child_doc(
+                    &id,
+                    &id,
+                    &id,
+                    &format!("t{}", i - 1),
+                    &path,
+                ))
+                .unwrap();
+            path = format!("{path}{id}/");
+        }
+        // subtree k0 (depth 0) with 9 descendants (depths 1..9)
+        store.upsert_document(&make_doc("k0", "k0", "K0")).unwrap();
+        let mut kpath = "/k0/".to_string();
+        for i in 1..=9 {
+            let id = format!("k{i}");
+            store
+                .upsert_document(&make_child_doc(
+                    &id,
+                    &id,
+                    &id,
+                    &format!("k{}", i - 1),
+                    &kpath,
+                ))
+                .unwrap();
+            kpath = format!("{kpath}{id}/");
+        }
+
+        // k0 under t4 would put k9 at depth 14.
+        let moved = make_child_doc("k0", "k0", "K0", "t4", &path);
+        let err = store.upsert_document(&moved).unwrap_err().to_string();
+        assert!(err.contains("maximum depth"), "{err}");
+        assert_eq!(path_depth(&store, "k0"), ("/k0/".to_string(), 0));
+        assert_eq!(path_depth(&store, "k9").1, 9);
     }
 
     #[test]
