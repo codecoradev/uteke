@@ -130,12 +130,21 @@ pub struct DocumentSearchResult {
 /// `(exact, like-prefix)` that select a subtree by `path`: the document itself
 /// is `exact`, its descendants match `prefix`.
 fn subtree_selectors(path: &str) -> (String, String) {
-    let dir = if path.ends_with('/') {
+    (
+        path.to_string(),
+        format!("{}%", escape_like(&subtree_dir(path))),
+    )
+}
+
+/// The RAW (unescaped) directory form of `path`: always ends with `/`. Use it
+/// for plain string comparisons (`starts_with`); the LIKE prefix from
+/// [`subtree_selectors`] is escaped and must only be bound to SQL.
+fn subtree_dir(path: &str) -> String {
+    if path.ends_with('/') {
         path.to_string()
     } else {
         format!("{path}/")
-    };
-    (path.to_string(), format!("{}%", escape_like(&dir)))
+    }
 }
 
 /// Escape `\`, `%` and `_` so a stored path is matched literally by
@@ -365,9 +374,10 @@ impl super::Store {
             // a result deeper than MAX_DEPTH BEFORE writing anything (#1377).
             let moved = doc.path != old_path;
             if moved && !old_path.is_empty() {
-                let (_, old_prefix) = subtree_selectors(&old_path);
+                // Raw string comparison: the LIKE prefix is escaped and would not
+                // match a path containing `_` or `%` (CodeCora on #1378).
                 let inside_old_subtree =
-                    doc.path.starts_with(old_prefix.trim_end_matches('%')) && doc.path != old_path;
+                    doc.path.starts_with(&subtree_dir(&old_path)) && doc.path != old_path;
                 if inside_old_subtree {
                     return Err(Error::validation(
                         "cannot move document into its own descendant",
@@ -1605,6 +1615,23 @@ mod tests {
         assert_eq!(path_depth(&store, "k"), ("/k/".to_string(), 0));
         assert_eq!(path_depth(&store, "g"), ("/k/g/".to_string(), 1));
         assert_eq!(store.get_document("k").unwrap().unwrap().title, "Kid");
+    }
+
+    /// CodeCora on #1378: the cycle guard compared a raw path with an escaped
+    /// LIKE prefix, so paths containing `_` slipped through.
+    #[test]
+    fn test_cycle_guard_works_for_paths_with_like_wildcards() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("k_1", "k1", "K")).unwrap();
+        store
+            .upsert_document(&make_child_doc("g_1", "g1", "G", "k_1", "/k_1/"))
+            .unwrap();
+
+        let cyc = make_child_doc("k_1", "k1", "K2", "g_1", "/k_1/g_1/");
+        let err = store.upsert_document(&cyc).unwrap_err().to_string();
+        assert!(err.contains("own descendant"), "{err}");
+        assert_eq!(path_depth(&store, "k_1"), ("/k_1/".to_string(), 0));
+        assert_eq!(path_depth(&store, "g_1"), ("/k_1/g_1/".to_string(), 1));
     }
 
     #[test]
