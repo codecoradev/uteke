@@ -321,19 +321,62 @@ impl Store {
     /// Recalculate importance for all memories.
     /// importance = 0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
     pub fn recompute_importance(&self) -> Result<usize, Error> {
-        let memories = self.load_all(None)?;
+        // Only the columns the formula needs: the old `load_all` pulled every
+        // embedding blob into memory for no reason (#1332). Same predicate as
+        // `load_all(None)`: live memories that have an embedding.
+        struct Row {
+            id: String,
+            importance: f64,
+            pinned: bool,
+            access_count: i64,
+            last_accessed: Option<chrono::DateTime<chrono::Utc>>,
+            metadata: serde_json::Value,
+        }
+        let rows: Vec<Row> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, importance, pinned, access_count, last_accessed, metadata \
+                     FROM memories WHERE embedding IS NOT NULL AND deprecated = 0",
+                )
+                .map_err(|e| Error::db("prepare recompute_importance", e))?;
+            stmt.query_map([], |r| {
+                let last: Option<String> = r.get(4)?;
+                let meta: Option<String> = r.get(5)?;
+                Ok(Row {
+                    id: r.get(0)?,
+                    importance: r.get::<_, f64>(1)?,
+                    pinned: r.get::<_, i64>(2)? != 0,
+                    access_count: r.get(3)?,
+                    last_accessed: last.as_deref().and_then(parse_datetime_opt),
+                    metadata: meta
+                        .and_then(|m| serde_json::from_str(&m).ok())
+                        .unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .map_err(|e| Error::db("query recompute_importance", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("read recompute_importance", e))?
+        };
+
+        // One transaction for the whole pass: per-row autocommit made this one
+        // fsync per memory.
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin recompute_importance", e))?;
+        let mut update = tx
+            .prepare("UPDATE memories SET importance = ?1 WHERE id = ?2")
+            .map_err(|e| Error::db("prepare importance update", e))?;
         let mut updated = 0;
         let now = chrono::Utc::now();
 
-        for m in &memories {
+        for m in &rows {
             // Skip pinned — they stay at 1.0
             if m.pinned {
                 if (m.importance - 1.0).abs() > f64::EPSILON {
-                    self.conn
-                        .execute(
-                            "UPDATE memories SET importance = 1.0 WHERE id = ?1",
-                            rusqlite::params![m.id],
-                        )
+                    update
+                        .execute(rusqlite::params![1.0_f64, m.id])
                         .map_err(|e| Error::db("update importance", e))?;
                     updated += 1;
                 }
@@ -359,22 +402,20 @@ impl Store {
                 .unwrap_or(0) as f64;
             let connectivity = (rel_count / 5.0).min(1.0);
 
-            let importance = 0.3 * access_score
-                + 0.3 * recency_score
-                + 0.2 * connectivity
-                + 0.2 * if m.pinned { 1.0 } else { 0.0 };
+            // (pinned rows `continue`d above, so the pinned term is always 0 here.)
+            let importance = 0.3 * access_score + 0.3 * recency_score + 0.2 * connectivity;
             let importance = importance.clamp(0.0_f64, 1.0_f64);
 
             if (m.importance - importance).abs() > f64::EPSILON {
-                self.conn
-                    .execute(
-                        "UPDATE memories SET importance = ?1 WHERE id = ?2",
-                        rusqlite::params![importance, m.id],
-                    )
+                update
+                    .execute(rusqlite::params![importance, m.id])
                     .map_err(|e| Error::db("update importance", e))?;
                 updated += 1;
             }
         }
+        drop(update);
+        tx.commit()
+            .map_err(|e| Error::db("commit recompute_importance", e))?;
         Ok(updated)
     }
 
@@ -456,6 +497,35 @@ fn parse_datetime_flexible(
 pub(crate) fn parse_datetime_opt(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     parse_datetime_flexible(s, 0).ok()
 }
+
+/// Canonical column list decoded **by position** by [`row_to_memory`].
+///
+/// Every `SELECT` that feeds `row_to_memory` must use this macro (or
+/// [`memory_columns_m`] for queries aliasing `memories AS m`) instead of
+/// hand-writing the list: a SELECT that drifts from this order or stops short
+/// silently yields wrong `slug` / `source` / `source_type` / `author_type` /
+/// `deprecated_at` values. It expands to a string literal, so it composes with
+/// `concat!` into a compile-time SQL constant (no runtime formatting).
+macro_rules! memory_columns {
+    () => {
+        "id, content, embedding, tags, metadata, created_at, updated_at, namespace, \
+         access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, \
+         importance, pinned, content_type, slug, source, source_type, author_type, \
+         deprecated_at"
+    };
+}
+
+/// [`memory_columns`] with every column qualified by the `m.` alias.
+macro_rules! memory_columns_m {
+    () => {
+        "m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, \
+         m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, \
+         m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, \
+         m.source, m.source_type, m.author_type, m.deprecated_at"
+    };
+}
+
+pub(crate) use {memory_columns, memory_columns_m};
 
 /// Convert a database row to a Memory.
 pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite::Error> {
@@ -601,6 +671,21 @@ mod tests {
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
         }
+    }
+
+    #[test]
+    fn test_bulk_ids_exceed_sqlite_param_limit() {
+        let store = Store::open(":memory:").unwrap();
+        let ids: Vec<String> = (0..1200).map(|i| format!("bulk-{i}")).collect();
+        for id in &ids {
+            store.insert(&make_test_memory(id, "x", &[])).unwrap();
+        }
+
+        let deprecated = store.deprecate_by_ids(&ids, "test").unwrap();
+        assert_eq!(deprecated, 1200);
+
+        let deleted = store.delete_by_ids(&ids).unwrap();
+        assert_eq!(deleted, 1200);
     }
 
     #[test]
@@ -1022,6 +1107,57 @@ mod tests {
         assert_eq!(new_matches.len(), 2);
     }
 
+    /// #1332: renaming onto a tag the memory already has must not duplicate it.
+    #[test]
+    fn test_rename_tag_onto_existing_tag_does_not_duplicate() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(&make_test_memory("1", "has both", &["alpha", "beta"]))
+            .unwrap();
+        store
+            .insert(&make_test_memory("2", "only old", &["alpha"]))
+            .unwrap();
+
+        store.rename_tag("alpha", "beta", None).unwrap();
+
+        let both = store.get_by_id("1").unwrap().unwrap();
+        assert_eq!(both.tags, vec!["beta".to_string()], "no duplicate entry");
+        let only = store.get_by_id("2").unwrap().unwrap();
+        assert_eq!(only.tags, vec!["beta".to_string()]);
+        assert_eq!(store.list(Some("beta"), None, 10, 0).unwrap().len(), 2);
+        assert_eq!(store.list(Some("alpha"), None, 10, 0).unwrap().len(), 0);
+    }
+
+    /// recompute_importance keeps its formula after the rewrite (#1332).
+    #[test]
+    fn test_recompute_importance_formula_and_pinned() {
+        let store = Store::open(":memory:").unwrap();
+        // 10+ accesses, accessed just now, no relationships: 0.3*1 + 0.3*~1.
+        let mut hot = make_test_memory("hot", "hot", &[]);
+        hot.access_count = 10;
+        hot.last_accessed = Some(chrono::Utc::now());
+        hot.importance = 0.5;
+        store.insert(&hot).unwrap();
+        // never accessed, no relationships: 0.3*0 + 0.3*e^(-ln2*365/30) ~ 0.
+        let mut cold = make_test_memory("cold", "cold", &[]);
+        cold.importance = 0.5;
+        store.insert(&cold).unwrap();
+        // pinned memories are forced to 1.0.
+        let mut pin = make_test_memory("pin", "pin", &[]);
+        pin.pinned = true;
+        pin.importance = 0.2;
+        store.insert(&pin).unwrap();
+
+        let changed = store.recompute_importance().unwrap();
+        assert_eq!(changed, 3);
+        let imp = |id: &str| store.get_by_id(id).unwrap().unwrap().importance;
+        assert!((imp("hot") - 0.6).abs() < 0.01, "hot = {}", imp("hot"));
+        assert!(imp("cold") < 0.001, "cold = {}", imp("cold"));
+        assert!((imp("pin") - 1.0).abs() < f64::EPSILON);
+        // a second pass changes nothing
+        assert_eq!(store.recompute_importance().unwrap(), 0);
+    }
+
     #[test]
     fn test_delete_tag_json_each() {
         let store = Store::open(":memory:").unwrap();
@@ -1199,6 +1335,98 @@ mod tests {
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0], "1");
         assert_eq!(store.count(Some("ns-b")).unwrap(), 1);
+    }
+
+    /// Every read path must hand back the full row: queries that stop short
+    /// of the shared column list silently default slug/source/source_type/
+    /// author_type (row_to_memory decodes by position).
+    #[test]
+    fn test_every_memory_reader_returns_full_row() {
+        let store = Store::open(":memory:").unwrap();
+        let mut m = make_test_memory("full-row", "fullrowterm", &["t1"]);
+        m.slug = Some("my-slug".to_string());
+        m.source = Some("notes.md".to_string());
+        m.source_type = "file".to_string();
+        m.author_type = "human".to_string();
+        store.insert(&m).unwrap();
+
+        let check = |what: &str, got: &Memory| {
+            assert_eq!(got.slug.as_deref(), Some("my-slug"), "{what}: slug");
+            assert_eq!(got.source.as_deref(), Some("notes.md"), "{what}: source");
+            assert_eq!(got.source_type, "file", "{what}: source_type");
+            assert_eq!(got.author_type, "human", "{what}: author_type");
+        };
+        let one = |what: &str, v: Vec<Memory>| {
+            assert_eq!(v.len(), 1, "{what}: expected exactly the inserted row");
+            check(what, &v[0]);
+        };
+
+        check("get_by_id", &store.get_by_id("full-row").unwrap().unwrap());
+        one("get_by_ids", store.get_by_ids(&["full-row"]).unwrap());
+        check(
+            "get_by_id_in_namespace",
+            &store
+                .get_by_id_in_namespace("full-row", Some(crate::memory::types::DEFAULT_NAMESPACE))
+                .unwrap()
+                .unwrap(),
+        );
+        one("load_all", store.load_all(None).unwrap());
+        one("list", store.list(None, None, 10, 0).unwrap());
+        one("list(tag)", store.list(Some("t1"), None, 10, 0).unwrap());
+        one(
+            "search_content",
+            store.search_content("fullrowterm", None, 10).unwrap(),
+        );
+        let future = chrono::Utc::now() + chrono::Duration::days(1);
+        one(
+            "list_at_time",
+            store.list_at_time(None, None, 10, 0, future).unwrap(),
+        );
+        one(
+            "list_at_time(tag)",
+            store.list_at_time(Some("t1"), None, 10, 0, future).unwrap(),
+        );
+        one("find_similar", store.find_similar("default", 10).unwrap());
+        one("find_aged", store.find_aged(0, u32::MAX, None).unwrap());
+
+        // deprecated_at is the last column (index 21): it must survive too.
+        store.deprecate("full-row").unwrap();
+        let got = store.get_by_id("full-row").unwrap().unwrap();
+        assert!(
+            got.deprecated && got.deprecated_at.is_some(),
+            "deprecated_at"
+        );
+        check("get_by_id after deprecate", &got);
+    }
+
+    /// The `m.`-aliased macro must stay in lockstep with the plain one.
+    #[test]
+    fn test_memory_column_macros_agree() {
+        let plain: Vec<&str> = memory_columns!().split(',').map(str::trim).collect();
+        let aliased: Vec<&str> = memory_columns_m!().split(',').map(str::trim).collect();
+        assert_eq!(plain.len(), 22, "row_to_memory decodes 22 columns");
+        assert_eq!(plain.len(), aliased.len());
+        for (p, a) in plain.iter().zip(&aliased) {
+            assert_eq!(format!("m.{p}"), *a);
+        }
+    }
+
+    #[test]
+    fn test_bulk_cold_skips_pinned() {
+        let store = Store::open(":memory:").unwrap();
+        let mut pinned = make_test_memory("pinned-cold", "keep me", &[]);
+        pinned.pinned = true; // last_accessed None => otherwise "cold"
+        store.insert(&pinned).unwrap();
+        store
+            .insert(&make_test_memory("plain-cold", "drop me", &[]))
+            .unwrap();
+
+        let found = store.find_ids_cold(None, 30).unwrap();
+        assert_eq!(found, vec!["plain-cold".to_string()]);
+
+        let deleted = store.bulk_delete_cold(None, 30).unwrap();
+        assert_eq!(deleted, vec!["plain-cold".to_string()]);
+        assert!(store.get_by_id("pinned-cold").unwrap().is_some());
     }
 
     #[test]

@@ -355,13 +355,19 @@ namespace = "my-project"
 
 [logging]
 level = "warn"
-
-[server]
-enabled = true
-port = 8767
 ```
 
 Combined with shell hooks, this enables automatic project-scoped memory — each project gets its own isolated memory store.
+
+### Trust: what a project file may not set
+
+A project directory can be an untrusted clone, so `.uteke/uteke.toml` is **not** allowed to decide where credentials or memory text are sent or how the server authenticates. These keys are ignored when they come from the project file (a warning is logged) and must be set in the global `uteke.toml` instead:
+
+- `[embedding]`: `backend`, `api_key`, `base_url`, `endpoint_path`
+- `[embed_fallback]` and `[extraction]`: `api_key`, `base_url`, `endpoint_path`
+- the whole `[server]` section (`enabled`, `host`, `port`, `auth_token`, `read_only_token`, `cors_origins`, `allowed_hosts`)
+
+Everything else (store path, namespace, logging, recall tuning, lifecycle, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
 
 ## CLI Flag Override
 

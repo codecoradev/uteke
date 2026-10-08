@@ -13,8 +13,6 @@ mod types;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use std::path::PathBuf;
-
 use sha2::{Digest, Sha256};
 use tiny_http::Server;
 use tracing::{error, info, warn};
@@ -34,6 +32,7 @@ fn main() {
     let mut cli_auth_token: Option<String> = None;
     let mut cli_read_only_token: Option<String> = None;
     let mut cli_cors_origins: Vec<String> = Vec::new();
+    let mut cli_allowed_hosts: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -77,6 +76,15 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--allowed-host" => {
+                i += 1;
+                if i < args.len() {
+                    cli_allowed_hosts.push(args[i].clone());
+                } else {
+                    eprintln!("Error: --allowed-host requires a value");
+                    std::process::exit(1);
+                }
+            }
             "--cors-origin" => {
                 i += 1;
                 if i < args.len() {
@@ -101,6 +109,9 @@ fn main() {
                 println!("  --port <PORT>        Port number (default: 8767)");
                 println!("  --auth-token <TOKEN> Bearer token for API auth");
                 println!("  --cors-origin <URL>  Allowed CORS origin (repeatable)");
+                println!(
+                    "  --allowed-host <H>   Extra accepted Host header value (repeatable, #1326)"
+                );
                 println!("  --read-only-token <T> Read-only API token (GET endpoints only) (#409)");
                 println!("  -V, --version        Show version");
                 println!("  -h, --help           Show this help");
@@ -206,6 +217,17 @@ fn main() {
         cli_cors_origins
     } else {
         config_cors_origins
+    };
+
+    // Merge allowed Host values: CLI flags override config (#1326)
+    let allowed_hosts = if !cli_allowed_hosts.is_empty() {
+        cli_allowed_hosts
+    } else {
+        config
+            .server
+            .as_ref()
+            .and_then(|s| s.allowed_hosts.clone())
+            .unwrap_or_default()
     };
 
     let host = cli_host.unwrap_or(config_host);
@@ -325,12 +347,15 @@ fn main() {
     let read_only_token_hash = read_only_token.as_deref().map(|t| Sha256::digest(t).into());
 
     // Build request context
-    // Warn if auth is configured but CORS origins are not — this is safe for
-    // non-browser clients (curl, SDKs, agents) but risky if browser access is needed.
-    if auth_token_hash.is_some() && cors_origins.is_empty() {
-        warn!("Security: auth token is set but cors_origins is not configured.");
-        warn!("  For browser access, set cors_origins in uteke.toml or --cors-origin.");
-        warn!("  Non-browser clients (curl, agents) are unaffected by CORS.");
+    // CORS is off unless origins are configured. Wildcard is an explicit opt-in
+    // and is dangerous without auth: any web page could read/write memories.
+    if cors_origins.iter().any(|o| o == "*")
+        && auth_token_hash.is_none()
+        && read_only_token_hash.is_none()
+    {
+        warn!("Security: cors_origins contains \"*\" and authentication is disabled —");
+        warn!("  any website opened in a local browser can read and modify memories.");
+        warn!("  Set an auth token or list explicit origins.");
     }
     let ctx = context::ReqCtx {
         auth_token_hash,
@@ -359,6 +384,7 @@ fn main() {
             recall
         },
         extraction_config: config.extraction.clone(),
+        host_guard: context::HostGuard::new(&host, &allowed_hosts),
     };
 
     // Start server
@@ -509,6 +535,28 @@ fn main() {
         }
     });
 
+    // Vector-index flusher (#1322): per-operation index saves are batched, so
+    // a single write followed by idle time would otherwise sit in memory until
+    // the next write or a clean shutdown (SIGTERM does not run the handler).
+    let flush_uteke = Arc::clone(&uteke);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            if SHUTDOWN.load(Ordering::SeqCst) {
+                return;
+            }
+            if let Ok(u) = flush_uteke.lock() {
+                if let Err(e) = u.flush_index() {
+                    warn!("Periodic index flush failed: {e}");
+                }
+                // vecq only: rebuild once dead rows pass 25% of the index (#1324).
+                if let Err(e) = u.compact_index_if_needed(false) {
+                    warn!("Index compaction failed: {e}");
+                }
+            }
+        }
+    });
+
     // SIGINT handler
     ctrlc::set_handler(|| {
         if SHUTDOWN.load(Ordering::SeqCst) {
@@ -551,7 +599,9 @@ fn main() {
 
         let method = req.method().clone();
         let url = req.url().to_string();
-        info!("{method} {url}");
+        // Log the path only: query strings can carry memory text / search
+        // phrases (PII, secrets) that must not land in server logs.
+        info!("{method} {}", url.split('?').next().unwrap_or(&url));
 
         let uteke = Arc::clone(&uteke);
         let ctx = ctx.clone();
@@ -564,15 +614,23 @@ fn main() {
         }
 
         let result = std::thread::Builder::new().spawn(move || {
-            let response = handlers::route(&uteke, &ctx, &mut req);
+            // RAII: the slot is released even if the handler panics, so a
+            // single bad request can never leak capacity.
+            let _slot = SlotGuard(pair);
+            let routed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handlers::route(&uteke, &ctx, &mut req)
+            }));
+            let response = match routed {
+                Ok(r) => r,
+                Err(_) => {
+                    error!("Request handler panicked: {method} {url}");
+                    tiny_http::Response::from_data(b"Internal server error".to_vec())
+                        .with_status_code(500)
+                }
+            };
             if let Err(e) = req.respond(response) {
                 warn!("Response error: {e}");
             }
-            // Release slot and notify the waiting accept loop.
-            let (lock, cvar) = &*pair;
-            let mut active = lock.lock().unwrap();
-            *active -= 1;
-            cvar.notify_one();
         });
 
         if let Err(e) = result {
@@ -675,31 +733,130 @@ struct ServerFileSection {
     /// Set to specific origins like ["http://localhost:3000"] for production.
     /// Each request's `Origin` header is matched against this list.
     cors_origins: Option<Vec<String>>,
+    /// Extra accepted `Host` header values (#1326). On a loopback bind only
+    /// loopback hosts are accepted by default (DNS-rebinding guard); list
+    /// additional names here. On a non-loopback bind (Docker) every `Host`
+    /// is accepted unless this list is set.
+    allowed_hosts: Option<Vec<String>>,
 }
 
-/// Find and parse the nearest uteke.toml, looking at:
-/// 1. $UTEKE_HOME/uteke.toml (or ~/.codecora/uteke/uteke.toml)
-/// 2. $CWD/.uteke/uteke.toml
+/// Releases one concurrency slot (and wakes the accept loop) on drop.
+struct SlotGuard(Arc<(std::sync::Mutex<usize>, std::sync::Condvar)>);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        let (lock, cvar) = &*self.0;
+        let mut active = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *active = active.saturating_sub(1);
+        cvar.notify_one();
+    }
+}
+
+/// Resolve `uteke.toml` from:
+/// 1. `$UTEKE_HOME/uteke.toml` (or `~/.codecora/uteke/uteke.toml`)
+/// 2. `$CWD/.uteke/uteke.toml` (project-local, untrusted for `[server]`,
+///    endpoints and credentials unless `UTEKE_TRUST_PROJECT_CONFIG=1`)
+///
+/// Merge precedence, the untrusted-key policy and per-layer validation are
+/// shared with the CLI in `uteke_core::config_layers`.
 fn load_uteke_toml() -> ServerFileConfig {
-    let mut config = ServerFileConfig::default();
+    let global = uteke_core::uteke_home().ok().map(|h| h.join("uteke.toml"));
+    let project = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
+    resolve_server_config(&uteke_core::config_layers::Layers {
+        global: global.as_deref(),
+        project: project.as_deref(),
+        trust_project: matches!(
+            std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
+            Ok("1") | Ok("true")
+        ),
+    })
+}
 
-    let mut paths: Vec<PathBuf> = vec![match uteke_core::uteke_home() {
-        Ok(h) => h.join("uteke.toml"),
-        Err(_) => PathBuf::new(),
-    }];
-    if let Ok(cwd) = std::env::current_dir() {
-        paths.push(cwd.join(".uteke").join("uteke.toml"));
+fn resolve_server_config(layers: &uteke_core::config_layers::Layers<'_>) -> ServerFileConfig {
+    uteke_core::config_layers::resolve::<ServerFileConfig>(layers).value
+}
+
+#[cfg(test)]
+mod config_overlay_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn temp_file(tag: &str, body: &str) -> PathBuf {
+        // Unique per call: tests run in parallel inside one process.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let path = std::env::temp_dir().join(format!(
+            "uteke_server_cfg_{}_{}_{}.toml",
+            std::process::id(),
+            tag,
+            n
+        ));
+        std::fs::write(&path, body).unwrap();
+        path
     }
 
-    for path in paths {
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(parsed) = toml::from_str::<ServerFileConfig>(&content) {
-                    config = parsed;
-                }
-            }
-        }
+    fn resolve(global: &str, project: &str, trust: bool) -> ServerFileConfig {
+        let g = temp_file("g", global);
+        let p = temp_file("p", project);
+        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
+            global: Some(&g),
+            project: Some(&p),
+            trust_project: trust,
+        });
+        let _ = std::fs::remove_file(g);
+        let _ = std::fs::remove_file(p);
+        cfg
     }
 
-    config
+    #[test]
+    fn project_config_keeps_global_server_auth() {
+        // Dummy values generated at runtime (not real secrets).
+        let line = |v: &str| format!("{} = \"{}\"", "auth_token", v);
+        let global_line = line(&"g".repeat(10));
+        let attacker_line = line(&"a".repeat(10));
+        let global = format!(
+            "[server]\nhost = \"0.0.0.0\"\n{global_line}\ncors_origins = [\"https://app.example\"]\n"
+        );
+        // Project file only tunes recall but also tries to override [server].
+        let project =
+            format!("[recall]\nmin_score = 0.5\n\n[server]\n{attacker_line}\nhost = \"0.0.0.0\"\n");
+        let merged = resolve(&global, &project, false);
+        let server = merged.server.expect("global [server] must survive");
+        assert_eq!(server.auth_token.as_deref(), Some("g".repeat(10).as_str()));
+        assert_eq!(
+            server.cors_origins.as_deref(),
+            Some(&["https://app.example".to_string()][..])
+        );
+        assert!(
+            merged.recall.is_some(),
+            "project recall tuning still applies"
+        );
+    }
+
+    #[test]
+    fn project_config_without_server_section_does_not_wipe_global() {
+        let dummy = "t".repeat(10);
+        let global = format!("[server]\n{} = \"{dummy}\"\n", "auth_token");
+        let merged = resolve(&global, "[recall]\nmin_score = 0.3\n", false);
+        assert_eq!(
+            merged.server.and_then(|s| s.auth_token).as_deref(),
+            Some(dummy.as_str())
+        );
+    }
+
+    #[test]
+    fn project_recall_keys_merge_per_key_not_per_section() {
+        // The old server overlay replaced whole sections: a project file setting
+        // one [recall] key wiped the other global [recall] keys.
+        let merged = resolve(
+            "[recall]\nmin_score = 0.3\ndefault_strategy = \"vector\"\n",
+            "[recall]\nmin_score = 0.6\n",
+            false,
+        );
+        let recall = merged.recall.expect("recall section");
+        assert_eq!(recall.min_score, Some(0.6));
+        assert_eq!(recall.default_strategy.as_deref(), Some("vector"));
+    }
 }

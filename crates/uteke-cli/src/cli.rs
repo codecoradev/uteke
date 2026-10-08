@@ -995,3 +995,49 @@ pub enum LifecycleCommands {
         namespace: Option<String>,
     },
 }
+
+#[cfg(test)]
+mod skill_coverage {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    /// Every CLI command (and nested subcommand) must appear in the bundled
+    /// SKILL.md as `uteke <name>` / `uteke <parent> <name>`. Version parity
+    /// alone let the skill drift from the real command surface.
+    #[test]
+    fn skill_documents_every_command() {
+        let skill = include_str!("../assets/uteke-memory-skill.md");
+        // Meta/plumbing commands that are not agent-facing workflow.
+        const EXEMPT: &[&str] = &["help"];
+
+        let root = Cli::command();
+        let mut missing = Vec::new();
+        for cmd in root.get_subcommands() {
+            let name = cmd.get_name();
+            if EXEMPT.contains(&name) {
+                continue;
+            }
+            if !skill.contains(&format!("uteke {name}")) {
+                missing.push(format!("uteke {name}"));
+            }
+            for sub in cmd.get_subcommands() {
+                let sub_name = sub.get_name();
+                if EXEMPT.contains(&sub_name) {
+                    continue;
+                }
+                let needle = format!("uteke {name} {sub_name}");
+                // Aliases such as `lifecycle <cycle|promote|status>` are
+                // documented compactly; accept the sub name inside that form.
+                let compact =
+                    skill.contains(&format!("uteke {name} <")) && skill.contains(sub_name);
+                if !skill.contains(&needle) && !compact {
+                    missing.push(needle);
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "SKILL.md (assets/uteke-memory-skill.md + .agents copy) is missing: {missing:?}"
+        );
+    }
+}

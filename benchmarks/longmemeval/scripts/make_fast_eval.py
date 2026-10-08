@@ -27,7 +27,7 @@ from pathlib import Path
 HERE = Path(__file__).parent.parent  # benchmarks/longmemeval (scripts live in scripts/)
 DATA = HERE / "data"
 PARENT = DATA / "longmemeval_s_cleaned.json"
-IDS = HERE / "fast_eval_ids.json"
+IDS = Path(__file__).parent / "fast_eval_ids.json"  # lives next to this script
 
 # id-list file name -> output dataset file name
 NAME_MAP = {

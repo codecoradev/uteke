@@ -301,7 +301,8 @@ fn tool_recall() -> Value {
                 "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." },
                 "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
                 "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
-                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." }
+                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             },
             "required": ["query"]
         }
@@ -318,7 +319,8 @@ fn tool_list() -> Value {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
                 "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
+                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             }
         }
     })
@@ -674,11 +676,12 @@ fn tool_doc_move() -> Value {
 fn tool_graph() -> Value {
     serde_json::json!({
         "name": "uteke_graph",
-        "description": "Get knowledge graph data (nodes + edges + stats) for visualization.",
+        "description": "Get the memory graph: nodes (live memories), edges (auto-links, supersession, explicit edges), stats, and the most recent edges.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (optional)" }
+                "namespace": { "type": "string", "description": "Filter by namespace (optional)" },
+                "limit": { "type": "integer", "description": "Max edges (default 500, max 5000)" }
             }
         }
     })
@@ -754,7 +757,8 @@ fn tool_room_memories() -> Value {
             "properties": {
                 "room_id": { "type": "string", "description": "Room identifier" },
                 "author": { "type": "string", "description": "Optional author filter" },
-                "limit": { "type": "integer", "description": "Max results (default 100)", "default": 100 }
+                "limit": { "type": "integer", "description": "Max results (default 100)", "default": 100 },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             },
             "required": ["room_id"]
         }
@@ -1138,6 +1142,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
     let namespace = args["namespace"].as_str();
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let tags_filter: Option<Vec<&str>> = args["tags"]
         .as_array()
@@ -1292,7 +1297,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             uteke_core::SearchResultType::Memory => r
                 .memory_id
                 .as_ref()
-                .map(|id| format!(" (id: {})", &id[..id.len().min(8)]))
+                .map(|id| format!(" (id: {})", display_id(id, full_ids)))
                 .unwrap_or_default(),
             uteke_core::SearchResultType::Document => r
                 .doc_slug
@@ -1339,6 +1344,7 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let namespace = args["namespace"].as_str();
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let memories = uteke
         .list(tag, limit, offset, namespace)
@@ -1357,8 +1363,8 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let lines: Vec<String> = memories
         .iter()
         .map(|m| {
-            let short_id = m.id.get(..8).unwrap_or(&m.id);
-            format!("[{short_id}] {} ({})", m.content, m.tags.join(", "))
+            let id = display_id(&m.id, full_ids);
+            format!("[{id}] {} ({})", m.content, m.tags.join(", "))
         })
         .collect();
 
@@ -1371,14 +1377,30 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
+/// Render a memory id for tool output: the 8-char prefix, or the full UUID
+/// when `full_ids` is set. IDs are UUIDv7, so memories written within the same
+/// ~65s share their first 8 chars and the prefix alone can be ambiguous (#1357).
+fn display_id(id: &str, full: bool) -> &str {
+    if full { id } else { id.get(..8).unwrap_or(id) }
+}
+
 /// Resolve an id argument to a full UUID (#1048).
 ///
 /// Accepts the full UUID or any unambiguous prefix (e.g. the 8-char ids
 /// printed by recall/list). Errors loudly on ambiguous prefixes instead of
 /// silently no-oping. Exact UUIDs skip the prefix scan.
 fn resolve_id<'a>(uteke: &'a Uteke, id: &'a str) -> Result<String, String> {
-    if id.len() == 36 {
-        return Ok(id.to_string());
+    // Ids are UUIDs: hex digits and dashes only. Rejecting anything else up
+    // front also keeps LIKE wildcards (`%`, `_`) out of the prefix scan (#1328).
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(format!(
+            "Invalid memory id '{id}' (expected a UUID or hex prefix)"
+        ));
+    }
+    // A well-formed full UUID skips the prefix scan; anything else (including a
+    // 36-char non-UUID string) takes the prefix path so it errors the same way.
+    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
+        return Ok(uuid.hyphenated().to_string());
     }
     match uteke.resolve_id_prefix(id) {
         Ok(Some(full)) => Ok(full),
@@ -1843,17 +1865,44 @@ fn exec_doc_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
+    let limit = args["limit"]
+        .as_u64()
+        .map(|v| v as usize)
+        .unwrap_or(uteke_core::graph_view::GRAPH_VIEW_DEFAULT_LIMIT);
 
-    let data = uteke
-        .graph_data(namespace)
+    let view = uteke
+        .graph_view(namespace, None, limit)
         .map_err(|e| format!("Failed: {e}"))?;
 
-    let text = format!(
-        "Graph: {} nodes, {} edges, {} relation types",
-        data.nodes.len(),
-        data.edges.len(),
-        data.stats.relation_types.len()
+    let mut text = format!(
+        "Graph: {} nodes, {} edges, {} relation types{}",
+        view.stats.node_count,
+        view.stats.edge_count,
+        view.stats.relation_types.len(),
+        if view.truncated {
+            " (truncated; raise 'limit')"
+        } else {
+            ""
+        }
     );
+    // Show the most recent edges so the agent can actually use the graph.
+    let label: std::collections::HashMap<&str, &str> = view
+        .nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n.label.as_str()))
+        .collect();
+    for e in view.edges.iter().take(15) {
+        text.push_str(&format!(
+            "\n- {} -[{}]-> {}",
+            label
+                .get(e.source_id.as_str())
+                .unwrap_or(&e.source_id.as_str()),
+            e.relation,
+            label
+                .get(e.target_id.as_str())
+                .unwrap_or(&e.target_id.as_str())
+        ));
+    }
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -1912,7 +1961,7 @@ fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
 
     let conn = uteke.graph_store();
     let gs = uteke_core::graph::GraphStore::new(conn);
-    gs.add_edge(&source, &target, edge_type, weight)
+    gs.add_edge_for_memories(&source, &target, edge_type, weight)
         .map_err(|e| format!("Failed: {e}"))?;
 
     Ok(ToolResult {
@@ -1933,7 +1982,7 @@ fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
     let conn = uteke.graph_store();
     let gs = uteke_core::graph::GraphStore::new(conn);
     let removed = gs
-        .remove_edge(&source, &target)
+        .remove_edge_between(&source, &target)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if removed {
@@ -2165,6 +2214,7 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let author = args["author"].as_str();
     let limit = args["limit"].as_u64().unwrap_or(100) as usize;
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let memories = uteke
         .recall_room(room_id, author, limit)
@@ -2186,8 +2236,8 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
             // #1052/#1048: include the short id so the next tool call
             // (pin/forget/graph edges) can act on the row directly.
             let created = m.created_at.format("%Y-%m-%d %H:%M");
-            let short_id: String = m.id.chars().take(8).collect();
-            format!("[{created} | {} | {}] {}", short_id, m.namespace, m.content)
+            let id = display_id(&m.id, full_ids);
+            format!("[{created} | {} | {}] {}", id, m.namespace, m.content)
         })
         .collect();
     Ok(ToolResult {
@@ -2871,6 +2921,60 @@ mod id_resolution_tests {
             v["content"].as_str().unwrap(),
             "id resolution probe content"
         );
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn resolve_id_rejects_malformed_ids() {
+        let (uteke, dir) = scratch();
+        // 36 chars but not a UUID: must not be passed through as a full id.
+        let fake = "z".repeat(36);
+        assert!(resolve_id(&uteke, &fake).unwrap_err().contains("Invalid"));
+        // LIKE wildcards never reach the prefix scan.
+        assert!(resolve_id(&uteke, "%").is_err());
+        assert!(resolve_id(&uteke, "ab_").is_err());
+        assert!(resolve_id(&uteke, "").is_err());
+        // 36 hex/dash chars that are not a UUID shape fall to the prefix path.
+        let almost = "0".repeat(36);
+        assert!(
+            resolve_id(&uteke, &almost)
+                .unwrap_err()
+                .contains("No memory matches")
+        );
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn display_id_prefix_or_full() {
+        let id = "01a115a7-aaaa-7bbb-8ccc-0123456789ab";
+        assert_eq!(display_id(id, false), "01a115a7");
+        assert_eq!(display_id(id, true), id);
+        assert_eq!(display_id("abc", false), "abc");
+    }
+
+    #[test]
+    fn list_and_room_memories_full_ids_round_trip() {
+        let (uteke, dir) = scratch();
+        let id = seed(&uteke);
+        let short = &id[..8];
+
+        let text = |r: ToolResult| match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+            #[allow(unreachable_patterns)]
+            _ => String::new(),
+        };
+
+        let default = text(exec_list(&uteke, &serde_json::json!({})).unwrap());
+        assert!(default.contains(&format!("[{short}]")), "{default}");
+        assert!(!default.contains(&id));
+
+        let full = text(exec_list(&uteke, &serde_json::json!({"full_ids": true})).unwrap());
+        assert!(full.contains(&format!("[{id}]")), "{full}");
+
+        // The full id printed by the tool is accepted by resolve_id as-is.
+        assert_eq!(resolve_id(&uteke, &id).unwrap(), id);
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
     }

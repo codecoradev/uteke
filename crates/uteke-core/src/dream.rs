@@ -17,6 +17,7 @@
 //! All phases are idempotent and safe to re-run.
 
 use crate::error::Error;
+use crate::memory::store::memory_columns;
 use serde::{Deserialize, Serialize};
 
 /// A single phase of the dream cycle.
@@ -443,7 +444,7 @@ impl crate::Uteke {
 
                 // Create "contradicts" graph edge
                 let gs = crate::GraphStore::new(&self.store.conn);
-                match gs.add_edge(older, newer, "contradicts", cosine as f64) {
+                match gs.add_edge_for_memories(older, newer, "contradicts", cosine as f64) {
                     Ok(()) => {
                         edges_created += 1;
                         tracing::info!(
@@ -497,20 +498,22 @@ impl crate::Uteke {
     ) -> Result<Vec<crate::memory::Memory>, Error> {
         let sql = match namespace {
             Some(_ns) => {
-                "SELECT id, content, embedding, tags, metadata, \
-                 created_at, updated_at, namespace, access_count, \
-                 last_accessed, deprecated, valid_from, valid_until, \
-                 memory_type, importance, pinned, content_type, slug \
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " \
                  FROM memories WHERE namespace = ?1 AND deprecated = 0 \
                  ORDER BY updated_at DESC LIMIT ?2"
+                )
             }
             None => {
-                "SELECT id, content, embedding, tags, metadata, \
-                 created_at, updated_at, namespace, access_count, \
-                 last_accessed, deprecated, valid_from, valid_until, \
-                 memory_type, importance, pinned, content_type, slug \
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " \
                  FROM memories WHERE deprecated = 0 \
                  ORDER BY updated_at DESC LIMIT ?1"
+                )
             }
         };
 
@@ -608,7 +611,7 @@ impl crate::Uteke {
         // Prune deprecated memories older than 30 days.
         const TTL_DAYS: u32 = 30;
         let result = self.prune(TTL_DAYS, namespace, dry_run)?;
-        let summary = if dry_run {
+        let mut summary = if dry_run {
             format!(
                 "✓ {} memories would be pruned ({} deprecated)",
                 result.pruned, result.deprecated
@@ -619,6 +622,17 @@ impl crate::Uteke {
                 result.pruned, result.deprecated
             )
         };
+        // Pruning leaves tombstoned rows in an append-only vecq index (#1324).
+        // The index is store-wide, so this ignores the namespace filter.
+        if let Some(c) = self.compact_index_if_needed(dry_run)? {
+            summary.push_str(&format!(
+                "; index {} {} dead rows ({} → {} rows)",
+                if dry_run { "would drop" } else { "dropped" },
+                c.dead_before,
+                c.rows_before,
+                c.rows_after
+            ));
+        }
         Ok(PhaseResult {
             phase: DreamPhase::Compact.as_str().to_string(),
             status: PhaseStatus::Ok,

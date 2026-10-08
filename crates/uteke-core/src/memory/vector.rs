@@ -49,6 +49,16 @@ use fs2::FileExt;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// vecq compaction (#1324) only kicks in for indexes at least this many rows
+/// large, so tiny indexes do not churn.
+const COMPACT_MIN_ROWS: usize = 128;
+
+/// Per-operation saves are deferred until this many mutations pile up (#1322).
+const SAVE_EVERY_OPS: u32 = 64;
+/// ...or until the last save is this old, whichever comes first.
+const SAVE_MAX_AGE: Duration = Duration::from_secs(2);
 
 #[cfg(feature = "usearch")]
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
@@ -383,6 +393,12 @@ pub struct VectorIndex {
     path: Option<PathBuf>,
     /// Whether the index has unsaved changes.
     dirty: bool,
+    /// Mutations since the last successful save (#1322).
+    unsaved_ops: u32,
+    /// When the index was last written to disk (or loaded/created).
+    last_saved: Instant,
+    /// Successful `save()` calls over this instance's lifetime (diagnostics, tests).
+    saves: u64,
     /// Cross-process file lock on the index file (#543).
     /// Held until the VectorIndex is dropped.
     _lock_file: Option<File>,
@@ -410,6 +426,9 @@ impl VectorIndex {
             next_key: 0,
             path: None,
             dirty: false,
+            unsaved_ops: 0,
+            last_saved: Instant::now(),
+            saves: 0,
             _lock_file: None,
         })
     }
@@ -510,6 +529,9 @@ impl VectorIndex {
         let mut key_to_id = HashMap::new();
         let mut id_to_key = HashMap::new();
         let mut next_key = 0u64;
+        // Digest of the index bytes this sidecar was written against (#1325).
+        // `None` for sidecars written before the header existed.
+        let mut sidecar_digest: Option<String> = None;
 
         let mapping_path = path.with_extension("keys");
         match std::fs::read_to_string(&mapping_path) {
@@ -517,6 +539,10 @@ impl VectorIndex {
                 for line in data.lines() {
                     let line = line.trim();
                     if line.is_empty() {
+                        continue;
+                    }
+                    if let Some(header) = line.strip_prefix(KEYS_HEADER_PREFIX) {
+                        sidecar_digest = header.split('\t').next().map(str::to_string);
                         continue;
                     }
                     if let Some((key_str, id)) = line.split_once('\t') {
@@ -534,6 +560,14 @@ impl VectorIndex {
             Err(e) => return Err(Error::embed("read key mapping", e)),
         }
 
+        verify_pair_consistency(
+            &engine,
+            backend,
+            &key_to_id,
+            sidecar_digest.as_deref(),
+            &buffer,
+        )?;
+
         Ok(Self {
             engine,
             backend,
@@ -542,6 +576,9 @@ impl VectorIndex {
             next_key,
             path: None,
             dirty: false,
+            unsaved_ops: 0,
+            last_saved: Instant::now(),
+            saves: 0,
             _lock_file: None,
         })
     }
@@ -579,8 +616,31 @@ impl VectorIndex {
 
             // Write buffer to disk via atomic write (temp file + rename)
             let tmp_path = path.with_extension(format!("{}.tmp", index_ext_for(self.backend)));
-            std::fs::write(&tmp_path, &buffer)
+            // Windows: the existing locked handle is refreshed after the rename
+            // (below). Elsewhere the rename replaces the inode our flock lives
+            // on, so lock the NEW file before it is published: the exclusive
+            // lock then follows the inode onto `path` with no unlocked window,
+            // and a second process can never lock a different inode.
+            #[cfg(windows)]
+            write_synced(&tmp_path, &buffer)
                 .map_err(|e| Error::embed("write temp index file", e))?;
+            #[cfg(not(windows))]
+            let new_lock = {
+                use std::io::Write;
+                let mut f = File::options()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&tmp_path)
+                    .map_err(|e| Error::embed("create temp index file", e))?;
+                f.try_lock_exclusive()
+                    .map_err(|e| Error::embed("lock temp index file", e))?;
+                f.write_all(&buffer)
+                    .and_then(|()| f.sync_all())
+                    .map_err(|e| Error::embed("write temp index file", e))?;
+                f
+            };
 
             // On Windows, `std::fs::rename` fails with `ERROR_ACCESS_DENIED` if
             // the destination file is locked by `LockFileEx` via fs2 (#926).
@@ -614,6 +674,9 @@ impl VectorIndex {
             {
                 std::fs::rename(&tmp_path, path)
                     .map_err(|e| Error::embed("rename temp to final index file", e))?;
+                // The old (now orphaned) inode's lock is released when the
+                // previous handle drops; the new handle holds the live lock.
+                self._lock_file = Some(new_lock);
             }
 
             // On Windows, reopen the file after rename to refresh the lock
@@ -639,12 +702,44 @@ impl VectorIndex {
             // Save key→id mapping as sidecar file using atomic write
             let mapping_path = path.with_extension("keys");
             let mut lines = Vec::new();
+            // First line ties this sidecar to the exact index bytes just
+            // published, so a crash between the two renames is detected on the
+            // next load instead of leaving a silently stale key map (#1325).
+            // Older binaries skip it (it does not parse as `<key>\t<id>`).
+            lines.push(format!(
+                "{KEYS_HEADER_PREFIX}{}\t{}",
+                index_digest(&buffer),
+                self.engine.len()
+            ));
             for (&key, id) in &self.key_to_id {
                 lines.push(format!("{key}\t{id}"));
             }
             atomic_write(&mapping_path, lines.join("\n").as_bytes())?;
 
             self.dirty = false;
+            self.unsaved_ops = 0;
+            self.last_saved = Instant::now();
+            self.saves += 1;
+        }
+        Ok(())
+    }
+
+    /// Save only when enough has piled up since the last save (#1322).
+    ///
+    /// `save()` rewrites the whole index and the whole `.keys` sidecar, so
+    /// saving on every write makes bulk ingest O(N²). Per-operation paths call
+    /// this instead: it writes once `SAVE_EVERY_OPS` mutations or
+    /// `SAVE_MAX_AGE` have accumulated. Nothing is lost for good in between —
+    /// SQLite already holds every row, and `shutdown()`, `Drop`, and the
+    /// server's periodic flush write whatever is still pending. After a hard
+    /// kill the on-disk index can trail SQLite by up to that window;
+    /// `uteke verify` / `repair` resync it.
+    pub fn save_if_due(&mut self) -> Result<(), Error> {
+        if !self.dirty {
+            return Ok(());
+        }
+        if self.unsaved_ops >= SAVE_EVERY_OPS || self.last_saved.elapsed() >= SAVE_MAX_AGE {
+            return self.save();
         }
         Ok(())
     }
@@ -653,8 +748,11 @@ impl VectorIndex {
     /// Used for migration from old HNSW or full rebuild.
     pub fn build(&mut self, items: &[(String, Vec<f32>)]) -> Result<(), Error> {
         // Reset (same engine, fresh instance)
+        // An empty rebuild keeps the index's CURRENT dimensionality: resetting
+        // to DEFAULT_DIMS (768) broke the next insert of a non-768 embedder
+        // after `repair()` on an empty store (#1332).
         let dims = if items.is_empty() {
-            DEFAULT_DIMS
+            self.engine.dims()
         } else {
             items[0].1.len()
         };
@@ -696,15 +794,6 @@ impl VectorIndex {
             )));
         }
 
-        // Guard: remove old entry if ID already exists (prevents duplicate + stale slot)
-        if let Some(old_key) = self.id_to_key.get(id) {
-            let old_key = *old_key;
-            self.key_to_id.remove(&old_key);
-            self.engine.remove(old_key);
-            // vecq has no incremental delete — the dead row is filtered out of
-            // search via the key map (key_to_id no longer contains old_key).
-        }
-
         let key = if self.backend == VectorBackend::Vecq {
             // vecq rows are append-only: the new entry lands at physical row
             // `len()`, and search maps rows back via key_to_id — so the
@@ -725,20 +814,30 @@ impl VectorIndex {
             }
             key
         } else {
+            // Auto-grow usearch capacity when full (fallible — runs before any
+            // state is touched so a failure leaves the index unchanged).
+            self.engine.ensure_capacity()?;
             let key = self.next_key;
             self.next_key = self.next_key.saturating_add(1);
-            // Auto-grow usearch capacity when full.
-            self.engine.ensure_capacity()?;
             key
         };
 
+        // vecq assigns rows sequentially; row == key by construction.
+        // Add first: if it fails, the previous entry for `id` is still intact.
+        self.engine.add(key, embedding)?;
+
+        // Replace the old entry only once the new vector is in the engine.
+        if let Some(old_key) = self.id_to_key.get(id).copied() {
+            self.key_to_id.remove(&old_key);
+            self.engine.remove(old_key);
+            // vecq has no incremental delete — the dead row is filtered out of
+            // search via the key map (key_to_id no longer contains old_key).
+        }
         self.key_to_id.insert(key, id.to_string());
         self.id_to_key.insert(id.to_string(), key);
 
-        // vecq assigns rows sequentially; row == key by construction.
-        self.engine.add(key, embedding)?;
-
         self.dirty = true;
+        self.unsaved_ops = self.unsaved_ops.saturating_add(1);
         Ok(())
     }
 
@@ -750,6 +849,7 @@ impl VectorIndex {
             // vecq: tombstone is implicit — the key vanishes from the map, so
             // search results referencing that row are filtered out below.
             self.dirty = true;
+            self.unsaved_ops = self.unsaved_ops.saturating_add(1);
             true
         } else {
             false
@@ -815,9 +915,54 @@ impl VectorIndex {
         self.len() == 0
     }
 
+    /// Successful saves over this instance's lifetime (diagnostics, tests).
+    #[allow(dead_code)]
+    pub(crate) fn save_count(&self) -> u64 {
+        self.saves
+    }
+
+    /// Physical rows in the engine, dead ones included (diagnostics, compaction).
+    pub fn physical_rows(&self) -> usize {
+        self.engine.len()
+    }
+
+    /// Dead (tombstoned) rows: physically present, no longer in the key map.
+    /// Only vecq is append-only; usearch removes in place, so it has none.
+    pub fn dead_rows(&self) -> usize {
+        if self.backend == VectorBackend::Vecq {
+            self.engine.len().saturating_sub(self.key_to_id.len())
+        } else {
+            0
+        }
+    }
+
+    /// Whether a rebuild from the live rows is worth doing (#1324): a vecq
+    /// index of at least `COMPACT_MIN_ROWS` rows with more than a quarter of
+    /// them dead. Dead rows cost file size and make every search over-fetch
+    /// `k + dead` from an O(N) scan.
+    pub fn needs_compaction(&self) -> bool {
+        let total = self.engine.len();
+        self.backend == VectorBackend::Vecq
+            && !self.key_to_id.is_empty()
+            && total >= COMPACT_MIN_ROWS
+            && self.dead_rows().saturating_mul(4) > total
+    }
+
     /// Whether the index has unsaved changes.
     pub fn is_dirty(&self) -> bool {
         self.dirty
+    }
+}
+
+/// Flush pending mutations when the index goes away, so a process that exits
+/// without calling `shutdown()` (CLI, MCP stdio) still persists its writes.
+impl Drop for VectorIndex {
+    fn drop(&mut self) {
+        if self.dirty && self.path.is_some() {
+            if let Err(e) = self.save() {
+                tracing::warn!("Failed to save vector index on drop: {e}");
+            }
+        }
     }
 }
 
@@ -882,12 +1027,14 @@ fn acquire_file_lock(path: &Path) -> Result<File, Error> {
         }
 
         if std::time::Instant::now() >= deadline {
-            return Err(Error::embed_msg(format!(
-                "Could not acquire lock on {} after {MAX_WAIT:?}. \
-                 Another uteke process (uteke-serve or CLI) may be running. \
-                 Stop it and retry.",
-                path.display()
-            )));
+            return Err(Error::Lock {
+                context: format!(
+                    "Could not acquire lock on {} after {MAX_WAIT:?}. \
+                     Another uteke process (uteke-serve or CLI) may be running. \
+                     Stop it and retry.",
+                    path.display()
+                ),
+            });
         }
 
         tracing::trace!(
@@ -898,12 +1045,88 @@ fn acquire_file_lock(path: &Path) -> Result<File, Error> {
     }
 }
 
+/// Write `data` to `path` and fsync before returning, so a following rename
+/// can never publish a zero-length or partial file after power loss.
+/// Marks the first line of a `.keys` sidecar: `#uteke-keys\t<sha256 of index
+/// bytes>\t<engine rows>`. `#` cannot start a numeric key, so older readers
+/// ignore the line.
+const KEYS_HEADER_PREFIX: &str = "#uteke-keys\t";
+
+/// Hex SHA-256 of the serialized index bytes.
+fn index_digest(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Reject an index file / `.keys` sidecar pair that cannot be trusted (#1325).
+///
+/// The two files are published by separate renames, so a crash between them
+/// leaves a mismatched pair. Returning an error makes the caller discard both
+/// files and rebuild from SQLite, instead of serving a stale key map (live
+/// rows that look dead, or a `next_key` that restarts too low and collides).
+fn verify_pair_consistency(
+    engine: &Engine,
+    backend: VectorBackend,
+    key_to_id: &HashMap<u64, String>,
+    sidecar_digest: Option<&str>,
+    index_bytes: &[u8],
+) -> Result<(), Error> {
+    let rows = engine.len();
+
+    // Exact check: the sidecar names the index it was written against.
+    if let Some(expected) = sidecar_digest {
+        if expected != index_digest(index_bytes) {
+            return Err(Error::embed_msg(
+                "vector index and .keys sidecar do not match (interrupted save?)",
+            ));
+        }
+    }
+
+    // Structural checks that also cover sidecars without a header (written by
+    // older binaries) and a missing sidecar.
+    if rows > 0 && key_to_id.is_empty() {
+        return Err(Error::embed_msg(
+            "vector index has entries but the .keys sidecar is empty or missing",
+        ));
+    }
+    match backend {
+        // vecq: a key IS a physical row, so no live key may point past the end
+        // and there cannot be more live keys than rows.
+        VectorBackend::Vecq => {
+            if key_to_id.len() > rows || key_to_id.keys().any(|&k| k >= rows as u64) {
+                return Err(Error::embed_msg(
+                    "vecq .keys sidecar references rows that are not in the index",
+                ));
+            }
+        }
+        // usearch: size() counts live entries, so the key map cannot hold more.
+        VectorBackend::Usearch => {
+            if key_to_id.len() > rows {
+                return Err(Error::embed_msg(
+                    "usearch .keys sidecar holds more keys than the index has entries",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_synced(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(path)?;
+    f.write_all(data)?;
+    f.sync_all()
+}
+
 /// Atomic file write: write to temp file then rename.
 /// Prevents corruption if process crashes mid-write.
 /// POSIX guarantees rename() is atomic on the same filesystem.
 fn atomic_write(path: &std::path::Path, data: &[u8]) -> Result<(), Error> {
     let tmp_path = path.with_extension("keys.tmp");
-    std::fs::write(&tmp_path, data).map_err(|e| Error::embed("write temp key mapping", e))?;
+    write_synced(&tmp_path, data).map_err(|e| Error::embed("write temp key mapping", e))?;
     std::fs::rename(&tmp_path, path)
         .map_err(|e| Error::embed("rename temp to final key mapping", e))?;
     Ok(())
@@ -971,6 +1194,30 @@ mod tests {
         // Search should only return m2
         let results = idx.search(&v1, 5, 50);
         assert!(results.iter().all(|(id, _)| id != "m1"));
+    }
+
+    /// Regression: after `save()` renames a new file over the index, the
+    /// exclusive lock must live on the file now at `path` (not the orphaned
+    /// inode), so a second opener cannot lock it.
+    #[cfg(unix)]
+    #[test]
+    fn test_save_keeps_exclusive_lock_on_published_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("lock.{INDEX_EXT}"));
+        let mut idx = VectorIndex::load_or_create(&path, 8).unwrap();
+        idx.insert("a", &make_vec(8, 0)).unwrap();
+        idx.save().unwrap();
+        idx.insert("b", &make_vec(8, 1)).unwrap();
+        idx.save().unwrap(); // second save: lock must survive repeated renames
+
+        let other = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(
+            other.try_lock_exclusive().is_err(),
+            "published index file must still be exclusively locked by its owner"
+        );
+        drop(idx);
+        let other = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(other.try_lock_exclusive().is_ok(), "lock released on drop");
     }
 
     #[test]
@@ -1161,5 +1408,236 @@ mod tests {
             let results = loaded.search(&v, 1, 50);
             assert_eq!(results.len(), 1);
         }
+    }
+
+    // ── #1325: index file / .keys sidecar consistency ──────────────────────
+
+    fn compiled_backends() -> Vec<VectorBackend> {
+        [VectorBackend::Usearch, VectorBackend::Vecq]
+            .into_iter()
+            .filter(|b| b.is_compiled_in())
+            .collect()
+    }
+
+    /// Save `n` items, return (index path, index with the lock still held).
+    fn saved_index(
+        dir: &std::path::Path,
+        backend: VectorBackend,
+        n: usize,
+    ) -> (PathBuf, VectorIndex) {
+        let path = dir.join(format!("idx.{}", index_ext_for(backend)));
+        let mut idx = VectorIndex::with_backend(backend, 64).unwrap();
+        idx.path = Some(path.clone());
+        for i in 0..n {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i)).unwrap();
+        }
+        idx.save().unwrap();
+        (path, idx)
+    }
+
+    #[test]
+    fn stale_sidecar_after_interrupted_save_is_rejected() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, mut idx) = saved_index(dir.path(), backend, 2);
+            let keys = path.with_extension("keys");
+            let stale = std::fs::read(&keys).unwrap();
+
+            // Next save publishes the new index, then "crashes" before the
+            // sidecar rename: put the previous sidecar back.
+            idx.insert("mem-2", &make_vec(64, 2)).unwrap();
+            idx.save().unwrap();
+            std::fs::write(&keys, stale).unwrap();
+
+            let err = VectorIndex::load(&path)
+                .err()
+                .unwrap_or_else(|| panic!("{backend:?}: stale sidecar must not load"));
+            assert!(
+                err.to_string().contains("do not match"),
+                "{backend:?}: unexpected error: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn matching_pair_survives_load_and_resave() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 3);
+            drop(idx);
+
+            let mut loaded = VectorIndex::load(&path).unwrap();
+            assert_eq!(loaded.len(), 3, "{backend:?}");
+            loaded.path = Some(path.clone());
+            loaded.save().unwrap();
+            let again = VectorIndex::load(&path).unwrap();
+            assert_eq!(again.len(), 3, "{backend:?}");
+        }
+    }
+
+    #[test]
+    fn sidecar_without_header_still_loads() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 2);
+            drop(idx);
+
+            // A sidecar from a binary that predates the header.
+            let keys = path.with_extension("keys");
+            let body: String = std::fs::read_to_string(&keys)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with(KEYS_HEADER_PREFIX))
+                .collect::<Vec<_>>()
+                .join("\n");
+            std::fs::write(&keys, body).unwrap();
+
+            let loaded = VectorIndex::load(&path).unwrap();
+            assert_eq!(loaded.len(), 2, "{backend:?}");
+        }
+    }
+
+    #[test]
+    fn missing_or_empty_sidecar_with_entries_is_rejected() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 2);
+            drop(idx);
+            let keys = path.with_extension("keys");
+
+            std::fs::remove_file(&keys).unwrap();
+            assert!(
+                VectorIndex::load(&path).is_err(),
+                "{backend:?}: missing sidecar must be rejected"
+            );
+
+            std::fs::write(&keys, "").unwrap();
+            assert!(
+                VectorIndex::load(&path).is_err(),
+                "{backend:?}: empty sidecar must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn headerless_sidecar_with_out_of_range_keys_is_rejected() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let (path, idx) = saved_index(dir.path(), backend, 2);
+            drop(idx);
+            let keys = path.with_extension("keys");
+            // Legacy-style sidecar claiming three entries for a two-entry index.
+            std::fs::write(&keys, "0\tmem-0\n1\tmem-1\n2\tmem-2").unwrap();
+            assert!(
+                VectorIndex::load(&path).is_err(),
+                "{backend:?}: extra keys must be rejected"
+            );
+        }
+    }
+
+    // ── #1322: deferred saves ──────────────────────────────────────────────
+
+    #[test]
+    fn save_if_due_batches_writes_and_drop_flushes_the_rest() {
+        for backend in compiled_backends() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(format!("idx.{}", index_ext_for(backend)));
+            let mut idx = VectorIndex::with_backend(backend, 64).unwrap();
+            idx.path = Some(path.clone());
+
+            // 130 per-operation writes: a save at op 64 and 128, not 130 saves.
+            for i in 0..130 {
+                idx.insert(&format!("mem-{i}"), &make_vec(64, i % 64))
+                    .unwrap();
+                idx.save_if_due().unwrap();
+            }
+            assert_eq!(idx.save_count(), 2, "{backend:?}: expected batched saves");
+            assert!(idx.is_dirty(), "{backend:?}: two ops are still pending");
+
+            // Going away flushes the pending tail.
+            drop(idx);
+            let loaded = VectorIndex::load(&path).unwrap();
+            assert_eq!(loaded.len(), 130, "{backend:?}: pending ops lost on drop");
+        }
+    }
+
+    #[test]
+    fn save_if_due_is_a_noop_when_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_path, mut idx) = saved_index(dir.path(), compiled_backends()[0], 1);
+        let before = idx.save_count();
+        idx.save_if_due().unwrap();
+        assert_eq!(idx.save_count(), before);
+    }
+
+    // ── #1324: vecq compaction ─────────────────────────────────────────────
+
+    #[cfg(feature = "vecq")]
+    #[test]
+    fn vecq_dead_rows_trigger_compaction_threshold() {
+        let mut idx = VectorIndex::with_backend(VectorBackend::Vecq, 64).unwrap();
+        for i in 0..200 {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i % 64))
+                .unwrap();
+        }
+        assert_eq!((idx.dead_rows(), idx.needs_compaction()), (0, false));
+
+        // 25% dead exactly is not enough ("more than a quarter").
+        for i in 0..50 {
+            assert!(idx.remove(&format!("mem-{i}")));
+        }
+        assert_eq!(idx.dead_rows(), 50);
+        assert!(!idx.needs_compaction());
+
+        assert!(idx.remove("mem-50"));
+        assert!(idx.needs_compaction(), "51/200 dead is over a quarter");
+
+        // Rebuilding from the live rows drops every dead row.
+        let live: Vec<(String, Vec<f32>)> = (51..200)
+            .map(|i| (format!("mem-{i}"), make_vec(64, i % 64)))
+            .collect();
+        idx.build(&live).unwrap();
+        assert_eq!((idx.physical_rows(), idx.dead_rows()), (149, 0));
+        assert!(!idx.needs_compaction());
+    }
+
+    #[cfg(feature = "vecq")]
+    #[test]
+    fn small_vecq_indexes_never_compact() {
+        let mut idx = VectorIndex::with_backend(VectorBackend::Vecq, 64).unwrap();
+        for i in 0..40 {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i)).unwrap();
+        }
+        for i in 0..39 {
+            idx.remove(&format!("mem-{i}"));
+        }
+        assert!(!idx.needs_compaction(), "below COMPACT_MIN_ROWS");
+    }
+
+    #[cfg(feature = "usearch")]
+    #[test]
+    fn usearch_has_no_dead_rows() {
+        let mut idx = VectorIndex::with_backend(VectorBackend::Usearch, 64).unwrap();
+        for i in 0..200 {
+            idx.insert(&format!("mem-{i}"), &make_vec(64, i % 64))
+                .unwrap();
+        }
+        for i in 0..150 {
+            idx.remove(&format!("mem-{i}"));
+        }
+        assert_eq!(idx.dead_rows(), 0);
+        assert!(!idx.needs_compaction());
+    }
+
+    /// #1332: an empty rebuild (e.g. `repair()` on an empty store) must keep the
+    /// index's dimensionality instead of resetting it to 768.
+    #[test]
+    fn test_build_empty_keeps_current_dims() {
+        let mut idx = VectorIndex::new(384).unwrap();
+        idx.build(&[]).unwrap();
+        assert_eq!(idx.dims(), 384);
+        idx.insert("a", &vec![0.5_f32; 384])
+            .expect("a 384-dim embedding must still be accepted after build(&[])");
+        assert_eq!(idx.len(), 1);
     }
 }

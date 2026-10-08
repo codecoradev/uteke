@@ -37,13 +37,13 @@ pub(crate) fn run(
         let visible = (if show_out { edges.outgoing.len() } else { 0 })
             + (if show_in { edges.incoming.len() } else { 0 });
         if visible == 0 {
-            println!("No edges for memory {}.", &id[..8.min(id.len())]);
+            println!("No edges for memory {}.", crate::output::char_prefix(id, 8));
             return Ok(());
         }
 
         println!(
             "Edges for memory {} ({} total):",
-            &id[..8.min(id.len())],
+            crate::output::char_prefix(id, 8),
             visible
         );
         if show_out && !edges.outgoing.is_empty() {
@@ -94,14 +94,14 @@ pub(crate) fn run(
         println!(
             "No memories reachable within {deep} hop{} from {}.",
             if deep == 1 { "" } else { "s" },
-            &id[..8.min(id.len())]
+            crate::output::char_prefix(id, 8)
         );
         return Ok(());
     }
     println!(
         "Memories reachable within {deep} hop{} from {} ({}):",
         if deep == 1 { "" } else { "s" },
-        &id[..8.min(id.len())],
+        crate::output::char_prefix(id, 8),
         reachable.len()
     );
     for m in &reachable {

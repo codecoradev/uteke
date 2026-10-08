@@ -10,6 +10,7 @@
 //! ```
 
 pub mod chunker;
+pub mod config_layers;
 mod consolidate;
 pub mod consolidation_api;
 pub mod consolidation_exec;
@@ -21,8 +22,10 @@ mod error;
 pub mod extraction;
 pub mod graph;
 pub mod graph_rerank;
+pub mod graph_view;
 pub mod guide;
 mod import_export;
+mod index_sync;
 mod jaccard;
 mod maintenance;
 pub mod memory;
@@ -79,7 +82,8 @@ pub use embed::Embedder;
 pub use embed::OnnxEmbedder;
 pub use error::{Error, format_bytes};
 pub use types::{
-    DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport, VerifyReport,
+    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
+    VerifyReport,
 };
 
 /// Maximum memory content length (characters) — default, overridable via config (#404).
@@ -636,11 +640,20 @@ impl Uteke {
             .index
             .write()
             .map_err(|_| Error::lock("index write lock during consolidation insert"))?;
-        index.insert(id, embedding)?;
-        if let Err(e) = index.save() {
-            tracing::warn!("failed to persist vector index after insert id={id}: {e}");
+        let sync = index_sync::upsert(
+            &mut *index,
+            id,
+            embedding,
+            &index_sync::SyncPolicy::STANDARD,
+        );
+        match sync.insert_error {
+            Some(e) => Err(Error::embed_msg(format!(
+                "vector insert failed for id={id}: {e}"
+            ))),
+            // A failed persist is already logged by index_sync; the entry is
+            // in the in-memory index and `uteke repair` can resync the file.
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// Remove an entry from the vector index (compensating action for a
@@ -650,10 +663,9 @@ impl Uteke {
         let Ok(mut index) = self.index.write() else {
             return;
         };
-        if index.remove(id) {
-            if let Err(e) = index.save() {
-                tracing::warn!("failed to persist vector index after remove id={id}: {e}");
-            }
+        let sync = index_sync::remove_ids(&mut *index, [id], &index_sync::SyncPolicy::STANDARD);
+        if let Some(msg) = sync.error_message() {
+            tracing::warn!("failed to persist vector index after remove id={id}: {msg}");
         }
     }
 
@@ -896,6 +908,19 @@ impl Uteke {
         let mut index = match &index_path {
             Some(path) => match VectorIndex::load_or_create_for(path, dims, vector_backend) {
                 Ok(idx) => idx,
+                // Lock contention / IO failure says nothing about the index
+                // content: another process (uteke-serve) may be holding a
+                // perfectly good index. Never delete it; run in-memory and
+                // rebuild from SQLite instead.
+                Err(e @ (Error::Lock { .. } | Error::Io(_))) => {
+                    tracing::warn!(
+                        "Vector index at {} could not be opened ({}). \
+                         Using an in-memory index rebuilt from SQLite; index files left untouched.",
+                        path.display(),
+                        e
+                    );
+                    VectorIndex::new(dims)?
+                }
                 Err(e) => {
                     // Index file is corrupt (dim mismatch, truncated, etc).
                     // Instead of crashing, discard the bad index and rebuild
@@ -1603,73 +1628,117 @@ impl Uteke {
             has_children: false,
         };
 
-        // Capture old chunk IDs BEFORE upsert (upsert_document deletes chunks
-        // internally as part of its transaction, so querying after returns empty).
+        // Embed-then-commit: chunk and embed with NO transaction open and NO index
+        // lock held (embedding is slow and can fail), then write the document and
+        // every chunk in ONE SQLite transaction, then mirror the result into the
+        // vector index. A failure before the commit leaves the previous version
+        // of the document, its chunks and the index untouched.
+        let chunk_doc_id = self
+            .store
+            .get_document_by_slug(&doc.slug)?
+            .map(|existing| existing.id)
+            .unwrap_or_else(|| doc.id.clone());
+        let tag_strings: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+        let chunks = self.embed_document_chunks(&chunk_doc_id, content, &tag_strings)?;
+
+        // Old chunk ids must be read BEFORE the upsert replaces them.
         let old_chunk_ids = self
             .store
-            .get_chunk_ids_for_documents(std::slice::from_ref(&doc.id))?;
+            .get_chunk_ids_for_documents(std::slice::from_ref(&chunk_doc_id))?;
 
-        let doc_id = self.store.upsert_document(&doc)?;
-
-        // Chunk and embed the content.
-        self.ensure_embedder()?;
-        let embedder = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during document chunking"))?;
-        let embedder = embedder.as_ref().expect("embedder ensured above");
-
-        let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
-        let chunks = crate::chunker::chunk_markdown(content, max_chars);
-
-        // Acquire usearch write lock for chunk index inserts.
-        let mut index = self
-            .index
-            .write()
-            .map_err(|_| Error::lock("index write lock during doc chunking"))?;
-
-        // Remove old chunk entries from usearch.
-        for old_id in &old_chunk_ids {
-            let key = format!("chunk:{}", old_id);
-            index.remove(&key);
-        }
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            let chunk_id = uuid::Uuid::now_v7().to_string();
-            let embedding = embedder.embed(&chunk.content)?;
-
-            self.store.insert_document_chunk(
-                &DocumentChunk {
-                    id: chunk_id.clone(),
-                    document_id: doc_id.clone(),
-                    chunk_index: i as i64,
-                    heading: chunk.heading.clone(),
-                    content: chunk.content.clone(),
-                    char_start: chunk.char_start as i64,
-                    char_end: chunk.char_end as i64,
-                    tags: tags.iter().map(|t| t.to_string()).collect(),
-                },
-                &embedding,
-            )?;
-
-            // Insert chunk embedding into usearch with "chunk:" prefix.
-            let index_key = format!("chunk:{}", chunk_id);
-            if let Err(e) = index.insert(&index_key, &embedding) {
-                tracing::warn!(
-                    "Failed to insert chunk {} into vector index: {}",
-                    chunk_id,
-                    e
-                );
-            }
-        }
-
-        if let Err(e) = index.save() {
-            tracing::warn!("Failed to persist vector index after doc chunking: {}", e);
-        }
+        let doc_id = self.store.upsert_document_with_chunks(&doc, &chunks)?;
+        self.sync_document_chunks_to_index(&old_chunk_ids, &chunks)?;
 
         tracing::info!("Document '{slug}' upserted: {} chunks", chunks.len());
 
         Ok(doc_id)
+    }
+
+    /// Chunk `content` and embed every chunk.
+    ///
+    /// Deliberately takes no index lock and opens no transaction: embedding is
+    /// slow and may fail, and must not block recall or leave partial writes.
+    fn embed_document_chunks(
+        &self,
+        doc_id: &str,
+        content: &str,
+        tags: &[String],
+    ) -> Result<Vec<(DocumentChunk, Vec<f32>)>, Error> {
+        self.ensure_embedder()?;
+        // The embedder mutex is shared with recall/remember (query embedding),
+        // so take it per call, never across the whole loop: a long document
+        // must not make every other embed wait for all of its chunks (#1323).
+        let max_chars = {
+            let guard = self
+                .embedder
+                .lock()
+                .map_err(|_| Error::lock("embedder lock during document chunking"))?;
+            guard
+                .as_ref()
+                .expect("embedder ensured above")
+                .max_seq_len()
+                .saturating_mul(4)
+                .max(1024)
+        };
+        let chunks = crate::chunker::chunk_markdown(content, max_chars);
+        chunks
+            .iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                let embedding = {
+                    let guard = self
+                        .embedder
+                        .lock()
+                        .map_err(|_| Error::lock("embedder lock during chunk embedding"))?;
+                    guard
+                        .as_ref()
+                        .expect("embedder ensured above")
+                        .embed(&chunk.content)?
+                };
+                Ok((
+                    DocumentChunk {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        document_id: doc_id.to_string(),
+                        chunk_index: i as i64,
+                        heading: chunk.heading.clone(),
+                        content: chunk.content.clone(),
+                        char_start: chunk.char_start as i64,
+                        char_end: chunk.char_end as i64,
+                        tags: tags.to_vec(),
+                    },
+                    embedding,
+                ))
+            })
+            .collect()
+    }
+
+    /// Mirror a committed chunk replacement into the vector index
+    /// (`chunk:<id>` keys): drop the replaced chunks, add the new ones, save
+    /// once. SQLite is already committed, so index trouble only warns —
+    /// `uteke repair` rebuilds chunk vectors from SQLite.
+    fn sync_document_chunks_to_index(
+        &self,
+        old_chunk_ids: &[String],
+        new_chunks: &[(DocumentChunk, Vec<f32>)],
+    ) -> Result<(), Error> {
+        let mut index = self
+            .index
+            .write()
+            .map_err(|_| Error::lock("index write lock during doc chunking"))?;
+        let policy = index_sync::SyncPolicy::STANDARD;
+        for old_id in old_chunk_ids {
+            index_sync::remove_unsaved(&mut *index, &format!("chunk:{old_id}"));
+        }
+        for (chunk, embedding) in new_chunks {
+            let key = format!("chunk:{}", chunk.id);
+            if let Err(e) = index_sync::insert_unsaved(&mut *index, &key, embedding, &policy) {
+                tracing::warn!("Failed to insert chunk {} into vector index: {e}", chunk.id);
+            }
+        }
+        if let Err(e) = index_sync::persist(&mut *index, &policy) {
+            tracing::warn!("Failed to persist vector index after doc chunking: {e}");
+        }
+        Ok(())
     }
 
     /// Get a document by ID or slug.
@@ -1701,74 +1770,31 @@ impl Uteke {
         };
         let doc_id = doc.id.clone();
 
-        // Partial update in SQLite.
-        let updated = self
-            .store
-            .update_document(&doc_id, title, content, tags, metadata)?;
-
-        let updated = match updated {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-
-        // If content was changed, rebuild chunks.
-        if let Some(content_text) = content {
-            let old_chunk_ids = self
+        // Content change: embed first (no locks, no transaction), then update the
+        // document and replace its chunks atomically, then mirror into the index.
+        let updated = if let Some(content_text) = content {
+            let chunk_tags: Vec<String> =
+                tags.map(|t| t.to_vec()).unwrap_or_else(|| doc.tags.clone());
+            let chunks = self.embed_document_chunks(&doc_id, content_text, &chunk_tags)?;
+            match self
                 .store
-                .delete_chunks_for_documents(std::slice::from_ref(&doc_id))?;
-
-            self.ensure_embedder()?;
-            let embedder = self
-                .embedder
-                .lock()
-                .map_err(|_| Error::lock("embedder lock during document update"))?;
-            let embedder = embedder.as_ref().expect("embedder ensured above");
-
-            let max_chars = embedder.max_seq_len().saturating_mul(4).max(1024);
-            let chunks = crate::chunker::chunk_markdown(content_text, max_chars);
-
-            let mut index = self
-                .index
-                .write()
-                .map_err(|_| Error::lock("index write lock during doc update"))?;
-
-            for old_id in &old_chunk_ids {
-                let key = format!("chunk:{}", old_id);
-                index.remove(&key);
-            }
-
-            for (i, chunk) in chunks.iter().enumerate() {
-                let chunk_id = uuid::Uuid::now_v7().to_string();
-                let embedding = embedder.embed(&chunk.content)?;
-
-                self.store.insert_document_chunk(
-                    &DocumentChunk {
-                        id: chunk_id.clone(),
-                        document_id: doc_id.clone(),
-                        chunk_index: i as i64,
-                        heading: chunk.heading.clone(),
-                        content: chunk.content.clone(),
-                        char_start: chunk.char_start as i64,
-                        char_end: chunk.char_end as i64,
-                        tags: updated.tags.clone(),
-                    },
-                    &embedding,
-                )?;
-
-                let index_key = format!("chunk:{}", chunk_id);
-                if let Err(e) = index.insert(&index_key, &embedding) {
-                    tracing::warn!(
-                        "Failed to insert chunk {} into index during update: {}",
-                        chunk_id,
-                        e
-                    );
+                .update_document_with_chunks(&doc_id, title, content, tags, metadata, &chunks)?
+            {
+                Some((updated, old_chunk_ids)) => {
+                    self.sync_document_chunks_to_index(&old_chunk_ids, &chunks)?;
+                    updated
                 }
+                None => return Ok(None),
             }
-
-            if let Err(e) = index.save() {
-                tracing::warn!("Failed to persist index after doc update: {}", e);
+        } else {
+            match self
+                .store
+                .update_document(&doc_id, title, content, tags, metadata)?
+            {
+                Some(updated) => updated,
+                None => return Ok(None),
             }
-        }
+        };
 
         tracing::info!("Document '{id_or_slug}' updated");
         Ok(Some(updated))
@@ -1784,6 +1810,18 @@ impl Uteke {
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
         self.store.list_documents_ns(namespace, limit)
+    }
+
+    /// One page of documents for callers that must see ALL of them (export).
+    /// Pages are stable (newest first, id tie-break); `limit` is capped at
+    /// 1000 per page.
+    pub fn doc_list_page(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        self.store.list_documents_page(namespace, limit, offset)
     }
 
     /// List root documents, optionally scoped to a namespace (#1268).
@@ -1902,11 +1940,13 @@ impl Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during doc delete"))?;
-            for chunk_id in &chunk_ids {
-                let key = format!("chunk:{}", chunk_id);
-                index.remove(&key);
-            }
-            let _ = index.save();
+            let keys: Vec<String> = chunk_ids.iter().map(|c| format!("chunk:{c}")).collect();
+            index_sync::remove_ids(
+                &mut *index,
+                keys.iter().map(String::as_str),
+                &index_sync::SyncPolicy::STANDARD,
+            )
+            .warn_if_stale("doc_delete");
         }
 
         Ok((deleted, subtree_size))
@@ -2018,10 +2058,10 @@ impl Uteke {
             (DocumentSummary, String, String, f32),
         > = std::collections::HashMap::new();
 
-        for ((_chunk_key, distance), (_chunk_id, doc_id, heading, content)) in
-            chunk_hits.iter().zip(chunks.iter())
+        for (distance, (_chunk_id, doc_id, heading, content)) in
+            pair_chunk_hits(&chunk_hits, &chunks)
         {
-            let score = crate::memory::vector::cosine_distance_to_similarity(*distance);
+            let score = crate::memory::vector::cosine_distance_to_similarity(distance);
 
             // Get document summary from store.
             if let Ok(Some(doc)) = self.store.get_document(doc_id) {
@@ -2656,29 +2696,60 @@ pub struct GraphData {
 }
 
 /// Resolve a path to a database string.
+/// `(chunk_id, doc_id, heading, content)` as returned by `get_chunks_by_ids_ordered`.
+type ChunkRow = (String, String, String, String);
+
+/// Pair each `chunk:<id>` vector hit with its SQLite chunk row by id.
+///
+/// `get_chunks_by_ids_ordered` silently drops ids missing from SQLite, so the
+/// two lists can differ in length; zipping them would attribute every later
+/// distance to the wrong chunk. Hits without a row are skipped.
+fn pair_chunk_hits<'a>(
+    hits: &'a [(String, f32)],
+    chunks: &'a [ChunkRow],
+) -> Vec<(f32, &'a ChunkRow)> {
+    let by_id: std::collections::HashMap<&str, &ChunkRow> =
+        chunks.iter().map(|c| (c.0.as_str(), c)).collect();
+    hits.iter()
+        .filter_map(|(key, distance)| {
+            let id = key.strip_prefix("chunk:")?;
+            by_id.get(id).map(|c| (*distance, *c))
+        })
+        .collect()
+}
+
 fn resolve_db_path(db_path: &Path) -> Result<String, Error> {
     if db_path.to_str() == Some(":memory:") {
         return Ok(":memory:".to_string());
     }
 
     if db_path.is_dir() || db_path.extension().is_none() {
+        let existed = db_path.exists();
         std::fs::create_dir_all(db_path).map_err(Error::Io)?;
-        // Set directory permissions to owner-only (0700) on Unix
-        #[cfg(unix)]
-        {
-            let p: &std::path::Path = db_path;
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700)).ok();
+        if !existed {
+            restrict_dir_permissions(db_path);
         }
         Ok(db_path.join("uteke.db").to_string_lossy().to_string())
     } else {
         if let Some(parent) = db_path.parent() {
+            let existed = parent.exists();
             std::fs::create_dir_all(parent).map_err(Error::Io)?;
-            // Set directory permissions to owner-only (0700) on Unix
-            #[cfg(unix)]
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)).ok();
+            if !existed {
+                restrict_dir_permissions(parent);
+            }
         }
         Ok(db_path.to_string_lossy().to_string())
     }
+}
+
+/// Owner-only (0700) permissions on Unix for a directory this process just
+/// created. Pre-existing directories (e.g. `$HOME` or a shared dir that
+/// merely contains the db file) are never touched.
+fn restrict_dir_permissions(dir: &Path) {
+    #[cfg(unix)]
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).ok();
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 #[cfg(test)]
@@ -2965,6 +3036,183 @@ mod tests {
         unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
     }
 
+    /// #1322: a burst of `remember` calls saves the index a handful of times,
+    /// not once per call, and nothing is lost once the store closes.
+    #[test]
+    #[serial_test::serial]
+    fn bulk_remember_batches_index_saves_without_losing_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("uteke.db");
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+
+        let u = Uteke::open(&db).unwrap();
+        for i in 0..100usize {
+            let mut v = vec![0.0f32; 768];
+            v[i % 768] = 1.0;
+            u.remember_precomputed(
+                &format!("bulk probe {i}"),
+                &[],
+                None,
+                None,
+                "fact",
+                "text",
+                &v,
+            )
+            .unwrap();
+        }
+        let saves = u.index.read().unwrap().save_count();
+        assert!(
+            saves <= 5,
+            "100 writes should batch into a few saves, got {saves}"
+        );
+        u.shutdown().unwrap();
+        drop(u);
+
+        let u = Uteke::open(&db).unwrap();
+        assert_eq!(u.index.read().unwrap().len(), 100, "no entry lost");
+        u.shutdown().unwrap();
+    }
+
+    /// #1325: a crash between the index rename and the `.keys` rename leaves a
+    /// stale sidecar. Reopening must rebuild from SQLite so the newest memory
+    /// is still searchable, not silently drop it from the key map.
+    #[test]
+    #[serial_test::serial]
+    fn interrupted_save_pair_is_rebuilt_not_lost() {
+        let backends: Vec<&str> = [
+            ("usearch", cfg!(feature = "usearch")),
+            ("vecq", cfg!(feature = "vecq")),
+        ]
+        .into_iter()
+        .filter(|(_, on)| *on)
+        .map(|(n, _)| n)
+        .collect();
+        for name in backends {
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join("uteke.db");
+            unsafe { std::env::set_var("UTEKE_VECTOR_BACKEND", name) };
+
+            let mk = |i: usize| {
+                let mut v = vec![0.0f32; 768];
+                v[i] = 1.0;
+                v
+            };
+            let remember = |u: &Uteke, text: &str, i: usize| {
+                u.remember_precomputed(text, &[], None, None, "fact", "text", &mk(i))
+                    .unwrap()
+            };
+
+            let u = Uteke::open(&db).unwrap();
+            remember(&u, "first interrupted save probe", 0);
+            remember(&u, "second interrupted save probe", 1);
+            u.shutdown().unwrap();
+            drop(u);
+            let keys = dir.path().join("uteke_index.keys");
+            let keys = if keys.exists() {
+                keys
+            } else {
+                dir.path().join(format!("uteke_index.{}.keys", name))
+            };
+            let stale = std::fs::read(&keys).unwrap();
+
+            let u = Uteke::open(&db).unwrap();
+            let newest = remember(&u, "third interrupted save probe", 2);
+            u.shutdown().unwrap();
+            drop(u);
+            // Crash after the index rename, before the sidecar rename.
+            std::fs::write(&keys, stale).unwrap();
+
+            let u = Uteke::open(&db).unwrap();
+            let hits = u.index.read().unwrap().search(&mk(2), 3, 50);
+            assert!(
+                hits.iter().any(|(id, _)| *id == newest),
+                "{name}: newest memory lost after interrupted save: {hits:?}"
+            );
+            u.shutdown().unwrap();
+            drop(u);
+        }
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+    }
+
+    /// #1324: after many deletes a vecq index is mostly tombstones. Compaction
+    /// rebuilds it from SQLite so the file and the search over-fetch shrink
+    /// back to the live set.
+    #[cfg(feature = "vecq")]
+    #[test]
+    #[serial_test::serial]
+    fn vecq_compaction_shrinks_file_and_drops_dead_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("uteke.db");
+        unsafe { std::env::set_var("UTEKE_VECTOR_BACKEND", "vecq") };
+
+        let u = Uteke::open(&db).unwrap();
+        let mut ids = Vec::new();
+        for i in 0..200usize {
+            let mut v = vec![0.0f32; 768];
+            v[i] = 1.0;
+            ids.push(
+                u.remember_precomputed(
+                    &format!("compaction probe {i}"),
+                    &[],
+                    None,
+                    None,
+                    "fact",
+                    "text",
+                    &v,
+                )
+                .unwrap(),
+            );
+        }
+        for id in &ids[..150] {
+            u.forget(id).unwrap();
+        }
+        u.flush_index().unwrap();
+        let file = dir.path().join("uteke_index.vecq");
+        let size_before = std::fs::metadata(&file).unwrap().len();
+        {
+            let idx = u.index.read().unwrap();
+            assert_eq!((idx.physical_rows(), idx.dead_rows()), (200, 150));
+            assert!(idx.needs_compaction());
+        }
+
+        // Dry run reports without touching anything.
+        let dry = u.compact_index_if_needed(true).unwrap().unwrap();
+        assert!(dry.dry_run);
+        assert_eq!((dry.rows_before, dry.dead_before), (200, 150));
+        assert_eq!(u.index.read().unwrap().physical_rows(), 200);
+
+        let report = u.compact_index_if_needed(false).unwrap().unwrap();
+        assert_eq!(
+            (report.rows_before, report.dead_before, report.rows_after),
+            (200, 150, 50)
+        );
+        {
+            let idx = u.index.read().unwrap();
+            assert_eq!((idx.physical_rows(), idx.dead_rows()), (50, 0));
+            assert!(!idx.needs_compaction());
+        }
+        assert!(
+            std::fs::metadata(&file).unwrap().len() < size_before,
+            "index file must shrink"
+        );
+        assert!(
+            u.compact_index_if_needed(false).unwrap().is_none(),
+            "nothing left to compact"
+        );
+
+        // A surviving memory is still found; reopening keeps the compacted index.
+        let mut q = vec![0.0f32; 768];
+        q[199] = 1.0;
+        let hits = u.index.read().unwrap().search(&q, 3, 50);
+        assert_eq!(hits.first().map(|h| h.0.as_str()), Some(ids[199].as_str()));
+        u.shutdown().unwrap();
+        drop(u);
+        let u = Uteke::open(&db).unwrap();
+        assert_eq!(u.index.read().unwrap().physical_rows(), 50);
+        u.shutdown().unwrap();
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+    }
+
     /// #1168: invalid / not-compiled-in UTEKE_VECTOR_BACKEND falls back to the
     /// default engine without failing the open.
     #[test]
@@ -3082,6 +3330,40 @@ mod tests {
         let restored: StoreStats = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.total_memories, 42);
         assert_eq!(restored.unique_tags, 5);
+    }
+
+    #[test]
+    fn pair_chunk_hits_survives_missing_rows() {
+        let hits = vec![
+            ("chunk:a".to_string(), 0.1_f32),
+            ("chunk:gone".to_string(), 0.2),
+            ("chunk:c".to_string(), 0.3),
+        ];
+        let row = |id: &str| (id.to_string(), format!("doc-{id}"), "h".into(), "c".into());
+        let chunks = vec![row("a"), row("c")];
+        let paired = pair_chunk_hits(&hits, &chunks);
+        assert_eq!(paired.len(), 2);
+        // 0.3 must stay with chunk "c", not shift onto a neighbour.
+        assert_eq!((paired[1].0, paired[1].1.0.as_str()), (0.3, "c"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_db_path_only_restricts_dirs_it_created() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tempfile::tempdir().unwrap();
+        // Pre-existing shared directory holding the db file: must stay 0755.
+        let shared = base.path().join("shared");
+        std::fs::create_dir(&shared).unwrap();
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        resolve_db_path(&shared.join("x.db")).unwrap();
+        let mode = std::fs::metadata(&shared).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+        // A directory created by the call is owner-only.
+        let fresh = base.path().join("fresh");
+        resolve_db_path(&fresh).unwrap();
+        let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 
     #[test]
@@ -3916,5 +4198,260 @@ mod uuidv7_tests {
         let v7 = uuid::Uuid::now_v7();
         assert_eq!(v4.get_version_num(), 4);
         assert_eq!(v7.get_version_num(), 7);
+    }
+}
+
+#[cfg(test)]
+mod doc_atomicity_tests {
+    //! #1341 — document upsert/update is embed-then-commit: a failure while
+    //! embedding must leave the previous version, its chunks and the index
+    //! untouched.
+    use super::*;
+    use crate::embed::Embedder;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI64, Ordering};
+
+    /// Succeeds for `ok_calls` embeds, then fails every embed.
+    struct BudgetEmbedder {
+        ok_calls: Arc<AtomicI64>,
+    }
+
+    impl Embedder for BudgetEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            if self.ok_calls.fetch_sub(1, Ordering::SeqCst) > 0 {
+                Ok(vec![0.1f32, 0.2, 0.3, 0.4])
+            } else {
+                Err(Error::Validation("simulated embed failure".to_string()))
+            }
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "budget-test-embedder"
+        }
+    }
+
+    fn open(budget: &Arc<AtomicI64>) -> Uteke {
+        let (_db, store) = Uteke::open_store(":memory:").expect("open_store");
+        Uteke::finish_open_full(
+            store,
+            Some(Box::new(BudgetEmbedder {
+                ok_calls: Arc::clone(budget),
+            })),
+            "test-budget".to_string(),
+            TierConfig::default(),
+            RecallConfig::default(),
+            EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    const V1: &str =
+        "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n\n# Gamma\ngamma body text\n";
+    const V2: &str =
+        "# One\nfirst replacement\n\n# Two\nsecond replacement\n\n# Three\nthird replacement\n";
+
+    fn chunk_ids(u: &Uteke, doc_id: &str) -> Vec<String> {
+        let mut ids = u
+            .store
+            .get_chunk_ids_for_documents(&[doc_id.to_string()])
+            .unwrap();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn upsert_failing_mid_document_keeps_previous_version_and_index() {
+        let budget = Arc::new(AtomicI64::new(1_000));
+        let u = open(&budget);
+        let doc_id = u.doc_upsert("doc-a", "Title", V1, &[], None).unwrap();
+        let before_chunks = chunk_ids(&u, &doc_id);
+        assert!(
+            before_chunks.len() >= 2,
+            "fixture must produce several chunks"
+        );
+        let before_index = u.index.read().unwrap().len();
+        let before = u.doc_get("doc-a").unwrap().unwrap();
+
+        // Allow exactly one embed of the replacement, then fail: the old code
+        // had already replaced the document by the time chunk 2 failed.
+        budget.store(1, Ordering::SeqCst);
+        let err = u.doc_upsert("doc-a", "Title", V2, &[], None);
+        assert!(err.is_err(), "embed failure must fail the upsert");
+
+        let after = u.doc_get("doc-a").unwrap().unwrap();
+        assert_eq!(after.content, before.content, "document content untouched");
+        assert_eq!(after.version, before.version, "version untouched");
+        assert_eq!(chunk_ids(&u, &doc_id), before_chunks, "old chunks intact");
+        assert_eq!(
+            u.index.read().unwrap().len(),
+            before_index,
+            "index untouched"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn upsert_success_replaces_chunks_in_store_and_index() {
+        let budget = Arc::new(AtomicI64::new(1_000));
+        let u = open(&budget);
+        let doc_id = u.doc_upsert("doc-b", "Title", V1, &[], None).unwrap();
+        let old = chunk_ids(&u, &doc_id);
+
+        u.doc_upsert("doc-b", "Title", V2, &[], None).unwrap();
+        let new = chunk_ids(&u, &doc_id);
+        assert!(!new.is_empty());
+        assert!(
+            new.iter().all(|id| !old.contains(id)),
+            "old chunks replaced"
+        );
+        assert_eq!(
+            u.index.read().unwrap().len(),
+            new.len(),
+            "index holds exactly the new chunk vectors"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn update_failing_mid_document_keeps_previous_content_and_chunks() {
+        let budget = Arc::new(AtomicI64::new(1_000));
+        let u = open(&budget);
+        let doc_id = u.doc_upsert("doc-c", "Title", V1, &[], None).unwrap();
+        let before_chunks = chunk_ids(&u, &doc_id);
+        let before = u.doc_get("doc-c").unwrap().unwrap();
+
+        budget.store(1, Ordering::SeqCst);
+        let res = u.doc_update("doc-c", None, Some(V2), None, None);
+        assert!(res.is_err());
+
+        let after = u.doc_get("doc-c").unwrap().unwrap();
+        assert_eq!(after.content, before.content);
+        assert_eq!(after.version, before.version);
+        assert_eq!(chunk_ids(&u, &doc_id), before_chunks);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn upsert_without_a_working_embedder_writes_nothing() {
+        let budget = Arc::new(AtomicI64::new(0));
+        let u = open(&budget);
+        assert!(u.doc_upsert("doc-d", "Title", V1, &[], None).is_err());
+        assert!(
+            u.doc_get("doc-d").unwrap().is_none(),
+            "no half-written document row when embedding is impossible"
+        );
+    }
+}
+
+#[cfg(test)]
+mod documents_fts_heal_tests {
+    //! #1349 — databases created with the old plain-UPDATE/DELETE
+    //! `documents_fts_*` triggers must heal and stop failing title changes.
+    use super::*;
+    use crate::embed::Embedder;
+
+    struct FixedEmbedder;
+    impl Embedder for FixedEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            Ok(vec![0.1, 0.2, 0.3, 0.4])
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "fixed-test-embedder"
+        }
+    }
+
+    fn open() -> Uteke {
+        let (_db, store) = Uteke::open_store(":memory:").expect("open_store");
+        Uteke::finish_open_full(
+            store,
+            Some(Box::new(FixedEmbedder)),
+            "test-fixed".to_string(),
+            TierConfig::default(),
+            RecallConfig::default(),
+            EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    const BODY: &str = "# Alpha\nalpha body text\n\n# Beta\nbeta body text\n";
+
+    fn title_hits(u: &Uteke, q: &str) -> Vec<String> {
+        u.store
+            .search_documents_fts(q, 10)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.title)
+            .collect()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn title_change_works_and_fts_follows() {
+        let u = open();
+        u.doc_upsert("doc-t", "Zeppelin Guide", BODY, &[], None)
+            .unwrap();
+        assert_eq!(title_hits(&u, "zeppelin"), vec!["Zeppelin Guide"]);
+
+        u.doc_update("doc-t", Some("Dirigible Guide"), None, None, None)
+            .unwrap()
+            .expect("document exists");
+        u.doc_upsert("doc-t", "Blimp Guide", "# One\nfirst\n", &[], None)
+            .unwrap();
+
+        assert!(title_hits(&u, "zeppelin").is_empty());
+        assert!(title_hits(&u, "dirigible").is_empty());
+        assert_eq!(title_hits(&u, "blimp"), vec!["Blimp Guide"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn old_triggers_are_healed() {
+        let u = open();
+        // Recreate a pre-fix database: plain UPDATE / DELETE on the
+        // external-content FTS table.
+        u.store
+            .conn
+            .execute_batch(
+                "DROP TRIGGER documents_fts_update;
+                 DROP TRIGGER documents_fts_delete;
+                 CREATE TRIGGER documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug, content = new.content WHERE rowid = new.rowid; END;
+                 CREATE TRIGGER documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END;",
+            )
+            .unwrap();
+        u.doc_upsert("doc-h", "Original Title", BODY, &[], None)
+            .unwrap();
+        let broken = u.doc_update("doc-h", Some("Changed Title"), None, None, None);
+        assert!(
+            broken.is_err() || !title_hits(&u, "original").is_empty(),
+            "fixture must reproduce the bug (error, or a stale FTS entry) before healing"
+        );
+
+        // Healing replaces the triggers and rebuilds the FTS index.
+        u.store.heal_documents_fts_triggers().unwrap();
+        u.doc_update("doc-h", Some("Changed Title"), None, None, None)
+            .unwrap()
+            .expect("document exists");
+        assert_eq!(title_hits(&u, "changed"), vec!["Changed Title"]);
+        assert!(
+            title_hits(&u, "original").is_empty(),
+            "stale pre-fix FTS entries are gone after the rebuild"
+        );
+        u.store.heal_documents_fts_triggers().unwrap(); // idempotent
     }
 }

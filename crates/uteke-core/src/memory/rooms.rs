@@ -1,6 +1,7 @@
 //! Room operations — collaborative memory spaces for multi-agent discussions.
 
 use crate::Error;
+use crate::memory::store::memory_columns_m;
 use rusqlite::OptionalExtension;
 use rusqlite::params;
 
@@ -534,14 +535,15 @@ impl super::Store {
         }
         conditions.push("m.deprecated = 0");
         let sql = format!(
-            "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-             m.created_at, m.updated_at, m.namespace, m.access_count, \
-             m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, \
-             m.slug, m.source, m.source_type \
+            concat!(
+                "SELECT ",
+                memory_columns_m!(),
+                " \
              FROM memories m \
              INNER JOIN room_memories rm ON m.id = rm.memory_id \
              WHERE {} \
-             ORDER BY rm.joined_at ASC{}",
+             ORDER BY rm.joined_at ASC{}"
+            ),
             conditions.join(" AND "),
             if no_limit { "" } else { " LIMIT ?" },
         );

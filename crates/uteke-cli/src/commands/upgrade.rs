@@ -200,14 +200,11 @@ pub fn run(yes: bool) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "Cannot determine install directory".to_string())?;
 
-    // CLI binary first — hard-fail on any problem (existing behavior).
-    replace_binary(&temp_dir, BINARY_NAME, install_dir, true)?;
-
-    // Companion binaries — replace when present in the archive; warn+skip
-    // otherwise so old installs without them still upgrade cleanly.
-    for name in [SERVER_BINARY_NAME, MCP_BINARY_NAME] {
-        replace_binary(&temp_dir, name, install_dir, false)?;
-    }
+    // Stage and verify EVERY binary first, then install them. The CLI used to
+    // be replaced before the companions were even looked at, so a broken
+    // uteke-serve left a new CLI next to an old (or half-replaced) server
+    // (#1332). Now a bad bundle fails before the installed files are touched.
+    install_bundle(&temp_dir, install_dir)?;
 
     // Bundled ONNX Runtime shared libs — refresh from the archive when present.
     refresh_ort_libs(&temp_dir, install_dir)?;
@@ -219,22 +216,67 @@ pub fn run(yes: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Run `<binary> --version`, retrying while the kernel reports the freshly
+/// written file as busy.
+///
+/// Executing a binary right after writing it can fail with `ETXTBSY`
+/// ("Text file busy", os error 26) when another thread/process forks while
+/// our write descriptor is still open — the child briefly inherits it. The
+/// condition clears as soon as that child execs, so a short retry is enough.
+fn run_version_check(binary: &std::path::Path) -> std::io::Result<std::process::Output> {
+    const ETXTBSY: i32 = 26;
+    const MAX_ATTEMPTS: u32 = 8;
+    let mut attempt = 0;
+    loop {
+        match std::process::Command::new(binary).arg("--version").output() {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && attempt + 1 < MAX_ATTEMPTS => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Verify a freshly extracted binary runs, then atomically move it into
 /// `install_dir`. With `required = false`, a missing artifact is skipped
 /// with a warning (companion binaries absent from older bundles).
+#[cfg(test)]
 fn replace_binary(
     temp_dir: &std::path::Path,
     name: &str,
     install_dir: &std::path::Path,
     required: bool,
 ) -> Result<(), String> {
+    match stage_binary(temp_dir, name, install_dir, required)? {
+        Some(staged) => commit_staged(staged),
+        None => Ok(()),
+    }
+}
+
+/// A verified binary waiting next to its destination as `<name>.new`.
+struct StagedBinary {
+    staged: std::path::PathBuf,
+    dest: std::path::PathBuf,
+    name: String,
+}
+
+/// Copy `name` from the bundle to `<install_dir>/<name>.new` and check that it
+/// runs. Nothing installed is modified. `Ok(None)` = an optional artifact that
+/// is not in the bundle.
+fn stage_binary(
+    temp_dir: &std::path::Path,
+    name: &str,
+    install_dir: &std::path::Path,
+    required: bool,
+) -> Result<Option<StagedBinary>, String> {
     let extracted = temp_dir.join(name);
     if !extracted.exists() {
         if required {
             return Err(format!("Binary '{name}' not found in archive"));
         }
         println!("[WARN] {name} not in bundle — skipping (left at its installed version)");
-        return Ok(());
+        return Ok(None);
     }
 
     // Copy to temp file first, then rename (atomic on POSIX)
@@ -242,10 +284,7 @@ fn replace_binary(
     fs::copy(&extracted, &temp_new).map_err(|e| format!("Failed to copy new {name}: {e}"))?;
 
     // Verify the new binary runs
-    match std::process::Command::new(&temp_new)
-        .arg("--version")
-        .output()
-    {
+    match run_version_check(&temp_new) {
         Ok(output) if output.status.success() => {
             let new_version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             // Extract version from clap output like "uteke 0.6.7"
@@ -265,8 +304,47 @@ fn replace_binary(
         }
     }
 
-    fs::rename(&temp_new, install_dir.join(name))
-        .map_err(|e| format!("Failed to replace {name}: {e}"))?;
+    Ok(Some(StagedBinary {
+        dest: install_dir.join(name),
+        staged: temp_new,
+        name: name.to_string(),
+    }))
+}
+
+/// Atomically move a staged binary over its destination.
+fn commit_staged(b: StagedBinary) -> Result<(), String> {
+    fs::rename(&b.staged, &b.dest).map_err(|e| format!("Failed to replace {}: {e}", b.name))
+}
+
+/// Stage + verify the CLI (required) and the companion binaries (optional),
+/// then install them. If anything fails while staging, every staged file is
+/// removed and the installed binaries are left exactly as they were.
+fn install_bundle(temp_dir: &std::path::Path, install_dir: &std::path::Path) -> Result<(), String> {
+    let mut staged: Vec<StagedBinary> = Vec::new();
+    let mut failure: Option<String> = None;
+    for (name, required) in [
+        (BINARY_NAME, true),
+        (SERVER_BINARY_NAME, false),
+        (MCP_BINARY_NAME, false),
+    ] {
+        match stage_binary(temp_dir, name, install_dir, required) {
+            Ok(Some(b)) => staged.push(b),
+            Ok(None) => {}
+            Err(e) => {
+                failure = Some(e);
+                break;
+            }
+        }
+    }
+    if let Some(e) = failure {
+        for b in &staged {
+            let _ = fs::remove_file(&b.staged);
+        }
+        return Err(e);
+    }
+    for b in staged {
+        commit_staged(b)?;
+    }
     Ok(())
 }
 
@@ -584,5 +662,81 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn write_exec(path: &std::path::Path, script: &str) {
+        fs::write(path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    fn scratch(tag: &str) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("uteke-upgrade-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let bundle = dir.join("bundle");
+        let inst = dir.join("inst");
+        fs::create_dir_all(&bundle).unwrap();
+        fs::create_dir_all(&inst).unwrap();
+        (dir, bundle, inst)
+    }
+
+    const OK_NEW: &str = "#!/bin/sh\necho \"uteke 9.9.9\"\n";
+    const OLD: &str = "#!/bin/sh\necho \"uteke 0.0.1\"\n";
+
+    #[test]
+    fn install_bundle_installs_cli_and_companions() {
+        let (dir, bundle, inst) = scratch("bundle-ok");
+        for n in ["uteke", "uteke-serve", "uteke-mcp"] {
+            write_exec(&bundle.join(n), OK_NEW);
+            write_exec(&inst.join(n), OLD);
+        }
+        install_bundle(&bundle, &inst).unwrap();
+        for n in ["uteke", "uteke-serve", "uteke-mcp"] {
+            assert_eq!(fs::read_to_string(inst.join(n)).unwrap(), OK_NEW, "{n}");
+            assert!(!inst.join(format!("{n}.new")).exists());
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// #1332: the CLI used to be replaced before the companions were checked,
+    /// leaving a new CLI next to an old server when a companion was broken.
+    #[test]
+    fn a_broken_companion_leaves_every_installed_binary_untouched() {
+        let (dir, bundle, inst) = scratch("bundle-broken");
+        write_exec(&bundle.join("uteke"), OK_NEW);
+        write_exec(&bundle.join("uteke-serve"), "#!/bin/sh\nexit 1\n");
+        write_exec(&bundle.join("uteke-mcp"), OK_NEW);
+        for n in ["uteke", "uteke-serve", "uteke-mcp"] {
+            write_exec(&inst.join(n), OLD);
+        }
+
+        let err = install_bundle(&bundle, &inst).unwrap_err();
+        assert!(err.contains("uteke-serve"), "{err}");
+        for n in ["uteke", "uteke-serve", "uteke-mcp"] {
+            assert_eq!(
+                fs::read_to_string(inst.join(n)).unwrap(),
+                OLD,
+                "{n} must still be the old version"
+            );
+            assert!(
+                !inst.join(format!("{n}.new")).exists(),
+                "no staged leftovers for {n}"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_bundle_requires_the_cli_but_not_the_companions() {
+        let (dir, bundle, inst) = scratch("bundle-cli-only");
+        write_exec(&bundle.join("uteke"), OK_NEW);
+        install_bundle(&bundle, &inst).unwrap();
+        assert!(inst.join("uteke").exists());
+        assert!(!inst.join("uteke-serve").exists());
+
+        let (dir2, bundle2, inst2) = scratch("bundle-no-cli");
+        write_exec(&bundle2.join("uteke-serve"), OK_NEW);
+        assert!(install_bundle(&bundle2, &inst2).is_err());
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&dir2);
     }
 }

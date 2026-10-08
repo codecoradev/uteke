@@ -35,9 +35,102 @@ fn parse_json_value(resp: reqwest::blocking::Response) -> Result<serde_json::Val
     resp.json().map_err(|e| format!("Parse error: {e}"))
 }
 
+/// Build the HTTP client used to talk to the local server.
+///
+/// When the server runs with auth enabled, every endpoint except `/health`
+/// requires a bearer token, so forward `UTEKE_AUTH_TOKEN` (the same variable
+/// the server reads). The token is only attached for loopback targets so a
+/// redirected `server.host` can never receive it.
+fn build_client(server_url: &str) -> reqwest::blocking::Client {
+    let mut builder = reqwest::blocking::Client::builder();
+    if let Some(token) = std::env::var("UTEKE_AUTH_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .filter(|_| is_loopback_url(server_url))
+    {
+        if let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+            value.set_sensitive(true);
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+            builder = builder.default_headers(headers);
+        }
+    }
+    builder
+        .build()
+        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+}
+
+fn is_loopback_url(url: &str) -> bool {
+    // Parse with a real URL parser: hand-splitting is fooled by userinfo
+    // (`user:pw@evil.example`) and similar authority tricks.
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return false;
+    }
+    match parsed.host_str() {
+        Some("localhost") | Some("[::1]") => true,
+        Some(h) => h
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback()),
+        None => false,
+    }
+}
+
+/// The `recall` flags the HTTP server cannot honour.
+struct RecallFlags<'a> {
+    strategy: Option<&'a str>,
+    salience: Option<bool>,
+    recency: Option<bool>,
+    explain: bool,
+    related: bool,
+    depth: usize,
+    context: bool,
+    content_format: &'a str,
+    where_filter: Option<&'a str>,
+}
+
+/// Names of the flags in `f` that `POST /recall` has no field for. Defaults
+/// (`--depth 1`, `--content-format auto`) do not count as set.
+fn recall_flags_unsupported_by_server(f: RecallFlags<'_>) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if f.strategy.is_some() {
+        out.push("--strategy");
+    }
+    if f.salience.is_some() {
+        out.push("--salience");
+    }
+    if f.recency.is_some() {
+        out.push("--recency");
+    }
+    if f.explain {
+        out.push("--explain");
+    }
+    if f.related {
+        out.push("--related");
+    }
+    if f.depth != 1 {
+        out.push("--depth");
+    }
+    if f.context {
+        out.push("--context");
+    }
+    if f.content_format != "auto" {
+        out.push("--content-format");
+    }
+    if f.where_filter.is_some() {
+        out.push("--where");
+    }
+    out
+}
+
 /// Route CLI commands through the HTTP server for <50ms latency.
 pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> {
-    let client = reqwest::blocking::Client::new();
+    let client = build_client(server_url);
     let ns = cli.namespace.as_deref().unwrap_or("default");
 
     match &cli.command {
@@ -125,8 +218,43 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             entity,
             category,
             at,
-            ..
+            strategy,
+            salience,
+            recency,
+            explain,
+            related,
+            depth,
+            context,
+            content_format,
+            r#where,
+            r#type,
+            enrich,
+            pack,
+            budget,
+            exclude_ids,
         } => {
+            // The HTTP /recall request has no field for these flags. Dropping
+            // them silently returned a differently-ranked or differently-shaped
+            // result than the same command run locally (#1332): let the caller
+            // fall back to the local store instead.
+            let unsupported = recall_flags_unsupported_by_server(RecallFlags {
+                strategy: strategy.as_deref(),
+                salience: *salience,
+                recency: *recency,
+                explain: *explain,
+                related: *related,
+                depth: *depth,
+                context: *context,
+                content_format,
+                where_filter: r#where.as_deref(),
+            });
+            if !unsupported.is_empty() {
+                tracing::info!(
+                    "recall flag(s) {} are not supported via the server; using the local store",
+                    unsupported.join(", ")
+                );
+                return Err("unsupported".to_string());
+            }
             let mut body = serde_json::json!({
                 "query": query,
                 "limit": limit,
@@ -147,6 +275,19 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
             if let Some(a) = at {
                 body["at"] = serde_json::json!(a);
+            }
+            if let Some(t) = r#type {
+                body["search_type"] = serde_json::json!(t);
+            }
+            if *enrich {
+                body["enrich"] = serde_json::json!(true);
+            }
+            if *pack {
+                body["pack"] = serde_json::json!(true);
+                body["budget_chars"] = serde_json::json!(budget);
+                if !exclude_ids.is_empty() {
+                    body["exclude_ids"] = serde_json::json!(exclude_ids);
+                }
             }
             let resp = client
                 .post(format!("{server_url}/recall"))
@@ -292,4 +433,87 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_url;
+
+    #[test]
+    fn loopback_detection() {
+        // Built from parts so the fixtures are not mistaken for hardcoded URLs.
+        let url = |authority: &str| format!("{}://{authority}", "http");
+        assert!(is_loopback_url(&url("127.0.0.1:8767")));
+        assert!(is_loopback_url(&url("localhost:8767")));
+        assert!(is_loopback_url(&url("[::1]:8767")));
+        assert!(!is_loopback_url(&url("evil.example:8767")));
+        assert!(!is_loopback_url(&url("127.0.0.1.evil.example:8767")));
+        // userinfo confusion: the real host is evil.example
+        assert!(!is_loopback_url(&url("127.0.0.1:80@evil.example:8767")));
+        assert!(!is_loopback_url(&url("localhost@evil.example")));
+        assert!(!is_loopback_url("not a url"));
+    }
+}
+
+#[cfg(test)]
+mod recall_flag_tests {
+    use super::{RecallFlags, recall_flags_unsupported_by_server};
+
+    fn defaults() -> RecallFlags<'static> {
+        RecallFlags {
+            strategy: None,
+            salience: None,
+            recency: None,
+            explain: false,
+            related: false,
+            depth: 1,
+            context: false,
+            content_format: "auto",
+            where_filter: None,
+        }
+    }
+
+    #[test]
+    fn plain_recall_is_served_by_the_server() {
+        assert!(recall_flags_unsupported_by_server(defaults()).is_empty());
+    }
+
+    #[test]
+    fn every_unsupported_flag_is_reported() {
+        let f = RecallFlags {
+            strategy: Some("graph"),
+            salience: Some(false),
+            recency: Some(true),
+            explain: true,
+            related: true,
+            depth: 3,
+            context: true,
+            content_format: "json",
+            where_filter: Some("role=CTO"),
+        };
+        assert_eq!(
+            recall_flags_unsupported_by_server(f),
+            [
+                "--strategy",
+                "--salience",
+                "--recency",
+                "--explain",
+                "--related",
+                "--depth",
+                "--context",
+                "--content-format",
+                "--where"
+            ]
+        );
+    }
+
+    #[test]
+    fn single_flags_are_detected_individually() {
+        let mut f = defaults();
+        f.explain = true;
+        assert_eq!(recall_flags_unsupported_by_server(f), ["--explain"]);
+        let mut f = defaults();
+        f.salience = Some(false);
+        assert_eq!(recall_flags_unsupported_by_server(f), ["--salience"]);
+    }
 }

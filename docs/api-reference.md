@@ -110,7 +110,7 @@ Rebuild the vector index from stored embeddings to fix recall desync (#1266). SQ
 
 #### 🟢 `GET` `/graph`
 
-Get graph edges for a memory. Accepts `?id=...` query param.
+Memory graph for visualisation: live memories as nodes, `memory_edges` (auto-links, supersession) plus explicit graph edges as edges, keyed by memory id. Accepts `?namespace=...`, `?node_id=<memory id>` (that memory's neighbourhood) and `?limit=` (edges, default 500, max 5000); response carries `truncated`. Derived `referenced_by` backlinks are omitted.
 
 #### 🟢 `GET` `/provenance`
 
@@ -303,7 +303,7 @@ Remove an edge between two nodes. Accepts memory IDs or graph node IDs via `?sou
 
 #### 🟢 `GET` `/edges`
 
-List edges for a memory (alias for /graph). Accepts `?id=...` query param.
+List all `memory_edges` of one memory (outgoing and incoming, including derived backlinks). Not an alias of `/graph`. Accepts `?id=...` query param.
 
 #### 🟢 `GET` `/timeline`
 

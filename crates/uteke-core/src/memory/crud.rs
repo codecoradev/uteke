@@ -1,6 +1,7 @@
 //! Core CRUD operations — insert, get, delete, update, list, search, count.
 
 use crate::Error;
+use crate::memory::store::{memory_columns, memory_columns_m};
 use crate::memory::types::Memory;
 use rusqlite::{OptionalExtension, params};
 
@@ -161,7 +162,11 @@ impl super::Store {
     pub fn get_by_id(&self, id: &str) -> Result<Option<Memory>, Error> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE id = ?1")
+            .prepare(concat!(
+                "SELECT ",
+                memory_columns!(),
+                " FROM memories WHERE id = ?1"
+            ))
             .map_err(|e| Error::db("Failed to prepare statement for get_by_id", e))?;
 
         let result = stmt
@@ -188,7 +193,12 @@ impl super::Store {
         for chunk in ids.chunks(CHUNK_SIZE) {
             let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!(
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE id IN ({placeholders})"
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " FROM memories WHERE id IN ({})"
+                ),
+                placeholders
             );
             let mut stmt = self
                 .conn
@@ -250,7 +260,11 @@ impl super::Store {
         let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
         let mut stmt = self
             .conn
-            .prepare("SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE id = ?1 AND namespace = ?2")
+            .prepare(concat!(
+                "SELECT ",
+                memory_columns!(),
+                " FROM memories WHERE id = ?1 AND namespace = ?2"
+            ))
             .map_err(|e| Error::db("Failed to prepare statement for get_by_id_in_namespace", e))?;
 
         let result = stmt
@@ -451,15 +465,14 @@ impl super::Store {
             (Some(ns), Some(t)) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT id, content, embedding, tags, metadata, \
-                         created_at, updated_at, namespace, access_count, \
-                         last_accessed, deprecated, valid_from, valid_until, \
-                         memory_type, importance, pinned, content_type, slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns!(),
+                        " \
                          FROM memories WHERE namespace = ?1 AND deprecated = 0 AND EXISTS \
                          (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?2) \
-                         ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-                    )
+                         ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, t, limit as i64, offset as i64], row_to_memory)
@@ -472,14 +485,13 @@ impl super::Store {
             (Some(ns), None) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT id, content, embedding, tags, metadata, \
-                         created_at, updated_at, namespace, access_count, \
-                         last_accessed, deprecated, valid_from, valid_until, \
-                         memory_type, importance, pinned, content_type, slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns!(),
+                        " \
                          FROM memories WHERE namespace = ?1 AND deprecated = 0 \
-                         ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-                    )
+                         ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, limit as i64, offset as i64], row_to_memory)
@@ -492,15 +504,14 @@ impl super::Store {
             (None, Some(t)) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT id, content, embedding, tags, metadata, \
-                         created_at, updated_at, namespace, access_count, \
-                         last_accessed, deprecated, valid_from, valid_until, \
-                         memory_type, importance, pinned, content_type, slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns!(),
+                        " \
                          FROM memories WHERE deprecated = 0 AND EXISTS \
                          (SELECT 1 FROM memory_tags WHERE memory_id = memories.id AND tag = ?1) \
-                         ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-                    )
+                         ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![t, limit as i64, offset as i64], row_to_memory)
@@ -513,14 +524,13 @@ impl super::Store {
             (None, None) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT id, content, embedding, tags, metadata, \
-                         created_at, updated_at, namespace, access_count, \
-                         last_accessed, deprecated, valid_from, valid_until, \
-                         memory_type, importance, pinned, content_type, slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns!(),
+                        " \
                          FROM memories WHERE deprecated = 0 \
-                         ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
-                    )
+                         ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![limit as i64, offset as i64], row_to_memory)
@@ -555,14 +565,18 @@ impl super::Store {
         let pattern = format!("%{escaped}%");
         let sql = match namespace {
             Some(_) => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug
+                concat!("SELECT ", memory_columns!(), "
                  FROM memories WHERE namespace = ?1 AND deprecated = 0 AND content LIKE ?2 ESCAPE '!'
-                 ORDER BY created_at DESC LIMIT ?3"
+                 ORDER BY created_at DESC LIMIT ?3")
             }
             None => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    "
                  FROM memories WHERE deprecated = 0 AND content LIKE ?1 ESCAPE '!'
                  ORDER BY created_at DESC LIMIT ?2"
+                )
             }
         };
         let mut stmt = self
@@ -595,10 +609,18 @@ impl super::Store {
         // recall and must not re-enter the vector index on repair/verify (#1047).
         let sql = match namespace {
             Some(_) => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE namespace = ?1 AND embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " FROM memories WHERE namespace = ?1 AND embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
+                )
             }
             None => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " FROM memories WHERE embedding IS NOT NULL AND deprecated = 0 ORDER BY created_at"
+                )
             }
         };
 
@@ -644,10 +666,18 @@ impl super::Store {
     pub fn load_missing_embeddings(&self, namespace: Option<&str>) -> Result<Vec<Memory>, Error> {
         let sql = match namespace {
             Some(_) => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE namespace = ?1 AND (embedding IS NULL OR length(embedding) = 0) AND deprecated = 0 ORDER BY created_at"
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " FROM memories WHERE namespace = ?1 AND (embedding IS NULL OR length(embedding) = 0) AND deprecated = 0 ORDER BY created_at"
+                )
             }
             None => {
-                "SELECT id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at FROM memories WHERE (embedding IS NULL OR length(embedding) = 0) AND deprecated = 0 ORDER BY created_at"
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " FROM memories WHERE (embedding IS NULL OR length(embedding) = 0) AND deprecated = 0 ORDER BY created_at"
+                )
             }
         };
 
@@ -753,6 +783,39 @@ impl super::Store {
         Ok(ids)
     }
 
+    /// Which of `ids` are live (not deprecated) memories, optionally limited
+    /// to `namespace`? One query over the candidates only, so the cost is
+    /// O(candidates) instead of O(memories in the namespace) — the hot
+    /// `remember` path (dedup + cosine auto-link) used to load every id of the
+    /// namespace on each write. Ids that are not memories (e.g. `chunk:<id>`
+    /// document-chunk index keys) simply do not appear in the result.
+    pub fn live_ids_in_namespace<S: AsRef<str>>(
+        &self,
+        ids: &[S],
+        namespace: Option<&str>,
+    ) -> Result<std::collections::HashSet<String>, Error> {
+        if ids.is_empty() {
+            return Ok(std::collections::HashSet::new());
+        }
+        let json = serde_json::to_string(&ids.iter().map(|s| s.as_ref()).collect::<Vec<_>>())
+            .map_err(|e| Error::Validation(format!("candidate id list: {e}")))?;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id FROM memories \
+                 WHERE id IN (SELECT value FROM json_each(?1)) \
+                   AND deprecated = 0 \
+                   AND (?2 IS NULL OR namespace = ?2)",
+            )
+            .map_err(|e| Error::db("prepare live_ids_in_namespace", e))?;
+        let found = stmt
+            .query_map(params![json, namespace], |row| row.get::<_, String>(0))
+            .map_err(|e| Error::db("query live_ids_in_namespace", e))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read live_ids_in_namespace", e))?;
+        Ok(found)
+    }
+
     /// Count memories grouped by memory_type in a namespace.
     pub fn memory_type_counts(&self, namespace: &str) -> Result<Vec<(String, usize)>, Error> {
         let mut stmt = self
@@ -798,11 +861,10 @@ impl super::Store {
             (Some(ns), Some(t)) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                         m.created_at, m.updated_at, m.namespace, m.access_count, \
-                         m.last_accessed, m.deprecated, m.valid_from, m.valid_until, \
-                         m.memory_type, m.importance, m.pinned, m.content_type, m.slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns_m!(),
+                        " \
                          FROM memories m \
                          INNER JOIN memory_tags mt ON mt.memory_id = m.id \
                          WHERE m.namespace = ?1 \
@@ -811,8 +873,8 @@ impl super::Store {
                            AND (m.valid_until IS NULL OR m.valid_until > ?2) \
                            AND m.deprecated = 0 \
                            AND mt.tag = ?3 \
-                         ORDER BY m.created_at DESC LIMIT ?4 OFFSET ?5",
-                    )
+                         ORDER BY m.created_at DESC LIMIT ?4 OFFSET ?5"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(
@@ -828,19 +890,18 @@ impl super::Store {
             (Some(ns), None) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT id, content, embedding, tags, metadata, \
-                         created_at, updated_at, namespace, access_count, \
-                         last_accessed, deprecated, valid_from, valid_until, \
-                         memory_type, importance, pinned, content_type, slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns!(),
+                        " \
                          FROM memories \
                          WHERE namespace = ?1 \
                            AND created_at <= ?2 \
                            AND (valid_from IS NULL OR valid_from <= ?2) \
                            AND (valid_until IS NULL OR valid_until > ?2) \
                            AND deprecated = 0 \
-                         ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
-                    )
+                         ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![ns, pit, limit as i64, offset as i64], row_to_memory)
@@ -853,11 +914,10 @@ impl super::Store {
             (None, Some(t)) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT m.id, m.content, m.embedding, m.tags, m.metadata, \
-                         m.created_at, m.updated_at, m.namespace, m.access_count, \
-                         m.last_accessed, m.deprecated, m.valid_from, m.valid_until, \
-                         m.memory_type, m.importance, m.pinned, m.content_type, m.slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns_m!(),
+                        " \
                          FROM memories m \
                          INNER JOIN memory_tags mt ON mt.memory_id = m.id \
                          WHERE m.created_at <= ?1 \
@@ -865,8 +925,8 @@ impl super::Store {
                            AND (m.valid_until IS NULL OR m.valid_until > ?1) \
                            AND m.deprecated = 0 \
                            AND mt.tag = ?2 \
-                         ORDER BY m.created_at DESC LIMIT ?3 OFFSET ?4",
-                    )
+                         ORDER BY m.created_at DESC LIMIT ?3 OFFSET ?4"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![pit, t, limit as i64, offset as i64], row_to_memory)
@@ -879,18 +939,17 @@ impl super::Store {
             (None, None) => {
                 let mut stmt = self
                     .conn
-                    .prepare(
-                        "SELECT id, content, embedding, tags, metadata, \
-                         created_at, updated_at, namespace, access_count, \
-                         last_accessed, deprecated, valid_from, valid_until, \
-                         memory_type, importance, pinned, content_type, slug \
+                    .prepare(concat!(
+                        "SELECT ",
+                        memory_columns!(),
+                        " \
                          FROM memories \
                          WHERE created_at <= ?1 \
                            AND (valid_from IS NULL OR valid_from <= ?1) \
                            AND (valid_until IS NULL OR valid_until > ?1) \
                            AND deprecated = 0 \
-                         ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
-                    )
+                         ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
+                    ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(params![pit, limit as i64, offset as i64], row_to_memory)

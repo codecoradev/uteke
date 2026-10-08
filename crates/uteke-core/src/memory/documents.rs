@@ -127,6 +127,97 @@ pub struct DocumentSearchResult {
     pub mode: String,
 }
 
+/// `(exact, like-prefix)` that select a subtree by `path`: the document itself
+/// is `exact`, its descendants match `prefix`.
+fn subtree_selectors(path: &str) -> (String, String) {
+    (
+        path.to_string(),
+        format!("{}%", escape_like(&subtree_dir(path))),
+    )
+}
+
+/// The RAW (unescaped) directory form of `path`: always ends with `/`. Use it
+/// for plain string comparisons (`starts_with`); the LIKE prefix from
+/// [`subtree_selectors`] is escaped and must only be bound to SQL.
+fn subtree_dir(path: &str) -> String {
+    if path.ends_with('/') {
+        path.to_string()
+    } else {
+        format!("{path}/")
+    }
+}
+
+/// Escape `\`, `%` and `_` so a stored path is matched literally by
+/// `LIKE ... ESCAPE '\'`. Without it `/my_doc/%` also matched `/myxdoc/...`
+/// and a move/delete could rewrite or remove unrelated subtrees.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Rewrite the `path`/`depth` of every descendant of the document at
+/// `old_path` after that document moved to `new_path` (`depth_diff` = new depth
+/// minus old depth). The document itself (`skip_id`) is not touched. A document
+/// with an empty legacy `path` has no addressable descendants (matching
+/// `"" + "/%"` would hit every row), so nothing is rewritten. Returns the
+/// number of descendants updated. Shared by `move_document` and the re-parenting
+/// branch of `upsert_document` (#1377).
+fn rewrite_descendants(
+    conn: &rusqlite::Connection,
+    old_path: &str,
+    new_path: &str,
+    depth_diff: i64,
+    skip_id: &str,
+) -> Result<usize, Error> {
+    if old_path.is_empty() {
+        return Ok(0);
+    }
+    let (old_exact, old_prefix) = subtree_selectors(old_path);
+    // Replace ONLY the leading prefix (substr), never other occurrences of the
+    // old path inside a descendant's path.
+    conn.execute(
+        "UPDATE documents SET path = ?2 || substr(path, length(?1) + 1), depth = depth + ?3 \
+         WHERE path LIKE ?4 ESCAPE '\\' AND id != ?5",
+        params![old_exact, new_path, depth_diff, old_prefix, skip_id],
+    )
+    .map_err(|e| Error::db("update descendant paths", e))
+}
+
+/// Deepest `depth` found in the subtree rooted at `old_path` (itself included),
+/// or `None` for a legacy row without a path.
+fn max_subtree_depth(conn: &rusqlite::Connection, old_path: &str) -> Option<i64> {
+    if old_path.is_empty() {
+        return None;
+    }
+    let (_, prefix) = subtree_selectors(old_path);
+    conn.query_row(
+        "SELECT MAX(depth) FROM documents WHERE path LIKE ?1 ESCAPE '\\'",
+        params![prefix],
+        |row| row.get::<_, Option<i64>>(0),
+    )
+    .unwrap_or(None)
+}
+
+/// Recompute a document's denormalized `has_children` flag from the actual
+/// rows. Used wherever a parent can gain or lose a child so the flag cannot go
+/// stale (#1332).
+fn refresh_has_children(conn: &rusqlite::Connection, doc_id: &str) -> Result<(), Error> {
+    conn.execute(
+        "UPDATE documents SET has_children = \
+         EXISTS(SELECT 1 FROM documents c WHERE c.parent_id = documents.id) \
+         WHERE id = ?1",
+        params![doc_id],
+    )
+    .map_err(|e| Error::db("refresh has_children", e))?;
+    Ok(())
+}
+
 /// Row mapper for Document (full document queries).
 /// Columns: id, slug, title, content, namespace, author, tags, metadata, version,
 ///          content_type, created_at, updated_at, parent_id, path, depth, sort_order, has_children
@@ -185,7 +276,78 @@ impl super::Store {
             .conn
             .unchecked_transaction()
             .map_err(|e| Error::db("begin document upsert transaction", e))?;
+        let doc_id = self.upsert_document_in(&tx, doc)?;
+        tx.commit()
+            .map_err(|e| Error::db("commit document upsert", e))?;
+        Ok(doc_id)
+    }
 
+    /// Upsert a document and replace its chunks in ONE transaction.
+    ///
+    /// `chunks` must already be embedded (embedding is slow and must not run
+    /// under a transaction or the index lock). Either the new document row and
+    /// all of its chunks are committed, or nothing changes. Returns the
+    /// document id (the existing id when the slug already exists).
+    pub fn upsert_document_with_chunks(
+        &self,
+        doc: &Document,
+        chunks: &[(DocumentChunk, Vec<f32>)],
+    ) -> Result<String, Error> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin document upsert transaction", e))?;
+        let doc_id = self.upsert_document_in(&tx, doc)?;
+        for (chunk, embedding) in chunks {
+            debug_assert_eq!(
+                chunk.document_id, doc_id,
+                "chunk must belong to the upserted document"
+            );
+            self.insert_document_chunk(chunk, embedding)?;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit document upsert", e))?;
+        Ok(doc_id)
+    }
+
+    /// Partial update plus chunk replacement in ONE transaction (content
+    /// changed). Returns the updated document and the ids of the chunks that
+    /// were replaced (so the caller can drop them from the vector index), or
+    /// `None` if the document does not exist (nothing is written).
+    pub fn update_document_with_chunks(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+        chunks: &[(DocumentChunk, Vec<f32>)],
+    ) -> Result<Option<(Document, Vec<String>)>, Error> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin document update transaction", e))?;
+        // update_document / delete_chunks_for_documents / insert_document_chunk
+        // all run on this connection, so they join the open transaction.
+        let Some(updated) = self.update_document(id, title, content, tags, metadata)? else {
+            return Ok(None);
+        };
+        let old_chunk_ids =
+            self.delete_chunks_for_documents(std::slice::from_ref(&id.to_string()))?;
+        for (chunk, embedding) in chunks {
+            self.insert_document_chunk(chunk, embedding)?;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit document update", e))?;
+        Ok(Some((updated, old_chunk_ids)))
+    }
+
+    /// Body of [`Self::upsert_document`], run inside the caller's transaction.
+    fn upsert_document_in(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        doc: &Document,
+    ) -> Result<String, Error> {
         // Check if document exists (by slug — globally unique).
         let existing: Option<String> = tx
             .query_row(
@@ -197,6 +359,36 @@ impl super::Store {
             .map_err(|e| Error::db("query existing document", e))?;
 
         let doc_id = if let Some(id) = existing {
+            // Remember the previous parent: a re-parenting upsert must fix the
+            // flag on BOTH the old and the new parent (#1332).
+            let (old_parent, old_path, old_depth): (Option<String>, String, i64) = tx
+                .query_row(
+                    "SELECT parent_id, path, depth FROM documents WHERE id = ?1",
+                    params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(|e| Error::db("read previous parent", e))?
+                .unwrap_or((None, String::new(), 0));
+            // A re-parenting upsert moves the whole subtree: refuse a cycle and
+            // a result deeper than MAX_DEPTH BEFORE writing anything (#1377).
+            let moved = doc.path != old_path;
+            if moved && !old_path.is_empty() {
+                // Raw string comparison: the LIKE prefix is escaped and would not
+                // match a path containing `_` or `%` (CodeCora on #1378).
+                let inside_old_subtree =
+                    doc.path.starts_with(&subtree_dir(&old_path)) && doc.path != old_path;
+                if inside_old_subtree {
+                    return Err(Error::validation(
+                        "cannot move document into its own descendant",
+                    ));
+                }
+                if let Some(deepest) = max_subtree_depth(tx, &old_path) {
+                    if deepest + (doc.depth - old_depth) > MAX_DEPTH {
+                        return Err(Error::validation("move would exceed maximum depth of 10"));
+                    }
+                }
+            }
             // Update existing document.
             let version = doc.version + 1;
             tx.execute(
@@ -225,6 +417,12 @@ impl super::Store {
                 params![id],
             )
             .map_err(|e| Error::db("delete old document chunks", e))?;
+            if moved {
+                rewrite_descendants(tx, &old_path, &doc.path, doc.depth - old_depth, &id)?;
+            }
+            for parent in old_parent.iter().chain(doc.parent_id.iter()) {
+                refresh_has_children(tx, parent)?;
+            }
             id
         } else {
             // Insert new document.
@@ -262,9 +460,6 @@ impl super::Store {
             }
             doc.id.clone()
         };
-
-        tx.commit()
-            .map_err(|e| Error::db("commit document upsert", e))?;
 
         Ok(doc_id)
     }
@@ -453,6 +648,32 @@ impl super::Store {
         Ok(docs)
     }
 
+    /// One page of documents (newest first, ties broken by id so pages never
+    /// overlap), optionally scoped to a namespace. `limit` is clamped to 1000
+    /// per page; callers that need everything (export) loop on `offset`.
+    pub fn list_documents_page(
+        &self,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<DocumentSummary>, Error> {
+        let limit = limit.clamp(1, 1000) as i64;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, slug, title, namespace, author, version, updated_at, \
+                 parent_id, depth, has_children, sort_order \
+                 FROM documents WHERE (?1 IS NULL OR namespace = ?1) \
+                 ORDER BY updated_at DESC, id ASC LIMIT ?2 OFFSET ?3",
+            )
+            .map_err(|e| Error::db("prepare list documents page", e))?;
+        let rows = stmt
+            .query_map(params![namespace, limit, offset as i64], row_to_summary)
+            .map_err(|e| Error::db("list documents page query", e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("read documents page", e))
+    }
+
     /// List root documents (parent_id IS NULL), global.
     pub fn list_root_documents(&self, limit: usize) -> Result<Vec<DocumentSummary>, Error> {
         self.list_root_documents_ns(None, limit)
@@ -525,11 +746,7 @@ impl super::Store {
                 .get_document(id_or_slug)?
                 .ok_or_else(|| Error::validation("document not found for descendants query"))?,
         };
-        let path_prefix = if doc.path.ends_with('/') {
-            format!("{}%", doc.path)
-        } else {
-            format!("{}/%", doc.path)
-        };
+        let (_, path_prefix) = subtree_selectors(&doc.path);
 
         if let Some(max) = max_depth {
             let mut stmt = self
@@ -537,7 +754,7 @@ impl super::Store {
                 .prepare(
                     "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents WHERE path LIKE ?1 AND id != ?4 AND depth <= ?2 \
+                 FROM documents WHERE path LIKE ?1 ESCAPE '\\' AND id != ?4 AND depth <= ?2 \
                  ORDER BY path, sort_order LIMIT ?3",
                 )
                 .map_err(|e| Error::db("prepare list descendants", e))?;
@@ -551,7 +768,7 @@ impl super::Store {
                 .prepare(
                     "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
-                 FROM documents WHERE path LIKE ?1 AND id != ?3 \
+                 FROM documents WHERE path LIKE ?1 ESCAPE '\\' AND id != ?3 \
                  ORDER BY path, sort_order LIMIT ?2",
                 )
                 .map_err(|e| Error::db("prepare list descendants", e))?;
@@ -626,15 +843,11 @@ impl super::Store {
         if path.is_empty() {
             return Ok(0);
         }
-        let prefix = if path.ends_with('/') {
-            format!("{}%", path)
-        } else {
-            format!("{}/%", path)
-        };
+        let (_, prefix) = subtree_selectors(&path);
         let count: i64 = self
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM documents WHERE path LIKE ?1 AND id != ?2",
+                "SELECT COUNT(*) FROM documents WHERE path LIKE ?1 ESCAPE '\\' AND id != ?2",
                 params![prefix, doc_id],
                 |row| row.get(0),
             )
@@ -679,11 +892,12 @@ impl super::Store {
             None => return Ok(0),
         };
 
-        let (old_path_exact, old_prefix) = if old_path.ends_with('/') {
-            (old_path.clone(), format!("{}%", old_path))
-        } else {
-            (old_path.to_string(), format!("{}/%", old_path))
-        };
+        // Legacy pre-v12 rows have an empty `path` (the migration never
+        // backfilled it). `"" + "/%"` would match EVERY document and rewrite all
+        // their paths/depths, so such a document is moved on its own: it has no
+        // addressable descendants (#1332).
+        let has_path = !old_path.is_empty();
+        let (_, old_prefix) = subtree_selectors(&old_path);
 
         // Safety checks.
         if let Some(parent) = new_parent_id {
@@ -711,14 +925,17 @@ impl super::Store {
                 )
                 .unwrap_or(0);
             let new_depth = parent_depth + 1;
-            let max_child_depth: i64 = tx
-                .query_row(
-                    "SELECT MAX(depth) FROM documents WHERE path LIKE ?1",
+            let max_child_depth: i64 = if has_path {
+                tx.query_row(
+                    "SELECT MAX(depth) FROM documents WHERE path LIKE ?1 ESCAPE '\\'",
                     params![old_prefix],
                     |row| row.get::<_, Option<i64>>(0),
                 )
                 .unwrap_or(None)
-                .unwrap_or(old_depth);
+                .unwrap_or(old_depth)
+            } else {
+                old_depth
+            };
             let depth_diff = new_depth - old_depth;
             if max_child_depth + depth_diff > MAX_DEPTH {
                 return Err(Error::validation("move would exceed maximum depth of 10"));
@@ -766,13 +983,7 @@ impl super::Store {
         // Use substr() to replace ONLY the prefix portion (not all occurrences),
         // avoiding corruption when old_path appears multiple times in a descendant path.
         // length(old_path) is the offset where the suffix begins.
-        let n = tx
-            .execute(
-                "UPDATE documents SET path = ?2 || substr(path, length(?1) + 1), depth = depth + ?3 \
-                 WHERE path LIKE ?4 AND id != ?5",
-                params![old_path_exact, new_path, depth_diff, old_prefix, doc_id,],
-            )
-            .map_err(|e| Error::db("update descendant paths", e))?;
+        let n = rewrite_descendants(&tx, &old_path, &new_path, depth_diff, doc_id)?;
 
         // Update new parent's has_children flag.
         if let Some(parent) = new_parent_id {
@@ -812,6 +1023,17 @@ impl super::Store {
     /// Returns (deleted, subtree_size).
     pub fn delete_document(&self, id: &str) -> Result<(bool, usize), Error> {
         let subtree_size = self.count_descendants(id)?;
+        // The parent may lose its last child: remember it to refresh the flag.
+        let parent_id: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT parent_id FROM documents WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("read parent before delete", e))?
+            .flatten();
         // Fetch the document's path for cascade delete.
         let path: String = self
             .conn
@@ -822,11 +1044,10 @@ impl super::Store {
             )
             .unwrap_or_default();
         let cascade_prefix = if path.is_empty() {
-            format!("/{}/%", id) // fallback: try UUID-based prefix
-        } else if path.ends_with('/') {
-            format!("{}%", path)
+            // fallback: try UUID-based prefix
+            subtree_selectors(&format!("/{id}/")).1
         } else {
-            format!("{}/%", path)
+            subtree_selectors(&path).1
         };
 
         // Collect all descendant document IDs (including self) for junction cleanup.
@@ -835,7 +1056,7 @@ impl super::Store {
         self.conn
             .execute(
                 "DELETE FROM room_documents WHERE doc_slug IN \
-                 (SELECT slug FROM documents WHERE id = ?1 OR path LIKE ?2)",
+                 (SELECT slug FROM documents WHERE id = ?1 OR path LIKE ?2 ESCAPE '\\')",
                 params![id, &cascade_prefix],
             )
             .map_err(|e| Error::db("cleanup room_documents junction on doc delete", e))?;
@@ -843,10 +1064,13 @@ impl super::Store {
         let n = self
             .conn
             .execute(
-                "DELETE FROM documents WHERE id = ?1 OR path LIKE ?2",
+                "DELETE FROM documents WHERE id = ?1 OR path LIKE ?2 ESCAPE '\\'",
                 params![id, cascade_prefix],
             )
             .map_err(|e| Error::db("delete document", e))?;
+        if let Some(parent) = parent_id {
+            refresh_has_children(&self.conn, &parent)?;
+        }
         Ok((n > 0, subtree_size))
     }
 
@@ -1086,6 +1310,458 @@ mod tests {
         doc.depth = parent_path.split('/').filter(|s| !s.is_empty()).count() as i64;
         doc.sort_order = 0;
         doc
+    }
+
+    fn fts_titles(store: &Store, query: &str) -> Vec<String> {
+        store
+            .search_documents_fts(query, 10)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.title)
+            .collect()
+    }
+
+    /// #1349: updating a document's title (partial update and upsert) must work
+    /// and keep the external-content FTS index in step.
+    #[test]
+    fn test_document_title_change_keeps_fts_in_sync() {
+        let store = Store::open(":memory:").unwrap();
+        let mut doc = make_doc("doc-t", "fts-title", "Zeppelin Handbook");
+        doc.content = "body about airships".to_string();
+        store.upsert_document(&doc).unwrap();
+        assert_eq!(fts_titles(&store, "zeppelin"), vec!["Zeppelin Handbook"]);
+
+        // Partial update with a new title.
+        store
+            .update_document("doc-t", Some("Dirigible Handbook"), None, None, None)
+            .unwrap()
+            .expect("document exists");
+        assert!(
+            fts_titles(&store, "zeppelin").is_empty(),
+            "old title gone from FTS"
+        );
+        assert_eq!(fts_titles(&store, "dirigible"), vec!["Dirigible Handbook"]);
+
+        // Upsert on the same slug with yet another title and new content.
+        let mut again = make_doc("doc-t", "fts-title", "Blimp Handbook");
+        again.content = "body about balloons".to_string();
+        store.upsert_document(&again).unwrap();
+        assert!(fts_titles(&store, "dirigible").is_empty());
+        assert_eq!(fts_titles(&store, "blimp"), vec!["Blimp Handbook"]);
+        assert_eq!(fts_titles(&store, "balloons"), vec!["Blimp Handbook"]);
+    }
+
+    /// #1349: deleting a document must remove it from FTS and must not leave
+    /// the index in a state where later writes fail.
+    #[test]
+    fn test_document_delete_removes_fts_entry() {
+        let store = Store::open(":memory:").unwrap();
+        let mut doc = make_doc("doc-d", "fts-delete", "Gazebo Plans");
+        doc.content = "plans for a gazebo".to_string();
+        store.upsert_document(&doc).unwrap();
+        assert_eq!(fts_titles(&store, "gazebo").len(), 1);
+
+        store.delete_document("doc-d").unwrap();
+        assert!(fts_titles(&store, "gazebo").is_empty(), "no stale FTS hit");
+
+        // The slug can be reused and updated afterwards.
+        let again = make_doc("doc-d2", "fts-delete", "Pergola Plans");
+        store.upsert_document(&again).unwrap();
+        store
+            .update_document("doc-d2", Some("Pergola Plans v2"), None, None, None)
+            .unwrap();
+        assert_eq!(fts_titles(&store, "pergola"), vec!["Pergola Plans v2"]);
+    }
+
+    /// #1349: reopening a database that still has the old triggers heals it.
+    #[test]
+    fn test_reopening_store_heals_old_documents_fts_triggers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("heal.db");
+        {
+            let store = Store::open(path.to_str().unwrap()).unwrap();
+            store
+                .conn
+                .execute_batch(
+                    "DROP TRIGGER documents_fts_update;
+                     DROP TRIGGER documents_fts_delete;
+                     CREATE TRIGGER documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug, content = new.content WHERE rowid = new.rowid; END;
+                     CREATE TRIGGER documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path.to_str().unwrap()).unwrap();
+        for name in ["documents_fts_update", "documents_fts_delete"] {
+            let sql: String = store
+                .conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1",
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert!(sql.contains("'delete'"), "{name} healed on open: {sql}");
+        }
+    }
+
+    fn has_children(store: &Store, id: &str) -> bool {
+        store.get_document(id).unwrap().unwrap().has_children
+    }
+
+    /// #1332: deleting a child must clear the parent's denormalized flag.
+    #[test]
+    fn test_delete_document_refreshes_parent_has_children() {
+        let store = open_test_store();
+        let parent = make_doc("p", "parent", "Parent");
+        store.upsert_document(&parent).unwrap();
+        store
+            .upsert_document(&make_child_doc("c1", "child-1", "C1", "p", "/p/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("c2", "child-2", "C2", "p", "/p/"))
+            .unwrap();
+        assert!(has_children(&store, "p"));
+
+        store.delete_document("c1").unwrap();
+        assert!(has_children(&store, "p"), "c2 is still a child");
+        store.delete_document("c2").unwrap();
+        assert!(
+            !has_children(&store, "p"),
+            "last child deleted: flag cleared"
+        );
+    }
+
+    /// #1332: an upsert that changes the parent must fix BOTH parents' flags.
+    #[test]
+    fn test_upsert_reparent_updates_old_and_new_parent_flags() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store.upsert_document(&make_doc("b", "b", "B")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        assert!(has_children(&store, "a") && !has_children(&store, "b"));
+
+        // Same slug, new parent.
+        let moved = make_child_doc("k", "kid", "Kid", "b", "/b/");
+        store.upsert_document(&moved).unwrap();
+        assert!(!has_children(&store, "a"), "old parent lost its only child");
+        assert!(has_children(&store, "b"), "new parent gained a child");
+    }
+
+    /// #1332: a legacy row with an empty `path` made `old_prefix = "/%"` match
+    /// every document, rewriting all paths and depths.
+    #[test]
+    fn test_move_document_with_empty_legacy_path_leaves_others_alone() {
+        let store = open_test_store();
+        store
+            .upsert_document(&make_doc("legacy", "legacy", "Legacy"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("target", "target", "Target"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("bystander", "bystander", "By"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc(
+                "deep",
+                "deep",
+                "Deep",
+                "bystander",
+                "/bystander/",
+            ))
+            .unwrap();
+        // pre-v12 row: no path
+        store
+            .conn
+            .execute("UPDATE documents SET path = '' WHERE id = 'legacy'", [])
+            .unwrap();
+
+        let before_by = store.get_document("bystander").unwrap().unwrap();
+        let before_deep = store.get_document("deep").unwrap().unwrap();
+        store.move_document("legacy", Some("target"), None).unwrap();
+
+        let moved = store.get_document("legacy").unwrap().unwrap();
+        assert_eq!(moved.parent_id.as_deref(), Some("target"));
+        assert_eq!(moved.path, "/target/legacy/");
+        assert_eq!(moved.depth, 1);
+        let after_by = store.get_document("bystander").unwrap().unwrap();
+        let after_deep = store.get_document("deep").unwrap().unwrap();
+        assert_eq!(
+            (after_by.path, after_by.depth),
+            (before_by.path, before_by.depth)
+        );
+        assert_eq!(
+            (after_deep.path, after_deep.depth),
+            (before_deep.path, before_deep.depth),
+            "unrelated documents must not be rewritten"
+        );
+    }
+
+    #[test]
+    fn test_list_documents_page_walks_every_document_once() {
+        let store = open_test_store();
+        for i in 0..7 {
+            let mut d = make_doc(&format!("d{i}"), &format!("slug-{i}"), &format!("T{i}"));
+            // identical timestamps: only the id tie-breaker keeps pages stable
+            d.updated_at = "2026-10-08T00:00:00+00:00".to_string();
+            store.upsert_document(&d).unwrap();
+        }
+        let mut seen = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = store.list_documents_page(None, 3, offset).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            offset += page.len();
+            seen.extend(page.into_iter().map(|d| d.id));
+        }
+        seen.sort();
+        let mut want: Vec<String> = (0..7).map(|i| format!("d{i}")).collect();
+        want.sort();
+        assert_eq!(seen, want, "every document exactly once");
+    }
+
+    fn path_depth(store: &Store, id: &str) -> (String, i64) {
+        let d = store.get_document(id).unwrap().unwrap();
+        (d.path, d.depth)
+    }
+
+    /// #1377: an upsert that re-parents a document must carry its whole subtree.
+    #[test]
+    fn test_upsert_reparent_rewrites_descendant_paths_and_depth() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store.upsert_document(&make_doc("b", "b", "B")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/a/k/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("gg", "great", "Great", "g", "/a/k/g/"))
+            .unwrap();
+        // unrelated sibling subtree that shares a textual prefix with "/a/k/"
+        store.upsert_document(&make_doc("ak", "ak", "AK")).unwrap();
+
+        // Same slug, new parent.
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "b", "/b/"))
+            .unwrap();
+
+        assert_eq!(path_depth(&store, "k"), ("/b/k/".to_string(), 1));
+        assert_eq!(path_depth(&store, "g"), ("/b/k/g/".to_string(), 2));
+        assert_eq!(path_depth(&store, "gg"), ("/b/k/g/gg/".to_string(), 3));
+        assert_eq!(path_depth(&store, "a"), ("/a/".to_string(), 0));
+        assert_eq!(path_depth(&store, "ak"), ("/ak/".to_string(), 0));
+    }
+
+    /// Dropping the parent (upsert without one) moves the subtree to the root.
+    #[test]
+    fn test_upsert_to_root_rewrites_descendants() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/a/k/"))
+            .unwrap();
+
+        store.upsert_document(&make_doc("k", "kid", "Kid")).unwrap();
+
+        assert_eq!(path_depth(&store, "k"), ("/k/".to_string(), 0));
+        assert_eq!(path_depth(&store, "g"), ("/k/g/".to_string(), 1));
+    }
+
+    /// Deleting the old parent must no longer take the moved subtree with it.
+    #[test]
+    fn test_delete_old_parent_after_reparent_keeps_moved_subtree() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("a", "a", "A")).unwrap();
+        store.upsert_document(&make_doc("b", "b", "B")).unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "a", "/a/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/a/k/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("k", "kid", "Kid", "b", "/b/"))
+            .unwrap();
+
+        store.delete_document("a").unwrap();
+        assert!(store.get_document("k").unwrap().is_some());
+        assert!(
+            store.get_document("g").unwrap().is_some(),
+            "g moved with k and must survive the deletion of a"
+        );
+    }
+
+    #[test]
+    fn test_upsert_reparent_into_own_descendant_is_rejected_atomically() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("k", "kid", "Kid")).unwrap();
+        store
+            .upsert_document(&make_child_doc("g", "grand", "Grand", "k", "/k/"))
+            .unwrap();
+
+        // k under its own child g.
+        let cyc = make_child_doc("k", "kid", "Kid2", "g", "/k/g/");
+        assert!(store.upsert_document(&cyc).is_err());
+        assert_eq!(path_depth(&store, "k"), ("/k/".to_string(), 0));
+        assert_eq!(path_depth(&store, "g"), ("/k/g/".to_string(), 1));
+        assert_eq!(store.get_document("k").unwrap().unwrap().title, "Kid");
+    }
+
+    /// CodeCora on #1378: the cycle guard compared a raw path with an escaped
+    /// LIKE prefix, so paths containing `_` slipped through.
+    #[test]
+    fn test_cycle_guard_works_for_paths_with_like_wildcards() {
+        let store = open_test_store();
+        store.upsert_document(&make_doc("k_1", "k1", "K")).unwrap();
+        store
+            .upsert_document(&make_child_doc("g_1", "g1", "G", "k_1", "/k_1/"))
+            .unwrap();
+
+        let cyc = make_child_doc("k_1", "k1", "K2", "g_1", "/k_1/g_1/");
+        let err = store.upsert_document(&cyc).unwrap_err().to_string();
+        assert!(err.contains("own descendant"), "{err}");
+        assert_eq!(path_depth(&store, "k_1"), ("/k_1/".to_string(), 0));
+        assert_eq!(path_depth(&store, "g_1"), ("/k_1/g_1/".to_string(), 1));
+    }
+
+    #[test]
+    fn test_upsert_reparent_exceeding_max_depth_is_rejected() {
+        let store = open_test_store();
+        // target chain t0..t4 (depths 0..4)
+        store.upsert_document(&make_doc("t0", "t0", "T0")).unwrap();
+        let mut path = "/t0/".to_string();
+        for i in 1..=4 {
+            let id = format!("t{i}");
+            store
+                .upsert_document(&make_child_doc(
+                    &id,
+                    &id,
+                    &id,
+                    &format!("t{}", i - 1),
+                    &path,
+                ))
+                .unwrap();
+            path = format!("{path}{id}/");
+        }
+        // subtree k0 (depth 0) with 9 descendants (depths 1..9)
+        store.upsert_document(&make_doc("k0", "k0", "K0")).unwrap();
+        let mut kpath = "/k0/".to_string();
+        for i in 1..=9 {
+            let id = format!("k{i}");
+            store
+                .upsert_document(&make_child_doc(
+                    &id,
+                    &id,
+                    &id,
+                    &format!("k{}", i - 1),
+                    &kpath,
+                ))
+                .unwrap();
+            kpath = format!("{kpath}{id}/");
+        }
+
+        // k0 under t4 would put k9 at depth 14.
+        let moved = make_child_doc("k0", "k0", "K0", "t4", &path);
+        let err = store.upsert_document(&moved).unwrap_err().to_string();
+        assert!(err.contains("maximum depth"), "{err}");
+        assert_eq!(path_depth(&store, "k0"), ("/k0/".to_string(), 0));
+        assert_eq!(path_depth(&store, "k9").1, 9);
+    }
+
+    /// CodeCora on #1378: paths are matched with LIKE; `_` and `%` must be literal.
+    /// `/my_doc/%` used to match `/myxdoc/...` and rewrite/delete unrelated rows.
+    #[test]
+    fn test_like_wildcards_in_paths_do_not_touch_unrelated_subtrees() {
+        let store = open_test_store();
+        store
+            .upsert_document(&make_doc("my_doc", "my-doc", "Underscore"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("myxdoc", "myx-doc", "Look-alike"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("100%", "pct", "Percent"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("1000", "thousand", "Look-alike 2"))
+            .unwrap();
+        store
+            .upsert_document(&make_doc("dest", "dest", "Dest"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc(
+                "kid-x", "kid-x", "KidX", "myxdoc", "/myxdoc/",
+            ))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc("kid-k", "kid-k", "KidK", "1000", "/1000/"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc(
+                "kid-m", "kid-m", "KidM", "my_doc", "/my_doc/",
+            ))
+            .unwrap();
+
+        // moving my_doc must not rewrite /myxdoc/... (and `%` must not match "1000")
+        store.move_document("my_doc", Some("dest"), None).unwrap();
+        assert_eq!(
+            path_depth(&store, "kid-m"),
+            ("/dest/my_doc/kid-m/".to_string(), 2)
+        );
+        assert_eq!(
+            path_depth(&store, "kid-x"),
+            ("/myxdoc/kid-x/".to_string(), 1)
+        );
+        store.move_document("100%", Some("dest"), None).unwrap();
+        assert_eq!(path_depth(&store, "kid-k"), ("/1000/kid-k/".to_string(), 1));
+
+        // the same via a re-parenting upsert
+        store
+            .upsert_document(&make_doc("dest2", "dest2", "Dest2"))
+            .unwrap();
+        store
+            .upsert_document(&make_child_doc(
+                "my_doc",
+                "my-doc",
+                "Underscore",
+                "dest2",
+                "/dest2/",
+            ))
+            .unwrap();
+        assert_eq!(
+            path_depth(&store, "kid-m"),
+            ("/dest2/my_doc/kid-m/".to_string(), 2)
+        );
+        assert_eq!(
+            path_depth(&store, "kid-x"),
+            ("/myxdoc/kid-x/".to_string(), 1)
+        );
+
+        // counting / listing descendants stays literal too
+        assert_eq!(store.count_descendants("my_doc").unwrap(), 1);
+        assert_eq!(
+            store.list_descendants("my_doc", None, 100).unwrap().len(),
+            1
+        );
+
+        // deleting my_doc removes only its own subtree
+        store.delete_document("my_doc").unwrap();
+        assert!(store.get_document("kid-m").unwrap().is_none());
+        assert!(store.get_document("myxdoc").unwrap().is_some());
+        assert!(
+            store.get_document("kid-x").unwrap().is_some(),
+            "look-alike subtree survives"
+        );
     }
 
     #[test]

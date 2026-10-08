@@ -1,6 +1,7 @@
 //! Core memory operations: remember, recall, search, forget, list, get, tags.
 
 use crate::error::Error;
+use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::{
     BulkDeleteResult, DEFAULT_NAMESPACE, Memory, MemoryTier, NamespaceDeleteResult,
     NamespaceRenameResult, RecallStrategy, SearchResult, TagInfo,
@@ -339,14 +340,16 @@ impl crate::Uteke {
             return Ok(None);
         }
 
-        // Filter by namespace if specified.
-        let ns_set: Option<std::collections::HashSet<String>> = if let Some(ns) = namespace {
-            match self.store.memories_in_namespace(ns) {
-                Ok(ids) => Some(ids.into_iter().collect()),
-                Err(_) => return Ok(None),
-            }
-        } else {
-            None
+        // Namespace + liveness filter over the (few) candidates only; the old
+        // code loaded every id of the namespace on each remember.
+        let candidate_ids: Vec<&str> = results
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .filter(|id| !id.starts_with("chunk:"))
+            .collect();
+        let live = match self.store.live_ids_in_namespace(&candidate_ids, namespace) {
+            Ok(set) => set,
+            Err(_) => return Ok(None),
         };
 
         for (id, dist) in &results {
@@ -354,11 +357,9 @@ impl crate::Uteke {
             if id.starts_with("chunk:") {
                 continue;
             }
-            // Namespace filter.
-            if let Some(ref set) = ns_set {
-                if !set.contains(id) {
-                    continue;
-                }
+            // Namespace + liveness filter.
+            if !live.contains(id) {
+                continue;
             }
             let sim = (1.0 - dist).clamp(0.0, 1.0);
             if sim >= DEDUP_THRESHOLD {
@@ -457,14 +458,12 @@ impl crate::Uteke {
             author_type: "agent".to_string(),
         };
 
-        // Acquire index write lock BEFORE any writes so lock failures are detected early.
-        // If SQLite commit fails after index insert, the orphan index entry is harmless
-        // and will be cleaned up by verify/repair.
-        let mut index = self
-            .index
-            .write()
-            .map_err(|_| Error::lock("index write lock during remember"))?;
-
+        // SQLite is the source of truth and is written first, WITHOUT holding the
+        // index write lock: the timeline / provenance / edge wiring below issue
+        // many queries and would otherwise block every concurrent recall for
+        // their whole duration. The vector is mirrored afterwards under a short
+        // write lock; if that fails the row stays FTS5-only and the outcome says
+        // so (#1273), `uteke repair` can backfill.
         self.store.insert(&memory)?;
 
         // Provenance: record the content hash at write time (#1172 Fase 1).
@@ -507,66 +506,25 @@ impl crate::Uteke {
         // carries embedding_written=false + warning so every surface can
         // tell the truth; `uteke repair` can backfill the vector later.
         let mut vector_error = embedding_error;
+        // One policy for insert + persist (retry, deterministic errors not
+        // retried) lives in `index_sync`; the outcome says what landed (#1273).
+        // An empty embedding means "no embedder": nothing to mirror, no lock.
         if !embedding.is_empty() {
-            // Retry the index insert itself (in-memory op, cheap) — #1273.
-            let mut insert_ok = false;
-            let mut last_err: Option<String> = None;
-            for attempt in 0..3 {
-                match index.insert(&id, embedding) {
-                    Ok(()) => {
-                        insert_ok = true;
-                        break;
+            match self.index.write() {
+                Ok(mut index) => {
+                    let sync =
+                        index_sync::upsert(&mut *index, &id, embedding, &SyncPolicy::STANDARD);
+                    if let Some(msg) = sync.error_message() {
+                        vector_error = Some(msg);
                     }
-                    Err(e) => {
-                        last_err = Some(e.to_string());
-                        if attempt < 2 {
-                            tracing::warn!(
-                                "Vector insert attempt {}/3 failed for id={id}: {e}. Retrying...",
-                                attempt + 1
-                            );
-                            std::thread::sleep(std::time::Duration::from_millis(200));
-                        }
-                    }
+                    // The write lock must be dropped BEFORE auto_link_cosine
+                    // (it takes a read lock on the same index, #442).
                 }
-            }
-            if insert_ok {
-                // Retry index persistence up to 3 times (#621).
-                // A failed save means the in-memory index has the entry but
-                // on-disk doesn't → silent desync on next process launch.
-                for attempt in 0..3 {
-                    match index.save() {
-                        Ok(()) => break,
-                        Err(e) => {
-                            if attempt < 2 {
-                                tracing::warn!(
-                                    "Index save attempt {}/3 failed after remember for id={id}: {e}. Retrying...",
-                                    attempt + 1
-                                );
-                                std::thread::sleep(std::time::Duration::from_millis(200));
-                            } else {
-                                tracing::warn!(
-                                    "Failed to persist vector index after 3 attempts for remember id={id}: {e}. \
-                                     Index entry can be rebuilt via `uteke repair`."
-                                );
-                                vector_error =
-                                    Some(format!("index persist failed after 3 attempts: {e}"));
-                            }
-                        }
-                    }
+                Err(_) => {
+                    vector_error = Some("index write lock poisoned; vector not written".into());
                 }
-            } else {
-                let e = last_err.unwrap_or_else(|| "unknown vector insert error".to_string());
-                tracing::warn!(
-                    "Vector insert failed after 3 attempts for remember id={id}: {e}. \
-                     Memory stored FTS5-only; run `uteke repair` to backfill."
-                );
-                vector_error = Some(format!("vector insert failed after 3 attempts: {e}"));
             }
         }
-        // Drop the write lock BEFORE auto_link_cosine to prevent deadlock.
-        // auto_link_cosine needs a read lock on the same index — holding
-        // the write lock here would deadlock (#442).
-        drop(index);
 
         // Cosine-similarity auto-linking (#401).
         // Must run AFTER index.insert() so the new memory is searchable.
@@ -1307,43 +1265,13 @@ impl crate::Uteke {
                 "Memory with id='{id}' not found in store. Nothing was deleted."
             )));
         }
-        // Vector index remove — orphan is harmless if fails (verify/repair cleans up)
-        if !index.remove(id) {
+        // Vector index remove + persist. A stale on-disk index is surfaced as an
+        // error (#926): the DB row is gone, `uteke repair` resyncs the index.
+        let sync = index_sync::remove_ids(&mut *index, [id], &SyncPolicy::STANDARD);
+        if sync.missing > 0 {
             tracing::warn!("Vector index entry not found during forget for id={id}");
         }
-        // Retry index persistence up to 3 times (#621).
-        // A failed save leaves orphan entries that desync from SQLite.
-        let mut last_err = None;
-        for attempt in 0..3 {
-            match index.save() {
-                Ok(()) => return Ok(()),
-                Err(e) => {
-                    last_err = Some(e);
-                    if attempt < 2 {
-                        tracing::warn!(
-                            "Index save attempt {}/3 failed after forget for id={id}: {}. Retrying...",
-                            attempt + 1,
-                            last_err.as_ref().unwrap()
-                        );
-                        std::thread::sleep(std::time::Duration::from_millis(200));
-                    }
-                }
-            }
-        }
-
-        // All retries exhausted: SQLite row is deleted but index persistence failed (#926).
-        // Return Err so the caller knows the operation was only partially successful.
-        // The DB is the source of truth; `repair` will resync the index.
-        tracing::error!(
-            "Failed to persist vector index after 3 attempts for forget id={id}. \
-             SQLite row deleted but index is stale. Run `uteke repair` to resync."
-        );
-        Err(Error::embed_msg(format!(
-            "Memory {id} was deleted from the database, but the vector index \
-             could not be saved after 3 attempts: {}. \
-             Run `uteke repair` to resync the index.",
-            last_err.unwrap()
-        )))
+        sync.into_delete_result(&format!("forget id={id}"))
     }
 
     /// Soft-delete (deprecate) a memory with reason (#929).
@@ -1358,14 +1286,11 @@ impl crate::Uteke {
             .index
             .write()
             .map_err(|_| Error::lock("index write lock during soft_forget"))?;
-        if !index.remove(id) {
-            tracing::debug!(
-                "Vector index entry not found during soft_forget for id={id} (ok if never embedded)"
-            );
-        }
-        // Persist vector index to disk so the removal survives restart.
-        if let Err(e) = index.save() {
-            tracing::warn!("Failed to persist vector index after soft_forget: {e}");
+        // Remove + persist so the removal survives restart; a stale on-disk
+        // index only warns here (the row is deprecated, recall filters it).
+        let sync = index_sync::remove_ids(&mut *index, [id], &SyncPolicy::STANDARD);
+        if let Some(msg) = sync.error_message() {
+            tracing::warn!("Failed to persist vector index after soft_forget id={id}: {msg}");
         }
         // Invalidate recall cache for this memory's namespace.
         if let Some(memory) = self.store.get_by_id(id).ok().flatten() {
@@ -1391,13 +1316,18 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during promote"))?;
-                if let Err(e) = index.insert(&memory.id, &memory.embedding) {
+                let sync = index_sync::upsert(
+                    &mut *index,
+                    &memory.id,
+                    &memory.embedding,
+                    &SyncPolicy::STANDARD,
+                );
+                if let Some(msg) = sync.error_message() {
                     tracing::warn!(
-                        "Failed to re-insert memory id={} into vector index during promote: {e}",
+                        "Failed to re-add memory id={} to the vector index during promote: {msg}",
                         memory.id
                     );
                 }
-                let _ = index.save();
             }
             self.recall_cache.invalidate_namespace(&memory.namespace);
         }
@@ -1419,10 +1349,12 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during bulk_forget_by_tag"))?;
-            for id in &ids {
-                index.remove(id);
-            }
-            persist_index_after_delete(&mut index, "bulk_forget_by_tag (soft)")?;
+            index_sync::remove_ids(
+                &mut *index,
+                ids.iter().map(String::as_str),
+                &SyncPolicy::STANDARD,
+            )
+            .into_delete_result("bulk_forget_by_tag (soft)")?;
             if let Some(ns) = namespace {
                 self.recall_cache.invalidate_namespace(ns);
             } else {
@@ -1440,14 +1372,12 @@ impl crate::Uteke {
             .write()
             .map_err(|_| Error::lock("index write lock during bulk_forget_by_tag"))?;
         let ids = self.store.bulk_delete_by_tag(tag, namespace)?;
-        for id in &ids {
-            if !index.remove(id) {
-                tracing::warn!(
-                    "Vector index entry not found during bulk_forget_by_tag for id={id}"
-                );
-            }
-        }
-        persist_index_after_delete(&mut index, "bulk_forget_by_tag")?;
+        index_sync::remove_ids(
+            &mut *index,
+            ids.iter().map(String::as_str),
+            &SyncPolicy::STANDARD,
+        )
+        .into_delete_result("bulk_forget_by_tag")?;
         Ok(BulkDeleteResult {
             deleted: ids.len(),
             ids,
@@ -1466,10 +1396,12 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during bulk_forget_cold"))?;
-            for id in &ids {
-                index.remove(id);
-            }
-            persist_index_after_delete(&mut index, "bulk_forget_cold (soft)")?;
+            index_sync::remove_ids(
+                &mut *index,
+                ids.iter().map(String::as_str),
+                &SyncPolicy::STANDARD,
+            )
+            .into_delete_result("bulk_forget_cold (soft)")?;
             if let Some(ns) = namespace {
                 self.recall_cache.invalidate_namespace(ns);
             } else {
@@ -1489,12 +1421,12 @@ impl crate::Uteke {
         let ids = self
             .store
             .bulk_delete_cold(namespace, self.tier_config.warm_days)?;
-        for id in &ids {
-            if !index.remove(id) {
-                tracing::warn!("Vector index entry not found during bulk_forget_cold for id={id}");
-            }
-        }
-        persist_index_after_delete(&mut index, "bulk_forget_cold")?;
+        index_sync::remove_ids(
+            &mut *index,
+            ids.iter().map(String::as_str),
+            &SyncPolicy::STANDARD,
+        )
+        .into_delete_result("bulk_forget_cold")?;
         Ok(BulkDeleteResult {
             deleted: ids.len(),
             ids,
@@ -1511,10 +1443,12 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during bulk_forget_all"))?;
-            for id in &ids {
-                index.remove(id);
-            }
-            persist_index_after_delete(&mut index, "bulk_forget_all (soft)")?;
+            index_sync::remove_ids(
+                &mut *index,
+                ids.iter().map(String::as_str),
+                &SyncPolicy::STANDARD,
+            )
+            .into_delete_result("bulk_forget_all (soft)")?;
             if let Some(ns) = namespace {
                 self.recall_cache.invalidate_namespace(ns);
             } else {
@@ -1532,12 +1466,12 @@ impl crate::Uteke {
             .write()
             .map_err(|_| Error::lock("index write lock during bulk_forget_all"))?;
         let ids = self.store.bulk_delete_all(namespace)?;
-        for id in &ids {
-            if !index.remove(id) {
-                tracing::warn!("Vector index entry not found during bulk_forget_all for id={id}");
-            }
-        }
-        persist_index_after_delete(&mut index, "bulk_forget_all")?;
+        index_sync::remove_ids(
+            &mut *index,
+            ids.iter().map(String::as_str),
+            &SyncPolicy::STANDARD,
+        )
+        .into_delete_result("bulk_forget_all")?;
         Ok(BulkDeleteResult {
             deleted: ids.len(),
             ids,
@@ -1714,10 +1648,12 @@ impl crate::Uteke {
                     .index
                     .write()
                     .map_err(|_| Error::lock("index write lock during delete_namespace"))?;
-                for id in &ids {
-                    index.remove(id);
-                }
-                persist_index_after_delete(&mut index, "delete_namespace (deprecate)")?;
+                index_sync::remove_ids(
+                    &mut *index,
+                    ids.iter().map(String::as_str),
+                    &SyncPolicy::STANDARD,
+                )
+                .into_delete_result("delete_namespace (deprecate)")?;
                 self.recall_cache.invalidate_namespace(name);
                 tracing::info!(
                     "Namespace delete (deprecate): '{name}' soft-deleted {affected} memories \
@@ -1918,26 +1854,17 @@ impl crate::Uteke {
                 .index
                 .write()
                 .map_err(|_| Error::lock("index write lock during update_memory"))?;
-            index.insert(id, &new_embedding)?;
-
-            // Persist index with retry
-            for attempt in 0..3 {
-                match index.save() {
-                    Ok(()) => break,
-                    Err(e) => {
-                        if attempt < 2 {
-                            tracing::warn!(
-                                "Index save attempt {}/3 failed after update_memory for id={id}: {e}. Retrying...",
-                                attempt + 1
-                            );
-                            std::thread::sleep(std::time::Duration::from_millis(200));
-                        } else {
-                            tracing::error!(
-                                "Index save failed after 3 attempts for id={id}: {e}. Index may be stale on next launch."
-                            );
-                        }
-                    }
-                }
+            let sync = index_sync::upsert(&mut *index, id, &new_embedding, &SyncPolicy::STANDARD);
+            if let Some(e) = &sync.insert_error {
+                return Err(Error::embed_msg(format!(
+                    "Memory {id} was updated in the database, but its vector could not be \
+                     written to the index: {e}. Run `uteke repair` to resync."
+                )));
+            }
+            if let Some(msg) = sync.error_message() {
+                tracing::error!(
+                    "{msg} (update_memory id={id}). Index may be stale on next launch."
+                );
             }
         } else {
             // No content change — just update SQLite fields
@@ -2039,47 +1966,6 @@ impl crate::Uteke {
         self.store
             .list_at_time(tag, namespace, limit, offset, point_in_time)
     }
-}
-
-/// Persist the vector index to disk after a delete operation.
-///
-/// Retries up to 3 times with 200ms backoff. Unlike the old per-call inline
-/// code, this helper **returns an error** on persistent failure so the caller
-/// can surface it to the user instead of silently swallowing it (#926).
-///
-/// The database is always the source of truth: if the index save fails, the
-/// rows are already gone from SQLite. `uteke repair` will resync the index.
-fn persist_index_after_delete(
-    index: &mut crate::memory::vector::VectorIndex,
-    context: &str,
-) -> Result<(), Error> {
-    let mut last_err = None;
-    for attempt in 0..3 {
-        match index.save() {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                last_err = Some(e);
-                if attempt < 2 {
-                    tracing::warn!(
-                        "Index save attempt {}/3 failed after {context}: {}. Retrying...",
-                        attempt + 1,
-                        last_err.as_ref().unwrap()
-                    );
-                    std::thread::sleep(std::time::Duration::from_millis(200));
-                }
-            }
-        }
-    }
-
-    tracing::error!(
-        "Failed to persist vector index after 3 attempts in {context}. \
-         SQLite rows deleted but index is stale. Run `uteke repair` to resync."
-    );
-    Err(Error::embed_msg(format!(
-        "Vector index could not be saved after 3 attempts in {context}: {}. \
-         Database rows were deleted. Run `uteke repair` to resync the index.",
-        last_err.unwrap()
-    )))
 }
 
 #[cfg(test)]

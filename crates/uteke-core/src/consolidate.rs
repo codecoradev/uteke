@@ -1,6 +1,7 @@
 //! Consolidation: contradiction detection, duplicate finding, and merging.
 
 use crate::error::Error;
+use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::{ContradictionResult, DEFAULT_NAMESPACE};
 use crate::operations::RememberOutcome;
 
@@ -142,13 +143,12 @@ impl crate::Uteke {
                     let mut idx = self.index.write().map_err(|_| {
                         Error::lock("index write lock during post-insert contradiction deprecation")
                     })?;
-                    if idx.remove(deprecated_id) {
-                        if let Err(e) = idx.save() {
-                            tracing::warn!(
-                                "Failed to persist vector index after deprecating id={deprecated_id}: {e}"
-                            );
-                        }
-                    }
+                    index_sync::remove_ids(
+                        &mut *idx,
+                        [deprecated_id.as_str()],
+                        &SyncPolicy::STANDARD,
+                    )
+                    .warn_if_stale("post-insert contradiction deprecation");
                 }
             }
         }
@@ -300,7 +300,7 @@ impl crate::Uteke {
                     .map_err(|e| Error::db("consolidate delete", e))?;
             }
             // SQLite first (source of truth), then vector index.
-            if !index.remove(to_remove) {
+            if !index_sync::remove_unsaved(&mut *index, to_remove) {
                 tracing::warn!(
                     "Vector index entry not found during consolidate for id={}",
                     to_remove
@@ -313,7 +313,7 @@ impl crate::Uteke {
         }
         // Persist vector index once after all removals.
         if index_dirty {
-            if let Err(e) = index.save() {
+            if let Err(e) = index_sync::persist(&mut *index, &SyncPolicy::STANDARD) {
                 tracing::warn!(
                     "Failed to persist vector index after consolidate: {e}. \
                      Orphan entries will be cleaned up by verify/repair."
@@ -386,17 +386,13 @@ impl crate::Uteke {
             .index
             .write()
             .map_err(|_| Error::lock("index write lock during consolidate_pair"))?;
-        if !index.remove(id_remove) {
+        let sync = index_sync::remove_ids(&mut *index, [id_remove], &SyncPolicy::STANDARD);
+        if sync.missing > 0 {
             tracing::warn!(
                 "Vector index entry not found during consolidate_pair for id={id_remove}"
             );
         }
-        if let Err(e) = index.save() {
-            tracing::warn!(
-                "Failed to persist vector index after consolidate_pair: {e}. \
-                 Orphan entries will be cleaned up by verify/repair."
-            );
-        }
+        sync.warn_if_stale("consolidate_pair");
         // Invalidate recall cache — the removed memory affects search results.
         if namespace.is_empty() {
             self.recall_cache.clear();

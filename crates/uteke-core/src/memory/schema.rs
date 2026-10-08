@@ -5,6 +5,16 @@ use rusqlite::{OptionalExtension, params};
 
 use super::store::{CURRENT_SCHEMA_VERSION, SCHEMA, SCHEMA_INDEXES};
 
+/// `documents_fts` is an FTS5 *external-content* table (`content='documents'`).
+/// For such tables FTS5 must be told the OLD values through the special
+/// `'delete'` command; a plain `UPDATE documents_fts SET ...` or
+/// `DELETE FROM documents_fts` re-reads the already-modified content row and
+/// fails with "database disk image is malformed" (#1349). `memories_fts`
+/// already follows this pattern.
+const DOCUMENTS_FTS_TRIGGER_INSERT: &str = "CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN INSERT INTO documents_fts(rowid, title, slug, content) VALUES (new.rowid, new.title, new.slug, new.content); END";
+const DOCUMENTS_FTS_TRIGGER_UPDATE: &str = "CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN INSERT INTO documents_fts(documents_fts, rowid, title, slug, content) VALUES ('delete', old.rowid, old.title, old.slug, old.content); INSERT INTO documents_fts(rowid, title, slug, content) VALUES (new.rowid, new.title, new.slug, new.content); END";
+const DOCUMENTS_FTS_TRIGGER_DELETE: &str = "CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN INSERT INTO documents_fts(documents_fts, rowid, title, slug, content) VALUES ('delete', old.rowid, old.title, old.slug, old.content); END";
+
 impl super::Store {
     /// Run initial schema creation + legacy column migrations.
     pub(super) fn init_schema(&self) -> Result<(), Error> {
@@ -328,7 +338,43 @@ impl super::Store {
             return self.ensure_documents_fts_create();
         }
 
-        Ok(())
+        self.heal_documents_fts_triggers()
+    }
+
+    /// Replace the pre-#1349 `documents_fts_update` / `documents_fts_delete`
+    /// triggers (plain UPDATE / DELETE on an external-content FTS5 table) with
+    /// the `'delete'`-command form, then rebuild the index from `documents`
+    /// so entries left stale by the old delete trigger disappear. Idempotent:
+    /// does nothing once the triggers are correct.
+    pub(crate) fn heal_documents_fts_triggers(&self) -> Result<(), Error> {
+        let trigger_sql = |name: &str| -> Result<Option<String>, Error> {
+            self.conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1",
+                    [name],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| Error::db("read documents_fts trigger (#1349)", e))
+        };
+        let outdated =
+            |sql: &Option<String>| sql.as_deref().is_some_and(|t| !t.contains("'delete'"));
+        if !outdated(&trigger_sql("documents_fts_update")?)
+            && !outdated(&trigger_sql("documents_fts_delete")?)
+        {
+            return Ok(());
+        }
+        tracing::info!("Repairing documents_fts triggers (#1349)");
+        let batch = format!(
+            "DROP TRIGGER IF EXISTS documents_fts_update; \
+             DROP TRIGGER IF EXISTS documents_fts_delete; \
+             {DOCUMENTS_FTS_TRIGGER_UPDATE}; \
+             {DOCUMENTS_FTS_TRIGGER_DELETE}; \
+             INSERT INTO documents_fts(documents_fts) VALUES ('rebuild');"
+        );
+        self.conn
+            .execute_batch(&batch)
+            .map_err(|e| Error::db("repair documents_fts triggers (#1349)", e))
     }
 
     fn ensure_documents_fts_create(&self) -> Result<(), Error> {
@@ -342,9 +388,7 @@ impl super::Store {
         // Create sync triggers — include content body.
         self.conn
             .execute_batch(
-                "CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN INSERT INTO documents_fts(rowid, title, slug, content) VALUES (new.rowid, new.title, new.slug, new.content); END;
-                 CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug, content = new.content WHERE rowid = new.rowid; END;
-                 CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END;",
+                &format!("{DOCUMENTS_FTS_TRIGGER_INSERT}; {DOCUMENTS_FTS_TRIGGER_UPDATE}; {DOCUMENTS_FTS_TRIGGER_DELETE};"),
             )
             .map_err(|e| Error::db("create documents_fts triggers (#860)", e))?;
 
@@ -913,10 +957,10 @@ impl super::Store {
         // Best-effort: skip if FTS5 is not available (e.g., custom SQLite builds).
         let fts = [
             "CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(title, slug, content, content='documents', content_rowid='rowid')",
-            // Triggers to keep FTS in sync with documents table.
-            "CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN INSERT INTO documents_fts(rowid, title, slug, content) VALUES (new.rowid, new.title, new.slug, new.content); END",
-            "CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN UPDATE documents_fts SET title = new.title, slug = new.slug, content = new.content WHERE rowid = new.rowid; END",
-            "CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN DELETE FROM documents_fts WHERE rowid = old.rowid; END",
+            // Triggers to keep FTS in sync with documents table (#1349: 'delete' form).
+            DOCUMENTS_FTS_TRIGGER_INSERT,
+            DOCUMENTS_FTS_TRIGGER_UPDATE,
+            DOCUMENTS_FTS_TRIGGER_DELETE,
         ];
         for sql in &fts {
             let _ = self.conn.execute(sql, []);

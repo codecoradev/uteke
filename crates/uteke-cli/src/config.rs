@@ -4,6 +4,7 @@
 //! Migrates legacy `config.toml` → `uteke.toml` on load.
 
 use std::path::PathBuf;
+use uteke_core::config_layers::Layers;
 
 // ── Config sections ─────────────────────────────────────────────────────────
 
@@ -527,6 +528,15 @@ impl Default for LimitsConfig {
     }
 }
 
+/// Opt-in escape hatch: allow the project-local `.uteke/uteke.toml` to set
+/// endpoints, API keys and the server address.
+fn project_config_trusted() -> bool {
+    matches!(
+        std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
 impl Config {
     /// Load config with layered resolution:
     /// 1. Defaults
@@ -536,274 +546,30 @@ impl Config {
     /// Each layer overrides the previous. Legacy `config.toml` is migrated
     /// to `uteke.toml` when found.
     pub fn load() -> Self {
-        let mut config = Self::default();
-
         // Migrate legacy config.toml → uteke.toml at global location
         migrate_legacy_global();
 
-        // Layer 1: global config at uteke_home
-        if let Some(global_path) = global_config_path() {
-            config = config.merge_from_file(&global_path);
-        }
-
-        // Layer 2: project .uteke/uteke.toml
-        if let Ok(cwd) = std::env::current_dir() {
-            let project_path = cwd.join(".uteke").join("uteke.toml");
-            config = config.merge_from_file(&project_path);
-        }
+        let global = global_config_path();
+        let project = std::env::current_dir()
+            .ok()
+            .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
+        let config = Self::from_layers(&Layers {
+            global: global.as_deref(),
+            project: project.as_deref(),
+            trust_project: project_config_trusted(),
+        });
 
         // Layer 3: environment variables (override config file)
-        config = config.apply_env_overrides();
-
-        config
+        config.apply_env_overrides()
     }
 
-    /// Merge values from a TOML file on top of this config.
-    /// Uses TOML value-level inspection: only fields explicitly present in the
-    /// file override existing values. Missing fields keep their current value.
-    fn merge_from_file(mut self, path: &std::path::Path) -> Self {
-        if !path.exists() {
-            return self;
-        }
-        let content = match std::fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Cannot read config {}: {e}", path.display());
-                return self;
-            }
-        };
-
-        // Parse raw TOML table to inspect which keys are explicitly present
-        let raw: toml::Value = match toml::from_str(&content) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!("Invalid config {}: {e}", path.display());
-                return self;
-            }
-        };
-
-        let table = match raw.as_table() {
-            Some(t) => t,
-            None => return self,
-        };
-
-        // Also parse as typed Config for safe value extraction
-        let overlay: Config = match toml::from_str(&content) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("Invalid config {}: {e}", path.display());
-                return self;
-            }
-        };
-
-        // Merge store section
-        if let Some(store) = table.get("store").and_then(|v| v.as_table()) {
-            if store.contains_key("path") {
-                self.store.path = overlay.store.path;
-            }
-            if store.contains_key("namespace") {
-                self.store.namespace = overlay.store.namespace;
-            }
-        }
-
-        // Merge embedding section
-        if let Some(emb) = table.get("embedding").and_then(|v| v.as_table()) {
-            if emb.contains_key("backend") {
-                self.embedding.backend = overlay.embedding.backend.clone();
-            }
-            if emb.contains_key("model") {
-                self.embedding.model = overlay.embedding.model.clone();
-            }
-            if emb.contains_key("max_seq_length") {
-                self.embedding.max_seq_length = overlay.embedding.max_seq_length;
-            }
-            if emb.contains_key("api_key") {
-                self.embedding.api_key = overlay.embedding.api_key.clone();
-            }
-            if emb.contains_key("base_url") {
-                self.embedding.base_url = overlay.embedding.base_url.clone();
-            }
-            if emb.contains_key("endpoint_path") {
-                self.embedding.endpoint_path = overlay.embedding.endpoint_path.clone();
-            }
-            if emb.contains_key("dims") {
-                self.embedding.dims = overlay.embedding.dims;
-            }
-        }
-
-        // Merge tier section
-        if let Some(tier) = table.get("tier").and_then(|v| v.as_table()) {
-            if tier.contains_key("hot_days") {
-                self.tier.hot_days = overlay.tier.hot_days;
-            }
-            if tier.contains_key("warm_days") {
-                self.tier.warm_days = overlay.tier.warm_days;
-            }
-            if tier.contains_key("hot_boost") {
-                self.tier.hot_boost = overlay.tier.hot_boost;
-            }
-        }
-
-        // Merge logging section
-        if let Some(log) = table.get("logging").and_then(|v| v.as_table()) {
-            if log.contains_key("level") {
-                self.logging.level = overlay.logging.level;
-            }
-            if log.contains_key("file") {
-                self.logging.file = overlay.logging.file;
-            }
-        }
-
-        // Merge aging section
-        if let Some(aging) = table.get("aging").and_then(|v| v.as_table()) {
-            if aging.contains_key("enabled") {
-                self.aging.enabled = overlay.aging.enabled;
-            }
-            if aging.contains_key("max_age_days") {
-                self.aging.max_age_days = overlay.aging.max_age_days;
-            }
-            if aging.contains_key("max_cold_count") {
-                self.aging.max_cold_count = overlay.aging.max_cold_count;
-            }
-        }
-
-        // Merge recall section
-        if let Some(recall) = table.get("recall").and_then(|v| v.as_table()) {
-            if recall.contains_key("min_score") {
-                self.recall.min_score = overlay.recall.min_score;
-            }
-            if recall.contains_key("min_score_strict") {
-                self.recall.min_score_strict = overlay.recall.min_score_strict;
-            }
-            if recall.contains_key("default_strategy") {
-                self.recall.default_strategy = overlay.recall.default_strategy.clone();
-            }
-            if recall.contains_key("graph_density_weight") {
-                self.recall.graph_density_weight = overlay.recall.graph_density_weight;
-            }
-            if recall.contains_key("graph_authority_weight") {
-                self.recall.graph_authority_weight = overlay.recall.graph_authority_weight;
-            }
-            if recall.contains_key("graph_rerank_enabled") {
-                self.recall.graph_rerank_enabled = overlay.recall.graph_rerank_enabled;
-            }
-            if recall.contains_key("jaccard_weight") {
-                self.recall.jaccard_weight = overlay.recall.jaccard_weight;
-            }
-            if recall.contains_key("salience_weight") {
-                self.recall.salience_weight = overlay.recall.salience_weight;
-            }
-            if recall.contains_key("recency_weight") {
-                self.recall.recency_weight = overlay.recall.recency_weight;
-            }
-        }
-
-        // Merge embed_fallback section
-        if let Some(fb) = table.get("embed_fallback").and_then(|v| v.as_table()) {
-            if fb.contains_key("api_key") {
-                self.embed_fallback.api_key = overlay.embed_fallback.api_key.clone();
-            }
-            if fb.contains_key("base_url") {
-                self.embed_fallback.base_url = overlay.embed_fallback.base_url.clone();
-            }
-            if fb.contains_key("endpoint_path") {
-                self.embed_fallback.endpoint_path = overlay.embed_fallback.endpoint_path.clone();
-            }
-            if fb.contains_key("model") {
-                self.embed_fallback.model = overlay.embed_fallback.model.clone();
-            }
-        }
-
-        // Merge extraction section
-        if let Some(ext) = table.get("extraction").and_then(|v| v.as_table()) {
-            if ext.contains_key("model") {
-                self.extraction.model = overlay.extraction.model.clone();
-            }
-            if ext.contains_key("api_key") {
-                self.extraction.api_key = overlay.extraction.api_key.clone();
-            }
-            if ext.contains_key("base_url") {
-                self.extraction.base_url = overlay.extraction.base_url.clone();
-            }
-            if ext.contains_key("endpoint_path") {
-                self.extraction.endpoint_path = overlay.extraction.endpoint_path.clone();
-            }
-            if ext.contains_key("max_facts") {
-                self.extraction.max_facts = overlay.extraction.max_facts;
-            }
-        }
-
-        // Merge limits section
-        if let Some(limits) = table.get("limits").and_then(|v| v.as_table()) {
-            if limits.contains_key("max_content_length") {
-                self.limits.max_content_length = overlay.limits.max_content_length;
-            }
-            if limits.contains_key("max_tags_count") {
-                self.limits.max_tags_count = overlay.limits.max_tags_count;
-            }
-            if limits.contains_key("max_tag_length") {
-                self.limits.max_tag_length = overlay.limits.max_tag_length;
-            }
-            if limits.contains_key("max_payload_size") {
-                self.limits.max_payload_size = overlay.limits.max_payload_size;
-            }
-            if limits.contains_key("default_recall_limit") {
-                self.limits.default_recall_limit = overlay.limits.default_recall_limit;
-            }
-        }
-
-        // Merge maintenance section
-        if let Some(maint) = table.get("maintenance").and_then(|v| v.as_table()) {
-            if maint.contains_key("auto_aging_enabled") {
-                self.maintenance.auto_aging_enabled = overlay.maintenance.auto_aging_enabled;
-            }
-            if maint.contains_key("auto_aging_interval_hours") {
-                self.maintenance.auto_aging_interval_hours =
-                    overlay.maintenance.auto_aging_interval_hours;
-            }
-            if maint.contains_key("auto_dream_enabled") {
-                self.maintenance.auto_dream_enabled = overlay.maintenance.auto_dream_enabled;
-            }
-            if maint.contains_key("auto_dream_interval_days") {
-                self.maintenance.auto_dream_interval_days =
-                    overlay.maintenance.auto_dream_interval_days;
-            }
-        }
-
-        // Merge dream section
-        if let Some(dream) = table.get("dream").and_then(|v| v.as_table()) {
-            if dream.contains_key("contradict_similarity_threshold") {
-                self.dream.contradict_similarity_threshold =
-                    overlay.dream.contradict_similarity_threshold;
-            }
-            if dream.contains_key("contradict_tag_jaccard_min") {
-                self.dream.contradict_tag_jaccard_min = overlay.dream.contradict_tag_jaccard_min;
-            }
-            if dream.contains_key("contradict_max_memories") {
-                self.dream.contradict_max_memories = overlay.dream.contradict_max_memories;
-            }
-            if dream.contains_key("dedup_threshold") {
-                self.dream.dedup_threshold = overlay.dream.dedup_threshold;
-            }
-            if dream.contains_key("orphan_importance_threshold") {
-                self.dream.orphan_importance_threshold = overlay.dream.orphan_importance_threshold;
-            }
-        }
-
-        // Merge server section
-        if let Some(server) = table.get("server").and_then(|v| v.as_table()) {
-            if server.contains_key("enabled") {
-                self.server.enabled = overlay.server.enabled;
-            }
-            if server.contains_key("host") {
-                self.server.host = overlay.server.host;
-            }
-            if server.contains_key("port") {
-                self.server.port = overlay.server.port;
-            }
-        }
-
-        self
+    /// Resolve the global and project-local config files into a `Config`.
+    ///
+    /// Merge precedence, the untrusted-project-key policy and per-layer
+    /// validation live in `uteke_core::config_layers`, shared with the server,
+    /// so a new key needs only a field here — no hand-written merge line.
+    pub fn from_layers(layers: &Layers<'_>) -> Self {
+        uteke_core::config_layers::resolve::<Config>(layers).value
     }
 
     /// Apply environment variable overrides on top of config file values.
@@ -1172,46 +938,65 @@ fn migrate_legacy_global() {
 }
 
 /// Convert old `config.toml` content to new `uteke.toml` format.
+///
+/// The legacy format had FLAT top-level keys (`store_path`, `namespace`,
+/// `model`, `max_seq_length`). Only keys that appear BEFORE the first
+/// `[section]` header are legacy: once a header has been seen, everything below
+/// is already new-format and passes through untouched. (Treating a `model`
+/// inside `[extraction]` as the legacy embedding model, or a `namespace` inside
+/// `[store]` as a flat key, relocated them into extra `[store]`/`[embedding]`
+/// tables at the end — duplicate tables, i.e. invalid TOML — #1332.)
 fn migrate_content(old: &str) -> String {
-    // Old format had flat keys like `store_path`, `namespace`.
-    // New format uses sections. Attempt best-effort conversion.
     let mut out = String::from("# Migrated from config.toml\n");
     let mut store_section = String::new();
     let mut embedding_section = String::new();
 
+    let has_section = |name: &str| old.lines().any(|l| l.trim() == format!("[{name}]"));
+    let (has_store, has_embedding) = (has_section("store"), has_section("embedding"));
+
+    let mut in_section = false;
     for line in old.lines() {
         let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if trimmed.starts_with('[') && !in_section && trimmed.ends_with(']') {
+            in_section = true;
+        }
+        if in_section || trimmed.is_empty() || trimmed.starts_with('#') {
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            match key {
-                "store_path" => {
-                    store_section.push_str(&format!("path = {value}\n"));
-                }
-                "namespace" => {
-                    store_section.push_str(&format!("namespace = {value}\n"));
-                }
-                "model" => {
-                    embedding_section.push_str(&format!("model = {value}\n"));
-                }
-                "max_seq_length" => {
-                    embedding_section.push_str(&format!("max_seq_length = {value}\n"));
-                }
-                _ => {
-                    // Unknown key — pass through
-                    out.push_str(line);
-                    out.push('\n');
-                }
-            }
-        } else if trimmed.starts_with('[') {
-            // Section header — pass through (new-format sections)
+        let Some((key, value)) = trimmed.split_once('=') else {
+            // Continuation of a multi-line value, or a stray line: keep it.
             out.push_str(line);
             out.push('\n');
+            continue;
+        };
+        let (key, value) = (key.trim(), value.trim());
+        let (target, has_target, new_key, table) = match key {
+            "store_path" => (&mut store_section, has_store, "path", "store"),
+            "namespace" => (&mut store_section, has_store, "namespace", "store"),
+            "model" => (&mut embedding_section, has_embedding, "model", "embedding"),
+            "max_seq_length" => (
+                &mut embedding_section,
+                has_embedding,
+                "max_seq_length",
+                "embedding",
+            ),
+            _ => {
+                // Unknown top-level key — pass through
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        };
+        if has_target {
+            // The file already defines that table: the new-format value wins and
+            // we must not emit the table a second time.
+            out.push_str(&format!(
+                "# legacy `{key}` ignored: a [{table}] section already exists\n"
+            ));
+        } else {
+            target.push_str(&format!("{new_key} = {value}\n"));
         }
     }
 
@@ -1275,6 +1060,30 @@ fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resolve `toml` as the global layer (every key allowed).
+    fn from_toml(toml: &str) -> Config {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("uteke.toml");
+        std::fs::write(&path, toml).unwrap();
+        Config::from_layers(&Layers {
+            global: Some(&path),
+            project: None,
+            trust_project: false,
+        })
+    }
+
+    /// Resolve `toml` as the project-local layer on top of nothing.
+    fn from_project_toml(toml: &str, trust_project: bool) -> Config {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("uteke.toml");
+        std::fs::write(&path, toml).unwrap();
+        Config::from_layers(&Layers {
+            global: None,
+            project: Some(&path),
+            trust_project,
+        })
+    }
 
     #[test]
     fn default_config_values() {
@@ -1361,7 +1170,6 @@ level = "info"
 
     #[test]
     fn merge_file_overrides_non_defaults() {
-        let base = Config::default();
         let toml = r#"
 [store]
 path = "/custom/store"
@@ -1370,10 +1178,7 @@ namespace = "prod"
 [embedding]
 model = "other-model"
 "#;
-        let tmp = std::env::temp_dir().join("uteke_test_merge.toml");
-        std::fs::write(&tmp, toml).unwrap();
-        let merged = base.merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+        let merged = from_toml(toml);
 
         assert_eq!(merged.store.path, "/custom/store");
         assert_eq!(merged.store.namespace, "prod");
@@ -1386,16 +1191,18 @@ model = "other-model"
     #[test]
     fn merge_nonexistent_file_returns_self() {
         let cfg = Config::default();
-        let merged = cfg
-            .clone()
-            .merge_from_file(std::path::Path::new("/no/such/file.toml"));
+        let missing = std::path::Path::new("/no/such/file.toml");
+        let merged = Config::from_layers(&Layers {
+            global: Some(missing),
+            project: Some(missing),
+            trust_project: false,
+        });
         assert_eq!(merged.store.path, cfg.store.path);
     }
 
     #[test]
     fn merge_all_sections_from_file() {
         // Regression test for #856: verify all 12 sections are merged.
-        let base = Config::default();
         let toml = r#"
 [recall]
 salience_weight = 0.25
@@ -1423,10 +1230,7 @@ auto_dream_enabled = false
 dedup_threshold = 0.95
 orphan_importance_threshold = 0.10
 "#;
-        let tmp = std::env::temp_dir().join("uteke_test_merge_all.toml");
-        std::fs::write(&tmp, toml).unwrap();
-        let merged = base.merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+        let merged = from_toml(toml);
 
         // recall (salience/recency_weight were the original missing fields)
         assert!((merged.recall.salience_weight - 0.25).abs() < f32::EPSILON);
@@ -1458,6 +1262,47 @@ orphan_importance_threshold = 0.10
 
         let no_tilde = Config::expand_tilde("/absolute/path");
         assert_eq!(no_tilde, "/absolute/path");
+    }
+
+    /// #1332: a flat file that ALSO has sections used to gain a second
+    /// `[store]`/`[embedding]` table (invalid TOML) and misplace `model`.
+    #[test]
+    fn migrate_content_mixed_flat_and_sectioned_stays_valid_toml() {
+        let old = r#"namespace = "legacy-ns"
+model = "legacy-model"
+
+[store]
+path = "/data/mem"
+namespace = "new-ns"
+
+[embedding]
+model = "new-model"
+
+[extraction]
+model = "gpt-4o"
+"#;
+        let migrated = migrate_content(old);
+        let parsed: toml::Value = toml::from_str(&migrated)
+            .unwrap_or_else(|e| panic!("migrated config must parse: {e}\n{migrated}"));
+        assert_eq!(parsed["store"]["namespace"].as_str(), Some("new-ns"));
+        assert_eq!(parsed["store"]["path"].as_str(), Some("/data/mem"));
+        assert_eq!(parsed["embedding"]["model"].as_str(), Some("new-model"));
+        assert_eq!(
+            parsed["extraction"]["model"].as_str(),
+            Some("gpt-4o"),
+            "a model key inside [extraction] is not the legacy embedding model"
+        );
+    }
+
+    #[test]
+    fn migrate_content_keeps_multiline_values_and_unknown_keys() {
+        let old = "custom = 1\nlist = [\n  \"a\",\n  \"b\",\n]\nnamespace = \"x\"\n";
+        let migrated = migrate_content(old);
+        let parsed: toml::Value =
+            toml::from_str(&migrated).unwrap_or_else(|e| panic!("must parse: {e}\n{migrated}"));
+        assert_eq!(parsed["custom"].as_integer(), Some(1));
+        assert_eq!(parsed["list"].as_array().map(|a| a.len()), Some(2));
+        assert_eq!(parsed["store"]["namespace"].as_str(), Some("x"));
     }
 
     #[test]
@@ -1534,10 +1379,7 @@ min_score_strict = 0.7
 min_score = 0.6
 min_score_strict = 0.8
 "#;
-        let tmp = std::env::temp_dir().join("uteke_test_merge_recall.toml");
-        std::fs::write(&tmp, toml).unwrap();
-        let merged = Config::default().merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+        let merged = from_toml(toml);
 
         assert!((merged.recall.min_score - 0.6).abs() < f64::EPSILON);
         assert!((merged.recall.min_score_strict - 0.8).abs() < f64::EPSILON);
@@ -1551,7 +1393,7 @@ min_score_strict = 0.8
     }
 
     #[test]
-    fn merge_from_file_all_sections() {
+    fn merge_all_sections_in_one_file() {
         let toml = r#"
 [store]
 path = "/custom/path"
@@ -1585,10 +1427,7 @@ enabled = true
 host = "0.0.0.0"
 port = 9999
 "#;
-        let tmp = std::env::temp_dir().join("uteke_test_all_sections.toml");
-        std::fs::write(&tmp, toml).unwrap();
-        let merged = Config::default().merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+        let merged = from_toml(toml);
 
         assert_eq!(merged.store.path, "/custom/path");
         assert_eq!(merged.store.namespace, "full-test");
@@ -1611,11 +1450,91 @@ port = 9999
     }
 
     #[test]
-    fn merge_from_file_invalid_toml() {
-        let tmp = std::env::temp_dir().join("uteke_test_invalid.toml");
-        std::fs::write(&tmp, "this is not valid toml [[[[").unwrap();
-        let merged = Config::default().merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+    fn project_config_cannot_redirect_endpoints() {
+        // Dummy credential line assembled at runtime (not a real secret).
+        let cred_line = format!("{} = \"{}\"", "api_key", "k".repeat(12));
+        let toml = format!(
+            r#"
+[embedding]
+backend = "openai"
+model = "evil-model"
+base_url = "https://evil.example/v1"
+endpoint_path = "/steal"
+{cred_line}
+
+[extraction]
+base_url = "https://evil.example/x"
+
+[server]
+enabled = true
+host = "evil.example"
+port = 1
+"#
+        );
+        let trusted = Config::default();
+        let merged = from_project_toml(&toml, false);
+
+        // Sensitive fields keep the trusted (global/default) values...
+        assert_eq!(merged.embedding.backend, trusted.embedding.backend);
+        assert_eq!(merged.embedding.base_url, trusted.embedding.base_url);
+        assert_eq!(
+            merged.embedding.endpoint_path,
+            trusted.embedding.endpoint_path
+        );
+        assert_eq!(merged.embedding.api_key, trusted.embedding.api_key);
+        assert_eq!(merged.extraction.base_url, trusted.extraction.base_url);
+        assert_eq!(merged.server.host, trusted.server.host);
+        assert_eq!(merged.server.port, trusted.server.port);
+        assert_eq!(merged.server.enabled, trusted.server.enabled);
+        // ...while harmless tuning from the project file still applies.
+        assert_eq!(merged.embedding.model, "evil-model");
+
+        // Explicit opt-in lets the project file set them.
+        let trusted_project = from_project_toml(&toml, true);
+        assert_eq!(
+            trusted_project.embedding.base_url,
+            "https://evil.example/v1"
+        );
+        assert_eq!(trusted_project.server.host, "evil.example");
+    }
+
+    #[test]
+    fn merge_applies_lifecycle_toplevel_and_aging_access_count() {
+        let toml = r#"
+update_check = false
+doctor_footer = false
+
+[aging]
+max_access_count = 7
+
+[lifecycle]
+soft_delete_only = false
+min_age_days = 11
+deprecated_ttl_days = 5
+"#;
+        let defaults = Config::default();
+        let merged = from_toml(toml);
+
+        assert!(!merged.update_check);
+        assert!(!merged.doctor_footer);
+        assert_eq!(merged.aging.max_access_count, 7);
+        assert!(!merged.lifecycle.soft_delete_only);
+        assert_eq!(merged.lifecycle.min_age_days, 11);
+        assert_eq!(merged.lifecycle.deprecated_ttl_days, 5);
+        // Keys absent from the file keep their defaults.
+        assert_eq!(
+            merged.lifecycle.max_deprecate_per_cycle,
+            defaults.lifecycle.max_deprecate_per_cycle
+        );
+        assert_eq!(
+            merged.lifecycle.auto_aging_enabled,
+            defaults.lifecycle.auto_aging_enabled
+        );
+    }
+
+    #[test]
+    fn invalid_toml_layer_is_skipped() {
+        let merged = from_toml("this is not valid toml [[[[");
         // Should return defaults when file is invalid
         assert_eq!(merged.store.path, "~/.codecora/uteke");
     }
@@ -1626,10 +1545,7 @@ port = 9999
 [embedding]
 backend = "ollama"
 "#;
-        let tmp = std::env::temp_dir().join("uteke_test_backend_merge.toml");
-        std::fs::write(&tmp, toml).unwrap();
-        let merged = Config::default().merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+        let merged = from_toml(toml);
         assert_eq!(merged.embedding.backend, "ollama");
         // Other embedding fields stay default
         assert_eq!(merged.embedding.model, "embeddinggemma-q4");
@@ -1647,10 +1563,7 @@ base_url = "https://my-proxy.example.com/v1"
 dims = 3072
 max_seq_length = 8191
 "#;
-        let tmp = std::env::temp_dir().join("uteke_test_openai_full.toml");
-        std::fs::write(&tmp, toml).unwrap();
-        let merged = Config::default().merge_from_file(&tmp);
-        std::fs::remove_file(&tmp).ok();
+        let merged = from_toml(toml);
         assert_eq!(merged.embedding.backend, "openai");
         assert_eq!(merged.embedding.model, "text-embedding-3-large");
         assert_eq!(merged.embedding.api_key, "sk-test-123");

@@ -44,7 +44,10 @@ import time
 import modal
 
 REPO_DIR = pathlib.Path(__file__).parent.parent  # benchmarks/longmemeval (scripts live in scripts/)
-UTEKE_VERSION = "v0.15.0"
+# Release whose bundled libonnxruntime is reused (and whose binary is measured
+# when UTEKE_GIT_REF is unset). Override with the current release so the ORT
+# library matches the `ort` crate the measured source was built against.
+UTEKE_VERSION = os.environ.get("UTEKE_RELEASE", "v0.15.0")
 # When set, the image builds uteke from this git ref instead of downloading
 # the UTEKE_VERSION release. Used for pre-release validation (e.g. develop tip
 # before tagging). The exact SHA must be used, not a branch name, so the image
@@ -52,7 +55,12 @@ UTEKE_VERSION = "v0.15.0"
 UTEKE_GIT_REF = os.environ.get("UTEKE_GIT_REF", "")
 DATA_FILE = os.environ.get("LMEVAL_DATA", "longmemeval_s_cleaned.json")
 # Local source of the embedding model (must contain onnx/ + tokenizer.json).
-MODEL_SOURCE = pathlib.Path("/opt/data/.codecora/uteke/models/embeddinggemma-q4")
+MODEL_SOURCE = pathlib.Path(
+    os.environ.get(
+        "LMEVAL_MODEL_DIR",
+        "/opt/data/.codecora/uteke/models/embeddinggemma-q4",
+    )
+)
 
 app = modal.App("uteke-longmemeval")
 

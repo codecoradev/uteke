@@ -190,6 +190,10 @@ impl super::Store {
                     }
                 }
                 if changed {
+                    // A memory that already carried `new` must not end up with it
+                    // twice in the JSON column (#1332). Keep first occurrences.
+                    let mut seen = std::collections::HashSet::new();
+                    tags.retain(|t| seen.insert(t.clone()));
                     let new_tags_json = serde_json::to_string(&tags)
                         .map_err(|e| Error::db("database operation", e))?;
                     let now = chrono::Utc::now().to_rfc3339();

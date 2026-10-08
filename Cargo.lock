@@ -2756,9 +2756,9 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usearch"
-version = "2.26.2"
+version = "2.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b43f3a7c8d3b100d53c1a34e9ce4cd76cc83627bdb4fcd035d4e82102778aeee"
+checksum = "3ae1c08a924aecdf8280c6d14f8bcc3677092a1f33d7c254f0f70fdc632ae694"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -2767,7 +2767,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.19.1"
+version = "0.20.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2793,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.19.1"
+version = "0.20.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2809,6 +2809,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokenizers",
+ "toml",
  "tracing",
  "usearch",
  "uuid",
@@ -2817,7 +2818,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-mcp"
-version = "0.19.1"
+version = "0.20.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -2829,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.19.1"
+version = "0.20.0"
 dependencies = [
  "chrono",
  "ctrlc",
@@ -2860,9 +2861,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.26.1"
+version = "1.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
+checksum = "97277d36b9c3ace13e58fa6e753f8b0bbbf302a18dd193240d70f9e29681059a"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",

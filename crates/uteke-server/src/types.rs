@@ -480,6 +480,11 @@ pub struct RecallFileSection {
 
 /// Hard cap on recall/list `limit` to prevent DoS via unbounded queries (#903).
 pub const MAX_LIMIT: usize = 100;
+/// Hard cap on `limit` for list-style endpoints (`/list`, `/recent`,
+/// `/contradictions`, `/doc/list`, deprecated listing). Callers page with `offset`.
+pub const MAX_LIST_LIMIT: usize = 1000;
+/// Hard cap on request-controlled `max_facts` for `/extract` (bounds LLM cost).
+pub const MAX_EXTRACT_FACTS: usize = 100;
 /// Default strict mode threshold for server recall.
 /// Used as fallback when [recall] min_score_strict is not configured.
 pub const STRICT_THRESHOLD: f32 = 0.5;

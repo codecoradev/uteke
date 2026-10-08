@@ -37,6 +37,17 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // Handler functions still receive the full `path` with query params intact.
     let route_path = path.split('?').next().unwrap_or(&path);
 
+    // DNS-rebinding guard (#1326): runs before everything else, preflight and
+    // health included, since a rebinding page can hit any route.
+    let host_header = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Host"))
+        .map(|h| h.value.as_str().to_string());
+    if !ctx.host_guard.allows(host_header.as_deref()) {
+        return ctx.error_response_for(req, 403, "Host not allowed");
+    }
+
     // CORS preflight — no auth required
     if method == Method::Options {
         return Response::new(
@@ -108,12 +119,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // Lock the Uteke instance for the duration of this request.
     // This serializes requests but prevents data races on the SQLite connection.
     // Future: use rwlock for read-heavy workloads.
-    let uteke = match uteke.lock() {
-        Ok(u) => u,
-        Err(e) => {
-            return ctx.error_response_for(req, 500, format!("Internal error: {e}").as_str());
-        }
-    };
+    // A handler panic poisons the mutex; recover the guard instead of failing
+    // every later request. SQLite transactions roll back on unwind, so the
+    // underlying state stays consistent.
+    let uteke = uteke.lock().unwrap_or_else(|e| e.into_inner());
 
     match (method, route_path) {
         // ── Health ──────────────────────────────────────────────────────
@@ -708,7 +717,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── List ────────────────────────────────────────────────────────
         (Method::Post, "/list") => match read_body::<ListParams>(req.as_reader()) {
-            Ok(req_data) => {
+            Ok(mut req_data) => {
+                req_data.limit = req_data.limit.min(MAX_LIST_LIMIT);
                 // Time-travel mode: parse --at and use list_at_time
                 let list_result = match req_data.at.as_deref() {
                     Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
@@ -922,7 +932,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let limit: u32 = params
                 .get("limit")
                 .and_then(|s| s.parse().ok())
-                .unwrap_or(100);
+                .unwrap_or(100)
+                .min(MAX_LIST_LIMIT as u32);
             match uteke.store().list_deprecated(ns_param, limit) {
                 Ok(items) => {
                     #[derive(serde::Serialize)]
@@ -1089,7 +1100,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let query = path.split('?').nth(1).unwrap_or("");
             let limit = parse_query_param(query, "limit")
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(20);
+                .unwrap_or(20)
+                .min(MAX_LIST_LIMIT);
             let offset = parse_query_param(query, "offset")
                 .and_then(|v| v.parse::<usize>().ok())
                 .unwrap_or(0);
@@ -1105,7 +1117,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Graph Visualization (#408) ───────────────────────────────────
         (Method::Get, "/graph") => {
             let ns = parse_query_namespace(&path);
-            match uteke.graph_data(ns.as_deref()) {
+            let query = path.split('?').nth(1).unwrap_or("");
+            // `node_id` = memory id whose neighbourhood to return (viewers);
+            // `limit` bounds the number of edges (default 500, max 5000).
+            let node_id = parse_query_param(query, "node_id").filter(|s| !s.is_empty());
+            let limit = parse_query_param(query, "limit")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(uteke_core::graph_view::GRAPH_VIEW_DEFAULT_LIMIT);
+            match uteke.graph_view(ns.as_deref(), node_id.as_deref(), limit) {
                 Ok(data) => ctx.ok_response_for(req, &data),
                 Err(e) => {
                     error!("Graph data error: {e}");
@@ -2131,18 +2150,28 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let content_length = req
                 .headers()
                 .iter()
-                .find(|h| h.field.as_str() == "content-length")
+                .find(|h| h.field.equiv("Content-Length"))
                 .and_then(|h| h.value.as_str().parse::<u64>().ok())
                 .unwrap_or(0);
             if content_length > MAX_MCP_BODY {
                 return ctx.error_response_for(req, 413, "Payload too large");
             }
+            // Read one byte past the cap so a chunked/unsized oversized body is
+            // a 413 instead of a silently truncated JSON parse error (#1328).
             let mut body = String::new();
-            if let Err(e) = req.as_reader().take(MAX_MCP_BODY).read_to_string(&mut body) {
+            if let Err(e) = req
+                .as_reader()
+                .take(MAX_MCP_BODY + 1)
+                .read_to_string(&mut body)
+            {
                 return ctx.error_response_for(req, 400, format!("Failed to read body: {e}"));
             }
+            if body.len() as u64 > MAX_MCP_BODY {
+                return ctx.error_response_for(req, 413, "Payload too large");
+            }
+            let cors = ctx.cors_headers_for(req);
             // None = notification (no response per JSON-RPC 2.0 §4.1) → 204 No Content
-            match uteke_mcp::handle_jsonrpc(&uteke, &body) {
+            let mut resp = match uteke_mcp::handle_jsonrpc(&uteke, &body) {
                 Some(response) => tiny_http::Response::from_string(response)
                     .with_header(
                         tiny_http::Header::from_bytes(
@@ -2167,7 +2196,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         )
                         .unwrap(),
                     ),
+            };
+            for h in cors {
+                resp.add_header(h);
             }
+            resp
         }
 
         // ── Document: Create / Upsert ────────────────────────────────────
@@ -2256,7 +2289,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── Document: List ─────────────────────────────────────────────
         (Method::Post, "/doc/list") => match read_body::<DocListParams>(req.as_reader()) {
-            Ok(params) => {
+            Ok(mut params) => {
+                params.limit = params.limit.min(MAX_LIST_LIMIT);
                 let result = if params.roots_only {
                     uteke.doc_list_roots(params.namespace.as_deref(), params.limit)
                 } else if let Some(ref parent) = params.parent {
@@ -2512,7 +2546,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             let ns = parse_query_namespace(&path);
             let limit = parse_query_param(query, "limit")
                 .and_then(|v| v.parse::<usize>().ok())
-                .unwrap_or(50);
+                .unwrap_or(50)
+                .min(MAX_LIST_LIMIT);
             match uteke.contradiction_resolutions(ns.as_deref(), limit) {
                 Ok(resolutions) => ctx.ok_response_for(req, &resolutions),
                 Err(e) => {
@@ -2683,8 +2718,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Import (JSONL) ──────────────────────────────────────────────
         (Method::Post, "/import") => match read_body::<ImportRequest>(req.as_reader()) {
             Ok(req_data) => {
-                if validate_content_size(&req_data.content, 5_242_880).is_err() {
-                    return ctx.error_response_for(req, 413, "Content too large (max 5MB)");
+                // Same ceiling `read_body` enforces on the whole request, so the
+                // limit the caller is told about is the limit that applies (#1328).
+                let max_import = uteke_core::MAX_PAYLOAD_SIZE;
+                if validate_content_size(&req_data.content, max_import).is_err() {
+                    return ctx.error_response_for(
+                        req,
+                        413,
+                        format!("Content too large (max {}MB)", max_import / 1_048_576),
+                    );
                 }
 
                 // Merge request tags into the JSONL entries.
@@ -2742,12 +2784,18 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // (pitfall 0f lock contention).
         (Method::Post, "/verify") => match uteke.verify() {
             Ok(r) => ctx.ok_response_for(req, &r),
-            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+            Err(e) => {
+                error!("Request failed: {e}");
+                ctx.error_response_for(req, 500, "Internal server error")
+            }
         },
 
         (Method::Post, "/repair") => match uteke.repair() {
             Ok(r) => ctx.ok_response_for(req, &r),
-            Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+            Err(e) => {
+                error!("Request failed: {e}");
+                ctx.error_response_for(req, 500, "Internal server error")
+            }
         },
 
         (Method::Post, "/prune") => match read_body::<PruneRequest>(req.as_reader()) {
@@ -2756,7 +2804,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     uteke.prune(req_data.ttl_days, ns(&req_data.namespace), req_data.dry_run);
                 match result {
                     Ok(r) => ctx.ok_response_for(req, &r),
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2769,14 +2820,20 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     let pairs = uteke.find_duplicates(ns(&req_data.namespace), req_data.threshold);
                     match pairs {
                         Ok(p) => ctx.ok_response_for(req, &p),
-                        Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                        Err(e) => {
+                            error!("Request failed: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 } else {
                     let result =
                         uteke.consolidate(ns(&req_data.namespace), req_data.threshold, false);
                     match result {
                         Ok(r) => ctx.ok_response_for(req, &r),
-                        Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                        Err(e) => {
+                            error!("Request failed: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 }
             }
@@ -2845,7 +2902,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 };
                 match result {
                     Ok(r) => ctx.ok_response_for(req, &r),
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2855,7 +2915,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         (Method::Post, "/importance") => match read_body::<ImportanceRequest>(req.as_reader()) {
             Ok(_req_data) => match uteke.recompute_importance() {
                 Ok(count) => ctx.ok_response_for(req, &serde_json::json!({ "updated": count })),
-                Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                Err(e) => {
+                    error!("Request failed: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
             },
             Err(e) => ctx.error_response_for(req, 400, e),
         },
@@ -2869,7 +2932,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     req_data.limit,
                 ) {
                     Ok(orphans) => ctx.ok_response_for(req, &orphans),
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2882,7 +2948,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     Ok(count) => {
                         ctx.ok_response_for(req, &serde_json::json!({ "backlinks_created": count }))
                     }
-                    Err(e) => ctx.error_response_for(req, 500, e.to_string()),
+                    Err(e) => {
+                        error!("Request failed: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
+                    }
                 },
                 Err(e) => ctx.error_response_for(req, 400, e),
             }
@@ -2916,7 +2985,9 @@ fn resolve_extraction_config(
         api_key: req_api_key.map(String::from).unwrap_or(base.api_key),
         base_url: base.base_url,
         endpoint_path: base.endpoint_path,
-        max_facts: req_max_facts.unwrap_or(base.max_facts),
+        max_facts: req_max_facts
+            .unwrap_or(base.max_facts)
+            .min(MAX_EXTRACT_FACTS),
     }
 }
 
@@ -3018,6 +3089,7 @@ mod room_memories_namespace_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -3249,6 +3321,7 @@ mod room_recall_at_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -3301,34 +3374,73 @@ mod room_recall_at_tests {
         let (status, resp) = app.add_edge(&id1, &id2);
         assert_eq!(status, 200, "{resp}");
 
-        let src_node = resp["source_node"].as_str().expect("source_node id");
-        let tgt_node = resp["target_node"].as_str().expect("target_node id");
+        // POST still reports the graph-node ids it created (#1180)...
+        assert!(resp["source_node"].as_str().is_some());
+        assert!(resp["target_node"].as_str().is_some());
 
-        // The resolved nodes must exist in GET /graph and carry the memory
-        // link, so visualization can map edges back to memories.
+        // ...but GET /graph keys nodes by MEMORY id (#1366) so a viewer can
+        // open them, and keeps `memory_id` for clients that map back.
         let (_, graph) = app.call(Method::Get, "/graph", None);
         let nodes = graph["nodes"].as_array().expect("nodes array");
-        assert!(
-            nodes.iter().any(|n| n["id"] == serde_json::json!(src_node)
-                && n["memory_id"] == serde_json::json!(id1)),
-            "source node must link back to memory {id1}: {graph}"
-        );
-        assert!(
-            nodes.iter().any(|n| n["id"] == serde_json::json!(tgt_node)
-                && n["memory_id"] == serde_json::json!(id2)),
-            "target node must link back to memory {id2}: {graph}"
-        );
+        for (id, text) in [(&id1, "alpha memory"), (&id2, "beta memory")] {
+            assert!(
+                nodes.iter().any(|n| n["id"] == serde_json::json!(id)
+                    && n["memory_id"] == serde_json::json!(id)
+                    && n["label"].as_str().is_some_and(|l| l.starts_with(text))),
+                "node for memory {id} missing: {graph}"
+            );
+        }
 
-        // The edge itself must be visible in the graph payload.
+        // The edge is visible with both long and short endpoint names.
         let edges = graph["edges"].as_array().expect("edges array");
         assert!(
             edges
                 .iter()
-                .any(|e| e["source_id"] == serde_json::json!(src_node)
-                    && e["target_id"] == serde_json::json!(tgt_node)
+                .any(|e| e["source_id"] == serde_json::json!(id1)
+                    && e["target_id"] == serde_json::json!(id2)
+                    && e["source"] == serde_json::json!(id1)
+                    && e["target"] == serde_json::json!(id2)
                     && e["relation"] == serde_json::json!("related")),
             "edge must appear in GET /graph: {graph}"
         );
+        assert_eq!(graph["truncated"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn graph_node_id_and_limit_query_params() {
+        let app = GraphEdgeApp::new();
+        let a = app.remember("hub memory");
+        let b = app.remember("spoke one");
+        let c = app.remember("spoke two");
+        let d = app.remember("elsewhere one");
+        let e = app.remember("elsewhere two");
+        for (s, t) in [(&a, &b), (&a, &c), (&d, &e)] {
+            let (status, resp) = app.add_edge(s, t);
+            assert_eq!(status, 200, "{resp}");
+        }
+
+        let hood_url = format!("/graph?node_id={a}");
+        let (_, hood) = app.call(Method::Get, &hood_url, None);
+        let touching: Vec<&serde_json::Value> = hood["edges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["relation"] == serde_json::json!("related"))
+            .collect();
+        assert!(
+            touching
+                .iter()
+                .all(|e| e["source"] == serde_json::json!(a) || e["target"] == serde_json::json!(a)),
+            "node_id must restrict to that memory's edges: {hood}"
+        );
+        assert!(touching.len() >= 2, "{hood}");
+
+        // URL built separately so the api_registry route scanner does not
+        // mistake this test call for a handler route arm.
+        let capped_url = "/graph?limit=1";
+        let (_, capped) = app.call(Method::Get, capped_url, None);
+        assert_eq!(capped["edges"].as_array().unwrap().len(), 1, "{capped}");
+        assert_eq!(capped["truncated"], serde_json::json!(true));
     }
 
     #[test]
@@ -3452,6 +3564,7 @@ mod room_recall_at_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -3737,6 +3850,7 @@ mod contradiction_api_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -3876,6 +3990,7 @@ mod pack_recall_api_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -4036,6 +4151,7 @@ mod explain_recall_api_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -4162,6 +4278,7 @@ mod list_pagination_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -4265,6 +4382,7 @@ mod payload_conformance_tests {
             cors_origins: vec![],
             recall_config: None,
             extraction_config: None,
+            host_guard: Default::default(),
         };
 
         let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
@@ -4342,6 +4460,7 @@ mod payload_conformance_tests {
             cors_origins: vec![],
             recall_config: None,
             extraction_config: None,
+            host_guard: Default::default(),
         };
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
@@ -4398,6 +4517,7 @@ mod payload_conformance_tests {
                     cors_origins: Vec::new(),
                     recall_config: None,
                     extraction_config: None,
+                    host_guard: Default::default(),
                 };
                 let resp = route(&self.uteke, &ctx, &mut req);
                 let status = resp.status_code().0;
@@ -4505,6 +4625,7 @@ mod routes_introspection_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -4612,6 +4733,7 @@ mod plain_remember_type_tests {
                 cors_origins: Vec::new(),
                 recall_config: None,
                 extraction_config: None,
+                host_guard: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -4715,6 +4837,114 @@ mod plain_remember_type_tests {
             mem["memory_type"].as_str(),
             Some("decision"),
             "content contains 'we decided' → auto-inference must still run: {mem}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod host_guard_route_tests {
+    use super::*;
+    use crate::context::HostGuard;
+    use tiny_http::{Header, TestRequest};
+
+    fn status(guard: HostGuard, host: Option<&str>, path: &str) -> u16 {
+        let uteke = Mutex::new(
+            Uteke::open_with_backend(":memory:", None)
+                .expect("open in-memory uteke without embedder"),
+        );
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: guard,
+        };
+        let mut t = TestRequest::new().with_method(Method::Get).with_path(path);
+        if let Some(h) = host {
+            t = t.with_header(Header::from_bytes(&b"Host"[..], h.as_bytes()).unwrap());
+        }
+        let mut req = t.into();
+        route(&uteke, &ctx, &mut req).status_code().0
+    }
+
+    // #1326 acceptance: a loopback bind rejects `Host: evil.example`.
+    #[test]
+    fn loopback_bind_rejects_foreign_host() {
+        let g = HostGuard::new("127.0.0.1", &[]);
+        assert_eq!(status(g.clone(), Some("evil.example:8767"), "/health"), 403);
+        assert_eq!(status(g.clone(), Some("evil.example"), "/stats"), 403);
+        assert_eq!(status(g.clone(), Some("127.0.0.1:8767"), "/health"), 200);
+        assert_eq!(status(g, Some("localhost:8767"), "/health"), 200);
+    }
+
+    // #1326 acceptance: a Docker-style bind works, and allowed_hosts is honoured.
+    #[test]
+    fn docker_style_bind_and_allowed_hosts() {
+        let open = HostGuard::new("0.0.0.0", &[]);
+        assert_eq!(status(open, Some("uteke:8767"), "/health"), 200);
+
+        let listed = HostGuard::new("0.0.0.0", &["uteke".to_string()]);
+        assert_eq!(status(listed.clone(), Some("uteke:8767"), "/health"), 200);
+        assert_eq!(status(listed, Some("evil.example"), "/health"), 403);
+    }
+}
+
+#[cfg(test)]
+mod mcp_http_hardening_tests {
+    use super::*;
+    use tiny_http::{Header, TestRequest};
+
+    fn app() -> Mutex<Uteke> {
+        Mutex::new(
+            Uteke::open_with_backend(":memory:", None)
+                .expect("open in-memory uteke without embedder"),
+        )
+    }
+
+    fn ctx(origins: Vec<String>) -> ReqCtx {
+        ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: origins,
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        }
+    }
+
+    // #1328: an oversized /mcp body is a 413, not a truncated JSON parse error.
+    #[test]
+    fn mcp_oversized_body_is_413() {
+        let big: &'static str = Box::leak("x".repeat(1024 * 1024 + 8).into_boxed_str());
+        let mut req = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/mcp")
+            .with_body(big)
+            .into();
+        let resp = route(&app(), &ctx(Vec::new()), &mut req);
+        assert_eq!(resp.status_code().0, 413);
+    }
+
+    // #1328: /mcp responses carry CORS headers like every other endpoint.
+    #[test]
+    fn mcp_response_has_cors_headers() {
+        let origin = "https://app.example";
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let mut req = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/mcp")
+            .with_header(Header::from_bytes(&b"Origin"[..], origin.as_bytes()).unwrap())
+            .with_body(body)
+            .into();
+        let resp = route(&app(), &ctx(vec![origin.to_string()]), &mut req);
+        assert!(
+            resp.headers()
+                .iter()
+                .any(|h| h.field.equiv("Access-Control-Allow-Origin")
+                    && h.value.as_str() == origin),
+            "missing ACAO on /mcp: {:?}",
+            resp.headers()
         );
     }
 }

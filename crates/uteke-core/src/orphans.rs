@@ -11,6 +11,7 @@
 
 use crate::error::Error;
 use crate::memory::store::Store;
+use crate::memory::store::memory_columns_m;
 use crate::memory::types::Memory;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -53,12 +54,10 @@ impl Store {
         // Single SQL pass: LEFT JOIN against the edge table twice (for
         // outgoing and incoming), filtering memories with zero matches on
         // both sides plus the remaining criteria.
-        let sql = r#"
-            SELECT m.id, m.content, m.embedding, m.tags, m.metadata,
-                   m.created_at, m.updated_at, m.namespace, m.access_count,
-                   m.last_accessed, m.deprecated, m.valid_from, m.valid_until,
-                   m.memory_type, m.importance, m.pinned, m.content_type, m.slug,
-                   m.source, m.source_type
+        let sql = concat!(
+            "SELECT ",
+            memory_columns_m!(),
+            r#"
             FROM memories m
             LEFT JOIN memory_edges out_e ON out_e.source_id = m.id
             LEFT JOIN memory_edges in_e  ON in_e.target_id  = m.id
@@ -71,7 +70,8 @@ impl Store {
               AND (?2 IS NULL OR m.namespace = ?2)
             GROUP BY m.id
             ORDER BY m.importance ASC, m.created_at ASC
-        "#;
+        "#
+        );
 
         let mut stmt = self
             .conn

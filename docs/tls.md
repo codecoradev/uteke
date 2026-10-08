@@ -71,8 +71,9 @@ server {
 |------|--------|---------|
 | TLS encryption | ✅ Via reverse proxy | Caddy (auto) or Nginx (manual Let's Encrypt) |
 | Authentication | ✅ Built-in | `--auth-token` flag or `uteke.toml [server] auth_token` |
-| CORS | ✅ Built-in | `--cors-origin` or `uteke.toml [server] cors_origins` |
+| CORS | ✅ Built-in (off by default; `"*"` opts in to wildcard) | `--cors-origin` or `uteke.toml [server] cors_origins` |
 | Bind address | ✅ Configurable | `--host 127.0.0.1` for local-only access |
+| Host header (DNS rebinding) | ✅ Built-in | Loopback bind accepts only loopback `Host` values; add names with `--allowed-host` or `[server] allowed_hosts` |
 | Rate limiting | ⚠️ Via reverse proxy | Configure in Caddy/Nginx |
 | File permissions | ✅ Built-in | Owner-only (0700/0600) on data directories |
 
@@ -91,6 +92,20 @@ uteke-serve --host 127.0.0.1 --auth-token YOUR_TOKEN
 # Listen on all interfaces (use with reverse proxy + auth)
 uteke-serve --host 0.0.0.0 --auth-token YOUR_TOKEN --cors-origin https://uteke.yourdomain.com
 ```
+
+### Host Header Validation (DNS Rebinding)
+
+On a loopback bind (`127.0.0.1`, `::1`, `localhost`) `uteke-serve` rejects requests whose `Host` header is not `localhost`, `*.localhost` or a loopback IP, with `403 Host not allowed`. This blocks DNS-rebinding pages that resolve an attacker-controlled name to your machine.
+
+If a reverse proxy forwards the public hostname to a loopback-bound server, list that name:
+
+```toml
+[server]
+host = "127.0.0.1"
+allowed_hosts = ["uteke.yourdomain.com"]
+```
+
+or `uteke-serve --allowed-host uteke.yourdomain.com` (repeatable; the CLI flag replaces the config list). On a non-loopback bind (e.g. `0.0.0.0` in Docker, where the service name is the `Host`) every `Host` is accepted unless `allowed_hosts` is set. Entries match the host with or without the port, case-insensitively. A request with no `Host` header is accepted.
 
 ### Environment Variables
 

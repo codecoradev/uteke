@@ -1,6 +1,7 @@
 //! FTS5 full-text search for memories.
 
 use crate::Error;
+use crate::memory::store::memory_columns_m;
 use crate::memory::types::Memory;
 use rusqlite::params;
 
@@ -91,18 +92,26 @@ impl super::Store {
 
         let sql = match namespace {
             Some(_) => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.source, m.source_type, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.namespace = ?2 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?3"#
+                )
             }
             None => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.source, m.source_type, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?2"#
+                )
             }
         };
 
@@ -116,7 +125,7 @@ impl super::Store {
                 let rows = stmt
                     .query_map(params![fts_query, ns, limit as i64], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f64 = row.get(19)?;
+                        let rank: f64 = row.get(22)?;
                         Ok((memory, rank))
                     })
                     .map_err(|e| Error::db("execute FTS5 search", e))?;
@@ -133,7 +142,7 @@ impl super::Store {
                 let rows = stmt
                     .query_map(params![fts_query, limit as i64], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f64 = row.get(19)?;
+                        let rank: f64 = row.get(22)?;
                         Ok((memory, rank))
                     })
                     .map_err(|e| Error::db("execute FTS5 search", e))?;
@@ -174,18 +183,26 @@ impl super::Store {
 
         let sql = match namespace {
             Some(_) => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.source, m.source_type, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.namespace = ?2 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?3"#
+                )
             }
             None => {
-                r#"SELECT m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.source, m.source_type, f.rank
+                concat!(
+                    "SELECT ",
+                    memory_columns_m!(),
+                    r#", f.rank
                    FROM memories_fts f JOIN memories m ON f.rowid = m.rowid
                    WHERE memories_fts MATCH ?1 AND m.deprecated = 0
                    ORDER BY f.rank
                    LIMIT ?2"#
+                )
             }
         };
 
@@ -199,7 +216,7 @@ impl super::Store {
                 let rows = stmt
                     .query_map(params![fts_query, ns, limit as i64], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f64 = row.get(19)?;
+                        let rank: f64 = row.get(22)?;
                         Ok((memory, rank))
                     })
                     .map_err(|e| Error::db("execute FTS5 token search", e))?;
@@ -216,7 +233,7 @@ impl super::Store {
                 let rows = stmt
                     .query_map(params![fts_query, limit as i64], |row| {
                         let memory = row_to_memory(row)?;
-                        let rank: f64 = row.get(19)?;
+                        let rank: f64 = row.get(22)?;
                         Ok((memory, rank))
                     })
                     .map_err(|e| Error::db("execute FTS5 token search", e))?;
@@ -261,6 +278,33 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+        }
+    }
+
+    /// Regression: FTS5 rows must map slug/source/source_type/author_type
+    /// the same way as every other query (column order matches row_to_memory).
+    #[test]
+    fn test_fts5_rows_carry_correct_metadata_columns() {
+        let store = Store::open(":memory:").unwrap();
+        store.init_fts5().unwrap();
+
+        let mut m = make_test_memory("meta-1", "uniqueterm alpha beta", &[]);
+        m.slug = Some("my-slug".to_string());
+        m.source = Some("notes.md".to_string());
+        m.source_type = "file".to_string();
+        m.author_type = "human".to_string();
+        store.insert(&m).unwrap();
+
+        for results in [
+            store.search_fts5("uniqueterm alpha", None, 10).unwrap(),
+            store.search_fts5_tokens("uniqueterm", None, 10).unwrap(),
+        ] {
+            let got = &results[0].0;
+            assert_eq!(got.slug.as_deref(), Some("my-slug"));
+            assert_eq!(got.source.as_deref(), Some("notes.md"));
+            assert_eq!(got.source_type, "file");
+            assert_eq!(got.author_type, "human");
+            assert!(results[0].1.is_finite());
         }
     }
 
