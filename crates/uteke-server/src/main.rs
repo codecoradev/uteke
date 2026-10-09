@@ -277,7 +277,7 @@ fn main() {
         &db_path,
         &embedding.backend,
         embedding.settings,
-        uteke_core::TierConfig::default(),
+        resolve_tier(&config),
         uteke_core::RecallConfig::default(),
         recall_tuning.graph.clone(),
         embedding.vector_backend.as_deref(),
@@ -700,6 +700,8 @@ struct ServerFileConfig {
     vector: Option<VectorFileSection>,
     /// `[embed_fallback]`: second embedding endpoint used when the primary fails (#1355).
     embed_fallback: Option<EmbedFallbackFileSection>,
+    /// `[tier]`: hot/warm/cold memory tiers (#1355).
+    tier: Option<TierFileSection>,
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
@@ -776,6 +778,25 @@ fn resolve_recall_tuning(config: &ServerFileConfig) -> RecallTuning {
             enabled: file.graph_rerank_enabled.unwrap_or(default.enabled),
         },
         jaccard_weight: file.jaccard_weight.unwrap_or(0.0),
+    }
+}
+
+/// `[tier]` in uteke.toml, same keys and defaults as the CLI.
+#[derive(serde::Deserialize, Default, Clone)]
+struct TierFileSection {
+    hot_days: Option<u32>,
+    warm_days: Option<u32>,
+    hot_boost: Option<f64>,
+}
+
+/// Tier settings: file values over the core defaults (7 / 30 days, boost 0.1).
+fn resolve_tier(config: &ServerFileConfig) -> uteke_core::TierConfig {
+    let default = uteke_core::TierConfig::default();
+    let file = config.tier.clone().unwrap_or_default();
+    uteke_core::TierConfig {
+        hot_days: file.hot_days.map_or(default.hot_days, i64::from),
+        warm_days: file.warm_days.map_or(default.warm_days, i64::from),
+        hot_boost: file.hot_boost.unwrap_or(default.hot_boost),
     }
 }
 
@@ -1224,5 +1245,36 @@ mod recall_tuning_tests {
         assert_eq!(r.min_score, Some(0.4));
         assert_eq!(r.default_strategy.as_deref(), Some("vector"));
         assert_eq!(r.jaccard_weight, Some(0.1));
+    }
+}
+
+#[cfg(test)]
+mod tier_config_tests {
+    //! #1355 step C — the server reads `[tier]`.
+    use super::*;
+
+    fn parse(t: &str) -> ServerFileConfig {
+        toml::from_str(t).expect("valid toml")
+    }
+
+    #[test]
+    fn defaults_equal_the_core_defaults() {
+        let t = resolve_tier(&ServerFileConfig::default());
+        let d = uteke_core::TierConfig::default();
+        assert_eq!(
+            (t.hot_days, t.warm_days, t.hot_boost),
+            (d.hot_days, d.warm_days, d.hot_boost)
+        );
+        assert_eq!((t.hot_days, t.warm_days), (7, 30));
+    }
+
+    #[test]
+    fn file_values_are_applied_and_a_partial_section_keeps_the_rest() {
+        let t = resolve_tier(&parse(
+            "[tier]\nhot_days = 2\nwarm_days = 10\nhot_boost = 0.5\n",
+        ));
+        assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (2, 10, 0.5));
+        let t = resolve_tier(&parse("[tier]\nhot_boost = 0.0\n"));
+        assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (7, 30, 0.0));
     }
 }
