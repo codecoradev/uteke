@@ -474,6 +474,14 @@ pub struct RecallFileSection {
     /// One of: vector | fts5 | hybrid | graph | fusion. Server-side default:
     /// fusion (#1123).
     pub default_strategy: Option<String>,
+    /// Weight of the edge-density boost of the `graph` strategy (#378, #1355).
+    pub graph_density_weight: Option<f32>,
+    /// Weight of the incoming-edge authority boost of the `graph` strategy.
+    pub graph_authority_weight: Option<f32>,
+    /// Feature flag for graph-augmented reranking.
+    pub graph_rerank_enabled: Option<bool>,
+    /// Weight of the Jaccard token reranking boost (#719). 0.0 disables.
+    pub jaccard_weight: Option<f32>,
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
