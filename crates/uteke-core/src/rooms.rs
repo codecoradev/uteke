@@ -110,6 +110,12 @@ impl crate::Uteke {
 
     /// [`Self::recall_room_semantic`] with an optional tag filter.
     ///
+    /// `min_score` is compared with the score each result carries: the hybrid
+    /// search score for memories found by search, and the raw cosine
+    /// similarity for room memories rescued by the #894 fallback. The two are
+    /// similarity-like but not guaranteed to share a scale (#1391), so treat
+    /// small thresholds as a coarse floor rather than an exact cut.
+    ///
     /// `tags` keeps a memory when it carries AT LEAST ONE of the given tags
     /// (same semantics as the tag filter of `recall`). The filter runs before
     /// the final truncation, so `limit` counts matching memories.
@@ -226,8 +232,12 @@ impl crate::Uteke {
     }
 
     /// Room recall packed into a character budget (#1335): the room
-    /// counterpart of `recall_unified_packed`. Rank order is preserved,
-    /// `exclude_ids` are memory ids already injected this turn.
+    /// counterpart of `recall_unified_packed`. Rank order is preserved.
+    ///
+    /// `exclude_ids` are memory ids already injected this turn. They are
+    /// removed BEFORE `limit` is applied (#1391), so `limit` counts memories
+    /// that can actually be selected; the excluded hits are still reported in
+    /// `skipped` with reason `excluded`.
     #[allow(clippy::too_many_arguments)]
     pub fn recall_room_packed(
         &self,
@@ -240,9 +250,17 @@ impl crate::Uteke {
         budget_chars: usize,
         exclude_ids: &[String],
     ) -> Result<crate::pack_mode::ContextPack, Error> {
-        let unified: Vec<crate::memory::types::UnifiedSearchResult> = self
-            .recall_room_semantic_filtered(room_id, query, limit, author, min_score, tags)?
+        // limit 0 = every match, so exclusion cannot starve the result.
+        let (excluded, mut kept): (Vec<_>, Vec<_>) = self
+            .recall_room_semantic_filtered(room_id, query, 0, author, min_score, tags)?
+            .into_iter()
+            .partition(|sr| exclude_ids.iter().any(|x| x == &sr.memory.id));
+        if limit > 0 {
+            kept.truncate(limit);
+        }
+        let unified: Vec<crate::memory::types::UnifiedSearchResult> = kept
             .iter()
+            .chain(excluded.iter())
             .map(crate::memory::types::UnifiedSearchResult::from_memory_result)
             .collect();
         Ok(crate::pack_mode::pack_context(
@@ -720,6 +738,46 @@ mod tests {
                 .iter()
                 .any(|s| s.reason == "excluded" && s.memory_id.as_deref() == Some(m1.as_str()))
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_packed_limit_counts_only_non_excluded_hits() {
+        let (u, [m1, m2, _m3]) = seeded_room();
+        // limit 1 with the best hit excluded must still yield the next one (#1391)
+        let pack = u
+            .recall_room_packed(
+                "r1",
+                "alpha beta",
+                1,
+                None,
+                0.0,
+                None,
+                4000,
+                std::slice::from_ref(&m1),
+            )
+            .unwrap();
+        assert_eq!(pack.selected.len(), 1);
+        assert_eq!(pack.selected[0].memory_id.as_deref(), Some(m2.as_str()));
+        assert!(
+            pack.skipped
+                .iter()
+                .any(|s| s.reason == "excluded" && s.memory_id.as_deref() == Some(m1.as_str()))
+        );
+
+        // everything excluded: nothing selected, but `skipped` explains why
+        let all: Vec<String> = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 0, None, 0.0, None)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.memory.id)
+            .collect();
+        let pack = u
+            .recall_room_packed("r1", "alpha beta", 1, None, 0.0, None, 4000, &all)
+            .unwrap();
+        assert!(pack.selected.is_empty());
+        assert!(!pack.skipped.is_empty());
+        assert!(pack.skipped.iter().all(|s| s.reason == "excluded"));
     }
 
     // ── Room rename / update / memory room-move (#1202) ─────────────

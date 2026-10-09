@@ -2262,8 +2262,10 @@ fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 &a.exclude_ids,
             )
             .map_err(|e| format!("Failed: {e}"))?;
-        if pack.selected.is_empty() {
-            return Ok(text_result("No results fit the budget.".to_string()));
+        // Nothing matched at all: say so. Otherwise return the pack even when
+        // `selected` is empty, so `skipped` explains why (excluded / budget).
+        if pack.selected.is_empty() && pack.skipped.is_empty() {
+            return Ok(text_result("No memories found in room.".to_string()));
         }
         return Ok(text_result(
             serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string()),
