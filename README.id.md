@@ -392,7 +392,7 @@ Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan
 <details>
 <summary><strong>Sudah production-ready?</strong></summary>
 
-Uteke sekarang v0.20.0 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke sekarang v0.20.1 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
 </details>
 
 ---
