@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.20.1] - 2026-10-09
+
+Patch release. Theme: **use an external OpenAI-compatible or Ollama embedder with `uteke-serve` and the Docker image.** Two fixes, nothing else (no schema change, no API change).
+
+### Fixed
+
+- **`uteke-serve` ignored the embedding configuration (#1399, #1401)** - the server opened its store with a hardcoded `onnx` backend, `ServerFileConfig` had no `[embedding]` section and `UTEKE_EMBEDDING_BACKEND` was only read by the CLI, so an external OpenAI-compatible or Ollama embedder could never be used by the server. The server now reads `[embedding]` (backend, model, api_key, base_url, endpoint_path, dims) and `[vector]` from `uteke.toml`; `UTEKE_EMBEDDING_BACKEND` (non-empty) wins over the file, `onnx` stays the default, and an unsupported backend exits at startup with a message naming the supported ones. The project-local `.uteke/uteke.toml` stays untrusted for `embedding.*`. Deployments without these settings behave exactly as before.
+- **Docker entrypoint downloaded the ONNX model for every backend and looped when `/data` was not writable (#1398, #1400)** - with `UTEKE_EMBEDDING_BACKEND=openai|ollama` (env, or `[embedding] backend` in `$UTEKE_HOME/uteke.toml`) the ~208 MB model download is now skipped. When a download is needed but the data dir is not writable, the container exits with a message naming the fixes (chown the volume to uid 1000, pre-populate the model, or use an external embedder) instead of dying on a bare `mkdir` error and restarting forever. The server still needs a writable data dir for `uteke.db` and the index files.
+
 ## [0.20.0] - 2026-10-08
 
 Minor release. Theme: **one write policy for the vector index, atomic documents,
