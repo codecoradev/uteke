@@ -1364,15 +1364,32 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
+/// Decode the arguments of `uteke_list` into the typed request shared with
+/// the HTTP server and the CLI (#1343), under the MCP policy: default limit
+/// 20, no cap. Fields of the wrong type fall back to their defaults. The tool
+/// exposes no `at`/`include_meta`, so those stay unset.
+pub fn decode_list_args(args: &Value) -> Result<uteke_core::ListRequest, String> {
+    let input = uteke_core::ListInput {
+        tag: args["tag"].as_str().map(str::to_string),
+        limit: args["limit"].as_u64().map(|l| l as usize),
+        offset: args["offset"].as_u64().map(|o| o as usize),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        ..uteke_core::ListInput::default()
+    };
+    uteke_core::ListRequest::decode(input, uteke_core::ListPolicy::MCP).map_err(|e| e.to_string())
+}
+
 fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    let tag = args["tag"].as_str();
-    let limit = args["limit"].as_u64().unwrap_or(20) as usize;
-    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
-    let namespace = args["namespace"].as_str();
+    let req = decode_list_args(args)?;
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let memories = uteke
-        .list(tag, limit, offset, namespace)
+        .list(
+            req.tag.as_deref(),
+            req.limit,
+            req.offset,
+            req.namespace.as_deref(),
+        )
         .map_err(|e| format!("Failed: {e}"))?;
 
     if memories.is_empty() {

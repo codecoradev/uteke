@@ -622,63 +622,47 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── List ────────────────────────────────────────────────────────
         (Method::Post, "/list") => match read_body::<ListParams>(req.as_reader()) {
-            Ok(mut req_data) => {
-                req_data.limit = req_data.limit.min(MAX_LIST_LIMIT);
-                // Time-travel mode: parse --at and use list_at_time
-                let list_result = match req_data.at.as_deref() {
-                    Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
-                        Ok(dt) => {
-                            let pit = dt.with_timezone(&chrono::Utc);
-                            uteke.list_at_time(
-                                req_data.tag.as_deref(),
-                                req_data.limit,
-                                req_data.offset,
-                                ns(&req_data.namespace),
-                                pit,
-                            )
-                        }
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                    req,
-                                    400,
-                                    format!(
-                                        "Invalid 'at' timestamp: {at_str}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
-                                    ),
-                                );
-                        }
-                    },
+            Ok(params) => {
+                // #1343: limit cap and `at` parsing live in the typed request.
+                let list_req = match params.decode() {
+                    Ok(r) => r,
+                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
+                };
+                // Time-travel mode: use list_at_time
+                let list_result = match list_req.at {
+                    Some(pit) => uteke.list_at_time(
+                        list_req.tag.as_deref(),
+                        list_req.limit,
+                        list_req.offset,
+                        ns(&list_req.namespace),
+                        pit,
+                    ),
                     None => uteke.list(
-                        req_data.tag.as_deref(),
-                        req_data.limit,
-                        req_data.offset,
-                        ns(&req_data.namespace),
+                        list_req.tag.as_deref(),
+                        list_req.limit,
+                        list_req.offset,
+                        ns(&list_req.namespace),
                     ),
                 };
                 match list_result {
                     Ok(memories) => {
                         // #1188: opt-in pagination envelope. The default
                         // response stays a bare array for existing clients.
-                        if req_data.include_meta && req_data.at.is_none() {
+                        if list_req.wants_envelope() {
                             // Total matching rows (same filters as the page).
-                            let total = match &req_data.tag {
-                                Some(tag) => uteke.count_by_tag(tag, ns(&req_data.namespace)),
-                                None => uteke.count(ns(&req_data.namespace)),
+                            let total = match &list_req.tag {
+                                Some(tag) => uteke.count_by_tag(tag, ns(&list_req.namespace)),
+                                None => uteke.count(ns(&list_req.namespace)),
                             }
                             .unwrap_or(0);
-                            let fetched = memories.len();
-                            let has_more = req_data.offset + fetched < total;
-                            let next_offset = if has_more {
-                                Some(req_data.offset + fetched)
-                            } else {
-                                None
-                            };
+                            let meta = list_req.page_meta(total, memories.len());
                             return ctx.ok_response_for(
                                 req,
                                 &serde_json::json!({
                                     "memories": memories,
                                     "total": total,
-                                    "has_more": has_more,
-                                    "next_offset": next_offset,
+                                    "has_more": meta.has_more,
+                                    "next_offset": meta.next_offset,
                                 }),
                             );
                         }
