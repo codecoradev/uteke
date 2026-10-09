@@ -1,7 +1,8 @@
 #!/bin/sh
 set -e
 
-MODEL_DIR="/data/models/embeddinggemma-q4"
+DATA_DIR="${UTEKE_HOME:-/data}"
+MODEL_DIR="${DATA_DIR}/models/embeddinggemma-q4"
 MODEL_FILE="${MODEL_DIR}/onnx/model_q4.onnx"
 
 # Expected SHA256 checksums for model files
@@ -32,10 +33,45 @@ verify_sha256() {
   fi
 }
 
-# Lazy download: only if model not present in volume
-if [ ! -f "$MODEL_FILE" ]; then
+# Embedding backend (#1398): UTEKE_EMBEDDING_BACKEND wins, then `[embedding]
+# backend` in $UTEKE_HOME/uteke.toml, then the default (onnx). Only the onnx
+# backend needs the local model; openai/ollama talk to an external embedder.
+embedding_backend() {
+  if [ -n "${UTEKE_EMBEDDING_BACKEND:-}" ]; then
+    echo "$UTEKE_EMBEDDING_BACKEND"
+    return
+  fi
+  toml="${DATA_DIR}/uteke.toml"
+  if [ -f "$toml" ]; then
+    awk '
+      /^[[:space:]]*\[/ { in_embedding = ($0 ~ /^[[:space:]]*\[embedding\][[:space:]]*(#.*)?$/) ; next }
+      in_embedding && /^[[:space:]]*backend[[:space:]]*=/ {
+        v = $0
+        sub(/^[^=]*=[[:space:]]*/, "", v)
+        sub(/[[:space:]]*#.*$/, "", v)
+        gsub(/["\047[:space:]]/, "", v)
+        print v
+        exit
+      }
+    ' "$toml"
+  fi
+}
+
+BACKEND="$(embedding_backend)"
+BACKEND="${BACKEND:-onnx}"
+
+# Lazy download: only for the onnx backend, and only if the model is not
+# present in the volume.
+if [ "$BACKEND" != "onnx" ]; then
+  echo "Embedding backend is '${BACKEND}': skipping the local ONNX model download."
+elif [ ! -f "$MODEL_FILE" ]; then
   echo "Model not found, downloading embedding model (~208MB)..."
-  mkdir -p "${MODEL_DIR}/onnx"
+  if ! mkdir -p "${MODEL_DIR}/onnx" 2>/dev/null; then
+    echo "ERROR: cannot create ${MODEL_DIR}: ${DATA_DIR} is not writable by $(id -un) (uid $(id -u))." >&2
+    echo "Fix the volume permissions (chown the host directory to that uid), pre-populate the model there," >&2
+    echo "or use an external embedder (UTEKE_EMBEDDING_BACKEND=openai|ollama) so no download is needed." >&2
+    exit 1
+  fi
 
   curl -fSL --retry 3 -o "${MODEL_DIR}/onnx/model_q4.onnx" \
     "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main/onnx/model_q4.onnx"
