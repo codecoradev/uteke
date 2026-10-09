@@ -282,6 +282,11 @@ fn main() {
         embedding.vector_backend.as_deref(),
     ) {
         Ok(mut u) => {
+            // [embed_fallback] + UTEKE_EMBED_FALLBACK_* (#1355): only when complete.
+            if let Some(fallback) = resolve_embed_fallback(&config, |k| std::env::var(k).ok()) {
+                info!("Embedding fallback: enabled ({})", fallback.base_url);
+                u.set_fallback_settings(fallback);
+            }
             // Apply dream pipeline thresholds from config (#731)
             if let Some(ref dc) = config.dream {
                 u.set_dream_config(uteke_core::DreamConfig {
@@ -690,6 +695,8 @@ struct ServerFileConfig {
     embedding: Option<EmbeddingFileSection>,
     /// `[vector]`: which vector engine runs when both are compiled in (#1168).
     vector: Option<VectorFileSection>,
+    /// `[embed_fallback]`: second embedding endpoint used when the primary fails (#1355).
+    embed_fallback: Option<EmbedFallbackFileSection>,
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
@@ -718,6 +725,33 @@ struct EmbeddingFileSection {
 #[derive(serde::Deserialize, Default, Clone)]
 struct VectorFileSection {
     backend: Option<String>,
+}
+
+/// `[embed_fallback]` in uteke.toml, same keys as the CLI. `UTEKE_EMBED_FALLBACK_*`
+/// env vars win over these (resolved in the core).
+#[derive(serde::Deserialize, Default, Clone)]
+struct EmbedFallbackFileSection {
+    api_key: Option<String>,
+    base_url: Option<String>,
+    endpoint_path: Option<String>,
+    model: Option<String>,
+}
+
+/// The fallback embedder to apply, or `None` when it is not fully configured
+/// (api_key, base_url AND model). Env overrides come from `lookup`.
+fn resolve_embed_fallback(
+    config: &ServerFileConfig,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<uteke_core::FallbackSettings> {
+    let file = config.embed_fallback.clone().unwrap_or_default();
+    let settings = uteke_core::FallbackSettings {
+        api_key: file.api_key.unwrap_or_default(),
+        base_url: file.base_url.unwrap_or_default(),
+        endpoint_path: file.endpoint_path.unwrap_or_default(),
+        model: file.model.unwrap_or_default(),
+    }
+    .with_overrides_from(lookup);
+    settings.is_configured().then_some(settings)
 }
 
 /// Backends `Uteke` can initialize lazily (same list as the CLI validates).
@@ -1036,6 +1070,80 @@ mod embedding_config_tests {
         let r = resolve_embedding(&cfg, None).unwrap();
         assert_eq!(r.backend, "onnx");
         assert!(r.settings.base_url.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod embed_fallback_config_tests {
+    //! #1355 step A — the server reads `[embed_fallback]`.
+    use super::*;
+
+    fn parse(t: &str) -> ServerFileConfig {
+        toml::from_str(t).expect("valid toml")
+    }
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn absent_or_partial_section_means_no_fallback() {
+        assert!(resolve_embed_fallback(&ServerFileConfig::default(), no_env).is_none());
+        let partial = parse("[embed_fallback]\napi_key = \"k\"\nbase_url = \"https://x\"\n");
+        assert!(
+            resolve_embed_fallback(&partial, no_env).is_none(),
+            "model missing"
+        );
+    }
+
+    #[test]
+    fn a_complete_section_is_applied_with_its_endpoint_path() {
+        let cfg = parse(
+            "[embed_fallback]\napi_key = \"k\"\nbase_url = \"https://x\"\nmodel = \"m\"\nendpoint_path = \"/embed\"\n",
+        );
+        let f = resolve_embed_fallback(&cfg, no_env).expect("configured");
+        assert_eq!(
+            (f.api_key.as_str(), f.base_url.as_str()),
+            ("k", "https://x")
+        );
+        assert_eq!(
+            (f.model.as_str(), f.endpoint_path.as_str()),
+            ("m", "/embed")
+        );
+    }
+
+    #[test]
+    fn env_overrides_the_file_and_can_complete_it() {
+        let cfg = parse("[embed_fallback]\nbase_url = \"https://file\"\nmodel = \"m\"\n");
+        let f = resolve_embed_fallback(&cfg, |k| match k {
+            "UTEKE_EMBED_FALLBACK_API_KEY" => Some("env-key".to_string()),
+            "UTEKE_EMBED_FALLBACK_BASE_URL" => Some("https://env".to_string()),
+            _ => None,
+        })
+        .expect("env completes the file");
+        assert_eq!(
+            (f.api_key.as_str(), f.base_url.as_str()),
+            ("env-key", "https://env")
+        );
+    }
+
+    #[test]
+    fn untrusted_project_file_cannot_set_the_fallback_endpoint() {
+        let dir = std::env::temp_dir().join(format!("uteke_fb_cfg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.join("project.toml");
+        std::fs::write(
+            &project,
+            "[embed_fallback]\napi_key = \"stolen\"\nbase_url = \"https://evil.example\"\nmodel = \"m\"\n",
+        )
+        .unwrap();
+        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
+            global: None,
+            project: Some(&project),
+            trust_project: false,
+        });
+        assert!(resolve_embed_fallback(&cfg, no_env).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
