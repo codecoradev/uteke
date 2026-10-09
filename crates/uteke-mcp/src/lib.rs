@@ -790,11 +790,12 @@ fn tool_room_create() -> Value {
 fn tool_room_list() -> Value {
     serde_json::json!({
         "name": "uteke_room_list",
-        "description": "List all rooms, optionally filtered by namespace.",
+        "description": "List all rooms, optionally filtered by namespace and/or by a case-insensitive substring of the room id or title.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (omit for all)" }
+                "namespace": { "type": "string", "description": "Filter by namespace (omit for all)" },
+                "name": { "type": "string", "description": "Keep only rooms whose id or title contains this text, case-insensitive (omit for all)" }
             }
         }
     })
@@ -2341,12 +2342,33 @@ fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
+/// Keep rooms whose id or title contains `name` (case-insensitive, #1336).
+/// A blank `name` keeps everything.
+fn filter_rooms_by_name(rooms: Vec<uteke_core::Room>, name: Option<&str>) -> Vec<uteke_core::Room> {
+    let needle = name.map(|n| n.trim().to_lowercase()).unwrap_or_default();
+    if needle.is_empty() {
+        return rooms;
+    }
+    rooms
+        .into_iter()
+        .filter(|r| {
+            r.id.to_lowercase().contains(&needle)
+                || r.title
+                    .as_deref()
+                    .is_some_and(|t| t.to_lowercase().contains(&needle))
+        })
+        .collect()
+}
+
 fn exec_room_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
 
-    let rooms = uteke
-        .list_rooms(namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let rooms = filter_rooms_by_name(
+        uteke
+            .list_rooms(namespace)
+            .map_err(|e| format!("Failed: {e}"))?,
+        args["name"].as_str(),
+    );
 
     if rooms.is_empty() {
         return Ok(ToolResult {
@@ -3389,5 +3411,62 @@ mod room_recall_tests {
         let full = format_room_recall_lines(&[sr(id, "hello world", 0.5)], true);
         assert_eq!(full[1], format!("       (id: {id})"));
         assert!(format_room_recall_lines(&[], false).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod room_list_filter_tests {
+    //! #1336 — name filter for `uteke_room_list`.
+    use super::*;
+
+    fn room(id: &str, title: Option<&str>) -> uteke_core::Room {
+        uteke_core::Room {
+            id: id.to_string(),
+            title: title.map(str::to_string),
+            namespace: "ns".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            description: None,
+        }
+    }
+
+    fn ids(rooms: Vec<uteke_core::Room>) -> Vec<String> {
+        rooms.into_iter().map(|r| r.id).collect()
+    }
+
+    fn sample() -> Vec<uteke_core::Room> {
+        vec![
+            room("gadio", None),
+            room("project-gadio", None),
+            room("project:gadio", Some("Gadio dev log")),
+            room("uteke", Some("Memory engine")),
+        ]
+    }
+
+    #[test]
+    fn matches_id_and_title_case_insensitively() {
+        assert_eq!(
+            ids(filter_rooms_by_name(sample(), Some("GADIO"))),
+            ["gadio", "project-gadio", "project:gadio"]
+        );
+        // title-only match
+        assert_eq!(
+            ids(filter_rooms_by_name(sample(), Some("engine"))),
+            ["uteke"]
+        );
+    }
+
+    #[test]
+    fn blank_or_missing_name_keeps_everything() {
+        assert_eq!(filter_rooms_by_name(sample(), None).len(), 4);
+        assert_eq!(filter_rooms_by_name(sample(), Some("  ")).len(), 4);
+    }
+
+    #[test]
+    fn no_match_returns_empty_and_schema_advertises_name() {
+        assert!(filter_rooms_by_name(sample(), Some("zzz")).is_empty());
+        let tool = tool_room_list();
+        assert!(tool["inputSchema"]["properties"]["name"].is_object());
+        assert!(tool["inputSchema"]["properties"]["namespace"].is_object());
     }
 }
