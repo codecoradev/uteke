@@ -12,8 +12,6 @@ use tiny_http::{Header, Method, Request, Response, StatusCode};
 use tracing::{error, warn};
 
 use uteke_core::Uteke;
-use uteke_core::memory::types::MemoryType;
-use uteke_core::memory::types::validate_author_type;
 
 use crate::api_registry;
 use crate::context::{self, ApiRole, AuthResult, ReqCtx};
@@ -181,72 +179,17 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── Remember ───────────────────────────────────────────────────
         (Method::Post, "/remember") => match read_body::<RememberRequest>(req.as_reader()) {
-            Ok(req_data) => {
-                // Validate input
-                if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
-                    return ctx.error_response_for(req, 400, e.to_string());
-                }
-
-                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
-
-                // Build metadata from optional fields — matches CLI behavior.
-                let mut meta = serde_json::Map::new();
-                if let Some(t) = &req_data.r#type {
-                    meta.insert("type".into(), serde_json::Value::String(t.clone()));
-                }
-                if let Some(vf) = &req_data.valid_from {
-                    meta.insert("valid_from".into(), serde_json::Value::String(vf.clone()));
-                }
-                if let Some(vu) = &req_data.valid_until {
-                    meta.insert("valid_until".into(), serde_json::Value::String(vu.clone()));
-                }
-                if let Some(entity) = &req_data.entity {
-                    meta.insert("entity".into(), serde_json::Value::String(entity.clone()));
-                }
-                if let Some(category) = &req_data.category {
-                    meta.insert(
-                        "category".into(),
-                        serde_json::Value::String(category.clone()),
-                    );
-                }
-                // Merge caller-supplied metadata object into the map (#682).
-                if let Some(serde_json::Value::Object(extra)) = &req_data.metadata {
-                    for (k, v) in extra {
-                        meta.insert(k.clone(), v.clone());
-                    }
-                }
-                let metadata = if meta.is_empty() {
-                    None
-                } else {
-                    Some(serde_json::Value::Object(meta))
+            Ok(raw) => {
+                // Validation (content/tags, author_type, type) and the
+                // metadata map live in the typed request shared with MCP and
+                // the CLI (#1343). Order: content/tags, author_type, type; all
+                // before any write (#1083, #1302).
+                let req_data = match raw.decode() {
+                    Ok(t) => t,
+                    Err(e) => return ctx.error_response_for(req, 400, e.message().to_string()),
                 };
-
-                // Validate author_type BEFORE any write (#1083, cora finding):
-                // invalid values must reject the whole request — inserting then
-                // failing would leave a persisted memory the client believes failed.
-                if let Some(at) = req_data.author_type.as_deref() {
-                    if let Err(e) = validate_author_type(at) {
-                        return ctx.error_response_for(req, 400, e.to_string());
-                    }
-                }
-                // #1302: validate the requested memory type BEFORE any write and
-                // honor it on the plain path — parity with rooms. The previous
-                // behavior only copied `type` into metadata and fell through to
-                // `remember_detailed` (auto-inference), silently storing `fact`
-                // for every explicit caller type — a contract break for typed
-                // writers (tole #143). Unknown values now fail loudly (400)
-                // listing the supported vocabulary instead of defaulting.
-                if let Some(t) = req_data.r#type.as_deref() {
-                    if MemoryType::from_str_opt(t).is_none() {
-                        return ctx.error_response_for(
-                            req,
-                            400,
-                            format!(
-                                "Unknown memory type '{t}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
-                            ),
-                        );
-                    }
-                }
+                let tag_refs = req_data.tag_refs();
+                let metadata = req_data.metadata.clone();
 
                 let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
                     if req_data.detect_contradiction {
@@ -256,12 +199,12 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 &tag_refs,
                                 metadata,
                                 ns(&req_data.namespace),
-                                req_data.r#type.as_deref(),
+                                req_data.memory_type.as_deref(),
                                 true,
                                 0.65,
                             )
                             .map(|(outcome, _)| outcome)
-                    } else if let Some(t) = req_data.r#type.as_deref() {
+                    } else if let Some(t) = req_data.memory_type.as_deref() {
                         uteke.remember_typed_detailed(
                             &req_data.content,
                             &tag_refs,

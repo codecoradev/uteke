@@ -39,11 +39,15 @@ pub use recall_request::{
     RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
     RecallRequestError,
 };
+pub use remember_request::{
+    RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
+};
 mod orphans;
 pub mod provenance;
 mod recall_cache;
 pub mod recall_explain;
 mod recall_request;
+mod remember_request;
 mod rooms;
 pub mod rooms_segments;
 pub mod salience_recency;
