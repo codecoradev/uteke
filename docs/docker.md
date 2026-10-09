@@ -68,6 +68,13 @@ docker compose up -d
 | `UTEKE_HOME` | `/data` | Data directory (set in Dockerfile) |
 | `UTEKE_AUTH_TOKEN` | — | Bearer token for API authentication |
 | `UTEKE_NAMESPACE` | `default` | Default namespace |
+| `UTEKE_READ_ONLY_TOKEN` | — | Bearer token that is only allowed to read (GET and `POST /recall`) |
+| `UTEKE_EMBEDDING_BACKEND` | `onnx` | `onnx` (local model), `openai` (any OpenAI-compatible endpoint) or `ollama`. Read by the server since v0.20.1 |
+| `UTEKE_EMBEDDING_BASE_URL` | — | Endpoint of the external embedder, e.g. `http://embor:8355/v1` |
+| `UTEKE_EMBEDDING_MODEL` | — | Model name sent to the endpoint |
+| `UTEKE_EMBEDDING_DIMS` | backend default | Vector size; must match the existing store |
+| `UTEKE_EMBEDDING_API_KEY` | — | Key for the endpoint (also read from `OPENAI_API_KEY`) |
+| `UTEKE_EMBEDDING_ENDPOINT_PATH` | `/embeddings` | Path appended to the base URL |
 
 ### With authentication
 
@@ -87,6 +94,68 @@ curl -H "Authorization: Bearer $UTEKE_AUTH_TOKEN" \
   http://localhost:8767/health
 ```
 
+### Passing variables with Docker Compose
+
+Compose reads a `.env` file **only to fill in `${VAR}` references inside the
+compose file**. Nothing in `.env` reaches the container by itself. Pass what the
+container needs in one of two ways:
+
+```yaml
+services:
+  uteke:
+    image: ghcr.io/codecoradev/uteke:latest
+    # (a) load every variable of .env into the container ...
+    env_file: .env
+    environment:
+      # (b) ... or list them one by one; ${VAR} is filled from .env
+      - UTEKE_AUTH_TOKEN=${UTEKE_TOKEN}
+```
+
+The server reads `UTEKE_AUTH_TOKEN`; a variable called `UTEKE_TOKEN` in `.env`
+does nothing unless it is mapped like above. If the token never arrives the
+server still starts, now **without authentication**, and the only hint is this
+line in the log:
+
+```
+WARN uteke_serve: Authentication: disabled — set --auth-token or UTEKE_AUTH_TOKEN for production
+```
+
+Check the log after every change to the compose file or `.env`, and recreate the
+container (`docker compose up -d --force-recreate`) so the new environment is used.
+
+### Using an external embedder (OpenAI-compatible or Ollama)
+
+By default the image downloads a ~208 MB ONNX model into `/data/models` on the
+first start. With an external embedder none of that is needed:
+
+```env
+UTEKE_EMBEDDING_BACKEND=openai
+UTEKE_EMBEDDING_BASE_URL=http://embor:8355/v1
+UTEKE_EMBEDDING_MODEL=embeddinggemma-q4
+UTEKE_EMBEDDING_DIMS=768
+# UTEKE_EMBEDDING_API_KEY=...   # if the endpoint needs a bearer token
+```
+
+(Load them with `env_file` as above, or put an `[embedding]` section in
+`/data/uteke.toml`; the entrypoint and the server both read it, and the
+environment variable wins over the file.) This needs **v0.20.1 or later**: earlier
+servers ignored the setting and always used the local model.
+
+- The log should say `Embedding backend is 'openai': skipping the local ONNX
+  model download.` and `Embedding backend: openai`. If it says `downloading
+  embedding model` instead, the variables did not reach the container.
+- `UTEKE_EMBEDDING_DIMS` must equal the vector size of your store. The URL ends in
+  `/v1` and uteke appends `/embeddings` (see `UTEKE_EMBEDDING_ENDPOINT_PATH`).
+- The embedder must be reachable from the container (same Docker network). If it
+  is down, `remember` still stores the memory but answers `"embedding_written":
+  false` with a warning, and `recall` fails until it is back.
+- Check it with one write: `POST /remember` should return `"embedding_written":
+  true` and `"warning": null`.
+
+The data directory still has to be writable: the image runs as `uteke` (uid and
+gid 1000) and writes `uteke.db`, the index files and `embed_cache.db` to `/data`
+whatever the embedder. For a bind mount, `chown -R 1000:1000` the host directory.
+
 ## Persistence
 
 Data is stored in the `/data` volume. Mount it for persistence:
@@ -104,7 +173,7 @@ The volume contains:
 - `uteke_index.usearch` — HNSW vector index (default engine)
 - `uteke_index.vecq` — quantized index (created if you switch engines)
 - `uteke_index.keys` — Index key mapping
-- `models/embeddinggemma-q4/` — ONNX embedding model (~200MB)
+- `models/embeddinggemma-q4/` — ONNX embedding model (~200MB; only with the `onnx` backend)
 
 ### Choosing the vector engine (v0.17.0+)
 
