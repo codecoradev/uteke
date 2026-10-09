@@ -427,8 +427,8 @@ uteke recall "api design" --context
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |
-| `--salience` | Enable salience boost (default: on, weight 0.15). Use `--no-salience` to disable |
-| `--recency` | Enable recency boost (default: on, weight 0.15). Use `--no-recency` to disable |
+| `--salience` | Salience boost is on by default with weight 0.1; passing `--salience` uses the configured `[recall] salience_weight` (default 0.15) instead. `--no-salience` disables it |
+| `--recency` | Recency boost is on by default with weight 0.1; passing `--recency` uses the configured `[recall] recency_weight` (default 0.15) instead. `--no-recency` disables it |
 | `--jaccard` | Enable Jaccard token reranking signal (default: off, requires `jaccard_weight` > 0 in config) |
 
 ### Reading recall scores (#1405)
@@ -454,9 +454,15 @@ Boosts are **added** on top and are not capped, so a final score can exceed
   has recency score `1.0`; it decays with the memory type's half-life.
 - `jaccard_boost` and `graph_boost` apply only when those signals are enabled.
 
-Both weights default to `0.15` in the CLI config. `uteke-serve` does not read
-`[recall]` weights yet (#1355) and uses the engine default of `0.1`, so the same
-query can score slightly differently over HTTP than through the CLI.
+Both weights are `0.1` by default, in the CLI and in `uteke-serve` alike. The
+configured `[recall]` weights (default `0.15`) are used only when
+`--salience` / `--recency` are passed explicitly, and `uteke-serve` does not read
+them yet (#1355).
+
+The salience score includes an access signal, so scores drift up a little as a
+memory is recalled: in a three-recall test on a fresh store `salience_boost`
+went `0.025`, `0.02676`, `0.02977`. Do not expect the same query to return
+exactly the same scores twice.
 
 Because fusion's base is so small, the boosts dominate its absolute value, and
 two memories at neighbouring ranks have final scores that differ only in the
