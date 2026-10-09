@@ -20,6 +20,7 @@ mod edges;
 mod embed;
 mod error;
 pub mod extraction;
+mod forget_request;
 pub mod graph;
 pub mod graph_rerank;
 pub mod graph_view;
@@ -33,6 +34,10 @@ pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
 
+pub use forget_request::{
+    ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
+    IdCharset, UnmatchedPrefixText, resolve_memory_id,
+};
 pub use operations::RememberOutcome;
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
