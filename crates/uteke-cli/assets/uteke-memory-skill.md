@@ -174,9 +174,11 @@ Version: **0.20.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 > - `tags` (e.g. `project:<repo>`) = the primary project filter.
 > - Strategies: `fusion` (default), `hybrid` (RRF vector+FTS5), `fts5`
 >   (keyword — best for short 1–3 word queries and exact terms), `vector`
->   (pure semantic), `graph`. Scores are rank-based (RRF), not cosine —
->   don't threshold them like similarity; use `recall --explain` for the
->   real vector similarity.
+>   (pure semantic), `graph`. A score is a strategy-specific base plus
+>   boosts (salience, recency) and can exceed 1.0; fusion's base is rank-based
+>   (RRF, about 0.04 at most), not cosine — don't threshold scores like
+>   similarity or compare them across strategies; use `recall --explain` for
+>   the exact breakdown and the real vector similarity.
 > - Prefer 2–3 core keywords: FTS5 AND-matches all tokens, long natural
 >   sentences can zero out the keyword arm.
 

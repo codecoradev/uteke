@@ -431,6 +431,62 @@ uteke recall "api design" --context
 | `--recency` | Enable recency boost (default: on, weight 0.15). Use `--no-recency` to disable |
 | `--jaccard` | Enable Jaccard token reranking signal (default: off, requires `jaccard_weight` > 0 in config) |
 
+### Reading recall scores (#1405)
+
+A recall score is **`base_score` + boosts**, and the base means something
+different per strategy. Scores are for ordering results within one query;
+they are not a similarity percentage and are not comparable across strategies,
+queries or stores.
+
+| Strategy | `base_score` | Typical range of the base |
+|----------|--------------|---------------------------|
+| `fusion` (default) | Weighted RRF of the vector and hybrid rankings: `1.7 / (60 + rank_v + 1) + 1.0 / (60 + rank_h + 1)`. A function of rank, not of similarity | at most about `0.044` (rank 1 in both) |
+| `hybrid` | RRF of the vector and FTS5 rankings divided by the best possible sum, so a memory at the top of both rankings is about `1.0` | up to `1.0` |
+| `vector` | The vector similarity of the query and the memory | up to about `1.0` |
+| `fts5` | Normalised keyword rank (rank 1 is `1.0`) | up to `1.0` |
+
+Boosts are **added** on top and are not capped, so a final score can exceed
+`1.0` (for example `1.1169` for a hybrid result):
+
+- `salience_boost` = salience score x salience weight. The salience score
+  combines importance, access signal and pinned state.
+- `recency_boost` = recency score x recency weight. A memory created just now
+  has recency score `1.0`; it decays with the memory type's half-life.
+- `jaccard_boost` and `graph_boost` apply only when those signals are enabled.
+
+Both weights default to `0.15` in the CLI config. `uteke-serve` does not read
+`[recall]` weights yet (#1355) and uses the engine default of `0.1`, so the same
+query can score slightly differently over HTTP than through the CLI.
+
+Because fusion's base is so small, the boosts dominate its absolute value, and
+two memories at neighbouring ranks have final scores that differ only in the
+third or fourth decimal. Rounded to three decimals they can look identical even
+though the order is decided. Use `--explain` for the exact breakdown; this is
+the output for the top result of a default (fusion) recall:
+
+```json
+{
+  "strategy": "fusion",
+  "final_score": 0.16899788,
+  "base_score": 0.043997884,
+  "vector_similarity": 0.76310307,
+  "vector_rank": 1,
+  "rrf_score": 0.043997884,
+  "fusion_vector_contribution": 0.027868852,
+  "fusion_hybrid_contribution": 0.016129032,
+  "salience_boost": 0.025,
+  "recency_boost": 0.1
+}
+```
+
+Here `0.16899788 = 0.043997884 (rrf_score) + 0.025 (salience) + 0.1 (recency)`.
+
+What this means for thresholds: `--min` compares against the final score, so a
+value that makes sense for `vector` (similarity scale) removes everything in
+`fusion` (base around 0.04), and a small value keeps almost everything in
+`hybrid` or `fts5`. The default is `0.0` for this reason (#1223); only set
+`--min` after looking at `--explain` output for your own queries and strategy.
+
 ## uteke room
 
 Room-based memory management:
