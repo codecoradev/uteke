@@ -1415,23 +1415,10 @@ fn display_id(id: &str, full: bool) -> &str {
 /// printed by recall/list). Errors loudly on ambiguous prefixes instead of
 /// silently no-oping. Exact UUIDs skip the prefix scan.
 fn resolve_id<'a>(uteke: &'a Uteke, id: &'a str) -> Result<String, String> {
-    // Ids are UUIDs: hex digits and dashes only. Rejecting anything else up
-    // front also keeps LIKE wildcards (`%`, `_`) out of the prefix scan (#1328).
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        return Err(format!(
-            "Invalid memory id '{id}' (expected a UUID or hex prefix)"
-        ));
-    }
-    // A well-formed full UUID skips the prefix scan; anything else (including a
-    // 36-char non-UUID string) takes the prefix path so it errors the same way.
-    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
-        return Ok(uuid.hyphenated().to_string());
-    }
-    match uteke.resolve_id_prefix(id) {
-        Ok(Some(full)) => Ok(full),
-        Ok(None) => Err(format!("No memory matches id prefix '{id}'")),
-        Err(e) => Err(format!("{e}")),
-    }
+    // The shared resolver under the MCP policy (#1343): hex-and-dash ids
+    // only (#1328), full UUIDs normalised, no existence check.
+    uteke_core::resolve_memory_id(uteke, id, uteke_core::ForgetPolicy::MCP)
+        .map_err(|e| e.message().to_string())
 }
 
 /// #1053: mark old_id superseded by new_id — wires the edge pair
@@ -1567,8 +1554,21 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 }
 
 fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
-    let id = resolve_id(uteke, id_arg)?;
+    // Typed request shared with HTTP and the CLI (#1343). The tool offers no
+    // tag or namespace, and (unlike HTTP) is not behind the read-only gate.
+    let policy = uteke_core::ForgetPolicy::MCP;
+    let request = uteke_core::ForgetRequest::decode(
+        uteke_core::ForgetInput {
+            id: args["id"].as_str().map(String::from),
+            ..Default::default()
+        },
+        policy,
+    )
+    .map_err(|e| e.message().to_string())?;
+    let id = request
+        .resolve(uteke, policy)
+        .map_err(|e| e.message().to_string())?
+        .ok_or("Missing 'id'")?;
 
     uteke.forget(&id).map_err(|e| format!("Failed: {e}"))?;
 
@@ -3121,6 +3121,49 @@ mod id_resolution_tests {
         // Bogus prefix must now ERROR (was: silent "not found" no-op pre-fix).
         let err = exec_forget(&uteke, &serde_json::json!({"id": "ffffffff"}));
         assert!(err.is_err(), "unknown prefix must error loudly");
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // #1343: the typed forget request keeps the MCP texts and policy.
+    #[test]
+    fn exec_forget_errors_keep_their_texts() {
+        let (uteke, dir) = scratch();
+        let id = seed(&uteke);
+        let err = |args: serde_json::Value| exec_forget(&uteke, &args).err().unwrap();
+
+        assert_eq!(err(serde_json::json!({})), "Missing 'id'");
+        assert_eq!(err(serde_json::json!({"id": 7})), "Missing 'id'");
+        assert_eq!(
+            err(serde_json::json!({"id": "%"})),
+            "Invalid memory id '%' (expected a UUID or hex prefix)"
+        );
+        assert_eq!(
+            err(serde_json::json!({"id": ""})),
+            "Invalid memory id '' (expected a UUID or hex prefix)"
+        );
+        assert_eq!(
+            err(serde_json::json!({"id": "ffffffff"})),
+            "No memory matches id prefix 'ffffffff'"
+        );
+        // The tool has no tag or namespace: extra keys never widen the target.
+        assert_eq!(
+            err(serde_json::json!({"tag": "probe", "namespace": "mcp-id-ns"})),
+            "Missing 'id'"
+        );
+        assert!(uteke.get_by_id(&id).unwrap().is_some());
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn exec_forget_normalises_full_uuid_forms() {
+        let (uteke, dir) = scratch();
+        let id = seed(&uteke);
+        let upper = id.to_uppercase();
+        let result = exec_forget(&uteke, &serde_json::json!({"id": upper})).unwrap();
+        let McpContent::Text { text, .. } = &result.content[0];
+        assert_eq!(text, &format!("✓ Forgotten: {id}"));
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
     }

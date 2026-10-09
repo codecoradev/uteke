@@ -377,40 +377,30 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             all: _,
             confirm: _,
         } => {
-            if let Some(id) = id {
-                let resp = client
-                    .delete(format!(
-                        "{server_url}/forget?id={}",
-                        urlencoding::encode(id)
-                    ))
-                    .send()
-                    .map_err(|e| format!("Server error: {e}"))?;
-                let data = parse_json_value(resp)?;
-                if cli.json {
-                    println!("{data}");
-                } else {
-                    println!("\u{2713} Memory forgotten: {id}");
-                }
-            } else if let Some(tag) = tag {
-                let resp = client
-                    .delete(format!(
-                        "{server_url}/forget?tag={}&namespace={}",
-                        urlencoding::encode(tag),
-                        urlencoding::encode(ns)
-                    ))
-                    .send()
-                    .map_err(|e| format!("Server error: {e}"))?;
-                let data = parse_json_value(resp)?;
-                if cli.json {
-                    println!("{data}");
-                } else {
-                    println!(
-                        "\u{2713} Deleted {} memories with tag '{}'",
-                        data["deleted"], tag
-                    );
-                }
-            } else {
+            // The DELETE /forget path comes from the typed request in
+            // uteke-core (#1343); the id wins over the tag, as on the server.
+            let input = uteke_core::ForgetInput {
+                id: id.clone(),
+                tag: tag.clone(),
+                namespace: Some(ns.to_string()),
+            };
+            let Some(path) = input.to_http_path(|v| urlencoding::encode(v).into_owned()) else {
                 return Err("Provide an ID, --tag, --cold, or --all".into());
+            };
+            let resp = client
+                .delete(format!("{server_url}{path}"))
+                .send()
+                .map_err(|e| format!("Server error: {e}"))?;
+            let data = parse_json_value(resp)?;
+            if cli.json {
+                println!("{data}");
+            } else if let Some(id) = id {
+                println!("\u{2713} Memory forgotten: {id}");
+            } else if let Some(tag) = tag {
+                println!(
+                    "\u{2713} Deleted {} memories with tag '{}'",
+                    data["deleted"], tag
+                );
             }
         }
         // Commands not supported via server fall through to local
@@ -424,6 +414,32 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::is_loopback_url;
+
+    // #1343: the forget URL is built by the typed request; it must stay what
+    // the CLI always sent (id wins, tag carries the namespace, values encoded).
+    #[test]
+    fn forget_path_matches_the_old_urls() {
+        let enc = |v: &str| urlencoding::encode(v).into_owned();
+        let by_id = uteke_core::ForgetInput {
+            id: Some("ab cd/1".into()),
+            tag: Some("t".into()),
+            namespace: Some("default".into()),
+        };
+        assert_eq!(
+            by_id.to_http_path(enc).as_deref(),
+            Some("/forget?id=ab%20cd%2F1")
+        );
+        let by_tag = uteke_core::ForgetInput {
+            id: None,
+            tag: Some("my tag&x".into()),
+            namespace: Some("work space".into()),
+        };
+        assert_eq!(
+            by_tag.to_http_path(enc).as_deref(),
+            Some("/forget?tag=my%20tag%26x&namespace=work%20space")
+        );
+        assert_eq!(uteke_core::ForgetInput::default().to_http_path(enc), None);
+    }
 
     #[test]
     fn loopback_detection() {

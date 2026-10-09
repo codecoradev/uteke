@@ -696,61 +696,54 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Forget by ID or tag (DELETE /forget?id=xxx or ?tag=xxx) ────
         (Method::Delete, "/forget") => {
             let query = path.split('?').nth(1).unwrap_or("");
-            let params: std::collections::HashMap<String, String> = query
-                .split('&')
-                .filter_map(|pair| {
-                    let mut kv = pair.splitn(2, '=');
-                    Some((kv.next()?.to_string(), kv.next()?.to_string()))
-                })
-                .collect();
-
-            if let Some(id) = params.get("id") {
-                // Accept full UUID or short ID prefix (#794).
-                // `list` and `room_recall` display only 8-char prefixes, so
-                // `forget` must resolve them back to full UUIDs.
-                let resolved_id = if uuid::Uuid::parse_str(id).is_ok() {
-                    id.clone()
-                } else {
-                    match uteke.resolve_id_prefix(id) {
-                        Ok(Some(full)) => full,
-                        Ok(None) => {
-                            return ctx.error_response_for(
-                                req,
-                                404,
-                                format!("Memory not found: {id}"),
-                            );
+            // Typed request shared with MCP and the CLI (#1343).
+            let request = match uteke_core::ForgetRequest::decode(
+                uteke_core::ForgetInput::from_http_query(query),
+                uteke_core::ForgetPolicy::HTTP,
+            ) {
+                Ok(r) => r,
+                Err(e) => return ctx.error_response_for(req, 400, e.message()),
+            };
+            match request {
+                uteke_core::ForgetRequest::Id(_) => {
+                    // Accept full UUID or short ID prefix (#794); the
+                    // existence check (#762) is part of the HTTP policy
+                    // because forget() silently returns Ok(()) for unknown ids.
+                    let resolved_id = match request.resolve(&uteke, uteke_core::ForgetPolicy::HTTP)
+                    {
+                        Ok(Some(id)) => id,
+                        Ok(None) => unreachable!("an id request resolves to an id"),
+                        Err(e) => {
+                            return match e.kind() {
+                                uteke_core::ForgetErrorKind::NotFound => {
+                                    ctx.error_response_for(req, 404, e.message())
+                                }
+                                _ => {
+                                    error!("Resolve error: {e}");
+                                    ctx.error_response_for(req, 400, e.message())
+                                }
+                            };
+                        }
+                    };
+                    match uteke.forget(&resolved_id) {
+                        Ok(()) => {
+                            ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id}))
                         }
                         Err(e) => {
-                            error!("Resolve error: {e}");
-                            return ctx.error_response_for(req, 400, e.to_string());
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
                         }
                     }
-                };
-                // Check existence before deleting (#762) — forget() silently
-                // returns Ok(()) even when the ID doesn't exist.
-                if uteke.get_by_id(&resolved_id).ok().flatten().is_none() {
-                    return ctx.error_response_for(req, 404, format!("Memory not found: {id}"));
                 }
-                match uteke.forget(&resolved_id) {
-                    Ok(()) => {
-                        ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id}))
-                    }
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
+                uteke_core::ForgetRequest::Tag { tag, namespace } => {
+                    match uteke.bulk_forget_by_tag(&tag, namespace.as_deref()) {
+                        Ok(result) => ctx.ok_response_for(req, &result),
+                        Err(e) => {
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 }
-            } else if let Some(tag) = params.get("tag") {
-                let namespace = params.get("namespace").map(|s| s.as_str());
-                match uteke.bulk_forget_by_tag(tag, namespace) {
-                    Ok(result) => ctx.ok_response_for(req, &result),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
-                }
-            } else {
-                ctx.error_response_for(req, 400, "Provide ?id= or ?tag= parameter")
             }
         }
 
@@ -4851,6 +4844,224 @@ mod mcp_http_hardening_tests {
                     && h.value.as_str() == origin),
             "missing ACAO on /mcp: {:?}",
             resp.headers()
+        );
+    }
+}
+
+// ── #1343: `DELETE /forget` goes through the typed forget request ──────────
+
+#[cfg(test)]
+mod forget_route_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use uteke_core::memory::types::Memory;
+
+    const ID_A: &str = "abcd0000-0000-4000-8000-00000000000a";
+    const ID_B: &str = "abcd0000-0000-4000-8000-00000000000b";
+    const ID_C: &str = "cafe0000-0000-4000-8000-00000000000c";
+
+    fn memory(id: &str, ns: &str, tag: &str) -> Memory {
+        let now = chrono::Utc::now();
+        Memory {
+            id: id.to_string(),
+            content: format!("forget route probe {id}"),
+            embedding: vec![0.21; 768],
+            tags: vec![tag.to_string()],
+            metadata: serde_json::json!({}),
+            created_at: now,
+            updated_at: now,
+            namespace: ns.to_string(),
+            access_count: 0,
+            recall_count: 0,
+            last_accessed: None,
+            deprecated: false,
+            deprecated_at: None,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
+            content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
+            author_type: "agent".to_string(),
+        }
+    }
+
+    fn app() -> Mutex<Uteke> {
+        let uteke = Uteke::open_with_backend(":memory:", None)
+            .expect("open in-memory uteke without embedder");
+        uteke.store().insert(&memory(ID_A, "ns-a", "t1")).unwrap();
+        uteke.store().insert(&memory(ID_B, "ns-a", "t1")).unwrap();
+        uteke.store().insert(&memory(ID_C, "ns-b", "t2")).unwrap();
+        Mutex::new(uteke)
+    }
+
+    fn call(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        url: &str,
+        bearer: Option<&str>,
+        tokens: bool,
+    ) -> (u16, serde_json::Value) {
+        let mut builder = tiny_http::TestRequest::new()
+            .with_method(method)
+            .with_path(url);
+        if let Some(h) = bearer {
+            builder =
+                builder.with_header(tiny_http::Header::from_bytes("Authorization", h).unwrap());
+        }
+        let mut req: tiny_http::Request = builder.into();
+        let ctx = ReqCtx {
+            auth_token_hash: tokens.then(|| Sha256::digest("rw").into()),
+            read_only_token_hash: tokens.then(|| Sha256::digest("ro").into()),
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        };
+        let resp = route(uteke, &ctx, &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    fn del(uteke: &Mutex<Uteke>, url: &str) -> (u16, serde_json::Value) {
+        call(uteke, Method::Delete, url, None, false)
+    }
+
+    #[test]
+    fn forget_by_full_id() {
+        let u = app();
+        let (s, body) = del(&u, &format!("/forget?id={ID_A}"));
+        assert_eq!((s, &body), (200, &serde_json::json!({"forgotten": ID_A})));
+    }
+
+    #[test]
+    fn forget_by_unambiguous_short_prefix() {
+        let u = app();
+        let (s, body) = del(&u, "/forget?id=cafe");
+        assert_eq!((s, &body), (200, &serde_json::json!({"forgotten": ID_C})));
+    }
+
+    #[test]
+    fn error_statuses_and_texts_are_unchanged() {
+        let u = app();
+        let (s, body) = del(&u, "/forget?id=ffff");
+        assert_eq!(s, 404);
+        assert_eq!(body["error"], "Memory not found: ffff");
+        let absent = "11111111-1111-4111-8111-111111111111";
+        let (s, body) = del(&u, &format!("/forget?id={absent}"));
+        assert_eq!(s, 404);
+        assert_eq!(body["error"], format!("Memory not found: {absent}"));
+        let (s, body) = del(&u, "/forget?id=abcd");
+        assert_eq!(s, 400);
+        assert_eq!(
+            body["error"],
+            "Validation error: Ambiguous ID prefix 'abcd' — matches 2 memories. Use a longer prefix."
+        );
+        for url in ["/forget", "/forget?namespace=ns-a", "/forget?flag"] {
+            let (s, body) = del(&u, url);
+            assert_eq!(s, 400, "{url}");
+            assert_eq!(body["error"], "Provide ?id= or ?tag= parameter", "{url}");
+        }
+    }
+
+    #[test]
+    fn id_wins_over_tag() {
+        let u = app();
+        let (s, body) = del(&u, &format!("/forget?tag=t1&id={ID_C}"));
+        assert_eq!((s, &body), (200, &serde_json::json!({"forgotten": ID_C})));
+        // The tag was not applied: the `t1` memories are untouched.
+        assert!(
+            !u.lock()
+                .unwrap()
+                .get_by_id(ID_A)
+                .unwrap()
+                .unwrap()
+                .deprecated
+        );
+    }
+
+    #[test]
+    fn tag_forget_honours_namespace_and_none_means_default() {
+        let u = app();
+        // Wrong namespace: nothing matches.
+        let (s, body) = del(&u, "/forget?tag=t1&namespace=ns-b");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 0);
+        let (s, body) = del(&u, "/forget?tag=t1&namespace=ns-a");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 2);
+        // No namespace means the default namespace, NOT every namespace:
+        // `t2` lives in `ns-b`, so it is untouched until ns-b is named.
+        let (s, body) = del(&u, "/forget?tag=t2");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 0);
+        let (s, body) = del(&u, "/forget?tag=t2&namespace=ns-b");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 1);
+    }
+
+    #[test]
+    fn read_only_token_cannot_forget() {
+        let u = app();
+        for url in [format!("/forget?id={ID_C}"), "/forget?tag=t2".to_string()] {
+            let (s, body) = call(&u, Method::Delete, &url, Some("Bearer ro"), true);
+            assert_eq!(s, 403, "{url}");
+            assert_eq!(
+                body["error"],
+                "Read-only token cannot perform write operations"
+            );
+        }
+        // Nothing was deleted by the blocked requests.
+        assert!(
+            !u.lock()
+                .unwrap()
+                .get_by_id(ID_C)
+                .unwrap()
+                .unwrap()
+                .deprecated
+        );
+        // The write token still can.
+        let (s, _) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={ID_C}"),
+            Some("Bearer rw"),
+            true,
+        );
+        assert_eq!(s, 200);
+        // Recorded disagreement: the gate is HTTP-only.
+        let may = |p: uteke_core::ForgetPolicy| p.read_only_token_may_forget;
+        assert_eq!(
+            (
+                may(uteke_core::ForgetPolicy::HTTP),
+                may(uteke_core::ForgetPolicy::MCP)
+            ),
+            (false, true)
+        );
+    }
+
+    #[test]
+    fn http_and_mcp_resolve_the_same_ids_to_the_same_memory() {
+        let u = app();
+        let guard = u.lock().unwrap();
+        let resolve = |input: &str, p| uteke_core::resolve_memory_id(&guard, input, p);
+        for input in [ID_A, "cafe", ID_B] {
+            let http = resolve(input, uteke_core::ForgetPolicy::HTTP);
+            let mcp = resolve(input, uteke_core::ForgetPolicy::MCP);
+            assert_eq!(http.unwrap(), mcp.unwrap(), "{input}");
+        }
+        // Where they disagree, each keeps its own text (pinned).
+        let http = resolve("ffff", uteke_core::ForgetPolicy::HTTP);
+        let mcp = resolve("ffff", uteke_core::ForgetPolicy::MCP);
+        assert_eq!(http.unwrap_err().message(), "Memory not found: ffff");
+        assert_eq!(
+            mcp.unwrap_err().message(),
+            "No memory matches id prefix 'ffff'"
         );
     }
 }
