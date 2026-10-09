@@ -44,9 +44,18 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    the rationale and wait (never decide and tag in the same run). Check the CORE
    contract: every CORE behaviour change in the release needs a uteke-cloud contract
    issue, and its answer should be read first. Run the pre-release mutation gate
-   (owner rule 2026-08-19, local only, CI skips it for PRs):
-   `cargo mutants -p uteke-core -j 2` (check `df -h` first, it needs many GB); if the
-   owner explicitly releases without it, say so in the PR body.
+   (owner rule 2026-08-19, local only; the CI workflow only triggers on `develop*`
+   head branches, so release PRs never run it) against the code changed since the
+   previous release:
+   `git diff vPREV..develop -- crates/uteke-core > /tmp/rel.diff` then
+   `cargo mutants -p uteke-core --in-diff /tmp/rel.diff -j 2 --timeout 120`
+   (install with `cargo install cargo-mutants --locked`; check `df -h` first).
+   Measured on v0.20.0..develop: 38 mutants, about 5 minutes. A missed mutant in
+   changed code gets a killing test (exact-value assertions); a miss only reachable
+   by tests that need the ONNX runtime (absent in CI) is listed in the release PR.
+   The full crate (`cargo mutants -p uteke-core -j 2`, 2058 mutants, an estimated
+   8 hours, not measured) is optional. If the owner explicitly releases without
+   the gate, say so in the PR body.
 2. **Release-prep PR into `develop`** (`chore(release): vX.Y.Z - version bump,
    changelog, docs sync`): workspace `Cargo.toml`, the internal deps in the three
    crates, `Cargo.lock`, both READMEs' version line, the version line of both skill
