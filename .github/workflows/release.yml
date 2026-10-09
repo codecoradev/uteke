@@ -366,6 +366,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write # keyless cosign signing (#1327)
 
     steps:
       - uses: actions/checkout@v7
@@ -391,6 +392,19 @@ jobs:
           cd release-artifacts
           sha256sum * > checksums-sha256.txt
           cat checksums-sha256.txt
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless signature over the checksums file (#1327). It covers every
+      # asset through its SHA256, and the certificate in the bundle is bound to
+      # this workflow's identity, so there is no signing key to manage.
+      - name: Sign checksums with cosign (keyless)
+        working-directory: release-artifacts
+        run: |
+          cosign sign-blob --yes \
+            --bundle checksums-sha256.txt.bundle \
+            checksums-sha256.txt
 
       - name: Extract changelog for this version
         id: changelog

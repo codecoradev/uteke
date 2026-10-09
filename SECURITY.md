@@ -44,3 +44,30 @@ Uteke uses multiple automated security checks on every PR:
 - **GitGuardian** — secret leak detection
 
 These are enforced via CI and block merge on findings.
+
+## Verifying a release
+
+Since the release after v0.20.0, `checksums-sha256.txt` of every GitHub release
+is signed with [cosign](https://docs.sigstore.dev/) keyless signing from the
+`Release` workflow (#1327). The signature bundle is published next to it as
+`checksums-sha256.txt.bundle`. There is no signing key to trust: the certificate
+inside the bundle is bound to this repository's workflow identity.
+
+```bash
+VER=vX.Y.Z   # the release tag
+curl -fsSLO "https://github.com/codecoradev/uteke/releases/download/$VER/checksums-sha256.txt"
+curl -fsSLO "https://github.com/codecoradev/uteke/releases/download/$VER/checksums-sha256.txt.bundle"
+
+cosign verify-blob \
+  --bundle checksums-sha256.txt.bundle \
+  --certificate-identity "https://github.com/codecoradev/uteke/.github/workflows/release.yml@refs/tags/$VER" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  checksums-sha256.txt
+
+# then check the archive you downloaded against the verified file
+sha256sum --check --ignore-missing checksums-sha256.txt
+```
+
+`uteke upgrade` does not verify this signature yet; it still checks the archive
+against the unsigned `checksums-sha256.txt` of the same release (corruption
+detection only).
