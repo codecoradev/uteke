@@ -481,6 +481,26 @@ pub struct FallbackSettings {
 }
 
 impl FallbackSettings {
+    /// Apply the `UTEKE_EMBED_FALLBACK_{API_KEY,BASE_URL,ENDPOINT_PATH,MODEL}`
+    /// environment overrides: env wins over the value already present, and an
+    /// empty variable counts as unset. One implementation for every consumer
+    /// of `[embed_fallback]` (#1355).
+    pub fn with_env_overrides(self) -> Self {
+        self.with_overrides_from(|name| std::env::var(name).ok())
+    }
+
+    /// [`Self::with_env_overrides`] with an injectable lookup (tests).
+    pub fn with_overrides_from(self, get: impl Fn(&str) -> Option<String>) -> Self {
+        let pick =
+            |name: &str, current: String| get(name).filter(|v| !v.is_empty()).unwrap_or(current);
+        Self {
+            api_key: pick("UTEKE_EMBED_FALLBACK_API_KEY", self.api_key),
+            base_url: pick("UTEKE_EMBED_FALLBACK_BASE_URL", self.base_url),
+            endpoint_path: pick("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH", self.endpoint_path),
+            model: pick("UTEKE_EMBED_FALLBACK_MODEL", self.model),
+        }
+    }
+
     /// Check if fallback is configured (all required fields present).
     /// Requires api_key AND base_url AND model — partial config is an error.
     pub fn is_configured(&self) -> bool {
@@ -4432,5 +4452,66 @@ mod documents_fts_heal_tests {
             "stale pre-fix FTS entries are gone after the rebuild"
         );
         u.store.heal_documents_fts_triggers().unwrap(); // idempotent
+    }
+}
+
+#[cfg(test)]
+mod fallback_settings_tests {
+    //! #1355 step A — one env-override implementation for `[embed_fallback]`.
+    use super::FallbackSettings;
+    use std::collections::HashMap;
+
+    fn file() -> FallbackSettings {
+        FallbackSettings {
+            api_key: "file-key".into(),
+            base_url: "https://file.example".into(),
+            endpoint_path: "/file".into(),
+            model: "file-model".into(),
+        }
+    }
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let m: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |k| m.get(k).cloned()
+    }
+
+    #[test]
+    fn env_wins_over_the_file_value_field_by_field() {
+        let got = file().with_overrides_from(env(&[
+            ("UTEKE_EMBED_FALLBACK_API_KEY", "env-key"),
+            ("UTEKE_EMBED_FALLBACK_MODEL", "env-model"),
+        ]));
+        assert_eq!(got.api_key, "env-key");
+        assert_eq!(got.model, "env-model");
+        // untouched fields keep the file value
+        assert_eq!(got.base_url, "https://file.example");
+        assert_eq!(got.endpoint_path, "/file");
+    }
+
+    #[test]
+    fn an_empty_env_value_is_treated_as_unset() {
+        let got = file().with_overrides_from(env(&[
+            ("UTEKE_EMBED_FALLBACK_API_KEY", ""),
+            ("UTEKE_EMBED_FALLBACK_BASE_URL", ""),
+        ]));
+        assert_eq!(got.api_key, "file-key");
+        assert_eq!(got.base_url, "https://file.example");
+    }
+
+    #[test]
+    fn env_alone_can_configure_the_fallback_and_partial_config_is_not_configured() {
+        let full = FallbackSettings::default().with_overrides_from(env(&[
+            ("UTEKE_EMBED_FALLBACK_API_KEY", "k"),
+            ("UTEKE_EMBED_FALLBACK_BASE_URL", "https://x"),
+            ("UTEKE_EMBED_FALLBACK_MODEL", "m"),
+        ]));
+        assert!(full.is_configured());
+        let partial = FallbackSettings::default()
+            .with_overrides_from(env(&[("UTEKE_EMBED_FALLBACK_API_KEY", "k")]));
+        assert!(!partial.is_configured());
+        assert!(!FallbackSettings::default().is_configured());
     }
 }
