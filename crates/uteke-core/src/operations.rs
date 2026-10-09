@@ -561,7 +561,7 @@ impl crate::Uteke {
         entity_filter: Option<&str>,
         category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
-        self.recall_inner(
+        let results = self.recall_inner(
             query,
             limit,
             tags_filter,
@@ -570,7 +570,20 @@ impl crate::Uteke {
             entity_filter,
             category_filter,
             false,
-        )
+        )?;
+        self.touch_recalled(&results);
+        Ok(results)
+    }
+
+    /// Count the results of ONE user-level recall/search as recall hits
+    /// (#1337, #1407). The strategy arms never touch on their own: they are
+    /// built from each other (fusion runs vector + hybrid, hybrid runs vector),
+    /// and the arms work on a `boost_window` of candidates, so touching inside
+    /// them counted one recall several times and bumped memories that were
+    /// never returned.
+    fn touch_recalled(&self, results: &[SearchResult]) {
+        let ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
+        self.store.touch_recall_batch(&ids).ok();
     }
 
     /// Same as `recall` but optionally keeps deprecated memories so temporal
@@ -723,10 +736,6 @@ impl crate::Uteke {
             results.retain(|r| r.score >= min_score);
         }
 
-        // Touch access for returned results
-        let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_recall_batch(&touch_ids).ok();
-
         Ok(results)
     }
 
@@ -768,6 +777,7 @@ impl crate::Uteke {
                 results.retain(|r| r.score >= min_score);
             }
             results.truncate(limit);
+            self.touch_recalled(&results);
             return Ok(results);
         }
 
@@ -805,6 +815,7 @@ impl crate::Uteke {
             results.retain(|r| r.score >= min_score);
         }
         results.truncate(limit);
+        self.touch_recalled(&results);
         Ok(results)
     }
 
@@ -826,9 +837,16 @@ impl crate::Uteke {
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         match strategy {
-            RecallStrategy::Vector => {
-                self.recall(query, boost_window, tags_filter, namespace, 0.0, None, None)
-            }
+            RecallStrategy::Vector => self.recall_inner(
+                query,
+                boost_window,
+                tags_filter,
+                namespace,
+                0.0,
+                None,
+                None,
+                false,
+            ),
             RecallStrategy::Fts5 => {
                 self.recall_fts5_only(query, boost_window, tags_filter, namespace, 0.0)
             }
@@ -993,7 +1011,16 @@ impl crate::Uteke {
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
                 tracing::warn!("FTS5 search failed, falling back to vector: {e}");
-                return self.recall(query, limit, tags_filter, namespace, min_score, None, None);
+                return self.recall_inner(
+                    query,
+                    limit,
+                    tags_filter,
+                    namespace,
+                    min_score,
+                    None,
+                    None,
+                    false,
+                );
             }
         };
 
@@ -1053,10 +1080,6 @@ impl crate::Uteke {
             results.retain(|r| r.score >= min_score);
         }
 
-        // Touch access for returned results
-        let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_recall_batch(&touch_ids).ok();
-
         Ok(results)
     }
 
@@ -1075,14 +1098,22 @@ impl crate::Uteke {
         const RRF_K: u32 = 60;
 
         // Run vector search (pass 0.0 for min_score since RRF does its own filtering)
-        let vector_results =
-            match self.recall(query, limit * 3, tags_filter, namespace, 0.0, None, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("Vector search failed in hybrid: {e}");
-                    return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
-                }
-            };
+        let vector_results = match self.recall_inner(
+            query,
+            limit * 3,
+            tags_filter,
+            namespace,
+            0.0,
+            None,
+            None,
+            false,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Vector search failed in hybrid: {e}");
+                return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
+            }
+        };
 
         // Run FTS5 search
         let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
@@ -1183,10 +1214,6 @@ impl crate::Uteke {
                 });
             }
         }
-
-        // Touch access for returned results
-        let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_recall_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -3183,5 +3210,106 @@ mod remember_embedding_status_tests {
             .expect("store read must work")
             .expect("memory row must exist");
         assert!(stored.embedding.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod recall_touch_tests {
+    //! #1407 — one user-level recall counts each RETURNED memory once.
+    use crate::RecallStrategy;
+    use crate::test_support::open_keyword;
+
+    /// Three memories; only the first two share words with the query, and
+    /// `limit = 1` returns exactly one of them.
+    fn seeded() -> (crate::Uteke, [String; 3]) {
+        let u = open_keyword();
+        let mut ids = Vec::new();
+        for text in [
+            "alpha beta gamma delta",
+            "alpha epsilon zeta eta",
+            "omega sigma tau upsilon",
+        ] {
+            ids.push(u.remember(text, &[], None, Some("ns")).unwrap());
+        }
+        let [a, b, c]: [String; 3] = ids.try_into().unwrap();
+        (u, [a, b, c])
+    }
+
+    fn counts(u: &crate::Uteke, ids: &[String; 3]) -> [u32; 3] {
+        let mut out = [0; 3];
+        for (i, id) in ids.iter().enumerate() {
+            out[i] = u.store().get_by_id(id).unwrap().unwrap().recall_count;
+        }
+        out
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn every_strategy_counts_the_returned_memory_exactly_once() {
+        for strategy in [
+            RecallStrategy::Vector,
+            RecallStrategy::Fts5,
+            RecallStrategy::Hybrid,
+            RecallStrategy::Fusion,
+        ] {
+            let (u, ids) = seeded();
+            let res = u
+                .recall_hybrid("alpha beta", 1, None, Some("ns"), strategy, 0.0)
+                .unwrap();
+            assert_eq!(res.len(), 1, "{strategy:?}");
+            let c = counts(&u, &ids);
+            // exactly one memory counted, once; nothing else touched
+            assert_eq!(c.iter().sum::<u32>(), 1, "{strategy:?}: {c:?}");
+            let returned = ids.iter().position(|i| *i == res[0].memory.id).unwrap();
+            assert_eq!(c[returned], 1, "{strategy:?}: {c:?}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a_repeated_query_served_from_the_cache_still_counts_once_per_call() {
+        let (u, ids) = seeded();
+        for expected in 1..=3u32 {
+            let res = u
+                .recall_hybrid(
+                    "alpha beta",
+                    1,
+                    None,
+                    Some("ns"),
+                    RecallStrategy::Fusion,
+                    0.0,
+                )
+                .unwrap();
+            let returned = ids.iter().position(|i| *i == res[0].memory.id).unwrap();
+            assert_eq!(counts(&u, &ids)[returned], expected);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_public_vector_recall_counts_returned_results_once() {
+        let (u, ids) = seeded();
+        let res = u
+            .recall("alpha beta", 1, None, Some("ns"), 0.0, None, None)
+            .unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(counts(&u, &ids).iter().sum::<u32>(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn explain_is_a_read_only_diagnostic() {
+        let (u, ids) = seeded();
+        let _ = u
+            .recall_explained(
+                "alpha beta",
+                2,
+                None,
+                Some("ns"),
+                RecallStrategy::Fusion,
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(counts(&u, &ids), [0, 0, 0]);
     }
 }

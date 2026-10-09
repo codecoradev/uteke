@@ -42,6 +42,8 @@ mod rooms;
 pub mod rooms_segments;
 pub mod salience_recency;
 pub mod structural_export;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod timeline;
 mod types;
 pub mod update_check;
