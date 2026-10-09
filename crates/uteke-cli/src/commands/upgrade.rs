@@ -15,9 +15,10 @@ const SERVER_BINARY_NAME: &str = "uteke-serve";
 const MCP_BINARY_NAME: &str = "uteke-mcp";
 
 /// Hard cap on the downloaded release archive (#1327). Release archives are
-/// ~10-15 MB (CLI + server + MCP binaries and the bundled ONNX Runtime libs);
-/// 128 MiB leaves roughly 8x headroom for growth while still stopping a
-/// hostile or broken mirror from filling the disk.
+/// about 20-35 MiB today (v0.20.1: 22 MiB arm64 Linux, 26 MiB x86_64 Linux,
+/// 31 MiB macOS, 35 MiB legacy-ORT Linux; CLI + server + MCP binaries and the
+/// bundled ONNX Runtime libs); 128 MiB leaves more than 3x headroom over the
+/// largest while still stopping a hostile or broken mirror from filling the disk.
 const MAX_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
 
 /// Hard cap on `checksums-sha256.txt` (#1327). The real file is a few hundred
