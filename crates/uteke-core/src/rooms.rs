@@ -780,6 +780,44 @@ mod tests {
         assert!(pack.skipped.iter().all(|s| s.reason == "excluded"));
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_semantic_wrapper_matches_the_filtered_call() {
+        let (u, [m1, ..]) = seeded_room();
+        let plain = u
+            .recall_room_semantic("r1", "alpha beta", 10, None, 0.0)
+            .unwrap();
+        let filtered = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 10, None, 0.0, None)
+            .unwrap();
+        assert!(!plain.is_empty());
+        assert_eq!(plain[0].memory.id, m1);
+        let ids = |v: &[crate::memory::types::SearchResult]| -> Vec<String> {
+            v.iter().map(|r| r.memory.id.clone()).collect()
+        };
+        assert_eq!(ids(&plain), ids(&filtered));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn room_recall_packed_limit_zero_means_every_match() {
+        let (u, _ids) = seeded_room();
+        let all = u
+            .recall_room_semantic_filtered("r1", "alpha beta", 0, None, 0.0, None)
+            .unwrap()
+            .len();
+        assert!(all >= 3, "fixture has three memories, got {all}");
+        let pack = u
+            .recall_room_packed("r1", "alpha beta", 0, None, 0.0, None, 100_000, &[])
+            .unwrap();
+        assert_eq!(pack.selected.len(), all);
+        // limit 1 still caps the selection
+        let one = u
+            .recall_room_packed("r1", "alpha beta", 1, None, 0.0, None, 100_000, &[])
+            .unwrap();
+        assert_eq!(one.selected.len(), 1);
+    }
+
     // ── Room rename / update / memory room-move (#1202) ─────────────
 
     /// Embedder-less engine — these ops never touch embeddings, and CI has
