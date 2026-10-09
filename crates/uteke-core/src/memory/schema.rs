@@ -469,6 +469,9 @@ impl super::Store {
                 // v20: timeline audit-grade — drop FK CASCADE (history survives
                 // memory deletion, owner decision 2026-09-18) + backfill Created
                 20 => self.migrate_v19_to_v20()?,
+                // v21: recall_count column — recall/search hits are counted apart
+                // from explicit gets (#1337)
+                21 => self.migrate_v20_to_v21()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1111,6 +1114,23 @@ impl super::Store {
             .map_err(|e| Error::db("create room_documents table", e))?;
 
         tracing::info!("Migration v14 to v15 complete: room_documents table created");
+        Ok(())
+    }
+
+    /// v21: add `recall_count` (#1337). Recall/search hits are counted here
+    /// instead of in `access_count`, which now only counts explicit `get`s.
+    /// Existing rows start at 0: their historical `access_count` is left as it
+    /// is (it cannot be split retroactively).
+    fn migrate_v20_to_v21(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v20 to v21: recall_count column");
+        if !self.column_exists("recall_count") {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE memories ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0;",
+                )
+                .map_err(|e| Error::db("schema migration v20 to v21", e))?;
+        }
+        tracing::info!("Migration v20 to v21 complete: recall_count column added");
         Ok(())
     }
 

@@ -103,8 +103,8 @@ impl super::Store {
     ) -> Result<(), Error> {
         self.conn
             .execute(
-                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, author_type, deprecated_at, recall_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
                 params![
                     memory.id,
                     memory.content,
@@ -128,6 +128,7 @@ impl super::Store {
                     memory.source_type,
                     memory.author_type,
                     memory.deprecated_at.map(|t| t.to_rfc3339()),
+                    memory.recall_count,
                 ],
             )
             .map_err(|e| Error::db("Failed to insert memory", e))?;
@@ -1068,6 +1069,7 @@ mod content_type_tests {
             updated_at: chrono::Utc::now(),
             namespace: "default".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -1102,6 +1104,7 @@ mod content_type_tests {
             updated_at: chrono::Utc::now(),
             namespace: "default".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -1151,6 +1154,7 @@ mod content_type_tests {
             updated_at: Utc::now(),
             namespace: "default".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,

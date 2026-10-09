@@ -443,6 +443,7 @@ impl crate::Uteke {
             updated_at: now,
             namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -724,7 +725,7 @@ impl crate::Uteke {
 
         // Touch access for returned results
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
+        self.store.touch_recall_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -1054,7 +1055,7 @@ impl crate::Uteke {
 
         // Touch access for returned results
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
+        self.store.touch_recall_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -1185,7 +1186,7 @@ impl crate::Uteke {
 
         // Touch access for returned results
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
+        self.store.touch_recall_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -1219,7 +1220,7 @@ impl crate::Uteke {
 
         // Touch access for returned results
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
+        self.store.touch_recall_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -2455,6 +2456,7 @@ mod rrf_fuse_weighted_tests {
             updated_at: now,
             namespace: "test".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -2644,6 +2646,7 @@ mod dedup_tests {
             updated_at: created,
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,

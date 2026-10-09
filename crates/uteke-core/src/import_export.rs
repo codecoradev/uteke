@@ -118,6 +118,7 @@ impl crate::Uteke {
                 updated_at: now,
                 namespace: target_ns,
                 access_count: 0,
+                recall_count: 0,
                 last_accessed: None,
                 deprecated: false,
                 deprecated_at: None,

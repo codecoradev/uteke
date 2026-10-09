@@ -133,11 +133,12 @@ pub fn compute_orphan_score(memory: &Memory, outgoing: usize, incoming: usize) -
     // Never-accessed (0) should score worse than accessed-once (1).
     // log10(1) = 0 which is the same as 0 accesses, so we add a small
     // floor for any non-zero access count to differentiate (CodeCora #389).
-    let access_freq = if memory.access_count == 0 {
+    let signal = memory.access_signal();
+    let access_freq = if signal <= 0.0 {
         0.0
     } else {
-        // access_count >= 1: log10(n+1) ensures access_count=1 → non-zero.
-        (((memory.access_count + 1) as f32).log10() / 3.0).clamp(0.0, 1.0)
+        // signal > 0: log10(n+1) keeps any non-zero signal above zero.
+        ((signal + 1.0).log10() / 3.0).clamp(0.0, 1.0)
     };
     // Clamp importance to [0, 1] to guard against corrupt/imported data
     // (CodeCora #389).
@@ -174,6 +175,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             namespace: "default".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
