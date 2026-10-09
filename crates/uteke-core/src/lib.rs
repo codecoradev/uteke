@@ -27,12 +27,17 @@ pub mod guide;
 mod import_export;
 mod index_sync;
 mod jaccard;
+mod list_request;
 mod maintenance;
 pub mod memory;
 pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
 
+pub use list_request::{
+    LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
+    ListPolicy, ListRequest, ListRequestError,
+};
 pub use operations::RememberOutcome;
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,

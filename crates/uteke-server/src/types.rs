@@ -354,6 +354,25 @@ pub struct ListParams {
     pub include_meta: bool,
 }
 
+impl ListParams {
+    /// Raw input for the typed list request shared with MCP and the CLI (#1343).
+    pub fn to_input(&self) -> uteke_core::ListInput {
+        uteke_core::ListInput {
+            tag: self.tag.clone(),
+            limit: Some(self.limit),
+            offset: Some(self.offset),
+            namespace: self.namespace.clone(),
+            at: self.at.clone(),
+            include_meta: self.include_meta,
+        }
+    }
+
+    /// Decode under the HTTP policy (cap [`MAX_LIST_LIMIT`]).
+    pub fn decode(&self) -> Result<uteke_core::ListRequest, uteke_core::ListRequestError> {
+        uteke_core::ListRequest::decode(self.to_input(), uteke_core::ListPolicy::HTTP)
+    }
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -521,7 +540,7 @@ pub struct RecallFileSection {
 
 /// Hard cap on `limit` for list-style endpoints (`/list`, `/recent`,
 /// `/contradictions`, `/doc/list`, deprecated listing). Callers page with `offset`.
-pub const MAX_LIST_LIMIT: usize = 1000;
+pub const MAX_LIST_LIMIT: usize = uteke_core::LIST_HTTP_MAX_LIMIT;
 /// Hard cap on request-controlled `max_facts` for `/extract` (bounds LLM cost).
 pub const MAX_EXTRACT_FACTS: usize = 100;
 /// Default minimum score for server recall.
@@ -1041,5 +1060,106 @@ mod recall_request_cross_surface_tests {
         assert_eq!(t.namespace.as_deref(), Some("default"));
         assert_eq!(t.tags, None);
         assert!(t.pack);
+    }
+}
+
+/// #1343 (`list` slice): the HTTP and MCP surfaces decode `list` through the
+/// one typed request in uteke-core. Where they agree the typed requests are
+/// equal; where they disagree the difference is pinned here.
+#[cfg(test)]
+mod list_request_cross_surface_tests {
+    use super::*;
+    use serde_json::json;
+    use uteke_core::ListRequest as Typed;
+
+    fn http(body: serde_json::Value) -> Result<Typed, String> {
+        let wire: ListParams = serde_json::from_value(body).unwrap();
+        wire.decode().map_err(|e| e.to_string())
+    }
+
+    fn mcp(args: serde_json::Value) -> Result<Typed, String> {
+        uteke_mcp::decode_list_args(&args)
+    }
+
+    #[test]
+    fn same_request_decodes_to_the_same_typed_request() {
+        let body = json!({"tag": "ops", "limit": 12, "offset": 4, "namespace": "work"});
+        let h = http(body.clone()).unwrap();
+        assert_eq!(h, mcp(body).unwrap());
+        assert_eq!(h.limit, 12);
+        assert_eq!(h.offset, 4);
+        assert_eq!(h.tag.as_deref(), Some("ops"));
+        assert_eq!(h.namespace.as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn omitted_namespace_and_tag_mean_unfiltered_on_both() {
+        let h = http(json!({"limit": 3})).unwrap();
+        assert_eq!(h, mcp(json!({"limit": 3})).unwrap());
+        assert_eq!((h.tag, h.namespace), (None, None));
+    }
+
+    #[test]
+    fn http_default_and_cap_come_from_the_typed_module() {
+        assert_eq!(uteke_core::ListPolicy::HTTP.max_limit, Some(MAX_LIST_LIMIT));
+        assert_eq!(uteke_core::LIST_HTTP_DEFAULT_LIMIT, default_limit());
+        assert_eq!(MAX_LIST_LIMIT, 1000);
+    }
+
+    // -- Disagreements pinned as they are today (owner decision pending) --
+
+    #[test]
+    fn disagreement_default_limit() {
+        assert_eq!(http(json!({})).unwrap().limit, 5);
+        assert_eq!(mcp(json!({})).unwrap().limit, 20);
+    }
+
+    #[test]
+    fn disagreement_limit_cap() {
+        assert_eq!(http(json!({"limit": 5000})).unwrap().limit, 1000);
+        assert_eq!(mcp(json!({"limit": 5000})).unwrap().limit, 5000);
+        assert_eq!(http(json!({"limit": 0})).unwrap().limit, 0);
+        assert_eq!(mcp(json!({"limit": 0})).unwrap().limit, 0);
+    }
+
+    #[test]
+    fn disagreement_bad_types() {
+        // HTTP rejects at the serde layer; MCP silently falls back.
+        assert!(serde_json::from_value::<ListParams>(json!({"limit": "x"})).is_err());
+        assert!(serde_json::from_value::<ListParams>(json!({"limit": -1})).is_err());
+        assert_eq!(mcp(json!({"limit": "x"})).unwrap().limit, 20);
+        assert_eq!(mcp(json!({"limit": -1})).unwrap().limit, 20);
+    }
+
+    #[test]
+    fn at_and_include_meta_are_http_only() {
+        let h = http(json!({"at": "2026-06-01T14:00:00+02:00", "include_meta": true})).unwrap();
+        assert_eq!(h.at.unwrap().to_rfc3339(), "2026-06-01T12:00:00+00:00");
+        assert!(h.include_meta);
+        assert!(!h.wants_envelope());
+        let m = mcp(json!({"at": "2026-06-01T12:00:00Z", "include_meta": true})).unwrap();
+        assert_eq!((m.at, m.include_meta), (None, false));
+        assert_eq!(
+            http(json!({"at": "bad"})).unwrap_err(),
+            "Invalid 'at' timestamp: bad. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+        );
+    }
+
+    #[test]
+    fn cli_via_server_body_decodes_under_the_http_policy() {
+        let body = uteke_core::ListInput {
+            tag: Some("t".into()),
+            limit: Some(5000),
+            offset: Some(2),
+            namespace: Some("default".into()),
+            at: Some("2026-06-01T12:00:00Z".into()),
+            ..uteke_core::ListInput::default()
+        }
+        .to_http_body();
+        let t = http(body).unwrap();
+        assert_eq!(t.limit, 1000);
+        assert_eq!(t.offset, 2);
+        assert_eq!(t.namespace.as_deref(), Some("default"));
+        assert!(t.at.is_some());
     }
 }

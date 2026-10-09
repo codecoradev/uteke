@@ -335,15 +335,15 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             at,
             ..
         } => {
-            let mut body = serde_json::json!({
-                "tag": tag,
-                "limit": limit,
-                "offset": offset,
-                "namespace": ns
-            });
-            if let Some(a) = at {
-                body["at"] = serde_json::json!(a);
+            let body = uteke_core::ListInput {
+                tag: tag.clone(),
+                limit: Some(*limit),
+                offset: Some(*offset),
+                namespace: Some(ns.to_string()),
+                at: at.clone(),
+                ..uteke_core::ListInput::default()
             }
+            .to_http_body();
             let resp = client
                 .post(format!("{server_url}/list"))
                 .json(&body)
