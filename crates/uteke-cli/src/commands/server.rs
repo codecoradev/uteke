@@ -255,40 +255,26 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 );
                 return Err("unsupported".to_string());
             }
-            let mut body = serde_json::json!({
-                "query": query,
-                "limit": limit,
-                "tags": tags,
-                "namespace": ns
-            });
-            if let Some(e) = entity {
-                body["entity"] = serde_json::json!(e);
+            // The typed recall request shared with HTTP and MCP (#1343) builds
+            // the body; the server validates and applies its own policy.
+            let body = uteke_core::RecallInput {
+                query: query.clone(),
+                limit: Some(*limit),
+                tags: Some(tags.clone()),
+                namespace: Some(ns.to_string()),
+                entity: entity.clone(),
+                category: category.clone(),
+                min_score: *min,
+                strict: *strict,
+                at: at.clone(),
+                search_type: r#type.clone(),
+                enrich: *enrich,
+                pack: *pack,
+                budget_chars: Some(*budget),
+                exclude_ids: exclude_ids.clone(),
+                ..uteke_core::RecallInput::default()
             }
-            if let Some(c) = category {
-                body["category"] = serde_json::json!(c);
-            }
-            if let Some(m) = min {
-                body["min_score"] = serde_json::json!(m);
-            }
-            if *strict {
-                body["strict"] = serde_json::json!(true);
-            }
-            if let Some(a) = at {
-                body["at"] = serde_json::json!(a);
-            }
-            if let Some(t) = r#type {
-                body["search_type"] = serde_json::json!(t);
-            }
-            if *enrich {
-                body["enrich"] = serde_json::json!(true);
-            }
-            if *pack {
-                body["pack"] = serde_json::json!(true);
-                body["budget_chars"] = serde_json::json!(budget);
-                if !exclude_ids.is_empty() {
-                    body["exclude_ids"] = serde_json::json!(exclude_ids);
-                }
-            }
+            .to_http_body();
             let resp = client
                 .post(format!("{server_url}/recall"))
                 .json(&body)

@@ -1155,44 +1155,59 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
-fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+/// Decode the arguments of `uteke_recall` into the typed request shared with
+/// the HTTP server and the CLI (#1343), under the MCP policy: no limit cap,
+/// blank queries accepted, `tags: []` kept as a filter. The tool exposes no
+/// entity/category/enrich/at/after/before/strict, so those stay unset.
+pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
-    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
-    let namespace = args["namespace"].as_str();
+    let input = uteke_core::RecallInput {
+        query: query.to_string(),
+        limit: args["limit"].as_u64().map(|l| l as usize),
+        tags: args["tags"].as_array().map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        }),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        min_score: args["min_score"].as_f64().map(|m| m as f32),
+        search_type: args["type"].as_str().map(str::to_string),
+        pack: args["pack"].as_bool().unwrap_or(false),
+        budget_chars: args["budget_chars"].as_u64().map(|b| b as usize),
+        exclude_ids: args["exclude_ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        strategy: args["strategy"].as_str().map(str::to_string),
+        explain: args["explain"].as_bool().unwrap_or(false),
+        ..uteke_core::RecallInput::default()
+    };
+    uteke_core::RecallRequest::decode(input, uteke_core::RecallPolicy::MCP)
+        .map_err(|e| e.to_string())
+}
+
+fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let req = decode_recall_args(args)?;
+    let query = req.query.as_str();
+    let limit = req.limit;
+    let namespace = req.namespace.as_deref();
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
-    let tags_filter: Option<Vec<&str>> = args["tags"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>());
-    let tags_ref = tags_filter.as_deref();
-    let min_score = args["min_score"].as_f64().unwrap_or(0.0) as f32;
+    let tag_vec = req.tag_filter();
+    let tags_ref = tag_vec.as_deref();
+    let min_score = req.resolve_min_score(None, None);
 
     // Parse optional search type (#531)
-    let search_type = match args["type"].as_str() {
-        Some("memory") => uteke_core::SearchType::Memory,
-        Some("doc") => uteke_core::SearchType::Document,
-        Some("all") | None => uteke_core::SearchType::All,
-        Some(other) => {
-            return Err(format!(
-                "Invalid search type: '{other}'. Use 'all', 'memory', or 'doc'."
-            ));
-        }
-    };
+    let search_type = req.search_type().map_err(|e| e.to_string())?;
 
     // Parse optional recall strategy (#1035): default fusion since 0.16.0
     // (#1123), matching the CLI and HTTP defaults. Unknown values are a loud
     // error (JSON-RPC -32603), never a silent fallback.
-    let strategy = match args["strategy"].as_str() {
-        Some(name) => match uteke_core::RecallStrategy::from_str_opt(name) {
-            Some(s) => s,
-            None => {
-                return Err(format!(
-                    "Invalid strategy: '{name}'. Use 'vector', 'fts5', 'hybrid', 'graph', or 'fusion'."
-                ));
-            }
-        },
-        None => uteke_core::RecallStrategy::Fusion,
-    };
+    let strategy = req.strategy(None).map_err(|e| e.to_string())?;
 
     // Explain mode (#1160): memory-only, bypasses unified results and
     // returns full ranking signals per result. An omitted `type` (the
@@ -1234,16 +1249,9 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // ContextPack envelope (selected/skipped/budget_used/budget_chars)
     // instead of a bare ranked list. Deterministic, LLM-free, rank-order
     // preserving; `exclude_ids` are memory IDs already injected this turn.
-    if args["pack"].as_bool().unwrap_or(false) {
-        let budget = args["budget_chars"].as_u64().unwrap_or(4000) as usize;
-        let exclude_ids: Vec<String> = args["exclude_ids"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
+    if req.pack {
+        let budget = req.budget_chars_or_default();
+        let exclude_ids = &req.exclude_ids;
         let pack = uteke
             .recall_unified_packed(
                 query,
@@ -1257,7 +1265,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 false,
                 strategy,
                 budget,
-                &exclude_ids,
+                exclude_ids,
             )
             .map_err(|e| format!("Failed: {e}"))?;
         if pack.selected.is_empty() {

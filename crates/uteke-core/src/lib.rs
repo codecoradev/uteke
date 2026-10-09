@@ -34,10 +34,16 @@ mod operations;
 pub mod pack_mode;
 
 pub use operations::RememberOutcome;
+pub use recall_request::{
+    RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
+    RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
+    RecallRequestError,
+};
 mod orphans;
 pub mod provenance;
 mod recall_cache;
 pub mod recall_explain;
+mod recall_request;
 mod rooms;
 pub mod rooms_segments;
 pub mod salience_recency;

@@ -286,6 +286,39 @@ pub struct RecallRequest {
     pub before: Option<String>,
 }
 
+impl RecallRequest {
+    /// Hand the wire fields to the typed request shared with MCP and the CLI
+    /// (#1343) without validating anything.
+    pub fn to_input(&self) -> uteke_core::RecallInput {
+        uteke_core::RecallInput {
+            query: self.query.clone(),
+            limit: Some(self.limit),
+            tags: Some(self.tags.clone()),
+            namespace: self.namespace.clone(),
+            entity: self.entity.clone(),
+            category: self.category.clone(),
+            min_score: self.min_score,
+            strict: self.strict,
+            at: self.at.clone(),
+            after: self.after.clone(),
+            before: self.before.clone(),
+            search_type: self.search_type.clone(),
+            enrich: self.enrich,
+            pack: self.pack,
+            budget_chars: self.budget_chars,
+            exclude_ids: self.exclude_ids.clone().unwrap_or_default(),
+            strategy: self.strategy.clone(),
+            explain: self.explain,
+        }
+    }
+
+    /// Decode under the HTTP policy: limit cap, blank-query rejection, empty
+    /// `tags` meaning "no filter", RFC3339 parsing of at/after/before.
+    pub fn decode(&self) -> Result<uteke_core::RecallRequest, uteke_core::RecallRequestError> {
+        uteke_core::RecallRequest::decode(self.to_input(), uteke_core::RecallPolicy::HTTP)
+    }
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 pub struct SearchRequest {
@@ -349,7 +382,7 @@ pub struct ErrorResponse {
 }
 
 pub fn default_limit() -> usize {
-    5
+    uteke_core::RECALL_DEFAULT_LIMIT
 }
 
 /// Document listings are not paginated like memories — callers (e.g. the Corin
@@ -486,19 +519,14 @@ pub struct RecallFileSection {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-/// Hard cap on recall/list `limit` to prevent DoS via unbounded queries (#903).
-pub const MAX_LIMIT: usize = 100;
 /// Hard cap on `limit` for list-style endpoints (`/list`, `/recent`,
 /// `/contradictions`, `/doc/list`, deprecated listing). Callers page with `offset`.
 pub const MAX_LIST_LIMIT: usize = 1000;
 /// Hard cap on request-controlled `max_facts` for `/extract` (bounds LLM cost).
 pub const MAX_EXTRACT_FACTS: usize = 100;
-/// Default strict mode threshold for server recall.
-/// Used as fallback when [recall] min_score_strict is not configured.
-pub const STRICT_THRESHOLD: f32 = 0.5;
 /// Default minimum score for server recall.
 /// Used as fallback when [recall] min_score is not configured.
-pub const DEFAULT_MIN_SCORE: f32 = 0.0;
+pub const DEFAULT_MIN_SCORE: f32 = uteke_core::RECALL_DEFAULT_MIN_SCORE;
 
 // ── Tag Management Types ─────────────────────────────────────────────────
 
@@ -881,5 +909,137 @@ mod tests {
     fn test_url_decode_utf8() {
         // %C3%A9 = é (2-byte UTF-8).
         assert_eq!(url_decode("caf%C3%A9"), "café");
+    }
+}
+
+/// #1343: the HTTP and MCP surfaces decode `recall` through the one typed
+/// request in uteke-core. Where they agree today the typed requests are equal;
+/// where they disagree the difference is pinned here so a later unification is
+/// a visible, deliberate change.
+#[cfg(test)]
+mod recall_request_cross_surface_tests {
+    use super::*;
+    use serde_json::json;
+    use uteke_core::RecallRequest as Typed;
+
+    fn http(body: serde_json::Value) -> Result<Typed, String> {
+        let wire: RecallRequest = serde_json::from_value(body).unwrap();
+        wire.decode().map_err(|e| e.to_string())
+    }
+
+    fn mcp(args: serde_json::Value) -> Result<Typed, String> {
+        uteke_mcp::decode_recall_args(&args)
+    }
+
+    #[test]
+    fn same_request_decodes_to_the_same_typed_request() {
+        // `type` is the MCP spelling of the HTTP `search_type`.
+        let http_req = http(json!({
+            "query": "deploy steps",
+            "limit": 12,
+            "namespace": "work",
+            "tags": ["ops", "prod"],
+            "min_score": 0.3,
+            "search_type": "memory",
+            "strategy": "vector",
+            "pack": true,
+            "budget_chars": 800,
+            "exclude_ids": ["a", "b"],
+            "explain": false,
+        }))
+        .unwrap();
+        let mcp_req = mcp(json!({
+            "query": "deploy steps",
+            "limit": 12,
+            "namespace": "work",
+            "tags": ["ops", "prod"],
+            "min_score": 0.3,
+            "type": "memory",
+            "strategy": "vector",
+            "pack": true,
+            "budget_chars": 800,
+            "exclude_ids": ["a", "b"],
+            "explain": false,
+        }))
+        .unwrap();
+        assert_eq!(http_req, mcp_req);
+    }
+
+    #[test]
+    fn minimal_request_agrees_on_limit_namespace_and_defaults() {
+        let h = http(json!({"query": "q"})).unwrap();
+        let m = mcp(json!({"query": "q"})).unwrap();
+        assert_eq!(h, m);
+        assert_eq!(h.limit, 5);
+        // Omitted namespace is "every namespace" on both, not "default".
+        assert_eq!(h.namespace, None);
+        assert_eq!(h.tags, None);
+        assert_eq!(h.budget_chars_or_default(), 4000);
+    }
+
+    #[test]
+    fn http_limit_cap_and_default_come_from_the_typed_module() {
+        assert_eq!(
+            uteke_core::RecallPolicy::HTTP.max_limit,
+            Some(uteke_core::RECALL_HTTP_MAX_LIMIT)
+        );
+        assert_eq!(uteke_core::RECALL_DEFAULT_LIMIT, default_limit());
+        assert_eq!(uteke_core::RECALL_HTTP_MAX_LIMIT, 100);
+    }
+
+    // ── Disagreements pinned as they are today (owner decision pending) ──
+
+    #[test]
+    fn disagreement_limit_cap() {
+        assert_eq!(
+            http(json!({"query": "q", "limit": 5000})).unwrap().limit,
+            100
+        );
+        assert_eq!(
+            mcp(json!({"query": "q", "limit": 5000})).unwrap().limit,
+            5000
+        );
+    }
+
+    #[test]
+    fn disagreement_blank_query() {
+        assert_eq!(
+            http(json!({"query": "  "})).unwrap_err(),
+            "Query must not be empty or whitespace-only"
+        );
+        assert!(mcp(json!({"query": "  "})).is_ok());
+    }
+
+    #[test]
+    fn disagreement_empty_tags() {
+        assert_eq!(http(json!({"query": "q", "tags": []})).unwrap().tags, None);
+        assert_eq!(
+            mcp(json!({"query": "q", "tags": []})).unwrap().tags,
+            Some(vec![])
+        );
+    }
+
+    #[test]
+    fn mcp_query_is_required() {
+        assert_eq!(mcp(json!({})).unwrap_err(), "Missing 'query'");
+    }
+
+    #[test]
+    fn cli_via_server_body_decodes_under_the_http_policy() {
+        let body = uteke_core::RecallInput {
+            query: "q".into(),
+            limit: Some(500),
+            tags: Some(vec![]),
+            namespace: Some("default".into()),
+            pack: true,
+            budget_chars: Some(4000),
+            ..uteke_core::RecallInput::default()
+        }
+        .to_http_body();
+        let t = http(body).unwrap();
+        assert_eq!(t.limit, 100);
+        assert_eq!(t.namespace.as_deref(), Some("default"));
+        assert_eq!(t.tags, None);
+        assert!(t.pack);
     }
 }

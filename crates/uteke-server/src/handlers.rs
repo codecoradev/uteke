@@ -323,122 +323,47 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Recall (semantic search) ────────────────────────────────────
         (Method::Post, "/recall") => match read_body::<RecallRequest>(req.as_reader()) {
             Ok(req_data) => {
-                // #907: Reject empty/whitespace queries — they return misleading
-                // results (top-N by recency, not relevance).
-                if req_data.query.trim().is_empty() {
-                    return ctx.error_response_for(
-                        req,
-                        400,
-                        "Query must not be empty or whitespace-only",
-                    );
-                }
-                // #903: Cap limit to prevent DoS via unbounded queries.
-                let limit = req_data.limit.min(MAX_LIMIT);
-
-                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
-                let tags_filter = if tag_refs.is_empty() {
-                    None
-                } else {
-                    Some(tag_refs.as_slice())
+                // Defaults, the limit cap (#903), the blank-query rejection (#907)
+                // and the RFC3339 parsing of at/after/before live in the typed
+                // request shared with MCP and the CLI (#1343).
+                let typed = match req_data.decode() {
+                    Ok(t) => t,
+                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                 };
-                // Resolve threshold: min_score > strict (→ from config or default 0.5) > 0.0
-                // Server reads [recall] section from uteke.toml, matching CLI behavior.
-                let min_score = if req_data.strict {
-                    req_data.min_score.unwrap_or(
-                        ctx.recall_config
-                            .as_ref()
-                            .and_then(|r| r.min_score_strict)
-                            .unwrap_or(STRICT_THRESHOLD as f64) as f32,
-                    )
-                } else {
-                    req_data.min_score.unwrap_or(
-                        ctx.recall_config
-                            .as_ref()
-                            .and_then(|r| r.min_score)
-                            .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
-                    )
-                };
+                let limit = typed.limit;
+                let tag_vec = typed.tag_filter();
+                let tags_filter = tag_vec.as_deref();
+                // Threshold: min_score > [recall] min_score(_strict) > built-in
+                // (strict 0.5, otherwise 0.0).
+                let min_score = typed.resolve_min_score(
+                    ctx.recall_config.as_ref().and_then(|r| r.min_score),
+                    ctx.recall_config.as_ref().and_then(|r| r.min_score_strict),
+                );
                 // Entity/category filters are now pushed into the core recall
                 // candidate loop (#663) — no 10x fetch amplification needed.
 
-                // Time-travel mode: parse --at and use recall_at_time
-                let point_in_time = match req_data.at.as_deref() {
-                    Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
-                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                    req,
-                                    400,
-                                    format!(
-                                        "Invalid 'at' timestamp: {at_str}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
-                                    ),
-                                );
-                        }
-                    },
-                    None => None,
-                };
+                // Time-travel mode: recall_at_time
+                let point_in_time = typed.at;
 
                 let entity_filter = req_data.entity.as_deref();
                 let category_filter = req_data.category.as_deref();
 
-                // #902: Parse temporal range filters (before/after RFC3339).
-                let after_ts = match req_data.after.as_deref() {
-                    Some(ts) => match chrono::DateTime::parse_from_rfc3339(ts) {
-                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid 'after' timestamp: {ts}. Use RFC3339 format (e.g. 2026-01-01T00:00:00Z)"
-                                ),
-                            );
-                        }
-                    },
-                    None => None,
-                };
-                let before_ts = match req_data.before.as_deref() {
-                    Some(ts) => match chrono::DateTime::parse_from_rfc3339(ts) {
-                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid 'before' timestamp: {ts}. Use RFC3339 format (e.g. 2026-01-01T00:00:00Z)"
-                                ),
-                            );
-                        }
-                    },
-                    None => None,
-                };
+                // #902: temporal range filters (before/after).
+                let after_ts = typed.after;
+                let before_ts = typed.before;
                 let has_temporal = after_ts.is_some() || before_ts.is_some();
 
                 // Resolve recall strategy ONCE for every path (#1034):
                 // request `strategy` > config `[recall] default_strategy` >
                 // Hybrid — matching the CLI default. Unknown values are a
                 // loud 400 on all paths, never a silent no-op.
-                let strategy_name = req_data.strategy.as_deref().or_else(|| {
+                let strategy = match typed.strategy(
                     ctx.recall_config
                         .as_ref()
-                        .and_then(|r| r.default_strategy.as_deref())
-                });
-                let strategy = match strategy_name {
-                    Some(name) => match uteke_core::RecallStrategy::from_str_opt(name) {
-                        Some(s) => s,
-                        None => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid strategy: '{name}'. Use 'vector', 'fts5', 'hybrid', 'graph', or 'fusion'."
-                                ),
-                            );
-                        }
-                    },
-                    // Implicit default since 0.16.0 (#1123): fusion.
-                    // Matches the core enum default and CLI default_strategy.
-                    None => uteke_core::RecallStrategy::Fusion,
+                        .and_then(|r| r.default_strategy.as_deref()),
+                ) {
+                    Ok(s) => s,
+                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                 };
 
                 // Explain mode (#1160): memory-only recall with per-result
@@ -500,21 +425,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             "pack is not supported with at/after/before filters; rerun without time filters",
                         );
                     }
-                    let parsed_search_type = match req_data.search_type.as_deref() {
-                        Some("memory") => uteke_core::SearchType::Memory,
-                        Some("doc") => uteke_core::SearchType::Document,
-                        Some("all") | None => uteke_core::SearchType::All,
-                        Some(other) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
-                                ),
-                            );
-                        }
+                    let parsed_search_type = match typed.search_type() {
+                        Ok(t) => t,
+                        Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                     };
-                    let exclude_ids = req_data.exclude_ids.clone().unwrap_or_default();
+                    let exclude_ids = typed.exclude_ids.clone();
                     return match uteke.recall_unified_packed(
                         &req_data.query,
                         limit,
@@ -526,7 +441,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         category_filter,
                         req_data.enrich,
                         strategy,
-                        req_data.budget_chars.unwrap_or(4000),
+                        typed.budget_chars_or_default(),
                         &exclude_ids,
                     ) {
                         Ok(pack) => ctx.ok_response_for(req, &pack),
@@ -541,19 +456,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 // use recall_unified. Entity/category filters are passed
                 // through to the core recall candidate loop (#663).
                 let unified_result = if req_data.search_type.is_some() && point_in_time.is_none() {
-                    let search_type = match req_data.search_type.as_deref() {
-                        Some("memory") => uteke_core::SearchType::Memory,
-                        Some("doc") => uteke_core::SearchType::Document,
-                        Some("all") | None => uteke_core::SearchType::All,
-                        Some(other) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
-                                ),
-                            );
-                        }
+                    let search_type = match typed.search_type() {
+                        Ok(t) => t,
+                        Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                     };
                     Some(uteke.recall_unified(
                         &req_data.query,
