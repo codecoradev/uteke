@@ -4,8 +4,8 @@
 //! from GitHub, download, verify checksum, replace the running binary.
 
 use std::fs;
-use std::io::{self, BufRead, Write};
-use std::path::PathBuf;
+use std::io::{self, BufRead, Read, Write};
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -13,6 +13,17 @@ const REPO: &str = "codecoradev/uteke";
 const BINARY_NAME: &str = "uteke";
 const SERVER_BINARY_NAME: &str = "uteke-serve";
 const MCP_BINARY_NAME: &str = "uteke-mcp";
+
+/// Hard cap on the downloaded release archive (#1327). Release archives are
+/// ~10-15 MB (CLI + server + MCP binaries and the bundled ONNX Runtime libs);
+/// 128 MiB leaves roughly 8x headroom for growth while still stopping a
+/// hostile or broken mirror from filling the disk.
+const MAX_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
+
+/// Hard cap on `checksums-sha256.txt` (#1327). The real file is a few hundred
+/// bytes (one line per artifact); 1 MiB is generous and keeps the in-memory
+/// read bounded.
+const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024;
 
 /// Entry point for `uteke upgrade`.
 pub fn run(yes: bool) -> Result<(), String> {
@@ -70,6 +81,14 @@ pub fn run(yes: bool) -> Result<(), String> {
     // 7. Build target and download
     let target = get_target(&os, &arch)?;
 
+    // The tag ends up in the URL and the file name: re-validate it here so
+    // no caller path can feed an unchecked value into either (#1327).
+    if !is_valid_version_tag(&latest_version) {
+        return Err(format!(
+            "Refusing unexpected version tag '{latest_version}'"
+        ));
+    }
+
     let archive_name = format!("{BINARY_NAME}-{target}-{latest_version}.tar.gz");
     let download_url =
         format!("https://github.com/{REPO}/releases/download/{latest_version}/{archive_name}");
@@ -104,9 +123,12 @@ pub fn run(yes: bool) -> Result<(), String> {
         return Err(format!("Download failed (HTTP {status}): {body}"));
     }
 
+    // Cheap early reject from the header, then enforce the cap while
+    // streaming: Content-Length may be absent (chunked) or simply wrong.
+    check_declared_len(resp.content_length(), MAX_ARCHIVE_BYTES, "Release archive")?;
     let mut file = fs::File::create(&archive_path)
         .map_err(|e| format!("Failed to create archive file: {e}"))?;
-    io::copy(&mut resp, &mut file).map_err(|e| format!("Failed to write archive: {e}"))?;
+    copy_capped(&mut resp, &mut file, MAX_ARCHIVE_BYTES, "Release archive")?;
     drop(file);
 
     // 8. Verify checksum — fail-hard to prevent MITM on unchecked binaries.
@@ -122,7 +144,12 @@ pub fn run(yes: bool) -> Result<(), String> {
         .unwrap_or(false);
 
     if skip_checksum {
-        println!("[WARN] Checksum verification skipped (UTEKE_UPGRADE_SKIP_CHECKSUM=1)");
+        eprintln!("[WARN] ============================================================");
+        eprintln!("[WARN] UTEKE_UPGRADE_SKIP_CHECKSUM is set: the downloaded archive is");
+        eprintln!("[WARN] NOT verified. A corrupted, tampered or malicious download will");
+        eprintln!("[WARN] be installed and executed as-is. Unset it unless you fully");
+        eprintln!("[WARN] trust the network path and the release source.");
+        eprintln!("[WARN] ============================================================");
     } else {
         let checksums_resp = client.get(&checksums_url).send().map_err(|e| {
             format!("Failed to download checksums: {e}. Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to skip.")
@@ -137,9 +164,21 @@ pub fn run(yes: bool) -> Result<(), String> {
             ));
         }
 
-        let checksums_text = checksums_resp
-            .text()
-            .map_err(|e| format!("Failed to read checksums body: {e}"))?;
+        check_declared_len(
+            checksums_resp.content_length(),
+            MAX_CHECKSUMS_BYTES,
+            "Checksums file",
+        )?;
+        let mut checksums_resp = checksums_resp;
+        let mut checksums_buf: Vec<u8> = Vec::new();
+        copy_capped(
+            &mut checksums_resp,
+            &mut checksums_buf,
+            MAX_CHECKSUMS_BYTES,
+            "Checksums file",
+        )?;
+        let checksums_text = String::from_utf8(checksums_buf)
+            .map_err(|e| format!("Checksums file is not valid UTF-8: {e}"))?;
 
         let expected = parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
             format!(
@@ -172,8 +211,7 @@ pub fn run(yes: bool) -> Result<(), String> {
         let path = entry
             .path()
             .map_err(|e| format!("Archive path error: {e}"))?;
-        let path_str = path.to_string_lossy();
-        if path_str.starts_with('/') || path_str.contains("..") {
+        if !is_safe_archive_path(&path) {
             return Err(
                 "Archive contains unsafe paths (absolute or directory traversal) — refusing to extract"
                     .to_string(),
@@ -524,14 +562,62 @@ fn parse_tag_from_location(loc: &str) -> Option<String> {
 }
 
 /// A version tag looks like `v0.19.0` / `0.19.0` (optional suffix after `-`).
+/// The whole tag (suffix included) is restricted to `[0-9A-Za-z.-]` because it
+/// is interpolated into the download URL and the archive file name (#1327).
 fn is_valid_version_tag(tag: &str) -> bool {
     let numeric = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
-    let mut parts = tag.trim_start_matches('v').split('.');
+    if !tag
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return false;
+    }
+    let mut parts = tag.strip_prefix('v').unwrap_or(tag).split('.');
     let major = parts.next().unwrap_or_default();
     let minor = parts.next().unwrap_or_default();
     let patch_raw = parts.next().unwrap_or_default();
     let (patch, _) = patch_raw.split_once('-').unwrap_or((patch_raw, ""));
     numeric(major) && numeric(minor) && numeric(patch)
+}
+
+/// Reject a download whose declared size already exceeds `max`.
+/// `None` (no Content-Length) passes: [`copy_capped`] still enforces the cap.
+fn check_declared_len(declared: Option<u64>, max: u64, what: &str) -> Result<(), String> {
+    match declared {
+        Some(n) if n > max => Err(format!(
+            "{what} is too large ({n} bytes declared, limit {max}) — refusing to download"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Copy `reader` into `writer`, failing as soon as more than `max` bytes
+/// arrive. Independent of any Content-Length header, so a missing or lying
+/// header cannot bypass the cap. Returns the number of bytes copied.
+fn copy_capped<R: Read, W: Write>(
+    reader: &mut R,
+    writer: &mut W,
+    max: u64,
+    what: &str,
+) -> Result<u64, String> {
+    // Read at most max+1 bytes: getting the extra byte proves the overflow.
+    let copied = io::copy(&mut reader.take(max.saturating_add(1)), writer)
+        .map_err(|e| format!("Failed to write {what}: {e}"))?;
+    if copied > max {
+        return Err(format!(
+            "{what} exceeds the size limit of {max} bytes — aborting download"
+        ));
+    }
+    Ok(copied)
+}
+
+/// Component-based check for an archive entry path: only normal components
+/// (and `.`) are allowed. Absolute paths, drive prefixes and any `..`
+/// component are rejected, so the entry cannot resolve outside the target dir.
+/// Names that merely contain dots (`a..b`) are fine.
+fn is_safe_archive_path(path: &Path) -> bool {
+    path.components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
 fn parse_checksum(checksums_text: &str, archive_name: &str) -> Option<String> {
@@ -614,6 +700,73 @@ mod tests {
         assert!(!is_valid_version_tag(""));
         assert!(!is_valid_version_tag("v1"));
         assert!(!is_valid_version_tag("v.alpha"));
+    }
+
+    #[test]
+    fn version_tag_suffix_is_restricted_to_url_safe_chars() {
+        // Previously accepted: the suffix after `-` was never inspected.
+        assert!(!is_valid_version_tag("v1.2.3-../../evil"));
+        assert!(!is_valid_version_tag("v1.2.3-rc/1"));
+        assert!(!is_valid_version_tag("v1.2.3-rc 1"));
+        assert!(!is_valid_version_tag("v1.2.3-rc?x=1"));
+        assert!(!is_valid_version_tag("v1.2.3-rc\\1"));
+        assert!(!is_valid_version_tag("vv1.2.3"));
+        assert!(is_valid_version_tag("v1.2.3-rc.1"));
+        assert!(is_valid_version_tag("v1.2.3-Beta-2"));
+    }
+
+    #[test]
+    fn copy_capped_enforces_limit_without_content_length() {
+        let data = [7u8; 100];
+        let mut out = Vec::new();
+        assert_eq!(
+            copy_capped(&mut &data[..], &mut out, 100, "x").unwrap(),
+            100
+        );
+        assert_eq!(out.len(), 100);
+
+        let mut out = Vec::new();
+        let err = copy_capped(&mut &data[..], &mut out, 99, "Release archive").unwrap_err();
+        assert!(
+            err.contains("Release archive") && err.contains("99"),
+            "{err}"
+        );
+        // Streaming stopped at the cap + 1 byte, not the whole body.
+        assert_eq!(out.len(), 100);
+        let big = [0u8; 10_000];
+        let mut out = Vec::new();
+        assert!(copy_capped(&mut &big[..], &mut out, 10, "x").is_err());
+        assert_eq!(out.len(), 11);
+    }
+
+    #[test]
+    fn declared_length_over_the_cap_is_rejected() {
+        assert!(check_declared_len(Some(10), 10, "x").is_ok());
+        assert!(check_declared_len(None, 10, "x").is_ok());
+        let err = check_declared_len(Some(11), 10, "Checksums file").unwrap_err();
+        assert!(
+            err.contains("Checksums file") && err.contains("too large"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn archive_path_check_is_component_based() {
+        let ok = |p: &str| is_safe_archive_path(Path::new(p));
+        // Layouts the release bundles use today.
+        assert!(ok("uteke"));
+        assert!(ok("./uteke"));
+        assert!(ok("libonnxruntime.so.1.22.0"));
+        assert!(ok("dir/uteke-serve"));
+        // Dots inside a name are not traversal (the old `contains("..")` refused these).
+        assert!(ok("uteke..bak"));
+        assert!(ok("lib..so"));
+        // Unsafe.
+        assert!(!ok("/etc/passwd"));
+        assert!(!ok("../evil"));
+        assert!(!ok("a/../../evil"));
+        assert!(!ok("a/.."));
+        assert!(!ok(".."));
     }
 
     #[test]
