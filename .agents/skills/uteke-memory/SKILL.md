@@ -317,6 +317,15 @@ Keep the three axes distinct so recall stays filterable:
   and write back the merged list; there is no bulk add-tag operation.
 - `uteke namespace rename` changes only the memories' namespace, not the `rooms` table.
 
+### Conventions first
+
+Before you write a memory in a workspace you have not used before, check whether
+it already has a memory convention: a room or document named like `*conventions*`
+(`uteke room list`, `uteke doc search conventions`), or the project's `AGENTS.md` /
+`CLAUDE.md`. If one exists, follow it (namespace, room, tags). If none exists, use
+the defaults: one fact per memory, no secrets or credentials, tag it with the
+project name.
+
 ### What to store
 
 Store only what is worth recalling again: decisions with their reason, causes of

@@ -63,6 +63,7 @@ pub fn recall_guide(available_tools: &[MemoryTool], max_searches: u32) -> String
 - If context is insufficient, use `{recall_tool}` for deeper retrieval.
 - **Max {max} search call(s) per turn.** If {max} search(es) yield nothing relevant, the information is likely not stored — answer with available context.
 - Use `{remember_tool}` only for genuinely new facts, decisions, or preferences — not for re-stating what's already stored.
+- **Conventions first.** Before you write a memory, check whether this workspace has a memory convention: look for a room or document named like `*conventions*` (`uteke_room_list` with `name`, or `uteke_doc_search`), or the project's AGENTS.md / CLAUDE.md. If one exists, follow it (namespace, room, tags). If none exists, use the defaults: one fact per memory, no secrets or credentials, tag it with the project name.
 </memory-tools-guide>"#,
         tools_section = tools_section,
         recall_tool = available_tools
@@ -78,6 +79,10 @@ pub fn recall_guide(available_tools: &[MemoryTool], max_searches: u32) -> String
         max = max_searches,
     )
 }
+
+/// The workspace-independent "conventions first" rule (#1395), reused by the
+/// MCP `initialize` instructions so the wording cannot drift from the guide.
+pub const CONVENTIONS_FIRST: &str = "Conventions first. Before you write a memory, check whether this workspace has a memory convention: look for a room or document named like `*conventions*` (`uteke_room_list` with `name`, or `uteke_doc_search`), or the project's AGENTS.md / CLAUDE.md. If one exists, follow it (namespace, room, tags). If none exists, use the defaults: one fact per memory, no secrets or credentials, tag it with the project name.";
 
 /// Convenience: the default guide with all four tools and max 3 searches.
 pub fn default_guide() -> String {
@@ -117,6 +122,18 @@ mod tests {
         assert!(guide.contains("uteke_recall"));
         assert!(!guide.contains("uteke_search"));
         assert!(guide.contains("Max 2 search"));
+    }
+
+    #[test]
+    fn test_guide_carries_the_conventions_first_rule() {
+        let rule = CONVENTIONS_FIRST;
+        // The guide bullet is the constant with a bold lead-in, so the two
+        // cannot drift apart.
+        let bullet = rule.replacen("Conventions first.", "**Conventions first.**", 1);
+        assert!(default_guide().contains(&bullet));
+        assert!(rule.contains("no secrets"));
+        // never tied to one owner's room name
+        assert!(!rule.contains("uteke-conventions"));
     }
 
     #[test]

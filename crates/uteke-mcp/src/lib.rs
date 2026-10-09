@@ -132,7 +132,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
             "serverInfo": {
                 "name": "uteke",
                 "version": env!("CARGO_PKG_VERSION")
-            }
+            },
+            "instructions": initialize_instructions()
         })),
 
         "notifications/initialized" => Ok(Value::Null),
@@ -785,6 +786,15 @@ fn tool_room_create() -> Value {
             "required": ["room_id"]
         }
     })
+}
+
+/// Short, workspace-independent guidance sent with `initialize` (#1395).
+/// The full tool guide stays behind `uteke guide`.
+fn initialize_instructions() -> String {
+    format!(
+        "{} Run `uteke guide` for the full memory tools guide.",
+        uteke_core::guide::CONVENTIONS_FIRST
+    )
 }
 
 fn tool_room_list() -> Value {
@@ -3468,5 +3478,21 @@ mod room_list_filter_tests {
         let tool = tool_room_list();
         assert!(tool["inputSchema"]["properties"]["name"].is_object());
         assert!(tool["inputSchema"]["properties"]["namespace"].is_object());
+    }
+}
+
+#[cfg(test)]
+mod initialize_instructions_tests {
+    //! #1395 — `initialize` carries the conventions-first rule.
+    use super::*;
+
+    #[test]
+    fn instructions_carry_the_rule_and_point_to_the_full_guide() {
+        let text = initialize_instructions();
+        assert!(text.starts_with("Conventions first."));
+        assert!(text.contains("no secrets"));
+        assert!(text.contains("uteke guide"));
+        // short on purpose: the whole guide is not injected into every client
+        assert!(text.len() < 800, "{} chars", text.len());
     }
 }
