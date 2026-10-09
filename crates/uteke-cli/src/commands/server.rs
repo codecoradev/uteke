@@ -149,54 +149,29 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             source_type,
             timestamp,
         } => {
-            let mut body = serde_json::json!({
-                "content": content,
-                "tags": tags,
-                "namespace": ns
-            });
-            if let Some(ts) = timestamp {
-                body["timestamp"] = serde_json::json!(ts);
+            // The typed remember request shared with HTTP and MCP (#1343)
+            // builds the body; the server validates and applies its policy.
+            // entity/category/--meta travel inside `metadata`.
+            let body = uteke_core::RememberInput {
+                content: content.clone(),
+                tags: tags.clone(),
+                namespace: Some(ns.to_string()),
+                memory_type: Some(r#type.clone()),
+                detect_contradiction: *detect_contradiction,
+                metadata: uteke_core::metadata_from_cli_flags(
+                    entity.as_deref(),
+                    category.as_deref(),
+                    meta,
+                ),
+                source: source.clone(),
+                source_type: source_type.clone(),
+                author_type: author_type.clone(),
+                room: room.clone(),
+                author: author.clone(),
+                timestamp: timestamp.clone(),
+                ..uteke_core::RememberInput::default()
             }
-            if let Some(at) = author_type {
-                body["author_type"] = serde_json::json!(at);
-            }
-            if !r#type.is_empty() {
-                body["type"] = serde_json::json!(r#type);
-            }
-            if *detect_contradiction {
-                body["detect_contradiction"] = serde_json::json!(true);
-            }
-            // Build metadata from entity/category/meta flags
-            let mut meta_map = serde_json::Map::new();
-            if let Some(e) = entity {
-                meta_map.insert("entity".to_string(), serde_json::Value::String(e.clone()));
-            }
-            if let Some(c) = category {
-                meta_map.insert("category".to_string(), serde_json::Value::String(c.clone()));
-            }
-            for pair in meta {
-                if let Some((key, value)) = pair.split_once(':') {
-                    meta_map.insert(
-                        key.to_string(),
-                        serde_json::Value::String(value.to_string()),
-                    );
-                }
-            }
-            if !meta_map.is_empty() {
-                body["metadata"] = serde_json::Value::Object(meta_map);
-            }
-            if let Some(room_id) = room {
-                body["room"] = serde_json::json!(room_id);
-            }
-            if let Some(author_name) = author {
-                body["author"] = serde_json::json!(author_name);
-            }
-            if let Some(src) = source {
-                body["source"] = serde_json::json!(src);
-            }
-            if let Some(st) = source_type {
-                body["source_type"] = serde_json::json!(st);
-            }
+            .to_http_body();
             let resp = client
                 .post(format!("{server_url}/remember"))
                 .json(&body)

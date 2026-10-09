@@ -218,6 +218,37 @@ pub struct RememberRequest {
     pub author_type: Option<String>,
 }
 
+impl RememberRequest {
+    /// Hand the wire fields to the typed request shared with MCP and the CLI
+    /// (#1343) without validating anything.
+    pub fn to_input(&self) -> uteke_core::RememberInput {
+        uteke_core::RememberInput {
+            content: self.content.clone(),
+            tags: self.tags.clone(),
+            namespace: self.namespace.clone(),
+            memory_type: self.r#type.clone(),
+            valid_from: self.valid_from.clone(),
+            valid_until: self.valid_until.clone(),
+            detect_contradiction: self.detect_contradiction,
+            entity: self.entity.clone(),
+            category: self.category.clone(),
+            metadata: self.metadata.clone(),
+            source: self.source.clone(),
+            source_type: self.source_type.clone(),
+            author_type: self.author_type.clone(),
+            room: None,
+            author: None,
+            timestamp: None,
+        }
+    }
+
+    /// Decode under the HTTP policy: content/tags, `author_type` and `type`
+    /// validated before any write, `type` mirrored into metadata.
+    pub fn decode(&self) -> Result<uteke_core::RememberRequest, uteke_core::RememberRequestError> {
+        uteke_core::RememberRequest::decode(self.to_input(), uteke_core::RememberPolicy::HTTP)
+    }
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 pub struct RecallRequest {
@@ -1041,5 +1072,158 @@ mod recall_request_cross_surface_tests {
         assert_eq!(t.namespace.as_deref(), Some("default"));
         assert_eq!(t.tags, None);
         assert!(t.pack);
+    }
+}
+
+/// #1343: the HTTP and MCP surfaces decode `remember` through the one typed
+/// request in uteke-core. Where they agree today the typed fields are equal;
+/// where they disagree the difference is pinned here so a later unification is
+/// a visible, deliberate change.
+#[cfg(test)]
+mod remember_request_cross_surface_tests {
+    use super::*;
+    use serde_json::json;
+    use uteke_core::RememberRequest as Typed;
+
+    fn http(body: serde_json::Value) -> Result<Typed, String> {
+        let wire: RememberRequest = serde_json::from_value(body).map_err(|e| e.to_string())?;
+        wire.decode().map_err(|e| e.to_string())
+    }
+
+    fn mcp(args: serde_json::Value) -> Result<Typed, String> {
+        uteke_mcp::decode_remember_args(&args)
+    }
+
+    #[test]
+    fn same_request_agrees_on_content_tags_namespace_and_type() {
+        let h = http(json!({
+            "content": "ship it", "tags": ["ops", "prod"], "namespace": "work", "type": "decision"
+        }))
+        .unwrap();
+        let m = mcp(json!({
+            "content": "ship it", "tags": ["ops", "prod"], "namespace": "work", "type": "decision"
+        }))
+        .unwrap();
+        assert_eq!(h.content, m.content);
+        assert_eq!(h.tags, m.tags);
+        assert_eq!(h.namespace, m.namespace);
+        assert_eq!(h.memory_type, m.memory_type);
+        assert_eq!(h.memory_type.as_deref(), Some("decision"));
+        assert_eq!(h.namespace.as_deref(), Some("work"));
+        assert!(!h.detect_contradiction && !m.detect_contradiction);
+        assert_eq!((h.source, h.author_type), (m.source, m.author_type));
+    }
+
+    #[test]
+    fn omitted_namespace_is_none_on_both() {
+        assert_eq!(http(json!({"content": "x"})).unwrap().namespace, None);
+        assert_eq!(mcp(json!({"content": "x"})).unwrap().namespace, None);
+    }
+
+    // ── Disagreements pinned as they are today (owner decision pending) ──
+
+    #[test]
+    fn disagreement_omitted_type() {
+        // HTTP: auto-inference. MCP: stored as `fact`, no inference.
+        assert_eq!(http(json!({"content": "x"})).unwrap().memory_type, None);
+        assert_eq!(
+            mcp(json!({"content": "x"})).unwrap().memory_type.as_deref(),
+            Some("fact")
+        );
+    }
+
+    #[test]
+    fn disagreement_type_copied_to_metadata() {
+        let t = json!({"content": "x", "type": "note"});
+        assert_eq!(
+            http(t.clone()).unwrap().metadata,
+            Some(json!({"type": "note"}))
+        );
+        assert_eq!(mcp(t).unwrap().metadata, None);
+    }
+
+    #[test]
+    fn disagreement_validation_point() {
+        assert_eq!(
+            http(json!({"content": " "})).unwrap_err(),
+            "Validation error: Content must not be empty"
+        );
+        assert!(mcp(json!({"content": " "})).is_ok());
+        assert!(http(json!({"content": "x", "type": "bogus"})).is_err());
+        assert!(mcp(json!({"content": "x", "type": "bogus"})).is_ok());
+    }
+
+    #[test]
+    fn disagreement_tags_wire_shape() {
+        // MCP drops non-string tags; HTTP rejects the body.
+        assert_eq!(
+            mcp(json!({"content": "x", "tags": ["a", 1, "b"]}))
+                .unwrap()
+                .tags,
+            vec!["a", "b"]
+        );
+        assert!(http(json!({"content": "x", "tags": ["a", 1]})).is_err());
+    }
+
+    #[test]
+    fn disagreement_http_only_fields_and_mcp_only_fields() {
+        let h = http(json!({"content": "x", "entity": "e", "source": "s"})).unwrap();
+        assert_eq!(h.metadata, Some(json!({"entity": "e"})));
+        assert_eq!(h.source.as_deref(), Some("s"));
+        // MCP ignores them; `room` and `author` are MCP-only (HTTP: unknown key).
+        let m =
+            mcp(json!({"content": "x", "entity": "e", "source": "s", "room": "r", "author": "a"}))
+                .unwrap();
+        assert_eq!(m.metadata, None);
+        assert_eq!(m.source, None);
+        assert_eq!(m.room.as_deref(), Some("r"));
+        assert_eq!(m.author.as_deref(), Some("a"));
+        assert!(http(json!({"content": "x", "room": "r"})).is_err());
+    }
+
+    #[test]
+    fn mcp_content_is_required() {
+        assert_eq!(mcp(json!({})).unwrap_err(), "Missing 'content'");
+    }
+
+    #[test]
+    fn cli_via_server_body_decodes_under_the_http_policy() {
+        let body = uteke_core::RememberInput {
+            content: "note".into(),
+            tags: vec!["a".into()],
+            namespace: Some("default".into()),
+            memory_type: Some("procedure".into()),
+            detect_contradiction: true,
+            metadata: Some(json!({"entity": "e"})),
+            source: Some("s".into()),
+            ..uteke_core::RememberInput::default()
+        }
+        .to_http_body();
+        let t = http(body).unwrap();
+        assert_eq!(t.content, "note");
+        assert_eq!(t.namespace.as_deref(), Some("default"));
+        assert_eq!(t.memory_type.as_deref(), Some("procedure"));
+        assert!(t.detect_contradiction);
+        assert_eq!(
+            t.metadata,
+            Some(json!({"type": "procedure", "entity": "e"}))
+        );
+    }
+
+    #[test]
+    fn cli_room_author_and_timestamp_are_rejected_by_the_server_today() {
+        for field in ["room", "author", "timestamp"] {
+            let mut input = uteke_core::RememberInput {
+                content: "x".into(),
+                ..uteke_core::RememberInput::default()
+            };
+            match field {
+                "room" => input.room = Some("r".into()),
+                "author" => input.author = Some("a".into()),
+                _ => input.timestamp = Some("t".into()),
+            }
+            let err = http(input.to_http_body()).unwrap_err();
+            assert!(err.contains(field), "{field}: {err}");
+        }
     }
 }

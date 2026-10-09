@@ -1110,16 +1110,43 @@ fn tool_graph_remove_edge() -> Value {
 
 // ── Tool Executors ──────────────────────────────────────────────────────────
 
-fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+/// Decode the arguments of `uteke_remember` into the typed request shared
+/// with the HTTP server and the CLI (#1343), under the MCP policy: content and
+/// tags validated by the core write, `type` defaulting to `fact` with no
+/// auto-inference, no metadata. Tags that are not strings are dropped. The
+/// tool exposes no entity/category/metadata/source/author_type fields, so
+/// those stay unset.
+pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest, String> {
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
-    let tags: Vec<&str> = args["tags"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    let namespace = args["namespace"].as_str();
-    let memory_type = args["type"].as_str().unwrap_or("fact");
-    let room = args["room"].as_str();
-    let author = args["author"].as_str().unwrap_or("anonymous");
+    let input = uteke_core::RememberInput {
+        content: content.to_string(),
+        tags: args["tags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        memory_type: args["type"].as_str().map(str::to_string),
+        room: args["room"].as_str().map(str::to_string),
+        author: args["author"].as_str().map(str::to_string),
+        ..uteke_core::RememberInput::default()
+    };
+    uteke_core::RememberRequest::decode(input, uteke_core::RememberPolicy::MCP)
+        .map_err(|e| e.to_string())
+}
+
+fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let req = decode_remember_args(args)?;
+    let content = req.content.as_str();
+    let tags = req.tag_refs();
+    let namespace = req.namespace.as_deref();
+    // The MCP policy always supplies a type (default `fact`).
+    let memory_type = req.memory_type.as_deref().unwrap_or("fact");
+    let room = req.room.as_deref();
+    let author = req.author.as_deref().unwrap_or("anonymous");
 
     let outcome = if let Some(room_id) = room {
         uteke
@@ -3506,5 +3533,34 @@ mod initialize_instructions_tests {
         assert!(text.contains("uteke guide"));
         // short on purpose: the whole guide is not injected into every client
         assert!(text.len() < 800, "{} chars", text.len());
+    }
+}
+
+#[cfg(test)]
+mod remember_decode_tests {
+    use super::decode_remember_args;
+    use serde_json::json;
+
+    #[test]
+    fn defaults_type_to_fact_and_author_stays_raw() {
+        let r = decode_remember_args(&json!({"content": "x"})).unwrap();
+        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+        assert_eq!(r.metadata, None);
+        assert_eq!(r.author, None);
+        assert_eq!(r.room, None);
+    }
+
+    #[test]
+    fn non_string_type_falls_back_to_fact_and_blank_content_is_accepted() {
+        let r = decode_remember_args(&json!({"content": "  ", "type": 5})).unwrap();
+        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+    }
+
+    #[test]
+    fn missing_content_message_is_unchanged() {
+        assert_eq!(
+            decode_remember_args(&json!({"tags": ["a"]})).unwrap_err(),
+            "Missing 'content'"
+        );
     }
 }
