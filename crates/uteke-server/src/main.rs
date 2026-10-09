@@ -258,7 +258,29 @@ fn main() {
 
     info!("Opening store at: {db_path}");
     let defaults = uteke_core::DreamConfig::default();
-    let uteke = match Uteke::open(&db_path) {
+    // Embedding backend + vector engine from uteke.toml / env (#1399). Fail
+    // fast on an unsupported backend instead of opening the store with a
+    // different embedder than the operator asked for.
+    let embedding = match resolve_embedding(
+        &config,
+        std::env::var("UTEKE_EMBEDDING_BACKEND").ok().as_deref(),
+    ) {
+        Ok(e) => e,
+        Err(msg) => {
+            error!("{msg}");
+            std::process::exit(1);
+        }
+    };
+    info!("Embedding backend: {}", embedding.backend);
+    let uteke = match Uteke::open_with_embedding_and_graph(
+        &db_path,
+        &embedding.backend,
+        embedding.settings,
+        uteke_core::TierConfig::default(),
+        uteke_core::RecallConfig::default(),
+        uteke_core::GraphRerankConfig::default(),
+        embedding.vector_backend.as_deref(),
+    ) {
         Ok(mut u) => {
             // Apply dream pipeline thresholds from config (#731)
             if let Some(ref dc) = config.dream {
@@ -664,6 +686,10 @@ fn main() {
 /// Minimal [server] config section for parsing uteke.toml.
 #[derive(serde::Deserialize, Default)]
 struct ServerFileConfig {
+    /// `[embedding]`: which embedder the server uses (#1399).
+    embedding: Option<EmbeddingFileSection>,
+    /// `[vector]`: which vector engine runs when both are compiled in (#1168).
+    vector: Option<VectorFileSection>,
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
@@ -673,6 +699,70 @@ struct ServerFileConfig {
     aging: Option<AgingFileSection>,
     dream: Option<DreamFileSection>,
     lifecycle: Option<LifecycleFileSection>,
+}
+
+/// `[embedding]` in uteke.toml, same keys as the CLI. Empty / missing values
+/// fall back to the backend defaults; `UTEKE_EMBEDDING_*` env vars win over
+/// these at resolve time inside the core.
+#[derive(serde::Deserialize, Default, Clone)]
+struct EmbeddingFileSection {
+    backend: Option<String>,
+    model: Option<String>,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    endpoint_path: Option<String>,
+    dims: Option<usize>,
+}
+
+/// `[vector]` in uteke.toml.
+#[derive(serde::Deserialize, Default, Clone)]
+struct VectorFileSection {
+    backend: Option<String>,
+}
+
+/// Backends `Uteke` can initialize lazily (same list as the CLI validates).
+const SUPPORTED_EMBEDDING_BACKENDS: &[&str] = &["onnx", "openai", "ollama"];
+
+/// What the server opens the store with.
+struct EmbeddingResolution {
+    backend: String,
+    settings: uteke_core::EmbeddingSettings,
+    vector_backend: Option<String>,
+}
+
+/// Resolve the embedder: `UTEKE_EMBEDDING_BACKEND` (non-empty) wins over
+/// `[embedding] backend`, which wins over the `onnx` default. An unsupported
+/// backend is an error with an actionable message (#1399).
+fn resolve_embedding(
+    config: &ServerFileConfig,
+    env_backend: Option<&str>,
+) -> Result<EmbeddingResolution, String> {
+    let file = config.embedding.clone().unwrap_or_default();
+    let backend = env_backend
+        .map(str::trim)
+        .filter(|b| !b.is_empty())
+        .map(str::to_string)
+        .or_else(|| file.backend.clone().filter(|b| !b.trim().is_empty()))
+        .unwrap_or_else(|| "onnx".to_string());
+    if !SUPPORTED_EMBEDDING_BACKENDS.contains(&backend.as_str()) {
+        return Err(format!(
+            "Unsupported embedding backend '{backend}'. Supported: {}. \
+             Set UTEKE_EMBEDDING_BACKEND or [embedding] backend in uteke.toml.",
+            SUPPORTED_EMBEDDING_BACKENDS.join(", ")
+        ));
+    }
+    Ok(EmbeddingResolution {
+        backend,
+        settings: uteke_core::EmbeddingSettings {
+            api_key: file.api_key.unwrap_or_default(),
+            base_url: file.base_url.unwrap_or_default(),
+            endpoint_path: file.endpoint_path.unwrap_or_default(),
+            model: file.model.unwrap_or_default(),
+            dims: file.dims.unwrap_or(0),
+        },
+        // UTEKE_VECTOR_BACKEND (higher precedence) is read inside the core.
+        vector_backend: config.vector.as_ref().and_then(|v| v.backend.clone()),
+    })
 }
 
 /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
@@ -858,5 +948,94 @@ mod config_overlay_tests {
         let recall = merged.recall.expect("recall section");
         assert_eq!(recall.min_score, Some(0.6));
         assert_eq!(recall.default_strategy.as_deref(), Some("vector"));
+    }
+}
+
+#[cfg(test)]
+mod embedding_config_tests {
+    //! #1399 — the server honours `[embedding]` / `[vector]` / env.
+    use super::*;
+
+    fn parse(toml_text: &str) -> ServerFileConfig {
+        toml::from_str(toml_text).expect("valid toml")
+    }
+
+    #[test]
+    fn default_is_onnx_with_empty_settings() {
+        let r = resolve_embedding(&ServerFileConfig::default(), None).unwrap();
+        assert_eq!(r.backend, "onnx");
+        assert!(r.settings.base_url.is_empty() && r.settings.model.is_empty());
+        assert_eq!(r.settings.dims, 0);
+        assert_eq!(r.vector_backend, None);
+    }
+
+    #[test]
+    fn toml_selects_an_external_backend_and_passes_its_settings() {
+        let cfg = parse(
+            "[embedding]\nbackend = \"openai\"\nbase_url = \"http://embor:8355/v1\"\n\
+             model = \"embeddinggemma-q4\"\ndims = 768\nendpoint_path = \"/embed\"\n\
+             [vector]\nbackend = \"vecq\"\n",
+        );
+        let r = resolve_embedding(&cfg, None).unwrap();
+        assert_eq!(r.backend, "openai");
+        assert_eq!(r.settings.base_url, "http://embor:8355/v1");
+        assert_eq!(r.settings.model, "embeddinggemma-q4");
+        assert_eq!(r.settings.endpoint_path, "/embed");
+        assert_eq!(r.settings.dims, 768);
+        assert_eq!(r.vector_backend.as_deref(), Some("vecq"));
+    }
+
+    #[test]
+    fn env_backend_wins_over_toml_and_empty_env_is_ignored() {
+        let cfg = parse("[embedding]\nbackend = \"ollama\"\n");
+        assert_eq!(
+            resolve_embedding(&cfg, Some("openai")).unwrap().backend,
+            "openai"
+        );
+        assert_eq!(resolve_embedding(&cfg, Some("")).unwrap().backend, "ollama");
+        assert_eq!(
+            resolve_embedding(&cfg, Some("  ")).unwrap().backend,
+            "ollama"
+        );
+        // env alone, no [embedding] section (the labs setup)
+        let r = resolve_embedding(&ServerFileConfig::default(), Some("openai")).unwrap();
+        assert_eq!(r.backend, "openai");
+    }
+
+    #[test]
+    fn unsupported_backend_is_an_actionable_error() {
+        let err = resolve_embedding(&ServerFileConfig::default(), Some("cohere"))
+            .err()
+            .expect("must fail");
+        assert!(
+            err.contains("cohere") && err.contains("onnx, openai, ollama"),
+            "{err}"
+        );
+        assert!(err.contains("UTEKE_EMBEDDING_BACKEND"), "{err}");
+    }
+
+    #[test]
+    fn untrusted_project_file_cannot_pick_the_embedder() {
+        // The shared layered resolver strips embedding.backend / base_url from
+        // the project-local file unless the project config is trusted.
+        let dir = std::env::temp_dir().join(format!("uteke_emb_cfg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let global = dir.join("global.toml");
+        let project = dir.join("project.toml");
+        std::fs::write(&global, "[embedding]\nbackend = \"onnx\"\n").unwrap();
+        std::fs::write(
+            &project,
+            "[embedding]\nbackend = \"openai\"\nbase_url = \"https://evil.example\"\n",
+        )
+        .unwrap();
+        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
+            global: Some(&global),
+            project: Some(&project),
+            trust_project: false,
+        });
+        let r = resolve_embedding(&cfg, None).unwrap();
+        assert_eq!(r.backend, "onnx");
+        assert!(r.settings.base_url.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
