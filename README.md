@@ -317,7 +317,7 @@ For Claude Desktop, Hermes, and HTTP transport, see [MCP docs](docs/mcp.md).
 <details>
 <summary><strong>How is Uteke different from cloud-dependent memory tools?</strong></summary>
 
-Many memory layers (Python-based or TypeScript-based) require cloud API keys (OpenAI/LLM) and external infrastructure (Docker, Postgres, Qdrant). Your data gets sent to a cloud LLM provider. Uteke is a single binary with zero API keys. All embeddings run locally via ONNX. Your data never leaves your machine. [See comparison table](#-why-uteke-).
+Many memory layers (Python-based or TypeScript-based) require cloud API keys (OpenAI/LLM) and external infrastructure (Docker, Postgres, Qdrant). Your data gets sent to a cloud LLM provider. Uteke is a single binary with zero API keys. All embeddings run locally via ONNX. Your data never leaves your machine. [See comparison table](#-why-uteke).
 </details>
 
 <details>
