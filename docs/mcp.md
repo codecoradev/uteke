@@ -287,6 +287,8 @@ See [TLS & Reverse Proxy](/tls) for full setup guides (Caddy, Nginx, Cloudflare 
 
 ## Namespace Isolation
 
+> **Deprecated.** Namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Writes to a non-default namespace (`uteke_remember`, `uteke_update` moves, `uteke_room_create`) return a deprecation warning. See [Namespaces are deprecated](/multi-agent#namespaces-are-deprecated).
+
 The MCP server uses the `default` namespace by default. Each agent can use its own isolated namespace by passing a `namespace` argument to any tool call. Memories in one namespace are never visible to another.
 
 This is the MCP equivalent of the CLI's `--namespace` flag — see [Multi-Agent Isolation](/getting-started#multi-agent-isolation) for details.

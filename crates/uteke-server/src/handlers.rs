@@ -250,7 +250,12 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 "id": id,
                                 "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
                                 "embedding_written": outcome.embedding_written,
-                                "warning": outcome.warning,
+                                "warning": uteke_core::namespace_deprecation::merge_warning(
+                                    outcome.warning,
+                                    uteke_core::namespace_deprecation::namespace_write_warning(
+                                        ns(&req_data.namespace),
+                                    ),
+                                ),
                             }),
                         )
                     }
@@ -1443,7 +1448,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 return ctx.error_response_for(req, status, e.to_string());
                             }
                         }
-                        ctx.ok_response_for(req, &serde_json::json!({"updated": req_data.id}))
+                        ctx.ok_response_for(
+                            req,
+                            &with_namespace_warning(
+                                serde_json::json!({"updated": req_data.id}),
+                                req_data.namespace.as_deref(),
+                            ),
+                        )
                     }
                     Ok(false) => ctx.error_response_for(
                         req,
@@ -1604,10 +1615,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     ) {
                         Ok(()) => ctx.ok_response_for(
                             req,
-                            &serde_json::json!({
-                                "created": req_data.room_id,
-                                "namespace": req_data.namespace
-                            }),
+                            &with_namespace_warning(
+                                serde_json::json!({
+                                    "created": req_data.room_id,
+                                    "namespace": req_data.namespace
+                                }),
+                                Some(req_data.namespace.as_str()),
+                            ),
                         ),
                         Err(e) => {
                             let msg = format!("Failed to create room: {e}");
@@ -1758,7 +1772,12 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 "id": outcome.id,
                                 "room_id": req_data.room_id,
                                 "embedding_written": outcome.embedding_written,
-                                "warning": outcome.warning,
+                                "warning": uteke_core::namespace_deprecation::merge_warning(
+                                    outcome.warning,
+                                    uteke_core::namespace_deprecation::namespace_write_warning(
+                                        ns(&req_data.namespace),
+                                    ),
+                                ),
                             }),
                         ),
                         Err(e) => {
@@ -2536,12 +2555,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
                 ctx.ok_response_for(
                     req,
-                    &serde_json::json!({
-                        "facts": facts.iter().map(|f| &f.content).collect::<Vec<_>>(),
-                        "count": facts.len(),
-                        "stored": stored_ids.len(),
-                        "stored_ids": stored_ids,
-                    }),
+                    &with_namespace_warning(
+                        serde_json::json!({
+                            "facts": facts.iter().map(|f| &f.content).collect::<Vec<_>>(),
+                            "count": facts.len(),
+                            "stored": stored_ids.len(),
+                            "stored_ids": stored_ids,
+                        }),
+                        fact_ns,
+                    ),
                 )
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2567,10 +2589,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 match uteke.import(&req_data.content, import_ns) {
                     Ok(result) => ctx.ok_response_for(
                         req,
-                        &serde_json::json!({
-                            "imported": result.imported,
-                            "skipped": result.skipped,
-                        }),
+                        &with_namespace_warning(
+                            serde_json::json!({
+                                "imported": result.imported,
+                                "skipped": result.skipped,
+                            }),
+                            import_ns,
+                        ),
                     ),
                     Err(e) => {
                         error!("Import error: {e}");
@@ -2875,6 +2900,21 @@ fn filter_room_memories_at_time(
         .into_iter()
         .filter(|m| memory_exists_at(m, pit))
         .collect()
+}
+
+/// Add the namespace deprecation `warning` (#1427) to a write response that
+/// has no warning field of its own. Nothing is added for the default
+/// namespace, so those responses stay byte-identical.
+fn with_namespace_warning(
+    mut body: serde_json::Value,
+    namespace: Option<&str>,
+) -> serde_json::Value {
+    if let Some(w) = uteke_core::namespace_deprecation::namespace_write_warning(namespace)
+        && let Some(obj) = body.as_object_mut()
+    {
+        obj.insert("warning".into(), serde_json::Value::String(w.to_string()));
+    }
+    body
 }
 
 #[cfg(test)]
@@ -4779,5 +4819,119 @@ mod mcp_http_hardening_tests {
             "missing ACAO on /mcp: {:?}",
             resp.headers()
         );
+    }
+}
+
+#[cfg(test)]
+mod namespace_deprecation_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    fn call(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        url: &str,
+        body: serde_json::Value,
+    ) -> (u16, String) {
+        let leaked: &'static str = Box::leak(body.to_string().into_boxed_str());
+        let mut req: Request = TestRequest::new()
+            .with_method(method)
+            .with_path(url)
+            .with_body(leaked)
+            .into();
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        };
+        let resp = route(uteke, &ctx, &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        (status, String::from_utf8(bytes).unwrap())
+    }
+
+    fn app() -> Mutex<Uteke> {
+        Mutex::new(Uteke::open_with_backend(":memory:", None).expect("open without embedder"))
+    }
+
+    fn warning(raw: &str) -> serde_json::Value {
+        serde_json::from_str::<serde_json::Value>(raw).unwrap()["warning"].clone()
+    }
+
+    #[test]
+    fn remember_non_default_namespace_carries_warning() {
+        let u = app();
+        let (st, raw) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            serde_json::json!({"content": "x", "namespace": "ns-http-remember"}),
+        );
+        assert_eq!(st, 200, "{raw}");
+        let w = warning(&raw);
+        let w = w.as_str().expect("warning is a string");
+        assert!(w.contains(uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING));
+    }
+
+    #[test]
+    fn remember_default_or_omitted_namespace_has_no_deprecation() {
+        let u = app();
+        for body in [
+            serde_json::json!({"content": "a"}),
+            serde_json::json!({"content": "b", "namespace": "default"}),
+        ] {
+            let (st, raw) = call(&u, Method::Post, "/remember", body);
+            assert_eq!(st, 200, "{raw}");
+            let w = warning(&raw);
+            assert!(
+                w.is_null() || !w.as_str().unwrap().contains("Namespaces are deprecated"),
+                "{raw}"
+            );
+            // Same keys as before the change: warning stays a key, no new ones.
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            assert_eq!(keys, ["author_type", "embedding_written", "id", "warning"]);
+        }
+    }
+
+    #[test]
+    fn room_create_warning_only_for_non_default() {
+        let u = app();
+        let (_, raw) = call(
+            &u,
+            Method::Post,
+            "/room/create",
+            serde_json::json!({"room_id": "r-default"}),
+        );
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(v.get("warning").is_none(), "{raw}");
+        assert_eq!(v["namespace"], "default");
+
+        let (_, raw) = call(
+            &u,
+            Method::Post,
+            "/room/create",
+            serde_json::json!({"room_id": "r-ns", "namespace": "ns-http-room"}),
+        );
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            v["warning"],
+            uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING
+        );
+        assert_eq!(v["created"], "r-ns");
+    }
+
+    #[test]
+    fn with_namespace_warning_is_identity_for_default() {
+        let body = serde_json::json!({"imported": 1, "skipped": 0});
+        assert_eq!(with_namespace_warning(body.clone(), None), body);
+        assert_eq!(with_namespace_warning(body.clone(), Some("default")), body);
+        let w = with_namespace_warning(body, Some("other"));
+        assert!(w["warning"].is_string());
+        assert_eq!(w["imported"], 1);
     }
 }

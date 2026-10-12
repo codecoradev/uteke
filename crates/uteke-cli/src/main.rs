@@ -113,6 +113,12 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Namespace deprecation signal (#1427): one line on stderr for writes to a
+    // non-default namespace; stdout and --json output are untouched.
+    if let Some(notice) = commands::namespace_write_notice(&cli, &config) {
+        eprintln!("{notice}");
+    }
+
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
     let server_available = config.server.enabled && commands::is_server_running(&server_url);

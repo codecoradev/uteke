@@ -177,7 +177,15 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let data = parse_json_value(resp)?;
+            let mut data = parse_json_value(resp)?;
+            // The deprecation signal (#1427) goes to stderr (see main), never
+            // into stdout JSON: strip it from the server's merged `warning`.
+            if let Some(w) = data["warning"].as_str() {
+                data["warning"] = match uteke_core::namespace_deprecation::strip_deprecation(w) {
+                    Some(rest) => serde_json::Value::String(rest),
+                    None => serde_json::Value::Null,
+                };
+            }
             if cli.json {
                 println!("{data}");
             } else {

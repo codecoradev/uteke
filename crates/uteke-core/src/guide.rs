@@ -64,6 +64,7 @@ pub fn recall_guide(available_tools: &[MemoryTool], max_searches: u32) -> String
 - **Max {max} search call(s) per turn.** If {max} search(es) yield nothing relevant, the information is likely not stored — answer with available context.
 - Use `{remember_tool}` only for genuinely new facts, decisions, or preferences — not for re-stating what's already stored.
 - **Conventions first.** Before you write a memory, check whether this workspace has a memory convention: look for a room or document named like `*conventions*` (`uteke_room_list` with `name`, or `uteke_doc_search`), or the project's AGENTS.md / CLAUDE.md. If one exists, follow it (namespace, room, tags). If none exists, use the defaults: one fact per memory, no secrets or credentials, tag it with the project name.
+- **Namespaces are deprecated** and will be removed in a future 0.x release. Do not pick a namespace for new memories: organise with rooms, tags and author. A non-default namespace still works, but the write carries a deprecation warning.
 </memory-tools-guide>"#,
         tools_section = tools_section,
         recall_tool = available_tools

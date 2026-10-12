@@ -18,7 +18,9 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub store: Option<String>,
 
-    /// Namespace for multi-agent isolation (default: "default")
+    /// Namespace (default: "default"). DEPRECATED: namespaces will be removed
+    /// in a future 0.x release; prefer rooms, tags and author
+    /// (writes to a non-default namespace print a warning on stderr)
     #[arg(long, global = true)]
     pub namespace: Option<String>,
 

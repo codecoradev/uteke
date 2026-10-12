@@ -23,7 +23,7 @@ Version: **0.20.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | Flag | Description |
 |------|-------------|
 | `--store <PATH>` | Override store path (default: `~/.codecora/uteke`) |
-| `--namespace <NS>` | Multi-agent isolation (default: `"default"`) |
+| `--namespace <NS>` | DEPRECATED (default: `"default"`): namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Writes to a non-default namespace print a warning on stderr |
 | `--json` | Machine-readable JSON output |
 | `--verbose` | Debug logging |
 
@@ -169,7 +169,9 @@ Version: **0.20.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 > behind → index written by the old binary reads as mismatched).
 >
 > **Search strategy guide — filters, not silos:**
-> - `namespace` = agent/workspace identity — pass it explicitly on recall.
+> - `namespace` = DEPRECATED (removal planned in a future 0.x release): do not
+>   choose one for new memories, use rooms, tags and author. Existing
+>   namespaced memories keep working; pass it explicitly on recall.
 > - `room` = collaborative discussion context (`uteke room recall`).
 > - `tags` (e.g. `project:<repo>`) = the primary project filter.
 > - Strategies: `fusion` (default), `hybrid` (RRF vector+FTS5), `fts5`
@@ -303,6 +305,11 @@ and the conversation names no project, add no `project:` tag.
 | **NO GENERIC TAGS** | No tags from generic folder names, no tags that act as ids, no tags that mimic a field (use `--type`, not `qtype:`) |
 
 ## Namespace, Room and Tag Conventions
+
+> **Namespaces are deprecated** (removal planned in a future 0.x release, #1427).
+> Writing to a non-default namespace works but returns a deprecation warning.
+> Organise with rooms, tags and author instead; the namespace row below only
+> describes memories that already exist.
 
 Keep the three axes distinct so recall stays filterable:
 

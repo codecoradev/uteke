@@ -33,6 +33,31 @@ use uteke_core::Uteke;
 
 pub(crate) use server::{is_server_running, run_via_server};
 
+/// Deprecation notice (#1427, phase 1) for write commands that target a
+/// non-default namespace (`--namespace`, `UTEKE_NAMESPACE` or config). The
+/// caller prints it on stderr, never stdout, so `--json` output stays clean.
+/// `None` for read commands and for the default namespace.
+pub(crate) fn namespace_write_notice(cli: &Cli, config: &Config) -> Option<String> {
+    let is_write = matches!(
+        &cli.command,
+        Commands::Remember { .. }
+            | Commands::Import { .. }
+            | Commands::Room {
+                command: crate::cli::RoomCommands::Create { .. }
+            }
+    );
+    if !is_write {
+        return None;
+    }
+    let ns = resolve_namespace(cli, config);
+    uteke_core::namespace_deprecation::is_deprecated_namespace(Some(&ns)).then(|| {
+        format!(
+            "Warning: {}",
+            uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING
+        )
+    })
+}
+
 /// Dispatch all CLI subcommands to their handler implementations.
 pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Result<(), String> {
     // Resolve effective namespace once: CLI > env > config > "default"
@@ -497,5 +522,50 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         // Onboard is handled in main.rs (early exit, no store needed).
         Commands::Onboard { .. } => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod namespace_notice_tests {
+    use super::*;
+    use clap::Parser;
+
+    fn notice(args: &[&str]) -> Option<String> {
+        let mut argv = vec!["uteke"];
+        argv.extend_from_slice(args);
+        let cli = Cli::parse_from(argv);
+        namespace_write_notice(&cli, &Config::default())
+    }
+
+    #[test]
+    fn write_commands_with_non_default_namespace_get_the_notice() {
+        let expect = format!(
+            "Warning: {}",
+            uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING
+        );
+        for args in [
+            &["--namespace", "work", "remember", "x"][..],
+            &["--namespace", "work", "import", "-"][..],
+            &["--namespace", "work", "room", "create", "r1"][..],
+        ] {
+            assert_eq!(notice(args), Some(expect.clone()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn explicit_default_namespace_is_not_deprecated() {
+        assert_eq!(notice(&["--namespace", "default", "remember", "x"]), None);
+    }
+
+    #[test]
+    fn read_commands_never_get_the_notice() {
+        for args in [
+            &["--namespace", "work", "recall", "x"][..],
+            &["--namespace", "work", "list"][..],
+            &["--namespace", "work", "stats"][..],
+            &["--namespace", "work", "room", "list"][..],
+        ] {
+            assert_eq!(notice(args), None, "{args:?}");
+        }
     }
 }

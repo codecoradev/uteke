@@ -275,7 +275,7 @@ fn tool_remember() -> Value {
             "properties": {
                 "content": { "type": "string", "description": "The text content to remember" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for categorization (optional)" },
-                "namespace": { "type": "string", "description": "Namespace for isolation (default: 'default')" },
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for isolation (default: 'default'); a non-default value makes the result carry a deprecation warning." },
                 "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" },
                 "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
                 "author": { "type": "string", "description": "Author attribution when storing in a room (default: anonymous)" }
@@ -294,7 +294,7 @@ fn tool_recall() -> Value {
             "properties": {
                 "query": { "type": "string", "description": "The search query" },
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
-                "namespace": { "type": "string", "description": "Namespace to search (default: 'default')" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to search (default: 'default')" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
@@ -320,7 +320,7 @@ fn tool_list() -> Value {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
                 "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
                 "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             }
         }
@@ -419,7 +419,7 @@ fn tool_contradictions() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Filter by namespace" },
                 "limit": { "type": "integer", "description": "Max entries (default 50)" }
             },
             "required": []
@@ -515,7 +515,7 @@ fn tool_update() -> Value {
                 "importance": { "type": "number", "description": "0.0–1.0" },
                 "pinned": { "type": "boolean", "description": "Pin (never decays) or unpin" },
                 "memory_type": { "type": "string", "description": "fact | procedure | preference | decision | context | note | insight | reference | event" },
-                "namespace": { "type": "string", "description": "Move the memory to this namespace (#1181 — plain move, no re-embed)" }
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Move the memory to this namespace (#1181 — plain move, no re-embed); the result carries a deprecation warning." }
             },
             "required": ["id"]
         }
@@ -543,7 +543,7 @@ fn tool_stats() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" }
             }
         }
     })
@@ -558,7 +558,7 @@ fn tool_search() -> Value {
             "properties": {
                 "query": { "type": "string", "description": "Keywords to search for" },
                 "limit": { "type": "integer", "description": "Max results (default 10)", "default": 10 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" }
             },
             "required": ["query"]
@@ -681,7 +681,7 @@ fn tool_graph() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (optional)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Filter by namespace (optional)" },
                 "limit": { "type": "integer", "description": "Max edges (default 500, max 5000)" }
             }
         }
@@ -695,7 +695,7 @@ fn tool_context() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace to summarize (default: 'default')" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to summarize (default: 'default')" }
             }
         }
     })
@@ -708,7 +708,7 @@ fn tool_dream() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace to process. STRONGLY RECOMMENDED — omitting processes ALL namespaces" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to process. STRONGLY RECOMMENDED — omitting processes ALL namespaces" },
                 "dry_run": { "type": "boolean", "description": "Preview changes without applying (default: TRUE — no mutations). Pass false explicitly to apply" },
                 "phases": { "type": "array", "items": { "type": "string" }, "description": "Specific phases: lint, backlinks, dedup, orphans, compact, verify (default: all)" },
                 "confirm_large": { "type": "boolean", "description": "Required when an APPLYING run projects more than 100 changes (default: false — run refuses instead)" }
@@ -781,7 +781,7 @@ fn tool_room_create() -> Value {
             "properties": {
                 "room_id": { "type": "string", "description": "Unique room identifier" },
                 "title": { "type": "string", "description": "Room title (optional)" },
-                "namespace": { "type": "string", "description": "Namespace for the room (default: 'default')" }
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for the room (default: 'default')." }
             },
             "required": ["room_id"]
         }
@@ -804,7 +804,7 @@ fn tool_room_list() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (omit for all)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Filter by namespace (omit for all)" },
                 "name": { "type": "string", "description": "Keep only rooms whose id or title contains this text, case-insensitive (omit for all)" }
             }
         }
@@ -979,7 +979,7 @@ fn tool_tags_list() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace to filter tags (default: all namespaces)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to filter tags (default: all namespaces)" },
                 "sort": { "type": "string", "enum": ["count", "alpha"], "description": "Sort order: 'count' by usage count descending (default), 'alpha' alphabetically" }
             }
         }
@@ -995,7 +995,7 @@ fn tool_tags_rename() -> Value {
             "properties": {
                 "old_tag": { "type": "string", "description": "Current tag name to rename" },
                 "new_tag": { "type": "string", "description": "New tag name" },
-                "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace scope (default: all namespaces)" }
             },
             "required": ["old_tag", "new_tag"]
         }
@@ -1010,7 +1010,7 @@ fn tool_tags_delete() -> Value {
             "type": "object",
             "properties": {
                 "tag": { "type": "string", "description": "Tag name to delete" },
-                "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace scope (default: all namespaces)" }
             },
             "required": ["tag"]
         }
@@ -1020,7 +1020,7 @@ fn tool_tags_delete() -> Value {
 fn tool_namespace_rename() -> Value {
     serde_json::json!({
         "name": "uteke_namespace_rename",
-        "description": "Rename a namespace, merging into the target when it already exists. Namespaces are a derived view — the old name vanishes when its last memory moved (#1181).",
+        "description": "DEPRECATED (namespaces will be removed in a future 0.x release; prefer rooms, tags and author). Rename a namespace, merging into the target when it already exists. Namespaces are a derived view — the old name vanishes when its last memory moved (#1181).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1035,7 +1035,7 @@ fn tool_namespace_rename() -> Value {
 fn tool_namespace_delete() -> Value {
     serde_json::json!({
         "name": "uteke_namespace_delete",
-        "description": "Delete a namespace with an explicit strategy for its memories: refuse (default — error while any memory uses the name), merge (move all memories to `target`), or deprecate (soft-delete — restorable via promote, never hard-deleted) (#1181).",
+        "description": "DEPRECATED (namespaces will be removed in a future 0.x release; prefer rooms, tags and author). Delete a namespace with an explicit strategy for its memories: refuse (default — error while any memory uses the name), merge (move all memories to `target`), or deprecate (soft-delete — restorable via promote, never hard-deleted) (#1181).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1138,6 +1138,15 @@ pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest,
         .map_err(|e| e.to_string())
 }
 
+/// Deprecation signal for a namespaced write (#1427, phase 1): a trailing
+/// warning line for the tool text, empty for the default namespace so those
+/// results stay byte-identical. Also logs once per namespace (server side).
+fn namespace_deprecation_suffix(namespace: Option<&str>) -> String {
+    uteke_core::namespace_deprecation::namespace_write_warning(namespace)
+        .map(|w| format!("\n⚠ {w}"))
+        .unwrap_or_default()
+}
+
 fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let req = decode_remember_args(args)?;
     let content = req.content.as_str();
@@ -1172,6 +1181,7 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             "\n⚠ Embedding NOT written: {warn}\nMemory is keyword-searchable only; run `uteke repair` to backfill."
         ));
     }
+    text.push_str(&namespace_deprecation_suffix(namespace));
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -1604,7 +1614,10 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("✓ Updated memory {id}"),
+            text: format!(
+                "✓ Updated memory {id}{}",
+                namespace_deprecation_suffix(args["namespace"].as_str())
+            ),
         }],
         is_error: false,
     })
@@ -2398,7 +2411,10 @@ fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("Room created: {room_id} (namespace: {namespace})"),
+            text: format!(
+                "Room created: {room_id} (namespace: {namespace}){}",
+                namespace_deprecation_suffix(Some(namespace))
+            ),
         }],
         is_error: false,
     })
@@ -3579,5 +3595,80 @@ mod remember_decode_tests {
             decode_remember_args(&json!({"tags": ["a"]})).unwrap_err(),
             "Missing 'content'"
         );
+    }
+}
+
+#[cfg(test)]
+mod namespace_deprecation_tests {
+    use super::*;
+    use uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING;
+
+    fn text(r: ToolResult) -> String {
+        match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    fn store() -> Uteke {
+        Uteke::open_with_backend(":memory:", None).expect("open without embedder")
+    }
+
+    #[test]
+    fn remember_non_default_namespace_appends_warning() {
+        let u = store();
+        let t = text(
+            exec_remember(
+                &u,
+                &serde_json::json!({"content": "x", "namespace": "ns-mcp-a"}),
+            )
+            .unwrap(),
+        );
+        assert!(t.starts_with("✓ Stored memory with ID: "), "{t}");
+        assert!(
+            t.ends_with(&format!("\n⚠ {NAMESPACE_DEPRECATION_WARNING}")),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn remember_default_or_omitted_is_unchanged() {
+        let u = store();
+        for args in [
+            serde_json::json!({"content": "a"}),
+            serde_json::json!({"content": "b", "namespace": "default"}),
+        ] {
+            let t = text(exec_remember(&u, &args).unwrap());
+            assert!(!t.contains("deprecated"), "{t}");
+            assert!(!t.contains('\n'), "{t}");
+        }
+    }
+
+    #[test]
+    fn room_create_warns_only_for_non_default() {
+        let u = store();
+        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "r1"})).unwrap());
+        assert_eq!(t, "Room created: r1 (namespace: default)");
+        let t = text(
+            exec_room_create(
+                &u,
+                &serde_json::json!({"room_id": "r2", "namespace": "ns-mcp-r"}),
+            )
+            .unwrap(),
+        );
+        assert!(t.contains(NAMESPACE_DEPRECATION_WARNING), "{t}");
+    }
+
+    #[test]
+    fn every_tool_with_a_namespace_argument_says_deprecated() {
+        let mut checked = 0;
+        let list = handle_request(&store(), "tools/list", None).unwrap();
+        for t in list["tools"].as_array().unwrap() {
+            let name = t["name"].as_str().unwrap().to_string();
+            if let Some(arg) = t["inputSchema"]["properties"]["namespace"]["description"].as_str() {
+                assert!(arg.contains("DEPRECATED"), "{name}: {arg}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 10, "only {checked} namespace args found");
     }
 }

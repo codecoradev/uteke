@@ -11,7 +11,7 @@ Complete reference for all uteke commands. Version **0.13.0**.
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--store <path>` | Override store location | `~/.codecora/uteke` |
-| `--namespace <name>` | Namespace for multi-agent isolation | `default` |
+| `--namespace <name>` | Namespace (deprecated: prefer rooms, tags and author; writes to a non-default namespace print a warning on stderr, see [Namespaces are deprecated](/multi-agent#namespaces-are-deprecated)) | `default` |
 | `--json` | Output as JSON | off |
 | `--verbose` | Enable debug logging | off |
 
