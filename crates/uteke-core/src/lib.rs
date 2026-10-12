@@ -28,6 +28,7 @@ pub mod guide;
 mod import_export;
 mod index_sync;
 mod jaccard;
+mod list_request;
 mod maintenance;
 pub mod memory;
 pub mod offline_extraction;
@@ -38,17 +39,25 @@ pub use forget_request::{
     ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
     IdCharset, UnmatchedPrefixText, resolve_memory_id,
 };
+pub use list_request::{
+    LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
+    ListPolicy, ListRequest, ListRequestError,
+};
 pub use operations::RememberOutcome;
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
     RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
     RecallRequestError,
 };
+pub use remember_request::{
+    RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
+};
 mod orphans;
 pub mod provenance;
 mod recall_cache;
 pub mod recall_explain;
 mod recall_request;
+mod remember_request;
 mod rooms;
 pub mod rooms_segments;
 pub mod salience_recency;
