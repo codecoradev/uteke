@@ -20,6 +20,7 @@ mod edges;
 mod embed;
 mod error;
 pub mod extraction;
+mod forget_request;
 pub mod graph;
 pub mod graph_rerank;
 pub mod graph_view;
@@ -35,6 +36,10 @@ pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
 
+pub use forget_request::{
+    ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
+    IdCharset, UnmatchedPrefixText, resolve_memory_id,
+};
 pub use list_request::{
     LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
     ListPolicy, ListRequest, ListRequestError,
