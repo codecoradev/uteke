@@ -76,6 +76,40 @@ If the server is not running, CLI falls back to local store automatically.
 | `host` | 127.0.0.1 | Server bind address |
 | `port` | 8767 | Server port |
 
+### Reaching the server from another device on your LAN
+
+By default `uteke-serve` listens on `127.0.0.1` only, so nothing else on your
+network can reach it. To use it from a second device (a laptop, a phone, another
+agent) on a network you trust:
+
+1. **Set a token first.** `UTEKE_AUTH_TOKEN=<long random value>` or `--auth-token`.
+   Without one the server still starts, **unauthenticated**, and the only hint is
+   a `WARN ... Authentication: disabled` line in its log. For a client that only
+   needs to read, give it `UTEKE_READ_ONLY_TOKEN` instead: it may use GET requests
+   and the read-only POST routes (recall, search, list, stats, room and document
+   reads) but gets `403` on every write route.
+2. **Bind to the LAN.** Either `uteke-serve --host 0.0.0.0` (all interfaces) or,
+   narrower, the machine's LAN address (`--host 192.168.1.20`); or `[server] host`
+   in `~/.codecora/uteke/uteke.toml`. A project-local `.uteke/uteke.toml` is not
+   allowed to set `[server]`.
+3. **Connect.** From the other device use `http://<lan-address>:8767`, with the
+   header `Authorization: Bearer <token>`. `GET /health` answers without a token
+   and is a quick reachability check.
+
+Things to know:
+
+- The `Host` header check (DNS-rebinding protection) only applies to a loopback
+  bind or when `allowed_hosts` is set. On a LAN bind every `Host` is accepted
+  unless you list names in `[server] allowed_hosts` / `--allowed-host`.
+- The traffic is plain HTTP, so the token is visible to anyone on the same network
+  segment. That is acceptable on a trusted home network; for anything else put a
+  TLS reverse proxy in front (see [TLS & Reverse Proxy](tls.md)) and keep
+  `uteke-serve` itself on `127.0.0.1`.
+- Allow only the server port in the firewall, and do not forward it from your
+  router to the internet.
+- In Docker the compose file maps `127.0.0.1:8767:8767`; remove the `127.0.0.1:`
+  prefix only after a token is set (see [Docker](docker.md)).
+
 ## Embedding Backend
 
 Configure the embedding backend. Three backends are supported:

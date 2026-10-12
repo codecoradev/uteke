@@ -193,6 +193,7 @@ Both transports expose the same 49 tools (MCP protocol version `2025-06-18`):
 | Binary | `uteke-mcp` | `uteke-serve` |
 | Daemon needed | No | Yes |
 | Remote access | No | Yes |
+| Authentication | None needed (a local process you start yourself) | Static bearer token (`UTEKE_AUTH_TOKEN`) |
 | Protocol | JSON-RPC over stdin/stdout | Streamable HTTP (POST `/mcp`) |
 | Best for | Local agents, single machine | Shared/team, remote access |
 
@@ -252,6 +253,25 @@ UTEKE_AUTH_TOKEN=your-secret uteke-serve --host 0.0.0.0 --port 8767
   }
 }
 ```
+
+### Keeping the token out of the client config
+
+`uteke-serve` authenticates with a **static bearer token**. It does not implement
+OAuth sign-in, so an MCP client cannot start a browser login against it and no
+token is refreshed automatically. What you can do instead:
+
+- **Same machine: use the stdio transport.** `uteke-mcp` runs as a local process
+  your client starts itself, so there is no network listener, no token and no
+  `Authorization` header to store (Option A above).
+- **Another machine: keep the secret out of git.** Put the token in an environment
+  variable and reference it from the client config if your client supports
+  expanding environment variables (check its documentation for the exact syntax),
+  or keep the client config file out of version control. Prefer
+  `UTEKE_READ_ONLY_TOKEN` for clients that only need to recall.
+- **Rotate by restarting.** Change `UTEKE_AUTH_TOKEN`, restart `uteke-serve`, and
+  update the clients; old tokens stop working immediately.
+
+OAuth-based sign-in for MCP clients is not part of the self-hosted server.
 
 ### Docker on a VPS
 
