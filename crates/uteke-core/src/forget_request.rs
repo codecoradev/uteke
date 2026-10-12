@@ -36,8 +36,9 @@ use std::fmt;
 /// What a surface accepts as a memory id before it touches the store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdCharset {
-    /// Anything: a non-UUID value goes straight to the prefix scan, where
-    /// `%` and `_` act as `LIKE` wildcards (HTTP today).
+    /// Anything: a non-UUID value goes to the prefix scan. Since #1435 that
+    /// scan treats `%` and `_` literally, so this can no longer wildcard-match;
+    /// no surface uses it any more, it stays for callers that want the raw scan.
     Any,
     /// Hex digits and `-` only (MCP, #1328); keeps wildcards out of the scan.
     HexAndDash,
@@ -80,7 +81,10 @@ pub struct ForgetPolicy {
 impl ForgetPolicy {
     /// `DELETE /forget`.
     pub const HTTP: Self = Self {
-        id_charset: IdCharset::Any,
+        // Hex digits and `-` only, like MCP (#1435): a `%` or `_` in the id used
+        // to act as a LIKE wildcard and could resolve, then delete, a memory
+        // the caller did not name.
+        id_charset: IdCharset::HexAndDash,
         full_id_form: FullIdForm::Verbatim,
         unmatched_prefix_text: UnmatchedPrefixText::MemoryNotFound,
         require_existing: true,
@@ -409,7 +413,7 @@ mod tests {
         let flags = |p: ForgetPolicy| (p.read_only_token_may_forget, p.require_existing);
         assert_eq!(flags(ForgetPolicy::HTTP), (false, true));
         assert_eq!(flags(ForgetPolicy::MCP), (true, false));
-        assert_eq!(ForgetPolicy::HTTP.id_charset, IdCharset::Any);
+        assert_eq!(ForgetPolicy::HTTP.id_charset, IdCharset::HexAndDash);
         assert_eq!(ForgetPolicy::HTTP.full_id_form, FullIdForm::Verbatim);
         assert_eq!(ForgetPolicy::MCP.id_charset, IdCharset::HexAndDash);
         assert_eq!(ForgetPolicy::MCP.full_id_form, FullIdForm::Hyphenated);
@@ -468,27 +472,47 @@ mod tests {
     }
 
     #[test]
-    fn charset_check_is_mcp_only() {
+    fn charset_check_applies_to_every_surface_and_wildcards_never_match() {
         let (uteke, dir) = scratch();
         let id = uuid::Uuid::new_v4().to_string();
         seed_with(&uteke, &id, "ns-a");
-        for bad in ["", "zz", "%", "a_b", "abc%"] {
-            let e = resolve_memory_id(&uteke, bad, ForgetPolicy::MCP).unwrap_err();
-            assert_eq!(e.kind(), ForgetErrorKind::InvalidId, "{bad:?}");
-            assert_eq!(
-                e.message(),
-                format!("Invalid memory id '{bad}' (expected a UUID or hex prefix)")
-            );
+        // #1435: HTTP and MCP both refuse anything but hex digits and `-`.
+        for policy in [ForgetPolicy::HTTP, ForgetPolicy::MCP] {
+            for bad in [
+                "",
+                "zz",
+                "%",
+                "_",
+                "a_b",
+                "abc%",
+                "%25",
+                "\\",
+                "{x}",
+                "urn:uuid:x",
+            ] {
+                let e = resolve_memory_id(&uteke, bad, policy).unwrap_err();
+                assert_eq!(e.kind(), ForgetErrorKind::InvalidId, "{bad:?}");
+                assert_eq!(
+                    e.message(),
+                    format!("Invalid memory id '{bad}' (expected a UUID or hex prefix)")
+                );
+            }
         }
-        // HTTP lets the wildcard reach the scan: with exactly one memory,
-        // `%` resolves to it (pinned, not endorsed: owner decision).
+        // Defence in depth: even a policy that skips the charset check cannot
+        // wildcard the scan, because the store treats `%` and `_` literally.
+        let raw = ForgetPolicy {
+            id_charset: IdCharset::Any,
+            ..ForgetPolicy::HTTP
+        };
+        for wild in ["%", "_", "%25", &id[..3].replace(&id[..1], "_")] {
+            let e = resolve_memory_id(&uteke, wild, raw).unwrap_err();
+            assert_eq!(e.kind(), ForgetErrorKind::NotFound, "{wild:?}");
+        }
+        // A real prefix still resolves.
         assert_eq!(
-            resolve_memory_id(&uteke, "%", ForgetPolicy::HTTP).unwrap(),
+            resolve_memory_id(&uteke, &id[..8], ForgetPolicy::HTTP).unwrap(),
             id
         );
-        // `zz` is just an unknown prefix there.
-        let e = resolve_memory_id(&uteke, "zz", ForgetPolicy::HTTP).unwrap_err();
-        assert_eq!(e.kind(), ForgetErrorKind::NotFound);
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
     }

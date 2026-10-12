@@ -226,10 +226,17 @@ impl super::Store {
     /// Returns `Ok(Some(id))` if exactly one match, `Ok(None)` if zero,
     /// or `Err` if multiple matches (ambiguous prefix).
     pub fn resolve_id_prefix(&self, prefix: &str) -> Result<Option<String>, Error> {
-        let pattern = format!("{prefix}%");
+        // `%`, `_` and the escape character are literals here: an id is never a
+        // pattern, and a wildcard would let `forget` resolve (and delete) a
+        // memory the caller did not name.
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("{escaped}%");
         let mut stmt = self
             .conn
-            .prepare("SELECT id FROM memories WHERE id LIKE ?1")
+            .prepare("SELECT id FROM memories WHERE id LIKE ?1 ESCAPE '\\'")
             .map_err(|e| Error::db("Failed to prepare statement for resolve_id_prefix", e))?;
 
         let ids: Vec<String> = stmt
@@ -1185,5 +1192,34 @@ mod content_type_tests {
         let all = store.load_all(None).unwrap();
         assert_eq!(all.len(), 1, "load_all should exclude NULL embeddings");
         assert_eq!(all[0].id, "valid-1");
+    }
+
+    /// #1435: an id prefix is data, never a LIKE pattern.
+    #[test]
+    fn resolve_id_prefix_treats_wildcards_literally() {
+        let store = super::super::store::Store::open(":memory:").unwrap();
+        for id in [
+            "abcd0000-0000-4000-8000-000000000001",
+            "abce0000-0000-4000-8000-000000000002",
+        ] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, memory_type)
+                     VALUES (?1, 'x', NULL, '[]', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', 'default', 'fact')",
+                    [id],
+                )
+                .unwrap();
+        }
+        // A real prefix still resolves; a shared prefix is still ambiguous.
+        assert_eq!(
+            store.resolve_id_prefix("abcd").unwrap().as_deref(),
+            Some("abcd0000-0000-4000-8000-000000000001")
+        );
+        assert!(store.resolve_id_prefix("abc").is_err(), "ambiguous");
+        // Wildcards and the escape character match nothing, not "everything".
+        for wild in ["%", "_", "%25", "ab_d", "a%", "\\", "abcd%"] {
+            assert_eq!(store.resolve_id_prefix(wild).unwrap(), None, "{wild:?}");
+        }
     }
 }
