@@ -84,34 +84,23 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // ReadOnly tokens can use GET endpoints + read-only POST endpoints.
     // Write operations (POST /remember, POST /forget, etc.) are blocked.
     if let AuthResult::Authenticated(ApiRole::ReadOnly) = auth_role {
-        // POST endpoints that are reads (semantic search, list, stats).
-        // Exact match to avoid prefix-based bypass (e.g. /recallfoo).
-        let read_only_post_paths = [
-            "/list",
-            "/recall",
-            "/search",
-            "/stats",
-            "/room/recall",
-            "/room/summary",
-            "/room/summary-document",
-            "/room/stats",
-            "/room/document/list",
-            "/doc/get",
-            "/doc/list",
-            "/doc/search",
-            "/doc/room/list",
-            "/memory/doc-refs",
-            "/doc/mem-refs",
-            "/orphans",
-        ];
-        let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
-        if !is_read {
+        // The gate is derived from the registry's `writes` flag (#1344): GET
+        // plus the POST rows that do not write (semantic search, list,
+        // stats). Exact path match avoids prefix-based bypass (/recallfoo).
+        if !api_registry::read_only_allows(method.as_str(), &path) {
             return ctx.error_response_for(
                 req,
                 403,
                 "Read-only token cannot perform write operations",
             );
         }
+    }
+
+    // The registry is the route table (#1344): a (method, path) without a row
+    // is a 404 whatever arms the match below still carries, so a handler
+    // cannot be reachable while unregistered (or ungated).
+    if api_registry::find(method.as_str(), route_path).is_none() {
+        return ctx.error_response_for(req, 404, "Not found");
     }
 
     // Lock the Uteke instance for the duration of this request.
@@ -2808,8 +2797,21 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── 404 ─────────────────────────────────────────────────────────
-        _ => ctx.error_response_for(req, 404, "Not found"),
+        // Unreachable while every registry row has an arm (enforced by the
+        // `every_registry_row_has_a_handler_arm` test); kept for exhaustiveness.
+        _ => {
+            #[cfg(test)]
+            UNHANDLED_ROW.with(|c| c.set(true));
+            ctx.error_response_for(req, 404, "Not found")
+        }
     }
+}
+
+// Test probe: set when a registry row reached the match fallback, i.e. it
+// has no handler arm.
+#[cfg(test)]
+thread_local! {
+    static UNHANDLED_ROW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Helper: validate content for extract/import to prevent abuse.
@@ -2986,10 +2988,7 @@ mod room_memories_namespace_tests {
             ids.push(resp["id"].as_str().expect("memory id").to_string());
         }
 
-        // URL constants: query-string URLs live in consts because the registry
-        // coverage test treats any method-plus-URL literal on one line as a
-        // handler route, and a query string would look like an unregistered
-        // path.
+        // URL constants for the query-string URLs used below.
         const URL_ALL: &str = "/room/memories?room_id=ns-room";
         const URL_CMO: &str = "/room/memories?room_id=ns-room&namespace=cmo";
         const URL_CMO_OTHER_AUTHOR: &str =
@@ -3301,8 +3300,6 @@ mod room_recall_at_tests {
         );
         assert!(touching.len() >= 2, "{hood}");
 
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let capped_url = "/graph?limit=1";
         let (_, capped) = app.call(Method::Get, capped_url, None);
         assert_eq!(capped["edges"].as_array().unwrap().len(), 1, "{capped}");
@@ -3384,8 +3381,6 @@ mod room_recall_at_tests {
     #[test]
     fn graph_edge_delete_requires_both_params() {
         let app = GraphEdgeApp::new();
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let url = "/graph/edge?source=only-one";
         let (status, _) = app.call(Method::Delete, url, None);
         assert_eq!(status, 400, "missing target param must 400");
@@ -3620,8 +3615,6 @@ mod room_recall_at_tests {
         assert_eq!(resp["affected"], serde_json::json!(1));
         assert_eq!(resp["empty"], serde_json::json!(false));
 
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let counts_url = "/namespaces?with_counts=true";
         let (_, counts) = app.call(Method::Get, counts_url, None);
         let arr = counts.as_array().expect("counts array");
@@ -3754,8 +3747,6 @@ mod contradiction_api_tests {
         let new = app.remember_in("deploy target is VM-2", "ops");
         app.supersede(&old, &new);
 
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let list_url = "/contradictions?namespace=ops";
         let (status, ledger) = app.call(Method::Get, list_url, None);
         assert_eq!(status, 200, "{ledger}");
@@ -4047,8 +4038,6 @@ mod explain_recall_api_tests {
             "explain-ns",
         );
 
-        // Body built separately so the api_registry route scanner does not
-        // mistake this literal for a handler route arm.
         let body = serde_json::json!({
             "query": "quick brown fox",
             "limit": 5,
@@ -4176,8 +4165,6 @@ mod list_pagination_tests {
         assert_eq!(resp.as_array().unwrap().len(), 7);
 
         // include_meta: envelope with total/has_more/next_offset.
-        // URL built separately so the api_registry route scanner does not
-        // mistake this literal for a handler route arm.
         let body = serde_json::json!({
             "namespace": "pg",
             "limit": 3,
@@ -4543,6 +4530,80 @@ mod routes_introspection_tests {
         let (status, json) = app.call(Method::Get, "/routes", Some("Bearer ro-secret"));
         assert_eq!(status, 200, "{json}");
         assert!(json.as_array().is_some(), "RO token gets the registry");
+    }
+
+    fn method_of(name: &str) -> Method {
+        match name {
+            "GET" => Method::Get,
+            "POST" => Method::Post,
+            "PUT" => Method::Put,
+            "DELETE" => Method::Delete,
+            other => panic!("unexpected registry method {other}"),
+        }
+    }
+
+    /// Every registry row must have a handler arm: the router consults the
+    /// table first, so a row whose arm is missing would silently 404 through
+    /// the fallback. Built from the table, not from source text (#1344).
+    #[test]
+    fn every_registry_row_has_a_handler_arm() {
+        let app = RoutesApp::new();
+        for e in crate::api_registry::ENDPOINTS {
+            UNHANDLED_ROW.with(|c| c.set(false));
+            let _ = app.call(method_of(e.method), e.path, None);
+            assert!(
+                !UNHANDLED_ROW.with(|c| c.get()),
+                "{} {} is registered but has no handler arm",
+                e.method,
+                e.path
+            );
+        }
+    }
+
+    /// A route that is not in the table is a 404 that never reaches a
+    /// handler, even when the path exists under another verb.
+    #[test]
+    fn unregistered_method_path_pairs_are_404_before_dispatch() {
+        let app = RoutesApp::new();
+        for (method, path) in [
+            (Method::Put, "/list"),
+            (Method::Delete, "/recall"),
+            (Method::Get, "/remember"),
+            (Method::Post, "/health"),
+            (Method::Get, "/no-such-route"),
+        ] {
+            UNHANDLED_ROW.with(|c| c.set(false));
+            let (status, json) = app.call(method.clone(), path, None);
+            assert_eq!(status, 404, "{method} {path}: {json}");
+            assert!(
+                !UNHANDLED_ROW.with(|c| c.get()),
+                "{method} {path} must be refused by the table, not the match fallback"
+            );
+        }
+    }
+
+    /// The read-only token is refused (403, gate message) on exactly the
+    /// rows the table marks as writes, and never on the others.
+    #[test]
+    fn read_only_token_gets_403_on_exactly_the_writing_rows() {
+        const GATE_MSG: &str = "Read-only token cannot perform write operations";
+        let app = RoutesApp::with_read_only_token("ro-secret");
+        let mut gated = 0;
+        for e in crate::api_registry::ENDPOINTS {
+            let (status, json) = app.call(method_of(e.method), e.path, Some("Bearer ro-secret"));
+            let refused = status == 403 && json["error"] == GATE_MSG;
+            let expect_refused = e.method != "GET" && !(e.method == "POST" && !e.writes);
+            assert_eq!(
+                refused, expect_refused,
+                "{} {}: {status} {json}",
+                e.method, e.path
+            );
+            if e.writes {
+                assert!(refused, "{} {} writes but was not gated", e.method, e.path);
+                gated += 1;
+            }
+        }
+        assert!(gated > 0, "table must contain writing rows");
     }
 
     #[test]
