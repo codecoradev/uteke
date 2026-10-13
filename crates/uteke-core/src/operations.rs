@@ -15,6 +15,9 @@ use std::time::Duration;
 /// Embedding failures silently drop vector entries, causing the vector
 /// index to desync from SQLite. This helper retries up to 3 times with
 /// 200ms, 400ms, then 800ms delays between attempts.
+///
+/// A store with no embedder configured (#1166) gets an embedding error
+/// instead of a panic.
 pub(crate) fn retry_embed(
     embedder: &Mutex<Option<Box<dyn crate::embed::Embedder>>>,
     text: &str,
@@ -26,7 +29,11 @@ pub(crate) fn retry_embed(
         let lock = embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?;
-        let embedder = lock.as_ref().expect("embedder ensured above");
+        let Some(embedder) = lock.as_ref() else {
+            return Err(Error::embed_msg(
+                "No embedder configured; the memory was not embedded",
+            ));
+        };
         match embedder.embed(text) {
             Ok(embedding) => return Ok(embedding),
             Err(e) => {
@@ -3311,5 +3318,17 @@ mod recall_touch_tests {
             )
             .unwrap();
         assert_eq!(counts(&u, &ids), [0, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod retry_embed_tests {
+    use super::*;
+
+    #[test]
+    fn no_embedder_is_an_error_not_a_panic() {
+        let embedder: Mutex<Option<Box<dyn crate::embed::Embedder>>> = Mutex::new(None);
+        let err = retry_embed(&embedder, "hello").unwrap_err();
+        assert!(err.to_string().contains("No embedder"), "{err}");
     }
 }
