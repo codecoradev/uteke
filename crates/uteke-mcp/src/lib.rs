@@ -59,13 +59,59 @@ struct ToolResult {
     is_error: bool,
 }
 
-/// Handle a single MCP JSON-RPC request (#381).
+/// Who is calling (#1439). The HTTP bridge passes the token role; stdio is
+/// always `Full` (the process belongs to the local caller).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    Full,
+    ReadOnly,
+}
+
+/// Tools a read-only caller may use: the MCP counterparts of the GET rows and
+/// the non-writing POST rows in uteke-server's `api_registry`. A new tool is
+/// write-gated until it is added here on purpose.
+pub const READ_ONLY_TOOLS: &[&str] = &[
+    "uteke_recall",
+    "uteke_search",
+    "uteke_list",
+    "uteke_get",
+    "uteke_provenance",
+    "uteke_timeline",
+    "uteke_contradictions",
+    "uteke_stats",
+    "uteke_doc_get",
+    "uteke_doc_list",
+    "uteke_doc_search",
+    "uteke_doc_list_rooms",
+    "uteke_graph",
+    "uteke_room_list",
+    "uteke_room_recall",
+    "uteke_room_memories",
+    "uteke_room_stats",
+    "uteke_room_summary",
+    "uteke_room_summary_document",
+    "uteke_room_document",
+    "uteke_room_list_documents",
+    "uteke_tags_list",
+];
+
+/// Handle a single MCP JSON-RPC request with full access (#381).
 ///
-/// This is the shared handler used by both the stdio binary and the
-/// HTTP endpoint. Returns `Some(JsonRpcResponse)` for regular requests
-/// and `None` for notifications (which must not receive a response
-/// per JSON-RPC 2.0 §4.1).
+/// Used by the stdio binary, whose caller owns the process. Equivalent to
+/// `handle_jsonrpc_as(uteke, raw, Access::Full)`.
 pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
+    handle_jsonrpc_as(uteke, raw, Access::Full)
+}
+
+/// Handle a single MCP JSON-RPC request on behalf of a caller with the given
+/// `access` (#381, #1439).
+///
+/// This is the shared handler behind both the stdio binary and the HTTP
+/// endpoint. With `Access::ReadOnly`, `tools/call` refuses any tool not in
+/// [`READ_ONLY_TOOLS`] before it runs. Returns `Some(JsonRpcResponse)` for
+/// regular requests and `None` for notifications (which must not receive a
+/// response per JSON-RPC 2.0 §4.1).
+pub fn handle_jsonrpc_as(uteke: &Uteke, raw: &str, access: Access) -> Option<String> {
     let req: JsonRpcRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
         Err(e) => {
@@ -84,7 +130,7 @@ pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
     let is_notification = req.id.is_none();
     let id = req.id.unwrap_or(Value::Null);
 
-    match handle_request(uteke, &req.method, req.params) {
+    match handle_request(uteke, &req.method, req.params, access) {
         Ok(result) => {
             if is_notification {
                 // Notifications must not receive any response per JSON-RPC 2.0 §4.1.
@@ -122,7 +168,12 @@ pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
 
 // ── Handler ─────────────────────────────────────────────────────────────────
 
-fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<Value, String> {
+fn handle_request(
+    uteke: &Uteke,
+    method: &str,
+    params: Option<Value>,
+    access: Access,
+) -> Result<Value, String> {
     match method {
         "initialize" => Ok(serde_json::json!({
             "protocolVersion": "2025-06-18",
@@ -199,6 +250,10 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 .get("arguments")
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
+
+            if access == Access::ReadOnly && !READ_ONLY_TOOLS.contains(&tool_name) {
+                return Err(format!("Read-only token cannot use {tool_name}"));
+            }
 
             let result = match tool_name {
                 "uteke_remember" => exec_remember(uteke, &arguments)?,
@@ -3704,7 +3759,7 @@ mod namespace_deprecation_tests {
     #[test]
     fn every_tool_with_a_namespace_argument_says_deprecated() {
         let mut checked = 0;
-        let list = handle_request(&store(), "tools/list", None).unwrap();
+        let list = handle_request(&store(), "tools/list", None, Access::Full).unwrap();
         for t in list["tools"].as_array().unwrap() {
             let name = t["name"].as_str().unwrap().to_string();
             if let Some(arg) = t["inputSchema"]["properties"]["namespace"]["description"].as_str() {
@@ -3713,5 +3768,85 @@ mod namespace_deprecation_tests {
             }
         }
         assert!(checked >= 10, "only {checked} namespace args found");
+    }
+}
+
+#[cfg(test)]
+mod read_only_gate_tests {
+    use super::*;
+
+    fn store() -> Uteke {
+        Uteke::open_with_backend(":memory:", None).expect("open without embedder")
+    }
+
+    fn call(u: &Uteke, access: Access, tool: &str, args: serde_json::Value) -> serde_json::Value {
+        let raw = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool, "arguments": args}
+        })
+        .to_string();
+        let out = handle_jsonrpc_as(u, &raw, access).expect("request, not notification");
+        serde_json::from_str(&out).unwrap()
+    }
+
+    fn listed_tools(u: &Uteke) -> Vec<String> {
+        let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let out: serde_json::Value =
+            serde_json::from_str(&handle_jsonrpc(u, raw).unwrap()).unwrap();
+        out["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_read_only_tool_exists() {
+        let u = store();
+        let listed = listed_tools(&u);
+        for t in READ_ONLY_TOOLS {
+            // uteke_room_document is a dispatch alias of uteke_room_summary_document.
+            if *t == "uteke_room_document" {
+                continue;
+            }
+            assert!(listed.iter().any(|l| l == t), "{t} is not a listed tool");
+        }
+    }
+
+    #[test]
+    fn read_only_refuses_a_write_tool_and_writes_nothing() {
+        let u = store();
+        let resp = call(
+            &u,
+            Access::ReadOnly,
+            "uteke_remember",
+            serde_json::json!({"content": "x"}),
+        );
+        assert_eq!(
+            resp["error"]["message"],
+            "Read-only token cannot use uteke_remember"
+        );
+        assert_eq!(u.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_only_allows_a_read_tool() {
+        let u = store();
+        let resp = call(&u, Access::ReadOnly, "uteke_stats", serde_json::json!({}));
+        assert!(resp.get("error").is_none(), "{resp}");
+    }
+
+    #[test]
+    fn full_access_is_unchanged() {
+        let u = store();
+        let resp = call(
+            &u,
+            Access::Full,
+            "uteke_remember",
+            serde_json::json!({"content": "x"}),
+        );
+        assert!(resp.get("error").is_none(), "{resp}");
+        assert_eq!(u.count(None).unwrap(), 1);
     }
 }
