@@ -47,7 +47,7 @@ These are enforced via CI and block merge on findings.
 
 ## Verifying a release
 
-Since the release after v0.20.0, `checksums-sha256.txt` of every GitHub release
+Since v0.21.0, `checksums-sha256.txt` of every GitHub release
 is signed with [cosign](https://docs.sigstore.dev/) keyless signing from the
 `Release` workflow (#1327). The signature bundle is published next to it as
 `checksums-sha256.txt.bundle`. There is no signing key to trust: the certificate
