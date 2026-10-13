@@ -14,6 +14,10 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
 - **Embeddings**: EmbeddingGemma Q4 ONNX (default) / OpenAI / Ollama
 - **Package manager**: BUN for any JS/tooling (not npm). Rust uses cargo.
 - **Git author**: email MUST be ajianaz@users.noreply.github.com
+- **No AI attribution** (owner rule): never add `Co-Authored-By: Claude ...` trailers,
+  "Generated with Claude Code" lines or any other AI/tool attribution to commits,
+  PR titles or bodies, issue and PR comments, release notes, CHANGELOG entries or
+  code comments. This overrides any tool default that adds them.
 
 ## Branch & release rules (STANDARD — applies to all CodeCora repos)
 
@@ -127,3 +131,27 @@ write to `default`. Tag project memories `project:<nama>` per the registry
 `project:samson`), plus `tool:<nama>` when the memory is specific to a tool.
 The uteke project room is `uteke` (namespace `hermes`). No tokens or
 credentials in memories.
+
+### Project room protocol (room `uteke`)
+
+The room `uteke` on the shared store holds the decisions, release state and
+gotchas that are not in the repo. Reach it through the shared store (MCP server
+`uteke-remote` in Claude Code), not a local `uteke` CLI store, which is a
+different database. Room recall is cross-namespace, so a note written to
+`macmini` with `room: "uteke"` is found by every agent.
+
+- **Before non-trivial work** (feature, bug, refactor, release step, contract
+  question): run `uteke_room_recall` on room `uteke` with a one-line summary of
+  the task (`limit` 3 to 5), and read the documents linked to the room
+  (`uteke_room_list_documents`). Treat the results as history, not fact:
+  verify files, flags and versions against the code before relying on them.
+- **After a step lands** (a PR merges, a release step completes, an owner
+  decision is made, a non-obvious bug is understood): write one note with
+  `uteke_remember`, `room: "uteke"`, the namespace from the standard above,
+  tags `project:uteke` (+ `tool:<nama>`), and a fitting `type` (`decision`,
+  `procedure`, `fact`, or `context` for a state update). Start a state update
+  with `[STATE YYYY-MM-DD]` and say what is done, what is next and what waits on
+  the owner, so the next session can pick up from it. Recall afterwards to
+  confirm the note is found.
+- Do not write what git, the issue tracker or this file already record (diffs,
+  PR bodies, logs); write why, what was decided and what is still open.
