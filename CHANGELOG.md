@@ -10,6 +10,10 @@
 
 - **Namespaces (#1427, phase 1: the signal)** - namespaces are deprecated and will be removed in a future 0.x release; organise with rooms, tags and author instead. Nothing changes in routing, storage or reads, and the `namespace` parameter keeps working everywhere. Writing to a non-default namespace (omitting it or passing `default` is not deprecated) now returns a one-sentence warning: the `warning` field of HTTP `/remember` and `/room/remember`, an optional `warning` on `/extract`, `/import`, `/room/create` and `PUT /memory` (absent for the default namespace, so those responses are byte-identical), the tool text of MCP `uteke_remember`, `uteke_update` and `uteke_room_create`, and one stderr line from `uteke remember`, `uteke import` and `uteke room create` (stdout and `--json` unchanged). The server logs it at WARN once per distinct namespace. MCP tool descriptions, `uteke guide`, the skill and the docs ("Namespaces are deprecated" in `docs/multi-agent.md`, with the phase plan) steer to rooms, tags and author.
 
+### Fixed
+
+- **An explicit --store no longer routes through a running server (#1439)** - with `[server] enabled = true` and `uteke-serve` running, `remember`, `recall`, `search`, `list`, `stats` and `forget` went to the server, which serves its own store, so `--store <other path>` silently read and wrote the wrong database. An explicit `--store` naming a different store now always runs locally; `--store` pointing at the default store still uses the server.
+
 ## [0.20.1] - 2026-10-09
 
 Patch release. Theme: **use an external OpenAI-compatible or Ollama embedder with `uteke-serve` and the Docker image.** Two fixes, nothing else (no schema change, no API change).

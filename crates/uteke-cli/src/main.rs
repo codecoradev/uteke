@@ -25,9 +25,16 @@ static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// (often production) path — an operator trap that could read/write the wrong
 /// database from an "isolated-looking" invocation.
 pub(crate) fn resolve_store_path(cli: &Cli, config: &Config) -> String {
-    if let Some(s) = cli.store.as_deref() {
-        return s.to_string();
+    match cli.store.as_deref() {
+        Some(s) => s.to_string(),
+        None => default_store_path(config),
     }
+}
+
+/// The store used when no `--store` flag is given: `UTEKE_HOME` env, then
+/// `uteke.toml [store].path`. Shared by `resolve_store_path` and the server
+/// routing decision so the two cannot drift.
+fn default_store_path(config: &Config) -> String {
     if let Ok(home) = std::env::var("UTEKE_HOME") {
         if !home.is_empty() {
             return home;
@@ -36,11 +43,41 @@ pub(crate) fn resolve_store_path(cli: &Cli, config: &Config) -> String {
     Config::expand_tilde(&config.store.path)
 }
 
+/// Whether two store paths name the same store: canonical paths when both
+/// exist, otherwise tilde-expanded strings with trailing slashes trimmed.
+fn same_path(a: &str, b: &str) -> bool {
+    if let (Ok(ca), Ok(cb)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        return ca == cb;
+    }
+    let norm = |p: &str| {
+        let e = Config::expand_tilde(p);
+        let t = e.trim_end_matches('/');
+        if t.is_empty() { e } else { t.to_string() }
+    };
+    norm(a) == norm(b)
+}
+
 /// Whether to route this invocation through a running server (#1439 B4).
-/// An explicit `--store` names a database the server does not serve, so it
-/// always runs locally.
-fn should_route_via_server(cli: &Cli, server_enabled: bool) -> bool {
-    server_enabled && cli.store.is_none()
+/// An explicit `--store` naming a different database than the default one
+/// runs locally; the server only serves its own store. `--store` pointing at
+/// the default store still routes (the server holds that store's index lock).
+/// `default_store` is `default_store_path(config)`, injected for testability.
+fn should_route_via_server(cli: &Cli, default_store: &str, server_enabled: bool) -> bool {
+    if !server_enabled {
+        return false;
+    }
+    match cli.store.as_deref() {
+        None => true,
+        Some(explicit) => {
+            let same = same_path(explicit, default_store);
+            if !same {
+                tracing::debug!(
+                    "--store {explicit} is not the default store, skipping server routing"
+                );
+            }
+            same
+        }
+    }
 }
 
 fn main() {
@@ -128,12 +165,10 @@ fn main() {
 
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
-    if config.server.enabled && cli.store.is_some() {
-        tracing::debug!("Explicit --store given, skipping server routing");
-    }
-    // Cheap check first: no network probe when --store is set.
-    let server_available = should_route_via_server(&cli, config.server.enabled)
-        && commands::is_server_running(&server_url);
+    // Cheap check first: no network probe when --store names another store.
+    let server_available =
+        should_route_via_server(&cli, &default_store_path(&config), config.server.enabled)
+            && commands::is_server_running(&server_url);
 
     if server_available {
         tracing::info!("Server detected at {server_url}, routing via HTTP");
@@ -338,20 +373,65 @@ mod resolve_store_tests {
         cfg.store.namespace = "default".to_string();
         assert_eq!(resolve_namespace(&cli, &cfg), "default");
     }
+}
 
-    /// #1439 B4: an explicit `--store` names a database the server does not
-    /// serve, so it must never be routed through a running server.
+#[cfg(test)]
+mod routing_tests {
+    use super::*;
+
+    fn cli_with_store(store: Option<&str>) -> Cli {
+        let mut cli = Cli::try_parse_from(["uteke", "stats"]).unwrap();
+        cli.store = store.map(str::to_string);
+        cli
+    }
+
+    /// #1439 B4: an explicit `--store` naming another database must never be
+    /// routed through a running server, which only serves its own store.
     #[test]
-    fn explicit_store_never_routes_via_server() {
-        let cli = Cli::try_parse_from(["uteke", "--store", "/tmp/x", "stats"]).unwrap();
-        assert!(!should_route_via_server(&cli, true));
-        assert!(!should_route_via_server(&cli, false));
+    fn other_store_never_routes_via_server() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let other_dir = tempfile::tempdir().unwrap();
+        let default = default_dir.path().to_str().unwrap();
+        let cli = cli_with_store(Some(other_dir.path().to_str().unwrap()));
+        assert!(!should_route_via_server(&cli, default, true));
+        assert!(!should_route_via_server(&cli, default, false));
+        // Non-existent paths fall back to string comparison.
+        let cli = cli_with_store(Some("/nonexistent/uteke-other"));
+        assert!(!should_route_via_server(
+            &cli,
+            "/nonexistent/uteke-default",
+            true
+        ));
+    }
+
+    /// `--store` pointing at the default store keeps routing: the server
+    /// holds that store's index lock, so a local open would block.
+    #[test]
+    fn store_equal_to_default_still_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = Config::default();
+        cfg.store.path = dir.path().to_str().unwrap().to_string();
+        // Injected default store (no dependence on the UTEKE_HOME env).
+        let default = Config::expand_tilde(&cfg.store.path);
+        let cli = cli_with_store(Some(&cfg.store.path));
+        assert!(should_route_via_server(&cli, &default, true));
+        assert!(!should_route_via_server(&cli, &default, false));
+        // Trailing slash on an existing path: canonicalize matches.
+        let cli = cli_with_store(Some(&format!("{}/", cfg.store.path)));
+        assert!(should_route_via_server(&cli, &default, true));
+        // Trailing slash on a non-existent path: string fallback matches.
+        let cli = cli_with_store(Some("/nonexistent/uteke-store/"));
+        assert!(should_route_via_server(
+            &cli,
+            "/nonexistent/uteke-store",
+            true
+        ));
     }
 
     #[test]
-    fn no_store_routes_when_server_enabled() {
-        let cli = Cli::try_parse_from(["uteke", "stats"]).unwrap();
-        assert!(should_route_via_server(&cli, true));
-        assert!(!should_route_via_server(&cli, false));
+    fn no_store_routes_only_when_server_enabled() {
+        let cli = cli_with_store(None);
+        assert!(should_route_via_server(&cli, "/any/default", true));
+        assert!(!should_route_via_server(&cli, "/any/default", false));
     }
 }
