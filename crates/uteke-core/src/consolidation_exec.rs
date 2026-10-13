@@ -146,6 +146,7 @@ pub fn execute_plan<U: ConsolidationStore>(
                 .map(|s| s.namespace.clone())
                 .unwrap_or_else(|| "default".to_string()),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,

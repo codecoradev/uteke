@@ -193,6 +193,7 @@ Both transports expose the same 49 tools (MCP protocol version `2025-06-18`):
 | Binary | `uteke-mcp` | `uteke-serve` |
 | Daemon needed | No | Yes |
 | Remote access | No | Yes |
+| Authentication | None needed (a local process you start yourself) | Static bearer token (`UTEKE_AUTH_TOKEN`) |
 | Protocol | JSON-RPC over stdin/stdout | Streamable HTTP (POST `/mcp`) |
 | Best for | Local agents, single machine | Shared/team, remote access |
 
@@ -253,6 +254,40 @@ UTEKE_AUTH_TOKEN=your-secret uteke-serve --host 0.0.0.0 --port 8767
 }
 ```
 
+### Keeping the token out of the client config
+
+`uteke-serve` authenticates with a **static bearer token**. It does not implement
+OAuth sign-in, so an MCP client cannot start a browser login against it and no
+token is refreshed automatically. What you can do instead:
+
+- **Same machine: use the stdio transport.** `uteke-mcp` runs as a local process
+  your client starts itself, so there is no network listener, no token and no
+  `Authorization` header to store (Option A above).
+- **Another machine: keep the secret out of git.** Put the token in an environment
+  variable and reference it from the client config if your client supports
+  expanding environment variables (check its documentation for the exact syntax),
+  or keep the client config file out of version control. Prefer
+  `UTEKE_READ_ONLY_TOKEN` for clients that only need to recall.
+- **Rotate by restarting.** Change `UTEKE_AUTH_TOKEN`, restart `uteke-serve`, and
+  update the clients; old tokens stop working immediately.
+
+OAuth-based sign-in for MCP clients is not part of the self-hosted server.
+
+### Read-only tokens
+
+A client authenticated with `UTEKE_READ_ONLY_TOKEN` can call these tools over
+`POST /mcp`: `uteke_recall`, `uteke_search`, `uteke_list`, `uteke_get`,
+`uteke_provenance`, `uteke_timeline`, `uteke_contradictions`, `uteke_stats`,
+`uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_list_rooms`,
+`uteke_graph`, `uteke_room_list`, `uteke_room_recall`, `uteke_room_memories`,
+`uteke_room_stats`, `uteke_room_summary`, `uteke_room_summary_document` (alias
+`uteke_room_document`), `uteke_room_list_documents` and `uteke_tags_list`.
+
+Every other tool is refused with a tool error (`isError: true`, text
+`Read-only token cannot use <tool>`) and nothing is written. `tools/list` still
+lists every tool. The stdio transport (`uteke-mcp`) has no tokens and is
+unaffected.
+
 ### Docker on a VPS
 
 ```bash
@@ -286,6 +321,8 @@ See [TLS & Reverse Proxy](/tls) for full setup guides (Caddy, Nginx, Cloudflare 
 | Firewall | Allow only port 8767/tcp | Restrict access at the network level |
 
 ## Namespace Isolation
+
+> **Deprecated.** Namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Writes to a non-default namespace (`uteke_remember`, `uteke_update` moves, `uteke_room_create`) return a deprecation warning. See [Namespaces are deprecated](/multi-agent#namespaces-are-deprecated).
 
 The MCP server uses the `default` namespace by default. Each agent can use its own isolated namespace by passing a `namespace` argument to any tool call. Memories in one namespace are never visible to another.
 

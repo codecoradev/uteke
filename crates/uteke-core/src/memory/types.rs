@@ -26,9 +26,17 @@ pub struct Memory {
     /// Namespace for multi-agent isolation.
     #[serde(default = "default_namespace")]
     pub namespace: String,
-    /// How many times this memory has been accessed (recall, get).
+    /// How many times this memory was explicitly fetched (`get`). Recall and
+    /// search count in `recall_count` instead (#1337): a hit in a result list
+    /// is weaker evidence of use than an explicit fetch.
     #[serde(default)]
     pub access_count: u32,
+    /// How many times this memory was returned by recall / search (#1337).
+    /// Weighted at [`RECALL_ACCESS_WEIGHT`] of an explicit access in the
+    /// salience, aging and orphan scores, so automated recalls cannot
+    /// reinforce a memory as strongly as real use.
+    #[serde(default)]
+    pub recall_count: u32,
     /// When this memory was last accessed.
     #[serde(default)]
     pub last_accessed: Option<chrono::DateTime<chrono::Utc>>,
@@ -81,6 +89,18 @@ pub struct Memory {
         skip_serializing_if = "is_default_author_type"
     )]
     pub author_type: String,
+}
+
+/// Weight of one recall/search hit relative to one explicit `get` when
+/// combining the two counters into a single access signal (#1337).
+pub const RECALL_ACCESS_WEIGHT: f32 = 0.5;
+
+impl Memory {
+    /// Combined access signal used by salience, aging and orphan scoring:
+    /// `access_count + RECALL_ACCESS_WEIGHT * recall_count`.
+    pub fn access_signal(&self) -> f32 {
+        self.access_count as f32 + RECALL_ACCESS_WEIGHT * self.recall_count as f32
+    }
 }
 
 fn default_namespace() -> String {
@@ -226,6 +246,39 @@ pub struct UnifiedSearchResult {
     /// Populated for type=document when cross-references exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_memory_ids: Option<Vec<String>>,
+}
+
+impl UnifiedSearchResult {
+    /// Build the unified (memory-typed) form of a ranked memory result.
+    /// Shared by unified recall and room recall so both report the same
+    /// fields, including `memory_id`.
+    pub fn from_memory_result(sr: &SearchResult) -> Self {
+        let m = &sr.memory;
+        UnifiedSearchResult {
+            result_type: SearchResultType::Memory,
+            score: sr.score,
+            content: m.content.clone(),
+            memory_id: Some(m.id.clone()),
+            tags: m.tags.clone(),
+            doc_slug: None,
+            doc_title: None,
+            chunk_heading: None,
+            chunk_snippet: None,
+            metadata: Some(m.metadata.clone()),
+            memory_type: Some(m.memory_type.clone()),
+            namespace: Some(m.namespace.clone()),
+            source: m.source.clone(),
+            source_type: Some(m.source_type.clone()),
+            importance: Some(m.importance),
+            pinned: Some(m.pinned),
+            access_count: Some(m.access_count),
+            last_accessed: m.last_accessed,
+            created_at: Some(m.created_at),
+            updated_at: Some(m.updated_at),
+            linked_doc_slugs: None,
+            linked_memory_ids: None,
+        }
+    }
 }
 
 /// Filter for unified search — which sources to query (#531).

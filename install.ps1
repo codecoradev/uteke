@@ -230,3 +230,10 @@ Write-Host "  uteke recall \"when do we deploy?\""
 Write-Host ""
 Write-Host "MCP Server (for AI agents):" -ForegroundColor Cyan
 Write-Host "  uteke-mcp"
+
+Write-Host ""
+Write-Host "Optional: use uteke from another device on your network" -ForegroundColor Cyan
+Write-Host "  uteke-serve listens on 127.0.0.1 only. To reach it over your LAN, set a token"
+Write-Host "  first (UTEKE_AUTH_TOKEN, or UTEKE_READ_ONLY_TOKEN for read-only clients), then"
+Write-Host "  start it with --host 0.0.0.0 (all interfaces) or your LAN address."
+Write-Host "  Guide: https://github.com/codecoradev/uteke/blob/main/docs/configuration.md#reaching-the-server-from-another-device-on-your-lan"

@@ -305,6 +305,7 @@ mod tests {
                 updated_at: now,
                 namespace: String::from("default"),
                 access_count: 0,
+                recall_count: 0,
                 last_accessed: None,
                 deprecated: false,
                 deprecated_at: None,

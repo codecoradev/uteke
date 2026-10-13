@@ -270,6 +270,15 @@ verify() {
     fi
 }
 
+print_lan_hint() {
+    echo ""
+    echo "Optional: use uteke from another device on your network"
+    echo "  uteke-serve listens on 127.0.0.1 only. To reach it over your LAN, set a token"
+    echo "  first (UTEKE_AUTH_TOKEN, or UTEKE_READ_ONLY_TOKEN for read-only clients), then"
+    echo "  start it with --host 0.0.0.0 (all interfaces) or your LAN address."
+    echo "  Guide: https://github.com/codecoradev/uteke/blob/main/docs/configuration.md#reaching-the-server-from-another-device-on-your-lan"
+}
+
 main() {
     # --from-source flag: skip binary download, compile directly
     if [ "${1:-}" = "--from-source" ]; then
@@ -278,6 +287,7 @@ main() {
         verify
         echo ""
         info "Installation complete! Run '${BINARY_NAME} --help' to get started."
+        print_lan_hint
         return
     fi
 
@@ -297,6 +307,7 @@ main() {
 
     echo ""
     info "Installation complete! Run '${BINARY_NAME} --help' to get started."
+    print_lan_hint
 }
 
 main "$@"

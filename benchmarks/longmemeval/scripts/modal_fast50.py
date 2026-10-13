@@ -45,7 +45,7 @@ import time
 import modal
 
 REPO_DIR = pathlib.Path(__file__).parent.parent  # benchmarks/longmemeval (scripts live in scripts/)
-UTEKE_VERSION = "v0.15.0"
+UTEKE_VERSION = os.environ.get("UTEKE_RELEASE", "v0.15.0")
 DATA_FILE = os.environ.get("LMEVAL_DATA", "longmemeval_fast50.json")
 RERANK = False  # removed (#1118 cancelled — single-model direction); kept as False for compat
 RERANK_DEPTH = 20

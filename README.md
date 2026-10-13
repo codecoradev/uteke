@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
   <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
-  <a href="#-benchmarks--982-recall-on-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
+  <a href="#-benchmarks-982-recall-on-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
 
 <p align="center">
@@ -317,7 +317,7 @@ For Claude Desktop, Hermes, and HTTP transport, see [MCP docs](docs/mcp.md).
 <details>
 <summary><strong>How is Uteke different from cloud-dependent memory tools?</strong></summary>
 
-Many memory layers (Python-based or TypeScript-based) require cloud API keys (OpenAI/LLM) and external infrastructure (Docker, Postgres, Qdrant). Your data gets sent to a cloud LLM provider. Uteke is a single binary with zero API keys. All embeddings run locally via ONNX. Your data never leaves your machine. [See comparison table](#-why-uteke-).
+Many memory layers (Python-based or TypeScript-based) require cloud API keys (OpenAI/LLM) and external infrastructure (Docker, Postgres, Qdrant). Your data gets sent to a cloud LLM provider. Uteke is a single binary with zero API keys. All embeddings run locally via ONNX. Your data never leaves your machine. [See comparison table](#-why-uteke).
 </details>
 
 <details>
@@ -353,7 +353,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.20.1 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.21.0 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
 
 ---

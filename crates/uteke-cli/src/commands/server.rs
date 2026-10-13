@@ -149,60 +149,43 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             source_type,
             timestamp,
         } => {
-            let mut body = serde_json::json!({
-                "content": content,
-                "tags": tags,
-                "namespace": ns
-            });
-            if let Some(ts) = timestamp {
-                body["timestamp"] = serde_json::json!(ts);
+            // The typed remember request shared with HTTP and MCP (#1343)
+            // builds the body; the server validates and applies its policy.
+            // entity/category/--meta travel inside `metadata`.
+            let body = uteke_core::RememberInput {
+                content: content.clone(),
+                tags: tags.clone(),
+                namespace: Some(ns.to_string()),
+                memory_type: Some(r#type.clone()),
+                detect_contradiction: *detect_contradiction,
+                metadata: uteke_core::metadata_from_cli_flags(
+                    entity.as_deref(),
+                    category.as_deref(),
+                    meta,
+                ),
+                source: source.clone(),
+                source_type: source_type.clone(),
+                author_type: author_type.clone(),
+                room: room.clone(),
+                author: author.clone(),
+                timestamp: timestamp.clone(),
+                ..uteke_core::RememberInput::default()
             }
-            if let Some(at) = author_type {
-                body["author_type"] = serde_json::json!(at);
-            }
-            if !r#type.is_empty() {
-                body["type"] = serde_json::json!(r#type);
-            }
-            if *detect_contradiction {
-                body["detect_contradiction"] = serde_json::json!(true);
-            }
-            // Build metadata from entity/category/meta flags
-            let mut meta_map = serde_json::Map::new();
-            if let Some(e) = entity {
-                meta_map.insert("entity".to_string(), serde_json::Value::String(e.clone()));
-            }
-            if let Some(c) = category {
-                meta_map.insert("category".to_string(), serde_json::Value::String(c.clone()));
-            }
-            for pair in meta {
-                if let Some((key, value)) = pair.split_once(':') {
-                    meta_map.insert(
-                        key.to_string(),
-                        serde_json::Value::String(value.to_string()),
-                    );
-                }
-            }
-            if !meta_map.is_empty() {
-                body["metadata"] = serde_json::Value::Object(meta_map);
-            }
-            if let Some(room_id) = room {
-                body["room"] = serde_json::json!(room_id);
-            }
-            if let Some(author_name) = author {
-                body["author"] = serde_json::json!(author_name);
-            }
-            if let Some(src) = source {
-                body["source"] = serde_json::json!(src);
-            }
-            if let Some(st) = source_type {
-                body["source_type"] = serde_json::json!(st);
-            }
+            .to_http_body();
             let resp = client
                 .post(format!("{server_url}/remember"))
                 .json(&body)
                 .send()
                 .map_err(|e| format!("Server error: {e}"))?;
-            let data = parse_json_value(resp)?;
+            let mut data = parse_json_value(resp)?;
+            // The deprecation signal (#1427) goes to stderr (see main), never
+            // into stdout JSON: strip it from the server's merged `warning`.
+            if let Some(w) = data["warning"].as_str() {
+                data["warning"] = match uteke_core::namespace_deprecation::strip_deprecation(w) {
+                    Some(rest) => serde_json::Value::String(rest),
+                    None => serde_json::Value::Null,
+                };
+            }
             if cli.json {
                 println!("{data}");
             } else {
@@ -255,40 +238,26 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 );
                 return Err("unsupported".to_string());
             }
-            let mut body = serde_json::json!({
-                "query": query,
-                "limit": limit,
-                "tags": tags,
-                "namespace": ns
-            });
-            if let Some(e) = entity {
-                body["entity"] = serde_json::json!(e);
+            // The typed recall request shared with HTTP and MCP (#1343) builds
+            // the body; the server validates and applies its own policy.
+            let body = uteke_core::RecallInput {
+                query: query.clone(),
+                limit: Some(*limit),
+                tags: Some(tags.clone()),
+                namespace: Some(ns.to_string()),
+                entity: entity.clone(),
+                category: category.clone(),
+                min_score: *min,
+                strict: *strict,
+                at: at.clone(),
+                search_type: r#type.clone(),
+                enrich: *enrich,
+                pack: *pack,
+                budget_chars: Some(*budget),
+                exclude_ids: exclude_ids.clone(),
+                ..uteke_core::RecallInput::default()
             }
-            if let Some(c) = category {
-                body["category"] = serde_json::json!(c);
-            }
-            if let Some(m) = min {
-                body["min_score"] = serde_json::json!(m);
-            }
-            if *strict {
-                body["strict"] = serde_json::json!(true);
-            }
-            if let Some(a) = at {
-                body["at"] = serde_json::json!(a);
-            }
-            if let Some(t) = r#type {
-                body["search_type"] = serde_json::json!(t);
-            }
-            if *enrich {
-                body["enrich"] = serde_json::json!(true);
-            }
-            if *pack {
-                body["pack"] = serde_json::json!(true);
-                body["budget_chars"] = serde_json::json!(budget);
-                if !exclude_ids.is_empty() {
-                    body["exclude_ids"] = serde_json::json!(exclude_ids);
-                }
-            }
+            .to_http_body();
             let resp = client
                 .post(format!("{server_url}/recall"))
                 .json(&body)
@@ -349,15 +318,15 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             at,
             ..
         } => {
-            let mut body = serde_json::json!({
-                "tag": tag,
-                "limit": limit,
-                "offset": offset,
-                "namespace": ns
-            });
-            if let Some(a) = at {
-                body["at"] = serde_json::json!(a);
+            let body = uteke_core::ListInput {
+                tag: tag.clone(),
+                limit: Some(*limit),
+                offset: Some(*offset),
+                namespace: Some(ns.to_string()),
+                at: at.clone(),
+                ..uteke_core::ListInput::default()
             }
+            .to_http_body();
             let resp = client
                 .post(format!("{server_url}/list"))
                 .json(&body)
@@ -391,40 +360,30 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             all: _,
             confirm: _,
         } => {
-            if let Some(id) = id {
-                let resp = client
-                    .delete(format!(
-                        "{server_url}/forget?id={}",
-                        urlencoding::encode(id)
-                    ))
-                    .send()
-                    .map_err(|e| format!("Server error: {e}"))?;
-                let data = parse_json_value(resp)?;
-                if cli.json {
-                    println!("{data}");
-                } else {
-                    println!("\u{2713} Memory forgotten: {id}");
-                }
-            } else if let Some(tag) = tag {
-                let resp = client
-                    .delete(format!(
-                        "{server_url}/forget?tag={}&namespace={}",
-                        urlencoding::encode(tag),
-                        urlencoding::encode(ns)
-                    ))
-                    .send()
-                    .map_err(|e| format!("Server error: {e}"))?;
-                let data = parse_json_value(resp)?;
-                if cli.json {
-                    println!("{data}");
-                } else {
-                    println!(
-                        "\u{2713} Deleted {} memories with tag '{}'",
-                        data["deleted"], tag
-                    );
-                }
-            } else {
+            // The DELETE /forget path comes from the typed request in
+            // uteke-core (#1343); the id wins over the tag, as on the server.
+            let input = uteke_core::ForgetInput {
+                id: id.clone(),
+                tag: tag.clone(),
+                namespace: Some(ns.to_string()),
+            };
+            let Some(path) = input.to_http_path(|v| urlencoding::encode(v).into_owned()) else {
                 return Err("Provide an ID, --tag, --cold, or --all".into());
+            };
+            let resp = client
+                .delete(format!("{server_url}{path}"))
+                .send()
+                .map_err(|e| format!("Server error: {e}"))?;
+            let data = parse_json_value(resp)?;
+            if cli.json {
+                println!("{data}");
+            } else if let Some(id) = id {
+                println!("\u{2713} Memory forgotten: {id}");
+            } else if let Some(tag) = tag {
+                println!(
+                    "\u{2713} Deleted {} memories with tag '{}'",
+                    data["deleted"], tag
+                );
             }
         }
         // Commands not supported via server fall through to local
@@ -438,6 +397,32 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::is_loopback_url;
+
+    // #1343: the forget URL is built by the typed request; it must stay what
+    // the CLI always sent (id wins, tag carries the namespace, values encoded).
+    #[test]
+    fn forget_path_matches_the_old_urls() {
+        let enc = |v: &str| urlencoding::encode(v).into_owned();
+        let by_id = uteke_core::ForgetInput {
+            id: Some("ab cd/1".into()),
+            tag: Some("t".into()),
+            namespace: Some("default".into()),
+        };
+        assert_eq!(
+            by_id.to_http_path(enc).as_deref(),
+            Some("/forget?id=ab%20cd%2F1")
+        );
+        let by_tag = uteke_core::ForgetInput {
+            id: None,
+            tag: Some("my tag&x".into()),
+            namespace: Some("work space".into()),
+        };
+        assert_eq!(
+            by_tag.to_http_path(enc).as_deref(),
+            Some("/forget?tag=my%20tag%26x&namespace=work%20space")
+        );
+        assert_eq!(uteke_core::ForgetInput::default().to_http_path(enc), None);
+    }
 
     #[test]
     fn loopback_detection() {

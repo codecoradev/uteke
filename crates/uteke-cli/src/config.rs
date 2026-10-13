@@ -126,30 +126,31 @@ pub struct EmbedFallbackConfig {
 }
 
 impl EmbedFallbackConfig {
+    /// The same settings as the core type, for `is_configured` and the env
+    /// overrides, so the rules live in one place (#1355).
+    fn to_core(&self) -> uteke_core::FallbackSettings {
+        uteke_core::FallbackSettings {
+            api_key: self.api_key.clone(),
+            base_url: self.base_url.clone(),
+            endpoint_path: self.endpoint_path.clone(),
+            model: self.model.clone(),
+        }
+    }
+
     /// Check if fallback is fully configured (api_key, base_url, AND model).
     /// Warns on partial config — partial config will be rejected by the core library.
     pub fn is_configured(&self) -> bool {
-        let has_any =
-            !self.api_key.is_empty() || !self.base_url.is_empty() || !self.model.is_empty();
-        let has_all =
-            !self.api_key.is_empty() && !self.base_url.is_empty() && !self.model.is_empty();
-        if has_any && !has_all {
-            tracing::warn!(
-                "Embedding fallback partially configured — requires api_key, base_url, AND model"
-            );
-        }
-        has_all
+        self.to_core().is_configured()
     }
 
     /// Resolve with env var overrides. Env vars win over toml values.
     fn resolve_with_env(self) -> Self {
-        let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        let r = self.to_core().with_env_overrides();
         Self {
-            api_key: env_or("UTEKE_EMBED_FALLBACK_API_KEY").unwrap_or(self.api_key),
-            base_url: env_or("UTEKE_EMBED_FALLBACK_BASE_URL").unwrap_or(self.base_url),
-            endpoint_path: env_or("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH")
-                .unwrap_or(self.endpoint_path),
-            model: env_or("UTEKE_EMBED_FALLBACK_MODEL").unwrap_or(self.model),
+            api_key: r.api_key,
+            base_url: r.base_url,
+            endpoint_path: r.endpoint_path,
+            model: r.model,
         }
     }
 }

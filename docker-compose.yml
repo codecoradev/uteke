@@ -9,9 +9,21 @@ services:
       - "127.0.0.1:${UTEKE_PORT:-8767}:8767"
     volumes:
       - uteke-data:/data
+    # A .env file next to this file only fills in the ${VAR} references below;
+    # it does NOT reach the container by itself. To load all of it, uncomment:
+    # env_file: .env
     environment:
-      # Auth (optional — set UTEKE_AUTH_TOKEN env var to enable)
+      # Auth (optional — set UTEKE_AUTH_TOKEN env var to enable). The server
+      # reads UTEKE_AUTH_TOKEN; if you keep the token under another name in .env,
+      # map it, e.g.: - UTEKE_AUTH_TOKEN=${UTEKE_TOKEN}
+      # Without a token the server starts unauthenticated (see the WARN in the log).
       # - UTEKE_AUTH_TOKEN
+      # External embedder instead of the built-in ONNX model (v0.20.1+); with a
+      # non-onnx backend the ~208 MB model download is skipped.
+      # - UTEKE_EMBEDDING_BACKEND=openai
+      # - UTEKE_EMBEDDING_BASE_URL=http://embor:8355/v1
+      # - UTEKE_EMBEDDING_MODEL=embeddinggemma-q4
+      # - UTEKE_EMBEDDING_DIMS=768
       # Vector engine (v0.17.0+): usearch (default) or vecq.
       # Both engines ship in the image; switching rebuilds the index from
       # SQLite on next start (data is never touched).

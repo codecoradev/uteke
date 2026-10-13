@@ -614,6 +614,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,

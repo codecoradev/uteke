@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.20.1** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "forbid"` workspace-wide.
+Version: **0.21.0** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "forbid"` workspace-wide.
 
 > This skill ships with each release — its version tracks the CLI version
 > (a CI gate fails when they drift, see `skill-version-parity` test).
@@ -23,7 +23,7 @@ Version: **0.20.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | Flag | Description |
 |------|-------------|
 | `--store <PATH>` | Override store path (default: `~/.codecora/uteke`) |
-| `--namespace <NS>` | Multi-agent isolation (default: `"default"`) |
+| `--namespace <NS>` | DEPRECATED (default: `"default"`): namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Writes to a non-default namespace print a warning on stderr |
 | `--json` | Machine-readable JSON output |
 | `--verbose` | Debug logging |
 
@@ -169,14 +169,18 @@ Version: **0.20.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 > behind → index written by the old binary reads as mismatched).
 >
 > **Search strategy guide — filters, not silos:**
-> - `namespace` = agent/workspace identity — pass it explicitly on recall.
+> - `namespace` = DEPRECATED (removal planned in a future 0.x release): do not
+>   choose one for new memories, use rooms, tags and author. Existing
+>   namespaced memories keep working; pass it explicitly on recall.
 > - `room` = collaborative discussion context (`uteke room recall`).
 > - `tags` (e.g. `project:<repo>`) = the primary project filter.
 > - Strategies: `fusion` (default), `hybrid` (RRF vector+FTS5), `fts5`
 >   (keyword — best for short 1–3 word queries and exact terms), `vector`
->   (pure semantic), `graph`. Scores are rank-based (RRF), not cosine —
->   don't threshold them like similarity; use `recall --explain` for the
->   real vector similarity.
+>   (pure semantic), `graph`. A score is a strategy-specific base plus
+>   boosts (salience, recency) and can exceed 1.0; fusion's base is rank-based
+>   (RRF, about 0.04 at most), not cosine — don't threshold scores like
+>   similarity or compare them across strategies; use `recall --explain` for
+>   the exact breakdown and the real vector similarity.
 > - Prefer 2–3 core keywords: FTS5 AND-matches all tokens, long natural
 >   sentences can zero out the keyword arm.
 
@@ -302,6 +306,11 @@ and the conversation names no project, add no `project:` tag.
 
 ## Namespace, Room and Tag Conventions
 
+> **Namespaces are deprecated** (removal planned in a future 0.x release, #1427).
+> Writing to a non-default namespace works but returns a deprecation warning.
+> Organise with rooms, tags and author instead; the namespace row below only
+> describes memories that already exist.
+
 Keep the three axes distinct so recall stays filterable:
 
 | Axis | Means | Rule |
@@ -316,6 +325,15 @@ Keep the three axes distinct so recall stays filterable:
 - `uteke update --tags` **replaces** the whole tag set — read the memory first
   and write back the merged list; there is no bulk add-tag operation.
 - `uteke namespace rename` changes only the memories' namespace, not the `rooms` table.
+
+### Conventions first
+
+Before you write a memory in a workspace you have not used before, check whether
+it already has a memory convention: a room or document named like `*conventions*`
+(`uteke room list`, `uteke doc search conventions`), or the project's `AGENTS.md` /
+`CLAUDE.md`. If one exists, follow it (namespace, room, tags). If none exists, use
+the defaults: one fact per memory, no secrets or credentials, tag it with the
+project name.
 
 ### What to store
 

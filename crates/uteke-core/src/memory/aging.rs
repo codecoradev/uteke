@@ -20,32 +20,44 @@ impl super::Store {
         Ok(())
     }
 
-    /// Batch-increment access counters for multiple memories in one transaction.
-    ///
-    /// Eliminates N+1 UPDATEs in recall(), recall_hybrid(), recall_rrf(), and search()
-    /// where each result triggered a separate touch_access() call.
+    /// Batch-increment `access_count` for memories fetched explicitly.
     pub fn touch_access_batch(&self, ids: &[&str]) -> Result<(), Error> {
+        self.touch_batch(ids, "access_count")
+    }
+
+    /// Batch-increment `recall_count` for memories returned by recall/search
+    /// (#1337). Kept apart from `access_count` so automated recalls weigh less
+    /// than explicit use in salience, aging and orphan scoring.
+    pub fn touch_recall_batch(&self, ids: &[&str]) -> Result<(), Error> {
+        self.touch_batch(ids, "recall_count")
+    }
+
+    /// One transaction for the whole batch (no N+1 UPDATEs). `column` is one of
+    /// two internal literals, never user input.
+    fn touch_batch(&self, ids: &[&str], column: &'static str) -> Result<(), Error> {
+        debug_assert!(matches!(column, "access_count" | "recall_count"));
         if ids.is_empty() {
             return Ok(());
         }
+        let sql = format!(
+            "UPDATE memories SET {column} = {column} + 1, last_accessed = ?1 WHERE id = ?2"
+        );
         let now = chrono::Utc::now().to_rfc3339();
         let tx = self
             .conn
             .unchecked_transaction()
-            .map_err(|e| Error::db("begin touch_access_batch transaction", e))?;
+            .map_err(|e| Error::db("begin touch batch transaction", e))?;
         {
             let mut stmt = tx
-                .prepare(
-                    "UPDATE memories SET access_count = access_count + 1, last_accessed = ?1 WHERE id = ?2",
-                )
-                .map_err(|e| Error::db("prepare touch_access_batch", e))?;
+                .prepare(&sql)
+                .map_err(|e| Error::db("prepare touch batch", e))?;
             for id in ids {
                 stmt.execute(params![now, id])
-                    .map_err(|e| Error::db("touch_access_batch execute", e))?;
+                    .map_err(|e| Error::db("touch batch execute", e))?;
             }
         }
         tx.commit()
-            .map_err(|e| Error::db("commit touch_access_batch", e))?;
+            .map_err(|e| Error::db("commit touch batch", e))?;
         Ok(())
     }
 

@@ -15,6 +15,10 @@ use std::time::Duration;
 /// Embedding failures silently drop vector entries, causing the vector
 /// index to desync from SQLite. This helper retries up to 3 times with
 /// 200ms, 400ms, then 800ms delays between attempts.
+///
+/// If the embedder slot is empty (it should not be after `ensure_embedder`),
+/// returns an embedding error instead of panicking. Validation errors are
+/// returned immediately: they can never succeed on retry.
 pub(crate) fn retry_embed(
     embedder: &Mutex<Option<Box<dyn crate::embed::Embedder>>>,
     text: &str,
@@ -26,9 +30,14 @@ pub(crate) fn retry_embed(
         let lock = embedder
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?;
-        let embedder = lock.as_ref().expect("embedder ensured above");
+        let Some(embedder) = lock.as_ref() else {
+            return Err(Error::embed_msg(
+                "No embedder configured; the memory was not embedded",
+            ));
+        };
         match embedder.embed(text) {
             Ok(embedding) => return Ok(embedding),
+            Err(e @ Error::Validation(_)) => return Err(e),
             Err(e) => {
                 drop(lock); // Release lock before sleeping
                 if attempt < MAX_RETRIES - 1 {
@@ -443,6 +452,7 @@ impl crate::Uteke {
             updated_at: now,
             namespace: namespace.unwrap_or(DEFAULT_NAMESPACE).to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -560,7 +570,7 @@ impl crate::Uteke {
         entity_filter: Option<&str>,
         category_filter: Option<&str>,
     ) -> Result<Vec<SearchResult>, Error> {
-        self.recall_inner(
+        let results = self.recall_inner(
             query,
             limit,
             tags_filter,
@@ -569,7 +579,20 @@ impl crate::Uteke {
             entity_filter,
             category_filter,
             false,
-        )
+        )?;
+        self.touch_recalled(&results);
+        Ok(results)
+    }
+
+    /// Count the results of ONE user-level recall/search as recall hits
+    /// (#1337, #1407). The strategy arms never touch on their own: they are
+    /// built from each other (fusion runs vector + hybrid, hybrid runs vector),
+    /// and the arms work on a `boost_window` of candidates, so touching inside
+    /// them counted one recall several times and bumped memories that were
+    /// never returned.
+    fn touch_recalled(&self, results: &[SearchResult]) {
+        let ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
+        self.store.touch_recall_batch(&ids).ok();
     }
 
     /// Same as `recall` but optionally keeps deprecated memories so temporal
@@ -595,7 +618,9 @@ impl crate::Uteke {
             .lock()
             .map_err(|_| Error::lock("embedder lock during recall"))?
             .as_ref()
-            .expect("embedder ensured above")
+            .ok_or_else(|| {
+                Error::embed_msg("No embedder configured; semantic recall is unavailable")
+            })?
             .embed(query)?;
         // Embedder lock dropped here — other threads can embed or recall concurrently.
 
@@ -722,10 +747,6 @@ impl crate::Uteke {
             results.retain(|r| r.score >= min_score);
         }
 
-        // Touch access for returned results
-        let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
-
         Ok(results)
     }
 
@@ -767,6 +788,7 @@ impl crate::Uteke {
                 results.retain(|r| r.score >= min_score);
             }
             results.truncate(limit);
+            self.touch_recalled(&results);
             return Ok(results);
         }
 
@@ -804,6 +826,7 @@ impl crate::Uteke {
             results.retain(|r| r.score >= min_score);
         }
         results.truncate(limit);
+        self.touch_recalled(&results);
         Ok(results)
     }
 
@@ -825,9 +848,16 @@ impl crate::Uteke {
         min_score: f32,
     ) -> Result<Vec<SearchResult>, Error> {
         match strategy {
-            RecallStrategy::Vector => {
-                self.recall(query, boost_window, tags_filter, namespace, 0.0, None, None)
-            }
+            RecallStrategy::Vector => self.recall_inner(
+                query,
+                boost_window,
+                tags_filter,
+                namespace,
+                0.0,
+                None,
+                None,
+                false,
+            ),
             RecallStrategy::Fts5 => {
                 self.recall_fts5_only(query, boost_window, tags_filter, namespace, 0.0)
             }
@@ -992,7 +1022,16 @@ impl crate::Uteke {
             Ok(_) => self.store.search_fts5_tokens(query, namespace, limit * 3)?,
             Err(e) => {
                 tracing::warn!("FTS5 search failed, falling back to vector: {e}");
-                return self.recall(query, limit, tags_filter, namespace, min_score, None, None);
+                return self.recall_inner(
+                    query,
+                    limit,
+                    tags_filter,
+                    namespace,
+                    min_score,
+                    None,
+                    None,
+                    false,
+                );
             }
         };
 
@@ -1052,10 +1091,6 @@ impl crate::Uteke {
             results.retain(|r| r.score >= min_score);
         }
 
-        // Touch access for returned results
-        let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
-
         Ok(results)
     }
 
@@ -1074,14 +1109,22 @@ impl crate::Uteke {
         const RRF_K: u32 = 60;
 
         // Run vector search (pass 0.0 for min_score since RRF does its own filtering)
-        let vector_results =
-            match self.recall(query, limit * 3, tags_filter, namespace, 0.0, None, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::warn!("Vector search failed in hybrid: {e}");
-                    return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
-                }
-            };
+        let vector_results = match self.recall_inner(
+            query,
+            limit * 3,
+            tags_filter,
+            namespace,
+            0.0,
+            None,
+            None,
+            false,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Vector search failed in hybrid: {e}");
+                return self.recall_fts5_only(query, limit, tags_filter, namespace, min_score);
+            }
+        };
 
         // Run FTS5 search
         let fts_results = match self.store.search_fts5(query, namespace, limit * 3) {
@@ -1146,19 +1189,28 @@ impl crate::Uteke {
         let mut results: Vec<SearchResult> = scored
             .into_iter()
             .take(limit)
-            .map(|(id, score)| {
-                let memory = memories
-                    .remove(&id)
-                    .expect("RRF score references memory that should exist");
+            .filter_map(|(id, score)| {
+                // Every RRF id is inserted into `memories` in the same loop,
+                // so this cannot miss today. If that invariant ever breaks,
+                // skip the id with a warning instead of panicking (the result
+                // may then hold fewer than `limit` items; `take` stays first so
+                // the normal path is unchanged).
+                let Some(memory) = memories.remove(&id) else {
+                    tracing::warn!(
+                        id = %id,
+                        "RRF score references a memory missing from the fused set; skipping"
+                    );
+                    return None;
+                };
                 // RRF score is sum of 1/(k+rank) from both channels.
                 // Max possible: 2/(k+1) when rank=0 in both.
                 // Normalize by dividing by that theoretical max.
                 let max_rrf = 2.0 / (RRF_K as f64 + 1.0);
                 let normalized = (score / max_rrf).clamp(0.0, 1.0);
-                SearchResult {
+                Some(SearchResult {
                     memory,
                     score: normalized as f32,
-                }
+                })
             })
             .collect();
 
@@ -1182,10 +1234,6 @@ impl crate::Uteke {
                 });
             }
         }
-
-        // Touch access for returned results
-        let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -1219,7 +1267,7 @@ impl crate::Uteke {
 
         // Touch access for returned results
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
-        self.store.touch_access_batch(&touch_ids).ok();
+        self.store.touch_recall_batch(&touch_ids).ok();
 
         Ok(results)
     }
@@ -2455,6 +2503,7 @@ mod rrf_fuse_weighted_tests {
             updated_at: now,
             namespace: "test".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -2644,6 +2693,7 @@ mod dedup_tests {
             updated_at: created,
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -3036,7 +3086,7 @@ mod remember_embedding_status_tests {
     impl Embedder for FailingEmbedder {
         fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Err(Error::Validation("simulated provider outage".to_string()))
+            Err(Error::embed_msg("simulated provider outage"))
         }
         fn dims(&self) -> usize {
             4
@@ -3060,7 +3110,7 @@ mod remember_embedding_status_tests {
         fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_times {
-                Err(Error::Validation(format!("transient failure #{n}")))
+                Err(Error::embed_msg(format!("transient failure #{n}")))
             } else {
                 Ok(vec![0.1f32; 4])
             }
@@ -3180,5 +3230,297 @@ mod remember_embedding_status_tests {
             .expect("store read must work")
             .expect("memory row must exist");
         assert!(stored.embedding.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod recall_touch_tests {
+    //! #1407 — one user-level recall counts each RETURNED memory once.
+    use crate::RecallStrategy;
+    use crate::test_support::open_keyword;
+
+    /// Three memories; only the first two share words with the query, and
+    /// `limit = 1` returns exactly one of them.
+    fn seeded() -> (crate::Uteke, [String; 3]) {
+        let u = open_keyword();
+        let mut ids = Vec::new();
+        for text in [
+            "alpha beta gamma delta",
+            "alpha epsilon zeta eta",
+            "omega sigma tau upsilon",
+        ] {
+            ids.push(u.remember(text, &[], None, Some("ns")).unwrap());
+        }
+        let [a, b, c]: [String; 3] = ids.try_into().unwrap();
+        (u, [a, b, c])
+    }
+
+    fn counts(u: &crate::Uteke, ids: &[String; 3]) -> [u32; 3] {
+        let mut out = [0; 3];
+        for (i, id) in ids.iter().enumerate() {
+            out[i] = u.store().get_by_id(id).unwrap().unwrap().recall_count;
+        }
+        out
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn every_strategy_counts_the_returned_memory_exactly_once() {
+        for strategy in [
+            RecallStrategy::Vector,
+            RecallStrategy::Fts5,
+            RecallStrategy::Hybrid,
+            RecallStrategy::Fusion,
+        ] {
+            let (u, ids) = seeded();
+            let res = u
+                .recall_hybrid("alpha beta", 1, None, Some("ns"), strategy, 0.0)
+                .unwrap();
+            assert_eq!(res.len(), 1, "{strategy:?}");
+            let c = counts(&u, &ids);
+            // exactly one memory counted, once; nothing else touched
+            assert_eq!(c.iter().sum::<u32>(), 1, "{strategy:?}: {c:?}");
+            let returned = ids.iter().position(|i| *i == res[0].memory.id).unwrap();
+            assert_eq!(c[returned], 1, "{strategy:?}: {c:?}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a_repeated_query_served_from_the_cache_still_counts_once_per_call() {
+        let (u, ids) = seeded();
+        for expected in 1..=3u32 {
+            let res = u
+                .recall_hybrid(
+                    "alpha beta",
+                    1,
+                    None,
+                    Some("ns"),
+                    RecallStrategy::Fusion,
+                    0.0,
+                )
+                .unwrap();
+            let returned = ids.iter().position(|i| *i == res[0].memory.id).unwrap();
+            assert_eq!(counts(&u, &ids)[returned], expected);
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn the_public_vector_recall_counts_returned_results_once() {
+        let (u, ids) = seeded();
+        let res = u
+            .recall("alpha beta", 1, None, Some("ns"), 0.0, None, None)
+            .unwrap();
+        assert_eq!(res.len(), 1);
+        assert_eq!(counts(&u, &ids).iter().sum::<u32>(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn explain_is_a_read_only_diagnostic() {
+        let (u, ids) = seeded();
+        let _ = u
+            .recall_explained(
+                "alpha beta",
+                2,
+                None,
+                Some("ns"),
+                RecallStrategy::Fusion,
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(counts(&u, &ids), [0, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod retry_embed_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Fake embedder that counts calls and fails the first `failures` calls
+    /// with the error built by `make_err`, then succeeds.
+    struct ScriptedEmbedder {
+        calls: Arc<AtomicUsize>,
+        failures: usize,
+        make_err: fn() -> Error,
+    }
+
+    impl crate::embed::Embedder for ScriptedEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.failures {
+                Err((self.make_err)())
+            } else {
+                Ok(vec![0.0; 4])
+            }
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            8
+        }
+        fn name(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    fn scripted(
+        failures: usize,
+        make_err: fn() -> Error,
+    ) -> (
+        Mutex<Option<Box<dyn crate::embed::Embedder>>>,
+        Arc<AtomicUsize>,
+    ) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let embedder: Box<dyn crate::embed::Embedder> = Box::new(ScriptedEmbedder {
+            calls: Arc::clone(&calls),
+            failures,
+            make_err,
+        });
+        (Mutex::new(Some(embedder)), calls)
+    }
+
+    #[test]
+    fn validation_error_is_not_retried() {
+        let (embedder, calls) = scripted(usize::MAX, || Error::Validation("bad input".into()));
+        let err = retry_embed(&embedder, "hello").unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn transient_error_is_retried_then_succeeds() {
+        let (embedder, calls) = scripted(1, || Error::embed_msg("timeout"));
+        let embedding = retry_embed(&embedder, "hello").unwrap();
+        assert_eq!(embedding.len(), 4);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn no_embedder_is_an_error_not_a_panic() {
+        let embedder: Mutex<Option<Box<dyn crate::embed::Embedder>>> = Mutex::new(None);
+        let err = retry_embed(&embedder, "hello").unwrap_err();
+        assert!(matches!(err, Error::Embedding { .. }), "{err:?}");
+        assert!(err.to_string().contains("No embedder"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod recall_no_embedder_tests {
+    #[cfg(feature = "onnx")]
+    use crate::Uteke;
+
+    /// A store whose embedder slot is empty and cannot be filled: the
+    /// "custom" backend with no injected embedder. `ensure_embedder` fails,
+    /// so vector recall must return an error, never panic. Gated on `onnx`
+    /// because non-onnx builds reject "custom" at open().
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn recall_without_embedder_returns_error() {
+        let (_db_str, store) = Uteke::open_store(":memory:").expect("open_store");
+        let u = Uteke::finish_open_full(
+            store,
+            None,
+            "custom".to_string(),
+            crate::TierConfig::default(),
+            crate::RecallConfig::default(),
+            crate::EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full");
+
+        let res = u.recall("anything", 5, None, None, 0.0, None, None);
+        let err = res.expect_err("recall without an embedder must be an error");
+        assert!(
+            err.to_string()
+                .contains("Custom embedder backend set but no embedder was provided"),
+            "got: {err}"
+        );
+    }
+}
+
+/// Exact-value tests for `recall_rrf` that the 0.21.0 mutation gate missed:
+/// the vector candidate window (`limit * 3`) and the score normalisation
+/// (`score / max_rrf`). They call `recall_rrf` directly so the boost window
+/// and salience/recency boosts of `recall_hybrid` stay out of the numbers.
+/// The keyword embedder hashes words into 64 buckets; "zebra" and "aab",
+/// "afk", "ajg", "ans", "aol" share bucket 15, which lets a memory be close
+/// in vector space without matching the FTS query.
+#[cfg(test)]
+mod mutant_kill_tests_0_21 {
+    use crate::test_support::open_keyword;
+
+    const K: f64 = 60.0;
+
+    fn rrf_at(rank: usize) -> f64 {
+        1.0 / (K + rank as f64 + 1.0)
+    }
+
+    fn normalized(score: f64) -> f32 {
+        (score / (2.0 / (K + 1.0))) as f32
+    }
+
+    /// Rank 0 in both channels normalises to exactly 1.0 (the theoretical
+    /// max); a memory found by one channel only, at rank 0, to exactly 0.5.
+    /// With `limit = 1` the vector window is 3; `limit / 3` would make it 0
+    /// and leave the top memory with FTS credit only (0.5).
+    #[test]
+    fn rank_zero_in_both_channels_scores_exactly_one() {
+        let u = open_keyword();
+        let top = u.remember("zebra", &[], None, None).unwrap();
+        u.remember("apple river stone", &[], None, None).unwrap();
+
+        let got = u.recall_rrf("zebra", 1, None, None, 0.0).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].memory.id, top);
+        assert_eq!(got[0].score, 1.0);
+        assert_eq!(got[0].score, normalized(rrf_at(0) + rrf_at(0)));
+    }
+
+    #[test]
+    fn rank_zero_in_one_channel_scores_exactly_half() {
+        let u = open_keyword();
+        // Vector neighbour of "zebra" (shared bucket) without the FTS word.
+        let vec_only = u.remember("aab", &[], None, None).unwrap();
+        u.remember("apple river stone", &[], None, None).unwrap();
+
+        let got = u.recall_rrf("zebra", 1, None, None, 0.0).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].memory.id, vec_only);
+        assert_eq!(got[0].score, 0.5);
+    }
+
+    /// With `limit = 2` the vector window is 6. The only FTS hit sits at
+    /// vector rank 5 (the 6th), so it gets credit from both channels and
+    /// ranks first. With a window of `limit + 3` = 5 it would get FTS credit
+    /// only, tie at 0.5 with the vector-only leader and lose its score.
+    #[test]
+    fn vector_window_is_three_times_the_limit() {
+        let u = open_keyword();
+        // Cosine to "zebra" = 1/sqrt(2): vector ranks 0..=4, no FTS match.
+        for c in [
+            "aab apple",
+            "afk stone",
+            "ajg cloud",
+            "ans maple",
+            "aol tiger",
+        ] {
+            u.remember(c, &[], None, None).unwrap();
+        }
+        // Cosine 1/2: vector rank 5; FTS rank 0 (the only FTS hit).
+        let target = u
+            .remember("zebra piano lemon candle", &[], None, None)
+            .unwrap();
+
+        let got = u.recall_rrf("zebra", 2, None, None, 0.0).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].memory.id, target);
+        assert_eq!(got[0].score, normalized(rrf_at(5) + rrf_at(0)));
+        assert_eq!(got[1].score, 0.5);
     }
 }

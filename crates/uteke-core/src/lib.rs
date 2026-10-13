@@ -20,6 +20,7 @@ mod edges;
 mod embed;
 mod error;
 pub mod extraction;
+mod forget_request;
 pub mod graph;
 pub mod graph_rerank;
 pub mod graph_view;
@@ -27,21 +28,43 @@ pub mod guide;
 mod import_export;
 mod index_sync;
 mod jaccard;
+mod list_request;
 mod maintenance;
 pub mod memory;
+pub mod namespace_deprecation;
 pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
 
+pub use forget_request::{
+    ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
+    IdCharset, UnmatchedPrefixText, resolve_memory_id,
+};
+pub use list_request::{
+    LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
+    ListPolicy, ListRequest, ListRequestError,
+};
 pub use operations::RememberOutcome;
+pub use recall_request::{
+    RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
+    RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
+    RecallRequestError,
+};
+pub use remember_request::{
+    RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
+};
 mod orphans;
 pub mod provenance;
 mod recall_cache;
 pub mod recall_explain;
+mod recall_request;
+mod remember_request;
 mod rooms;
 pub mod rooms_segments;
 pub mod salience_recency;
 pub mod structural_export;
+#[cfg(test)]
+pub(crate) mod test_support;
 mod timeline;
 mod types;
 pub mod update_check;
@@ -479,6 +502,26 @@ pub struct FallbackSettings {
 }
 
 impl FallbackSettings {
+    /// Apply the `UTEKE_EMBED_FALLBACK_{API_KEY,BASE_URL,ENDPOINT_PATH,MODEL}`
+    /// environment overrides: env wins over the value already present, and an
+    /// empty variable counts as unset. One implementation for every consumer
+    /// of `[embed_fallback]` (#1355).
+    pub fn with_env_overrides(self) -> Self {
+        self.with_overrides_from(|name| std::env::var(name).ok())
+    }
+
+    /// [`Self::with_env_overrides`] with an injectable lookup (tests).
+    pub fn with_overrides_from(self, get: impl Fn(&str) -> Option<String>) -> Self {
+        let pick =
+            |name: &str, current: String| get(name).filter(|v| !v.is_empty()).unwrap_or(current);
+        Self {
+            api_key: pick("UTEKE_EMBED_FALLBACK_API_KEY", self.api_key),
+            base_url: pick("UTEKE_EMBED_FALLBACK_BASE_URL", self.base_url),
+            endpoint_path: pick("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH", self.endpoint_path),
+            model: pick("UTEKE_EMBED_FALLBACK_MODEL", self.model),
+        }
+    }
+
     /// Check if fallback is configured (all required fields present).
     /// Requires api_key AND base_url AND model — partial config is an error.
     pub fn is_configured(&self) -> bool {
@@ -2365,33 +2408,7 @@ impl Uteke {
                 }
                 true
             })
-            .map(|sr| {
-                let m = &sr.memory;
-                UnifiedSearchResult {
-                    result_type: SearchResultType::Memory,
-                    score: sr.score,
-                    content: m.content.clone(),
-                    memory_id: Some(m.id.clone()),
-                    tags: m.tags.clone(),
-                    doc_slug: None,
-                    doc_title: None,
-                    chunk_heading: None,
-                    chunk_snippet: None,
-                    metadata: Some(m.metadata.clone()),
-                    memory_type: Some(m.memory_type.clone()),
-                    namespace: Some(m.namespace.clone()),
-                    source: m.source.clone(),
-                    source_type: Some(m.source_type.clone()),
-                    importance: Some(m.importance),
-                    pinned: Some(m.pinned),
-                    access_count: Some(m.access_count),
-                    last_accessed: m.last_accessed,
-                    created_at: Some(m.created_at),
-                    updated_at: Some(m.updated_at),
-                    linked_doc_slugs: None,
-                    linked_memory_ids: None,
-                }
-            })
+            .map(|sr| UnifiedSearchResult::from_memory_result(&sr))
             .take(limit)
             .collect();
         Ok(results)
@@ -3240,6 +3257,7 @@ mod tests {
             updated_at: now,
             namespace: DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -3290,6 +3308,7 @@ mod tests {
             updated_at: now,
             namespace: DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -4091,6 +4110,7 @@ mod tests {
             updated_at: now,
             namespace: DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -4453,5 +4473,95 @@ mod documents_fts_heal_tests {
             "stale pre-fix FTS entries are gone after the rebuild"
         );
         u.store.heal_documents_fts_triggers().unwrap(); // idempotent
+    }
+}
+
+#[cfg(test)]
+mod fallback_settings_tests {
+    //! #1355 step A — one env-override implementation for `[embed_fallback]`.
+    use super::FallbackSettings;
+    use std::collections::HashMap;
+
+    fn file() -> FallbackSettings {
+        FallbackSettings {
+            api_key: "file-key".into(),
+            base_url: "https://file.example".into(),
+            endpoint_path: "/file".into(),
+            model: "file-model".into(),
+        }
+    }
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let m: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |k| m.get(k).cloned()
+    }
+
+    #[test]
+    fn env_wins_over_the_file_value_field_by_field() {
+        let got = file().with_overrides_from(env(&[
+            ("UTEKE_EMBED_FALLBACK_API_KEY", "env-key"),
+            ("UTEKE_EMBED_FALLBACK_MODEL", "env-model"),
+        ]));
+        assert_eq!(got.api_key, "env-key");
+        assert_eq!(got.model, "env-model");
+        // untouched fields keep the file value
+        assert_eq!(got.base_url, "https://file.example");
+        assert_eq!(got.endpoint_path, "/file");
+    }
+
+    #[test]
+    fn an_empty_env_value_is_treated_as_unset() {
+        let got = file().with_overrides_from(env(&[
+            ("UTEKE_EMBED_FALLBACK_API_KEY", ""),
+            ("UTEKE_EMBED_FALLBACK_BASE_URL", ""),
+        ]));
+        assert_eq!(got.api_key, "file-key");
+        assert_eq!(got.base_url, "https://file.example");
+    }
+
+    #[test]
+    fn env_alone_can_configure_the_fallback_and_partial_config_is_not_configured() {
+        let full = FallbackSettings::default().with_overrides_from(env(&[
+            ("UTEKE_EMBED_FALLBACK_API_KEY", "k"),
+            ("UTEKE_EMBED_FALLBACK_BASE_URL", "https://x"),
+            ("UTEKE_EMBED_FALLBACK_MODEL", "m"),
+        ]));
+        assert!(full.is_configured());
+        let partial = FallbackSettings::default()
+            .with_overrides_from(env(&[("UTEKE_EMBED_FALLBACK_API_KEY", "k")]));
+        assert!(!partial.is_configured());
+        assert!(!FallbackSettings::default().is_configured());
+    }
+
+    /// Removes the variable on drop, so a failing assertion cannot leak it
+    /// into other tests of this binary.
+    struct EnvVarGuard(&'static str);
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: serialised with the other env-mutating tests.
+            unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
+    /// `with_env_overrides` reads the real process environment: a set
+    /// variable overrides its field, unset ones keep the current value.
+    /// Only `UTEKE_EMBED_FALLBACK_ENDPOINT_PATH` is touched; no other test
+    /// in this crate sets it.
+    #[test]
+    #[serial_test::serial]
+    fn with_env_overrides_reads_the_process_environment() {
+        const VAR: &str = "UTEKE_EMBED_FALLBACK_ENDPOINT_PATH";
+        let _guard = EnvVarGuard(VAR);
+        // SAFETY: serialised with the other env-mutating tests.
+        unsafe { std::env::set_var(VAR, "/env-path") };
+        let got = file().with_env_overrides();
+        // Only the variable this test owns is asserted: the others may be set
+        // in a developer's shell. Default::default() (the missed mutant) gives
+        // an empty endpoint_path.
+        assert_eq!(got.endpoint_path, "/env-path");
     }
 }

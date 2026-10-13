@@ -272,16 +272,24 @@ fn main() {
         }
     };
     info!("Embedding backend: {}", embedding.backend);
+    let recall_tuning = resolve_recall_tuning(&config);
     let uteke = match Uteke::open_with_embedding_and_graph(
         &db_path,
         &embedding.backend,
         embedding.settings,
-        uteke_core::TierConfig::default(),
+        resolve_tier(&config),
         uteke_core::RecallConfig::default(),
-        uteke_core::GraphRerankConfig::default(),
+        recall_tuning.graph.clone(),
         embedding.vector_backend.as_deref(),
     ) {
         Ok(mut u) => {
+            // [recall] jaccard_weight (#719, #1355 step B); the core clamps to 0..=1.
+            u.set_jaccard_weight(recall_tuning.jaccard_weight);
+            // [embed_fallback] + UTEKE_EMBED_FALLBACK_* (#1355): only when complete.
+            if let Some(fallback) = resolve_embed_fallback(&config, |k| std::env::var(k).ok()) {
+                info!("Embedding fallback: enabled ({})", fallback.base_url);
+                u.set_fallback_settings(fallback);
+            }
             // Apply dream pipeline thresholds from config (#731)
             if let Some(ref dc) = config.dream {
                 u.set_dream_config(uteke_core::DreamConfig {
@@ -690,6 +698,10 @@ struct ServerFileConfig {
     embedding: Option<EmbeddingFileSection>,
     /// `[vector]`: which vector engine runs when both are compiled in (#1168).
     vector: Option<VectorFileSection>,
+    /// `[embed_fallback]`: second embedding endpoint used when the primary fails (#1355).
+    embed_fallback: Option<EmbedFallbackFileSection>,
+    /// `[tier]`: hot/warm/cold memory tiers (#1355).
+    tier: Option<TierFileSection>,
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
@@ -718,6 +730,74 @@ struct EmbeddingFileSection {
 #[derive(serde::Deserialize, Default, Clone)]
 struct VectorFileSection {
     backend: Option<String>,
+}
+
+/// `[embed_fallback]` in uteke.toml, same keys as the CLI. `UTEKE_EMBED_FALLBACK_*`
+/// env vars win over these (resolved in the core).
+#[derive(serde::Deserialize, Default, Clone)]
+struct EmbedFallbackFileSection {
+    api_key: Option<String>,
+    base_url: Option<String>,
+    endpoint_path: Option<String>,
+    model: Option<String>,
+}
+
+/// The fallback embedder to apply, or `None` when it is not fully configured
+/// (api_key, base_url AND model). Env overrides come from `lookup`.
+fn resolve_embed_fallback(
+    config: &ServerFileConfig,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Option<uteke_core::FallbackSettings> {
+    let file = config.embed_fallback.clone().unwrap_or_default();
+    let settings = uteke_core::FallbackSettings {
+        api_key: file.api_key.unwrap_or_default(),
+        base_url: file.base_url.unwrap_or_default(),
+        endpoint_path: file.endpoint_path.unwrap_or_default(),
+        model: file.model.unwrap_or_default(),
+    }
+    .with_overrides_from(lookup);
+    settings.is_configured().then_some(settings)
+}
+
+/// Recall tuning read from `[recall]` (#1355 step B): the graph-rerank weights
+/// and the Jaccard weight, with the same defaults as the CLI.
+struct RecallTuning {
+    graph: uteke_core::GraphRerankConfig,
+    jaccard_weight: f32,
+}
+
+fn resolve_recall_tuning(config: &ServerFileConfig) -> RecallTuning {
+    let default = uteke_core::GraphRerankConfig::default();
+    let file = config.recall.clone().unwrap_or_default();
+    RecallTuning {
+        graph: uteke_core::GraphRerankConfig {
+            density_weight: file.graph_density_weight.unwrap_or(default.density_weight),
+            authority_weight: file
+                .graph_authority_weight
+                .unwrap_or(default.authority_weight),
+            enabled: file.graph_rerank_enabled.unwrap_or(default.enabled),
+        },
+        jaccard_weight: file.jaccard_weight.unwrap_or(0.0),
+    }
+}
+
+/// `[tier]` in uteke.toml, same keys and defaults as the CLI.
+#[derive(serde::Deserialize, Default, Clone)]
+struct TierFileSection {
+    hot_days: Option<u32>,
+    warm_days: Option<u32>,
+    hot_boost: Option<f64>,
+}
+
+/// Tier settings: file values over the core defaults (7 / 30 days, boost 0.1).
+fn resolve_tier(config: &ServerFileConfig) -> uteke_core::TierConfig {
+    let default = uteke_core::TierConfig::default();
+    let file = config.tier.clone().unwrap_or_default();
+    uteke_core::TierConfig {
+        hot_days: file.hot_days.map_or(default.hot_days, i64::from),
+        warm_days: file.warm_days.map_or(default.warm_days, i64::from),
+        hot_boost: file.hot_boost.unwrap_or(default.hot_boost),
+    }
 }
 
 /// Backends `Uteke` can initialize lazily (same list as the CLI validates).
@@ -1037,5 +1117,164 @@ mod embedding_config_tests {
         assert_eq!(r.backend, "onnx");
         assert!(r.settings.base_url.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod embed_fallback_config_tests {
+    //! #1355 step A — the server reads `[embed_fallback]`.
+    use super::*;
+
+    fn parse(t: &str) -> ServerFileConfig {
+        toml::from_str(t).expect("valid toml")
+    }
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    #[test]
+    fn absent_or_partial_section_means_no_fallback() {
+        assert!(resolve_embed_fallback(&ServerFileConfig::default(), no_env).is_none());
+        let partial = parse("[embed_fallback]\napi_key = \"k\"\nbase_url = \"https://x\"\n");
+        assert!(
+            resolve_embed_fallback(&partial, no_env).is_none(),
+            "model missing"
+        );
+    }
+
+    #[test]
+    fn a_complete_section_is_applied_with_its_endpoint_path() {
+        let cfg = parse(
+            "[embed_fallback]\napi_key = \"k\"\nbase_url = \"https://x\"\nmodel = \"m\"\nendpoint_path = \"/embed\"\n",
+        );
+        let f = resolve_embed_fallback(&cfg, no_env).expect("configured");
+        assert_eq!(
+            (f.api_key.as_str(), f.base_url.as_str()),
+            ("k", "https://x")
+        );
+        assert_eq!(
+            (f.model.as_str(), f.endpoint_path.as_str()),
+            ("m", "/embed")
+        );
+    }
+
+    #[test]
+    fn env_overrides_the_file_and_can_complete_it() {
+        let cfg = parse("[embed_fallback]\nbase_url = \"https://file\"\nmodel = \"m\"\n");
+        let f = resolve_embed_fallback(&cfg, |k| match k {
+            "UTEKE_EMBED_FALLBACK_API_KEY" => Some("env-key".to_string()),
+            "UTEKE_EMBED_FALLBACK_BASE_URL" => Some("https://env".to_string()),
+            _ => None,
+        })
+        .expect("env completes the file");
+        assert_eq!(
+            (f.api_key.as_str(), f.base_url.as_str()),
+            ("env-key", "https://env")
+        );
+    }
+
+    #[test]
+    fn untrusted_project_file_cannot_set_the_fallback_endpoint() {
+        let dir = std::env::temp_dir().join(format!("uteke_fb_cfg_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = dir.join("project.toml");
+        std::fs::write(
+            &project,
+            "[embed_fallback]\napi_key = \"stolen\"\nbase_url = \"https://evil.example\"\nmodel = \"m\"\n",
+        )
+        .unwrap();
+        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
+            global: None,
+            project: Some(&project),
+            trust_project: false,
+        });
+        assert!(resolve_embed_fallback(&cfg, no_env).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod recall_tuning_tests {
+    //! #1355 step B — the server reads the graph and jaccard keys of `[recall]`.
+    use super::*;
+
+    fn parse(t: &str) -> ServerFileConfig {
+        toml::from_str(t).expect("valid toml")
+    }
+
+    #[test]
+    fn defaults_match_the_core_and_the_cli() {
+        let t = resolve_recall_tuning(&ServerFileConfig::default());
+        let d = uteke_core::GraphRerankConfig::default();
+        assert_eq!(t.graph.density_weight, d.density_weight);
+        assert_eq!(t.graph.authority_weight, d.authority_weight);
+        assert_eq!(t.graph.enabled, d.enabled);
+        assert_eq!(t.jaccard_weight, 0.0, "jaccard is opt-in");
+        // a [recall] section without these keys changes nothing either
+        let t = resolve_recall_tuning(&parse("[recall]\nmin_score = 0.2\n"));
+        assert_eq!((t.graph.density_weight, t.jaccard_weight), (0.1, 0.0));
+    }
+
+    #[test]
+    fn file_values_are_applied() {
+        let t = resolve_recall_tuning(&parse(
+            "[recall]\ngraph_density_weight = 0.3\ngraph_authority_weight = 0.2\n\
+             graph_rerank_enabled = false\njaccard_weight = 0.12\n",
+        ));
+        assert_eq!(t.graph.density_weight, 0.3);
+        assert_eq!(t.graph.authority_weight, 0.2);
+        assert!(!t.graph.enabled);
+        assert_eq!(t.jaccard_weight, 0.12);
+    }
+
+    #[test]
+    fn a_partial_section_keeps_the_other_defaults() {
+        let t = resolve_recall_tuning(&parse("[recall]\ngraph_density_weight = 0.0\n"));
+        assert_eq!(t.graph.density_weight, 0.0);
+        assert_eq!(t.graph.authority_weight, 0.1);
+        assert!(t.graph.enabled);
+    }
+
+    #[test]
+    fn existing_recall_keys_still_parse_next_to_the_new_ones() {
+        let cfg = parse(
+            "[recall]\nmin_score = 0.4\ndefault_strategy = \"vector\"\njaccard_weight = 0.1\n",
+        );
+        let r = cfg.recall.expect("recall");
+        assert_eq!(r.min_score, Some(0.4));
+        assert_eq!(r.default_strategy.as_deref(), Some("vector"));
+        assert_eq!(r.jaccard_weight, Some(0.1));
+    }
+}
+
+#[cfg(test)]
+mod tier_config_tests {
+    //! #1355 step C — the server reads `[tier]`.
+    use super::*;
+
+    fn parse(t: &str) -> ServerFileConfig {
+        toml::from_str(t).expect("valid toml")
+    }
+
+    #[test]
+    fn defaults_equal_the_core_defaults() {
+        let t = resolve_tier(&ServerFileConfig::default());
+        let d = uteke_core::TierConfig::default();
+        assert_eq!(
+            (t.hot_days, t.warm_days, t.hot_boost),
+            (d.hot_days, d.warm_days, d.hot_boost)
+        );
+        assert_eq!((t.hot_days, t.warm_days), (7, 30));
+    }
+
+    #[test]
+    fn file_values_are_applied_and_a_partial_section_keeps_the_rest() {
+        let t = resolve_tier(&parse(
+            "[tier]\nhot_days = 2\nwarm_days = 10\nhot_boost = 0.5\n",
+        ));
+        assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (2, 10, 0.5));
+        let t = resolve_tier(&parse("[tier]\nhot_boost = 0.0\n"));
+        assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (7, 30, 0.0));
     }
 }

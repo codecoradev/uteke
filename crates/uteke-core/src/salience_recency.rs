@@ -73,8 +73,9 @@ impl SalienceRecencyConfig {
 ///
 /// The three are weighted and clamped to 1.0.
 pub fn salience_score(memory: &Memory) -> f32 {
-    // access_count is u32; log10(0) is -inf, so guard with max(1).
-    let access_freq = ((memory.access_count.max(1) as f32).log10() / 3.0).clamp(0.0, 1.0);
+    // log10(0) is -inf, so guard with max(1.0). The signal combines explicit
+    // gets with the lighter-weighted recall hits (#1337).
+    let access_freq = (memory.access_signal().max(1.0).log10() / 3.0).clamp(0.0, 1.0);
     let importance = memory.importance as f32;
     let pinned_bonus = if memory.pinned { 0.2 } else { 0.0 };
 
@@ -152,6 +153,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
             namespace: "default".to_string(),
             access_count: access,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,

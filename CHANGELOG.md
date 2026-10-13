@@ -1,5 +1,63 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.21.0] - 2026-10-13
+
+Minor release. Theme: **honest recall feedback, one access policy for MCP over
+HTTP, and a server that reads the same `uteke.toml` as the CLI** — recall and
+search hits are counted apart from explicit gets (and once per call), a
+read-only token can use the MCP read tools, `uteke-serve` honours
+`[embed_fallback]`, `[tier]` and more of `[recall]`, namespaces start their
+deprecation, and the release checksums are signed. 39 PRs since v0.20.1.
+
+Upgrading: the first open by 0.21.0 migrates the store to **schema v21**
+automatically (an in-place `ALTER TABLE` that adds `memories.recall_count`;
+existing rows start at 0). The 0.21.0 release is the first whose
+`checksums-sha256.txt` comes with a cosign signature bundle (see Security).
+
+### ⚠️ Behavior Change
+
+- **`access_count` now only grows on an explicit `get`; recall and search hits go to the new `recall_count` (#1337, #1397, schema v21)** - `recall`, `recall_context` and `search` bump `recall_count` instead of `access_count`. Salience, aging (`recompute_importance`) and orphan scoring use `access_count + 0.5 * recall_count`, so automated recalls (session hooks, agents repeating a query) no longer reinforce the same memories as strongly as an explicit get. Historical `access_count` cannot be split and is left as it is. `Memory` gains a `recall_count` field (`#[serde(default)]`, so old exports still import). Contract issue: uteke-cloud#135.
+- **A recall is counted once, and only for the memories it returns (#1407, #1412)** - a default (`fusion`) recall bumped the counter 3 times per memory and also counted candidates that were never returned. The counter is now touched once per user-level call on the final results; a recall served from the recall cache now counts too. `recall --explain` and the point-in-time candidate search no longer touch counters.
+- **`uteke-serve` applies more of `uteke.toml`** - `[embed_fallback]` (#1414, #1415), the `graph_density_weight`, `graph_authority_weight`, `graph_rerank_enabled` and `jaccard_weight` keys of `[recall]` (#1416, #1417), and `[tier]` (`hot_days`, `warm_days`, `hot_boost`; #1418, #1419) were read by the CLI but silently ignored by the server. A server whose config already sets them now uses them; absent keys keep the previous behaviour.
+- **HTTP `DELETE /forget` rejects a non-hex id** with `400 Invalid memory id '<id>' (expected a UUID or hex prefix)`, the rule MCP has had since #1328 (#1435, #1436; see Security).
+
+### Security
+
+- **Read-only tokens and MCP (#1439, #1441)** - `POST /mcp` used to be a write route, so a read-only token could not call any MCP tool, and a token that could reach it could call every tool. MCP now gates each tool: a read-only token can call the read tools (recall, search, list, get, stats, room and document reads) and gets a tool error (`isError: true`) from every write tool. Write tokens and the stdio transport are unchanged.
+- **`%` and `_` in a forget id no longer act as LIKE wildcards (#1435, #1436)** - `DELETE /forget?id=%25` matched every memory whose id contains "25" and deleted it when exactly one matched. Id prefix resolution now escapes `%`, `_` and the escape character for every caller, and HTTP forget validates the id charset. MCP was never affected.
+- **Signed release checksums (#1327, #1394)** - the `Release` workflow signs `checksums-sha256.txt` with cosign keyless signing and publishes `checksums-sha256.txt.bundle` next to it; the certificate is bound to this repository's workflow identity, so there is no key to trust. v0.21.0 is the first release with the bundle. `SECURITY.md` ("Verifying a release") shows how to verify it. `uteke upgrade` does not verify the signature yet.
+- **`uteke upgrade` hardening (#1421, #1422)** - the whole release tag must be `[0-9A-Za-z.-]` with at most one leading `v` (an unchecked suffix used to reach the download URL and file name); the archive is capped at 128 MiB and `checksums-sha256.txt` at 1 MiB, enforced while streaming; archive entries must be plain relative paths (no absolute path or `..` component). `UTEKE_UPGRADE_SKIP_CHECKSUM` stays, with a multi-line warning that the archive is not verified.
+- **quinn-proto 0.11.19 (#1442)** - fixes RUSTSEC-2026-0338 to RUSTSEC-2026-0342 in a transitive dependency of the HTTP client stack (uteke-cli, docgen).
+
+### Added
+
+- **`uteke_room_recall` parity with `uteke_recall` (#1335, #1389, #1391, #1392)** - optional `min_score`, `tags` (any-of), `pack` with `budget_chars` and `exclude_ids`, and `full_ids`; each result shows its memory id. In pack mode the response keeps the `skipped` reasons and `limit` is applied after `exclude_ids`.
+- **Name filter for `uteke_room_list` (#1336, #1393)** - optional `name`: a case-insensitive substring match on room id or title, combined with `namespace`. Omitted, the full list is returned as before.
+- **"Conventions first" rule (#1395, #1396)** - `uteke guide`, `GET /guide`, the bundled skill and a new `instructions` field in the MCP `initialize` response tell agents to look for the workspace's memory convention (a `*conventions*` room or doc, AGENTS.md, CLAUDE.md) before writing.
+
+### Changed
+
+- **One typed request per operation, shared by HTTP, MCP and the CLI (#1343; #1423 recall, #1424 list, #1425 remember, #1426 forget)** - parsing, defaults, caps and validation moved to `uteke-core` (`recall_request`, `list_request`, `remember_request`, `forget_request`). Extraction only: routes, shapes, defaults, caps and error texts are unchanged (except the forget id fix above); the remaining surface differences are explicit policy values.
+- **The API registry drives routing and the read-only gate (#1344, #1437)** - `api_registry::ENDPOINTS` is the table the router and the read-only-token gate read; a route without a registry row answers 404 before any handler runs, so a new write route is gated by construction. Behaviour is unchanged; `GET /routes` and the generated docs are byte-identical.
+- **Recall paths without an embedder return an error instead of panicking (#1439, #1443)** - defensive: none of these paths is reachable today. `retry_embed` also returns validation errors at once instead of retrying them.
+
+### Deprecated
+
+- **Namespaces (#1427, #1434, phase 1: the signal)** - namespaces are deprecated and will be removed in a future 0.x release; organise with rooms, tags and author instead. Nothing changes in routing, storage or reads, and the `namespace` parameter keeps working everywhere. Writing to a non-default namespace (omitting it or passing `default` is not deprecated) now returns a one-sentence warning: the `warning` field of HTTP `/remember` and `/room/remember`, an optional `warning` on `/extract`, `/import`, `/room/create` and `PUT /memory` (absent for the default namespace, so those responses are byte-identical), the tool text of MCP `uteke_remember`, `uteke_update` and `uteke_room_create`, and one stderr line from `uteke remember`, `uteke import` and `uteke room create` (stdout and `--json` unchanged). The server logs it at WARN once per distinct namespace. MCP tool descriptions, `uteke guide`, the skill and the docs ("Namespaces are deprecated" in `docs/multi-agent.md`, with the phase plan) steer to rooms, tags and author.
+
+### Fixed
+
+- **An explicit --store no longer routes through a running server (#1439, #1444)** - with `[server] enabled = true` and `uteke-serve` running, `remember`, `recall`, `search`, `list`, `stats` and `forget` went to the server, which serves its own store, so `--store <other path>` silently read and wrote the wrong database. An explicit `--store` naming a different store now always runs locally; `--store` pointing at the default store still uses the server.
+
+### Docs
+
+- **Reaching the server from another device on the LAN (#1431, #1433, #1438, #1447)** - a LAN access guide in `docs/configuration.md` (token first, bind address, read-only token, Host header, plain-HTTP caveat), MCP authentication options in `docs/mcp.md`, and both installers now end with an optional note pointing to the guide. No default changes.
+- **Docker (#1413, #1420)** - `.env` versus `environment:`/`env_file:` in Compose, `UTEKE_AUTH_TOKEN`, and the external-embedder setup.
+- **Reading recall scores (#1405, #1406, #1408, #1409)** - what each strategy's score means, the additive salience/recency boosts (default weight 0.1 on both CLI and server) and what that means for `--min`.
+- Internal: release procedure, mutation gate and memory conventions in AGENTS.md (#1382, #1388, #1404, #1440), Homebrew tap PR format and checksum check in the release workflow (#1384), Cora review against the PR's base branch (#1386), raw v0.20.0 LongMemEval results (#1390), mutation-killing tests (#1403), README anchors and CHANGELOG link refs (#1411, #1428, #1429, #1430).
+
 ## [0.20.1] - 2026-10-09
 
 Patch release. Theme: **use an external OpenAI-compatible or Ollama embedder with `uteke-serve` and the Docker image.** Two fixes, nothing else (no schema change, no API change).
@@ -1831,7 +1889,32 @@ Major release: safe memory lifecycle, offline extraction, persistent embedding c
 - **Binary name:** `uteke`
 - **Minimum Rust version:** 1.75+
 
-[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/codecoradev/uteke/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/codecoradev/uteke/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/codecoradev/uteke/compare/v0.20.0...v0.20.1
+[0.20.0]: https://github.com/codecoradev/uteke/compare/v0.19.1...v0.20.0
+[0.19.1]: https://github.com/codecoradev/uteke/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/codecoradev/uteke/compare/v0.18.1...v0.19.0
+[0.18.1]: https://github.com/codecoradev/uteke/compare/v0.18.0...v0.18.1
+[0.18.0]: https://github.com/codecoradev/uteke/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/codecoradev/uteke/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/codecoradev/uteke/compare/v0.15.0...v0.16.0
+[0.15.0]: https://github.com/codecoradev/uteke/compare/v0.14.3...v0.15.0
+[0.14.3]: https://github.com/codecoradev/uteke/compare/v0.14.2...v0.14.3
+[0.14.2]: https://github.com/codecoradev/uteke/compare/v0.14.1...v0.14.2
+[0.14.1]: https://github.com/codecoradev/uteke/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/codecoradev/uteke/compare/v0.13.2...v0.14.0
+[0.13.2]: https://github.com/codecoradev/uteke/compare/v0.13.1...v0.13.2
+[0.13.1]: https://github.com/codecoradev/uteke/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/codecoradev/uteke/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/codecoradev/uteke/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/codecoradev/uteke/compare/v0.10.3...v0.11.0
+[0.10.3]: https://github.com/codecoradev/uteke/compare/v0.10.2...v0.10.3
+[0.10.2]: https://github.com/codecoradev/uteke/compare/v0.10.1...v0.10.2
+[0.10.1]: https://github.com/codecoradev/uteke/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/codecoradev/uteke/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/codecoradev/uteke/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/codecoradev/uteke/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/codecoradev/uteke/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/codecoradev/uteke/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/codecoradev/uteke/compare/v0.7.1...v0.7.2

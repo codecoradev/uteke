@@ -59,13 +59,63 @@ struct ToolResult {
     is_error: bool,
 }
 
-/// Handle a single MCP JSON-RPC request (#381).
+/// Who is calling (#1439). The HTTP bridge passes the token role; stdio is
+/// always `Full` (the process belongs to the local caller).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// Every tool.
+    Full,
+    /// Only the tools in [`READ_ONLY_TOOLS`].
+    ReadOnly,
+}
+
+/// Tools a read-only caller may use: the MCP counterparts of the GET rows and
+/// the non-writing POST rows in uteke-server's `api_registry`. A new tool is
+/// write-gated until it is added here on purpose.
+pub const READ_ONLY_TOOLS: &[&str] = &[
+    "uteke_recall",
+    "uteke_search",
+    "uteke_list",
+    "uteke_get",
+    "uteke_provenance",
+    "uteke_timeline",
+    "uteke_contradictions",
+    "uteke_stats",
+    "uteke_doc_get",
+    "uteke_doc_list",
+    "uteke_doc_search",
+    "uteke_doc_list_rooms",
+    "uteke_graph",
+    "uteke_room_list",
+    "uteke_room_recall",
+    "uteke_room_memories",
+    "uteke_room_stats",
+    "uteke_room_summary",
+    "uteke_room_summary_document",
+    // MCP alias of the read-only summary document above; NOT the HTTP
+    // `POST /room/document` route, which writes.
+    "uteke_room_document",
+    "uteke_room_list_documents",
+    "uteke_tags_list",
+];
+
+/// Handle a single MCP JSON-RPC request with full access (#381).
 ///
-/// This is the shared handler used by both the stdio binary and the
-/// HTTP endpoint. Returns `Some(JsonRpcResponse)` for regular requests
-/// and `None` for notifications (which must not receive a response
-/// per JSON-RPC 2.0 §4.1).
+/// Used by the stdio binary, whose caller owns the process. Equivalent to
+/// `handle_jsonrpc_as(uteke, raw, Access::Full)`.
 pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
+    handle_jsonrpc_as(uteke, raw, Access::Full)
+}
+
+/// Handle a single MCP JSON-RPC request on behalf of a caller with the given
+/// `access` (#381, #1439).
+///
+/// This is the shared handler behind both the stdio binary and the HTTP
+/// endpoint. With `Access::ReadOnly`, `tools/call` refuses any tool not in
+/// [`READ_ONLY_TOOLS`] before it runs. Returns `Some(JsonRpcResponse)` for
+/// regular requests and `None` for notifications (which must not receive a
+/// response per JSON-RPC 2.0 §4.1).
+pub fn handle_jsonrpc_as(uteke: &Uteke, raw: &str, access: Access) -> Option<String> {
     let req: JsonRpcRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
         Err(e) => {
@@ -84,7 +134,7 @@ pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
     let is_notification = req.id.is_none();
     let id = req.id.unwrap_or(Value::Null);
 
-    match handle_request(uteke, &req.method, req.params) {
+    match handle_request(uteke, &req.method, req.params, access) {
         Ok(result) => {
             if is_notification {
                 // Notifications must not receive any response per JSON-RPC 2.0 §4.1.
@@ -122,7 +172,12 @@ pub fn handle_jsonrpc(uteke: &Uteke, raw: &str) -> Option<String> {
 
 // ── Handler ─────────────────────────────────────────────────────────────────
 
-fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<Value, String> {
+fn handle_request(
+    uteke: &Uteke,
+    method: &str,
+    params: Option<Value>,
+    access: Access,
+) -> Result<Value, String> {
     match method {
         "initialize" => Ok(serde_json::json!({
             "protocolVersion": "2025-06-18",
@@ -132,7 +187,8 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
             "serverInfo": {
                 "name": "uteke",
                 "version": env!("CARGO_PKG_VERSION")
-            }
+            },
+            "instructions": initialize_instructions()
         })),
 
         "notifications/initialized" => Ok(Value::Null),
@@ -198,6 +254,19 @@ fn handle_request(uteke: &Uteke, method: &str, params: Option<Value>) -> Result<
                 .get("arguments")
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
+
+            if access == Access::ReadOnly && !READ_ONLY_TOOLS.contains(&tool_name) {
+                // A tool error, not a JSON-RPC error: the call was understood
+                // and refused (uteke-cloud answers route refusals the same way).
+                let refused = ToolResult {
+                    content: vec![McpContent::Text {
+                        r#type: "text".to_string(),
+                        text: format!("Read-only token cannot use {tool_name}"),
+                    }],
+                    is_error: true,
+                };
+                return serde_json::to_value(refused).map_err(|e| e.to_string());
+            }
 
             let result = match tool_name {
                 "uteke_remember" => exec_remember(uteke, &arguments)?,
@@ -274,7 +343,7 @@ fn tool_remember() -> Value {
             "properties": {
                 "content": { "type": "string", "description": "The text content to remember" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for categorization (optional)" },
-                "namespace": { "type": "string", "description": "Namespace for isolation (default: 'default')" },
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for isolation (default: 'default'); a non-default value makes the result carry a deprecation warning." },
                 "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" },
                 "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
                 "author": { "type": "string", "description": "Author attribution when storing in a room (default: anonymous)" }
@@ -293,7 +362,7 @@ fn tool_recall() -> Value {
             "properties": {
                 "query": { "type": "string", "description": "The search query" },
                 "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
-                "namespace": { "type": "string", "description": "Namespace to search (default: 'default')" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to search (default: 'default')" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
@@ -319,7 +388,7 @@ fn tool_list() -> Value {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
                 "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
                 "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             }
         }
@@ -418,7 +487,7 @@ fn tool_contradictions() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Filter by namespace" },
                 "limit": { "type": "integer", "description": "Max entries (default 50)" }
             },
             "required": []
@@ -514,7 +583,7 @@ fn tool_update() -> Value {
                 "importance": { "type": "number", "description": "0.0–1.0" },
                 "pinned": { "type": "boolean", "description": "Pin (never decays) or unpin" },
                 "memory_type": { "type": "string", "description": "fact | procedure | preference | decision | context | note | insight | reference | event" },
-                "namespace": { "type": "string", "description": "Move the memory to this namespace (#1181 — plain move, no re-embed)" }
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Move the memory to this namespace (#1181 — plain move, no re-embed); the result carries a deprecation warning." }
             },
             "required": ["id"]
         }
@@ -542,7 +611,7 @@ fn tool_stats() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace (optional)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" }
             }
         }
     })
@@ -557,7 +626,7 @@ fn tool_search() -> Value {
             "properties": {
                 "query": { "type": "string", "description": "Keywords to search for" },
                 "limit": { "type": "integer", "description": "Max results (default 10)", "default": 10 },
-                "namespace": { "type": "string", "description": "Namespace (optional)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" }
             },
             "required": ["query"]
@@ -680,7 +749,7 @@ fn tool_graph() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (optional)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Filter by namespace (optional)" },
                 "limit": { "type": "integer", "description": "Max edges (default 500, max 5000)" }
             }
         }
@@ -694,7 +763,7 @@ fn tool_context() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace to summarize (default: 'default')" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to summarize (default: 'default')" }
             }
         }
     })
@@ -707,7 +776,7 @@ fn tool_dream() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace to process. STRONGLY RECOMMENDED — omitting processes ALL namespaces" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to process. STRONGLY RECOMMENDED — omitting processes ALL namespaces" },
                 "dry_run": { "type": "boolean", "description": "Preview changes without applying (default: TRUE — no mutations). Pass false explicitly to apply" },
                 "phases": { "type": "array", "items": { "type": "string" }, "description": "Specific phases: lint, backlinks, dedup, orphans, compact, verify (default: all)" },
                 "confirm_large": { "type": "boolean", "description": "Required when an APPLYING run projects more than 100 changes (default: false — run refuses instead)" }
@@ -735,13 +804,19 @@ fn tool_repair() -> Value {
 fn tool_room_recall() -> Value {
     serde_json::json!({
         "name": "uteke_room_recall",
-        "description": "Semantic recall within a room context. Requires an EXISTING room_id (create via uteke_room_create first) — unknown room ids error at call time. Searches across all namespaces in the room using hybrid RRF ranking.",
+        "description": "Semantic recall within a room context. Requires an EXISTING room_id (create via uteke_room_create first) — unknown room ids error at call time. Searches across all namespaces in the room using hybrid RRF ranking. Optional min_score, tags (any-of), pack/budget_chars/exclude_ids (budgeted context pack) mirror uteke_recall; every result carries its memory id.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "room_id": { "type": "string", "description": "Room identifier" },
                 "query": { "type": "string", "description": "Search query" },
-                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 }
+                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
+                "min_score": { "type": "number", "description": "Minimum score; weaker results are dropped (default 0.0)" },
+                "tags": { "type": "array", "items": { "type": "string" }, "description": "Keep only memories that carry at least one of these tags (optional)" },
+                "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
+                "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
+                "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
+                "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix in the id line (ids are UUIDv7, prefixes collide, #1357).", "default": false }
             },
             "required": ["room_id", "query"]
         }
@@ -774,21 +849,31 @@ fn tool_room_create() -> Value {
             "properties": {
                 "room_id": { "type": "string", "description": "Unique room identifier" },
                 "title": { "type": "string", "description": "Room title (optional)" },
-                "namespace": { "type": "string", "description": "Namespace for the room (default: 'default')" }
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for the room (default: 'default')." }
             },
             "required": ["room_id"]
         }
     })
 }
 
+/// Short, workspace-independent guidance sent with `initialize` (#1395).
+/// The full tool guide stays behind `uteke guide`.
+fn initialize_instructions() -> String {
+    format!(
+        "{} Run `uteke guide` for the full memory tools guide.",
+        uteke_core::guide::CONVENTIONS_FIRST
+    )
+}
+
 fn tool_room_list() -> Value {
     serde_json::json!({
         "name": "uteke_room_list",
-        "description": "List all rooms, optionally filtered by namespace.",
+        "description": "List all rooms, optionally filtered by namespace and/or by a case-insensitive substring of the room id or title.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Filter by namespace (omit for all)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Filter by namespace (omit for all)" },
+                "name": { "type": "string", "description": "Keep only rooms whose id or title contains this text, case-insensitive (omit for all)" }
             }
         }
     })
@@ -962,7 +1047,7 @@ fn tool_tags_list() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "namespace": { "type": "string", "description": "Namespace to filter tags (default: all namespaces)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to filter tags (default: all namespaces)" },
                 "sort": { "type": "string", "enum": ["count", "alpha"], "description": "Sort order: 'count' by usage count descending (default), 'alpha' alphabetically" }
             }
         }
@@ -978,7 +1063,7 @@ fn tool_tags_rename() -> Value {
             "properties": {
                 "old_tag": { "type": "string", "description": "Current tag name to rename" },
                 "new_tag": { "type": "string", "description": "New tag name" },
-                "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace scope (default: all namespaces)" }
             },
             "required": ["old_tag", "new_tag"]
         }
@@ -993,7 +1078,7 @@ fn tool_tags_delete() -> Value {
             "type": "object",
             "properties": {
                 "tag": { "type": "string", "description": "Tag name to delete" },
-                "namespace": { "type": "string", "description": "Namespace scope (default: all namespaces)" }
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace scope (default: all namespaces)" }
             },
             "required": ["tag"]
         }
@@ -1003,7 +1088,7 @@ fn tool_tags_delete() -> Value {
 fn tool_namespace_rename() -> Value {
     serde_json::json!({
         "name": "uteke_namespace_rename",
-        "description": "Rename a namespace, merging into the target when it already exists. Namespaces are a derived view — the old name vanishes when its last memory moved (#1181).",
+        "description": "DEPRECATED (namespaces will be removed in a future 0.x release; prefer rooms, tags and author). Rename a namespace, merging into the target when it already exists. Namespaces are a derived view — the old name vanishes when its last memory moved (#1181).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1018,7 +1103,7 @@ fn tool_namespace_rename() -> Value {
 fn tool_namespace_delete() -> Value {
     serde_json::json!({
         "name": "uteke_namespace_delete",
-        "description": "Delete a namespace with an explicit strategy for its memories: refuse (default — error while any memory uses the name), merge (move all memories to `target`), or deprecate (soft-delete — restorable via promote, never hard-deleted) (#1181).",
+        "description": "DEPRECATED (namespaces will be removed in a future 0.x release; prefer rooms, tags and author). Delete a namespace with an explicit strategy for its memories: refuse (default — error while any memory uses the name), merge (move all memories to `target`), or deprecate (soft-delete — restorable via promote, never hard-deleted) (#1181).",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1093,16 +1178,52 @@ fn tool_graph_remove_edge() -> Value {
 
 // ── Tool Executors ──────────────────────────────────────────────────────────
 
-fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+/// Decode the arguments of `uteke_remember` into the typed request shared
+/// with the HTTP server and the CLI (#1343), under the MCP policy: content and
+/// tags validated by the core write, `type` defaulting to `fact` with no
+/// auto-inference, no metadata. Tags that are not strings are dropped. The
+/// tool exposes no entity/category/metadata/source/author_type fields, so
+/// those stay unset.
+pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest, String> {
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
-    let tags: Vec<&str> = args["tags"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    let namespace = args["namespace"].as_str();
-    let memory_type = args["type"].as_str().unwrap_or("fact");
-    let room = args["room"].as_str();
-    let author = args["author"].as_str().unwrap_or("anonymous");
+    let input = uteke_core::RememberInput {
+        content: content.to_string(),
+        tags: args["tags"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        memory_type: args["type"].as_str().map(str::to_string),
+        room: args["room"].as_str().map(str::to_string),
+        author: args["author"].as_str().map(str::to_string),
+        ..uteke_core::RememberInput::default()
+    };
+    uteke_core::RememberRequest::decode(input, uteke_core::RememberPolicy::MCP)
+        .map_err(|e| e.to_string())
+}
+
+/// Deprecation signal for a namespaced write (#1427, phase 1): a trailing
+/// warning line for the tool text, empty for the default namespace so those
+/// results stay byte-identical. Also logs once per namespace (server side).
+fn namespace_deprecation_suffix(namespace: Option<&str>) -> String {
+    uteke_core::namespace_deprecation::namespace_write_warning(namespace)
+        .map(|w| format!("\n⚠ {w}"))
+        .unwrap_or_default()
+}
+
+fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let req = decode_remember_args(args)?;
+    let content = req.content.as_str();
+    let tags = req.tag_refs();
+    let namespace = req.namespace.as_deref();
+    // The MCP policy always supplies a type (default `fact`).
+    let memory_type = req.memory_type.as_deref().unwrap_or("fact");
+    let room = req.room.as_deref();
+    let author = req.author.as_deref().unwrap_or("anonymous");
 
     let outcome = if let Some(room_id) = room {
         uteke
@@ -1128,6 +1249,7 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             "\n⚠ Embedding NOT written: {warn}\nMemory is keyword-searchable only; run `uteke repair` to backfill."
         ));
     }
+    text.push_str(&namespace_deprecation_suffix(namespace));
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -1138,44 +1260,59 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
-fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+/// Decode the arguments of `uteke_recall` into the typed request shared with
+/// the HTTP server and the CLI (#1343), under the MCP policy: no limit cap,
+/// blank queries accepted, `tags: []` kept as a filter. The tool exposes no
+/// entity/category/enrich/at/after/before/strict, so those stay unset.
+pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
-    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
-    let namespace = args["namespace"].as_str();
+    let input = uteke_core::RecallInput {
+        query: query.to_string(),
+        limit: args["limit"].as_u64().map(|l| l as usize),
+        tags: args["tags"].as_array().map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        }),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        min_score: args["min_score"].as_f64().map(|m| m as f32),
+        search_type: args["type"].as_str().map(str::to_string),
+        pack: args["pack"].as_bool().unwrap_or(false),
+        budget_chars: args["budget_chars"].as_u64().map(|b| b as usize),
+        exclude_ids: args["exclude_ids"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        strategy: args["strategy"].as_str().map(str::to_string),
+        explain: args["explain"].as_bool().unwrap_or(false),
+        ..uteke_core::RecallInput::default()
+    };
+    uteke_core::RecallRequest::decode(input, uteke_core::RecallPolicy::MCP)
+        .map_err(|e| e.to_string())
+}
+
+fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let req = decode_recall_args(args)?;
+    let query = req.query.as_str();
+    let limit = req.limit;
+    let namespace = req.namespace.as_deref();
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
-    let tags_filter: Option<Vec<&str>> = args["tags"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>());
-    let tags_ref = tags_filter.as_deref();
-    let min_score = args["min_score"].as_f64().unwrap_or(0.0) as f32;
+    let tag_vec = req.tag_filter();
+    let tags_ref = tag_vec.as_deref();
+    let min_score = req.resolve_min_score(None, None);
 
     // Parse optional search type (#531)
-    let search_type = match args["type"].as_str() {
-        Some("memory") => uteke_core::SearchType::Memory,
-        Some("doc") => uteke_core::SearchType::Document,
-        Some("all") | None => uteke_core::SearchType::All,
-        Some(other) => {
-            return Err(format!(
-                "Invalid search type: '{other}'. Use 'all', 'memory', or 'doc'."
-            ));
-        }
-    };
+    let search_type = req.search_type().map_err(|e| e.to_string())?;
 
     // Parse optional recall strategy (#1035): default fusion since 0.16.0
     // (#1123), matching the CLI and HTTP defaults. Unknown values are a loud
     // error (JSON-RPC -32603), never a silent fallback.
-    let strategy = match args["strategy"].as_str() {
-        Some(name) => match uteke_core::RecallStrategy::from_str_opt(name) {
-            Some(s) => s,
-            None => {
-                return Err(format!(
-                    "Invalid strategy: '{name}'. Use 'vector', 'fts5', 'hybrid', 'graph', or 'fusion'."
-                ));
-            }
-        },
-        None => uteke_core::RecallStrategy::Fusion,
-    };
+    let strategy = req.strategy(None).map_err(|e| e.to_string())?;
 
     // Explain mode (#1160): memory-only, bypasses unified results and
     // returns full ranking signals per result. An omitted `type` (the
@@ -1217,16 +1354,9 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // ContextPack envelope (selected/skipped/budget_used/budget_chars)
     // instead of a bare ranked list. Deterministic, LLM-free, rank-order
     // preserving; `exclude_ids` are memory IDs already injected this turn.
-    if args["pack"].as_bool().unwrap_or(false) {
-        let budget = args["budget_chars"].as_u64().unwrap_or(4000) as usize;
-        let exclude_ids: Vec<String> = args["exclude_ids"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
+    if req.pack {
+        let budget = req.budget_chars_or_default();
+        let exclude_ids = &req.exclude_ids;
         let pack = uteke
             .recall_unified_packed(
                 query,
@@ -1240,7 +1370,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 false,
                 strategy,
                 budget,
-                &exclude_ids,
+                exclude_ids,
             )
             .map_err(|e| format!("Failed: {e}"))?;
         if pack.selected.is_empty() {
@@ -1339,15 +1469,32 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
+/// Decode the arguments of `uteke_list` into the typed request shared with
+/// the HTTP server and the CLI (#1343), under the MCP policy: default limit
+/// 20, no cap. Fields of the wrong type fall back to their defaults. The tool
+/// exposes no `at`/`include_meta`, so those stay unset.
+pub fn decode_list_args(args: &Value) -> Result<uteke_core::ListRequest, String> {
+    let input = uteke_core::ListInput {
+        tag: args["tag"].as_str().map(str::to_string),
+        limit: args["limit"].as_u64().map(|l| l as usize),
+        offset: args["offset"].as_u64().map(|o| o as usize),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        ..uteke_core::ListInput::default()
+    };
+    uteke_core::ListRequest::decode(input, uteke_core::ListPolicy::MCP).map_err(|e| e.to_string())
+}
+
 fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    let tag = args["tag"].as_str();
-    let limit = args["limit"].as_u64().unwrap_or(20) as usize;
-    let offset = args["offset"].as_u64().unwrap_or(0) as usize;
-    let namespace = args["namespace"].as_str();
+    let req = decode_list_args(args)?;
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
     let memories = uteke
-        .list(tag, limit, offset, namespace)
+        .list(
+            req.tag.as_deref(),
+            req.limit,
+            req.offset,
+            req.namespace.as_deref(),
+        )
         .map_err(|e| format!("Failed: {e}"))?;
 
     if memories.is_empty() {
@@ -1390,23 +1537,10 @@ fn display_id(id: &str, full: bool) -> &str {
 /// printed by recall/list). Errors loudly on ambiguous prefixes instead of
 /// silently no-oping. Exact UUIDs skip the prefix scan.
 fn resolve_id<'a>(uteke: &'a Uteke, id: &'a str) -> Result<String, String> {
-    // Ids are UUIDs: hex digits and dashes only. Rejecting anything else up
-    // front also keeps LIKE wildcards (`%`, `_`) out of the prefix scan (#1328).
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        return Err(format!(
-            "Invalid memory id '{id}' (expected a UUID or hex prefix)"
-        ));
-    }
-    // A well-formed full UUID skips the prefix scan; anything else (including a
-    // 36-char non-UUID string) takes the prefix path so it errors the same way.
-    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
-        return Ok(uuid.hyphenated().to_string());
-    }
-    match uteke.resolve_id_prefix(id) {
-        Ok(Some(full)) => Ok(full),
-        Ok(None) => Err(format!("No memory matches id prefix '{id}'")),
-        Err(e) => Err(format!("{e}")),
-    }
+    // The shared resolver under the MCP policy (#1343): hex-and-dash ids
+    // only (#1328), full UUIDs normalised, no existence check.
+    uteke_core::resolve_memory_id(uteke, id, uteke_core::ForgetPolicy::MCP)
+        .map_err(|e| e.message().to_string())
 }
 
 /// #1053: mark old_id superseded by new_id — wires the edge pair
@@ -1535,15 +1669,31 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("✓ Updated memory {id}"),
+            text: format!(
+                "✓ Updated memory {id}{}",
+                namespace_deprecation_suffix(args["namespace"].as_str())
+            ),
         }],
         is_error: false,
     })
 }
 
 fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
-    let id = resolve_id(uteke, id_arg)?;
+    // Typed request shared with HTTP and the CLI (#1343). The tool offers no
+    // tag or namespace, and (unlike HTTP) is not behind the read-only gate.
+    let policy = uteke_core::ForgetPolicy::MCP;
+    let request = uteke_core::ForgetRequest::decode(
+        uteke_core::ForgetInput {
+            id: args["id"].as_str().map(String::from),
+            ..Default::default()
+        },
+        policy,
+    )
+    .map_err(|e| e.message().to_string())?;
+    let id = request
+        .resolve(uteke, policy)
+        .map_err(|e| e.message().to_string())?
+        .ok_or("Missing 'id'")?;
 
     uteke.forget(&id).map_err(|e| format!("Failed: {e}"))?;
 
@@ -2177,37 +2327,105 @@ fn exec_dream(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     })
 }
 
+/// Parsed arguments of `uteke_room_recall` (same names and defaults as
+/// `uteke_recall` where they overlap).
+#[derive(Debug, PartialEq)]
+struct RoomRecallArgs {
+    limit: usize,
+    min_score: f32,
+    tags: Vec<String>,
+    pack: bool,
+    budget_chars: usize,
+    exclude_ids: Vec<String>,
+    full_ids: bool,
+}
+
+fn parse_room_recall_args(args: &Value) -> RoomRecallArgs {
+    let strings = |key: &str| -> Vec<String> {
+        args[key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    RoomRecallArgs {
+        limit: args["limit"].as_u64().unwrap_or(5) as usize,
+        min_score: args["min_score"].as_f64().unwrap_or(0.0).max(0.0) as f32,
+        tags: strings("tags"),
+        pack: args["pack"].as_bool().unwrap_or(false),
+        budget_chars: args["budget_chars"].as_u64().unwrap_or(4000) as usize,
+        exclude_ids: strings("exclude_ids"),
+        full_ids: args["full_ids"].as_bool().unwrap_or(false),
+    }
+}
+
+/// Plain-list output: the historical `[score] content` line, followed by an
+/// indented `(id: …)` line so the result can be passed to `uteke_provenance`,
+/// `uteke_get` or `exclude_ids`.
+fn format_room_recall_lines(results: &[uteke_core::SearchResult], full_ids: bool) -> Vec<String> {
+    let mut lines = Vec::with_capacity(results.len() * 2);
+    for sr in results {
+        lines.push(format!("[{:.2}] {}", sr.score, sr.memory.content));
+        lines.push(format!(
+            "       (id: {})",
+            display_id(&sr.memory.id, full_ids)
+        ));
+    }
+    lines
+}
+
 fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
-    let limit = args["limit"].as_u64().unwrap_or(5) as usize;
+    let a = parse_room_recall_args(args);
+    let tag_refs: Vec<&str> = a.tags.iter().map(String::as_str).collect();
+    let tags = (!tag_refs.is_empty()).then_some(tag_refs.as_slice());
+
+    let text_result = |text: String| ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    };
+
+    // Budgeted context pack (#1335, same envelope as uteke_recall #1281).
+    if a.pack {
+        let pack = uteke
+            .recall_room_packed(
+                room_id,
+                query,
+                a.limit,
+                None,
+                a.min_score,
+                tags,
+                a.budget_chars,
+                &a.exclude_ids,
+            )
+            .map_err(|e| format!("Failed: {e}"))?;
+        // Nothing matched at all: say so. Otherwise return the pack even when
+        // `selected` is empty, so `skipped` explains why (excluded / budget).
+        if pack.selected.is_empty() && pack.skipped.is_empty() {
+            return Ok(text_result("No memories found in room.".to_string()));
+        }
+        return Ok(text_result(
+            serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string()),
+        ));
+    }
 
     let results = uteke
-        .recall_room_semantic(room_id, query, limit, None, 0.0)
+        .recall_room_semantic_filtered(room_id, query, a.limit, None, a.min_score, tags)
         .map_err(|e| format!("Failed: {e}"))?;
 
     if results.is_empty() {
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text: "No memories found in room.".to_string(),
-            }],
-            is_error: false,
-        });
+        return Ok(text_result("No memories found in room.".to_string()));
     }
-
-    let lines: Vec<String> = results
-        .iter()
-        .map(|sr| format!("[{:.2}] {}", sr.score, sr.memory.content))
-        .collect();
-
-    Ok(ToolResult {
-        content: vec![McpContent::Text {
-            r#type: "text".to_string(),
-            text: lines.join("\n"),
-        }],
-        is_error: false,
-    })
+    Ok(text_result(
+        format_room_recall_lines(&results, a.full_ids).join("\n"),
+    ))
 }
 
 fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
@@ -2261,18 +2479,42 @@ fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("Room created: {room_id} (namespace: {namespace})"),
+            text: format!(
+                "Room created: {room_id} (namespace: {namespace}){}",
+                namespace_deprecation_suffix(Some(namespace))
+            ),
         }],
         is_error: false,
     })
 }
 
+/// Keep rooms whose id or title contains `name` (case-insensitive, #1336).
+/// A blank `name` keeps everything.
+fn filter_rooms_by_name(rooms: Vec<uteke_core::Room>, name: Option<&str>) -> Vec<uteke_core::Room> {
+    let needle = name.map(|n| n.trim().to_lowercase()).unwrap_or_default();
+    if needle.is_empty() {
+        return rooms;
+    }
+    rooms
+        .into_iter()
+        .filter(|r| {
+            r.id.to_lowercase().contains(&needle)
+                || r.title
+                    .as_deref()
+                    .is_some_and(|t| t.to_lowercase().contains(&needle))
+        })
+        .collect()
+}
+
 fn exec_room_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
 
-    let rooms = uteke
-        .list_rooms(namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let rooms = filter_rooms_by_name(
+        uteke
+            .list_rooms(namespace)
+            .map_err(|e| format!("Failed: {e}"))?,
+        args["name"].as_str(),
+    );
 
     if rooms.is_empty() {
         return Ok(ToolResult {
@@ -2869,6 +3111,7 @@ mod id_resolution_tests {
             updated_at: chrono::Utc::now(),
             namespace: "mcp-id-ns".to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -3010,6 +3253,49 @@ mod id_resolution_tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    // #1343: the typed forget request keeps the MCP texts and policy.
+    #[test]
+    fn exec_forget_errors_keep_their_texts() {
+        let (uteke, dir) = scratch();
+        let id = seed(&uteke);
+        let err = |args: serde_json::Value| exec_forget(&uteke, &args).err().unwrap();
+
+        assert_eq!(err(serde_json::json!({})), "Missing 'id'");
+        assert_eq!(err(serde_json::json!({"id": 7})), "Missing 'id'");
+        assert_eq!(
+            err(serde_json::json!({"id": "%"})),
+            "Invalid memory id '%' (expected a UUID or hex prefix)"
+        );
+        assert_eq!(
+            err(serde_json::json!({"id": ""})),
+            "Invalid memory id '' (expected a UUID or hex prefix)"
+        );
+        assert_eq!(
+            err(serde_json::json!({"id": "ffffffff"})),
+            "No memory matches id prefix 'ffffffff'"
+        );
+        // The tool has no tag or namespace: extra keys never widen the target.
+        assert_eq!(
+            err(serde_json::json!({"tag": "probe", "namespace": "mcp-id-ns"})),
+            "Missing 'id'"
+        );
+        assert!(uteke.get_by_id(&id).unwrap().is_some());
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn exec_forget_normalises_full_uuid_forms() {
+        let (uteke, dir) = scratch();
+        let id = seed(&uteke);
+        let upper = id.to_uppercase();
+        let result = exec_forget(&uteke, &serde_json::json!({"id": upper})).unwrap();
+        let McpContent::Text { text, .. } = &result.content[0];
+        assert_eq!(text, &format!("✓ Forgotten: {id}"));
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn exec_update_partial_fields() {
         let (uteke, dir) = scratch();
@@ -3066,6 +3352,7 @@ mod supersession_mcp_tests {
                 updated_at: chrono::Utc::now(),
                 namespace: "ssmcp-ns".to_string(),
                 access_count: 0,
+                recall_count: 0,
                 last_accessed: None,
                 deprecated: false,
                 deprecated_at: None,
@@ -3146,6 +3433,7 @@ mod contradiction_mcp_tests {
                 updated_at: chrono::Utc::now(),
                 namespace: "scmcp-ns".to_string(),
                 access_count: 0,
+                recall_count: 0,
                 last_accessed: None,
                 deprecated: false,
                 deprecated_at: None,
@@ -3206,5 +3494,437 @@ mod contradiction_mcp_tests {
 
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod room_recall_tests {
+    //! #1335 — `uteke_room_recall` parity with `uteke_recall`.
+    use super::*;
+    use uteke_core::SearchResult;
+    use uteke_core::memory::types::Memory;
+
+    fn sr(id: &str, content: &str, score: f32) -> SearchResult {
+        SearchResult {
+            memory: Memory {
+                id: id.to_string(),
+                content: content.to_string(),
+                embedding: vec![],
+                tags: vec![],
+                metadata: serde_json::json!({}),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+                namespace: "ns".to_string(),
+                access_count: 0,
+                recall_count: 0,
+                last_accessed: None,
+                deprecated: false,
+                deprecated_at: None,
+                valid_from: None,
+                valid_until: None,
+                memory_type: "fact".to_string(),
+                importance: 0.5,
+                pinned: false,
+                content_type: "text".to_string(),
+                slug: None,
+                source: None,
+                source_type: "user".to_string(),
+                author_type: "agent".to_string(),
+            },
+            score,
+        }
+    }
+
+    #[test]
+    fn defaults_are_unchanged() {
+        let a = parse_room_recall_args(&serde_json::json!({"room_id": "r", "query": "q"}));
+        assert_eq!(
+            a,
+            RoomRecallArgs {
+                limit: 5,
+                min_score: 0.0,
+                tags: vec![],
+                pack: false,
+                budget_chars: 4000,
+                exclude_ids: vec![],
+                full_ids: false,
+            }
+        );
+    }
+
+    #[test]
+    fn all_new_parameters_are_parsed() {
+        let a = parse_room_recall_args(&serde_json::json!({
+            "room_id": "r", "query": "q", "limit": 3, "min_score": 0.25,
+            "tags": ["a", "b"], "pack": true, "budget_chars": 900,
+            "exclude_ids": ["x", "y"], "full_ids": true
+        }));
+        assert_eq!(a.limit, 3);
+        assert!((a.min_score - 0.25).abs() < 1e-6);
+        assert_eq!(a.tags, ["a", "b"]);
+        assert!(a.pack && a.full_ids);
+        assert_eq!(a.budget_chars, 900);
+        assert_eq!(a.exclude_ids, ["x", "y"]);
+        // negative min_score is clamped, non-string array items ignored
+        let a = parse_room_recall_args(&serde_json::json!({"min_score": -1.0, "tags": ["a", 7]}));
+        assert_eq!(a.min_score, 0.0);
+        assert_eq!(a.tags, ["a"]);
+    }
+
+    #[test]
+    fn schema_advertises_every_new_parameter() {
+        let tool = tool_room_recall();
+        let props = tool["inputSchema"]["properties"].as_object().unwrap();
+        for k in [
+            "room_id",
+            "query",
+            "limit",
+            "min_score",
+            "tags",
+            "pack",
+            "budget_chars",
+            "exclude_ids",
+            "full_ids",
+        ] {
+            assert!(props.contains_key(k), "missing {k}");
+        }
+        // required fields did not change
+        assert_eq!(
+            tool["inputSchema"]["required"],
+            serde_json::json!(["room_id", "query"])
+        );
+    }
+
+    #[test]
+    fn every_result_carries_its_memory_id_and_the_score_line_is_unchanged() {
+        let id = "01a11a97-1814-747a-bff1-98db63fb137f";
+        let lines = format_room_recall_lines(&[sr(id, "hello world", 0.8123)], false);
+        assert_eq!(lines[0], "[0.81] hello world", "historical first line");
+        assert_eq!(lines[1], "       (id: 01a11a97)");
+        let full = format_room_recall_lines(&[sr(id, "hello world", 0.5)], true);
+        assert_eq!(full[1], format!("       (id: {id})"));
+        assert!(format_room_recall_lines(&[], false).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod room_list_filter_tests {
+    //! #1336 — name filter for `uteke_room_list`.
+    use super::*;
+
+    fn room(id: &str, title: Option<&str>) -> uteke_core::Room {
+        uteke_core::Room {
+            id: id.to_string(),
+            title: title.map(str::to_string),
+            namespace: "ns".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            description: None,
+        }
+    }
+
+    fn ids(rooms: Vec<uteke_core::Room>) -> Vec<String> {
+        rooms.into_iter().map(|r| r.id).collect()
+    }
+
+    fn sample() -> Vec<uteke_core::Room> {
+        vec![
+            room("gadio", None),
+            room("project-gadio", None),
+            room("project:gadio", Some("Gadio dev log")),
+            room("uteke", Some("Memory engine")),
+        ]
+    }
+
+    #[test]
+    fn matches_id_and_title_case_insensitively() {
+        assert_eq!(
+            ids(filter_rooms_by_name(sample(), Some("GADIO"))),
+            ["gadio", "project-gadio", "project:gadio"]
+        );
+        // title-only match
+        assert_eq!(
+            ids(filter_rooms_by_name(sample(), Some("engine"))),
+            ["uteke"]
+        );
+    }
+
+    #[test]
+    fn blank_or_missing_name_keeps_everything() {
+        assert_eq!(filter_rooms_by_name(sample(), None).len(), 4);
+        assert_eq!(filter_rooms_by_name(sample(), Some("  ")).len(), 4);
+    }
+
+    #[test]
+    fn no_match_returns_empty_and_schema_advertises_name() {
+        assert!(filter_rooms_by_name(sample(), Some("zzz")).is_empty());
+        let tool = tool_room_list();
+        assert!(tool["inputSchema"]["properties"]["name"].is_object());
+        assert!(tool["inputSchema"]["properties"]["namespace"].is_object());
+    }
+}
+
+#[cfg(test)]
+mod initialize_instructions_tests {
+    //! #1395 — `initialize` carries the conventions-first rule.
+    use super::*;
+
+    #[test]
+    fn instructions_carry_the_rule_and_point_to_the_full_guide() {
+        let text = initialize_instructions();
+        assert!(text.starts_with("Conventions first."));
+        assert!(text.contains("no secrets"));
+        assert!(text.contains("uteke guide"));
+        // short on purpose: the whole guide is not injected into every client
+        assert!(text.len() < 800, "{} chars", text.len());
+    }
+}
+
+#[cfg(test)]
+mod remember_decode_tests {
+    use super::decode_remember_args;
+    use serde_json::json;
+
+    #[test]
+    fn defaults_type_to_fact_and_author_stays_raw() {
+        let r = decode_remember_args(&json!({"content": "x"})).unwrap();
+        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+        assert_eq!(r.metadata, None);
+        assert_eq!(r.author, None);
+        assert_eq!(r.room, None);
+    }
+
+    #[test]
+    fn non_string_type_falls_back_to_fact_and_blank_content_is_accepted() {
+        let r = decode_remember_args(&json!({"content": "  ", "type": 5})).unwrap();
+        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+    }
+
+    #[test]
+    fn missing_content_message_is_unchanged() {
+        assert_eq!(
+            decode_remember_args(&json!({"tags": ["a"]})).unwrap_err(),
+            "Missing 'content'"
+        );
+    }
+}
+
+#[cfg(test)]
+mod namespace_deprecation_tests {
+    use super::*;
+    use uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING;
+
+    fn text(r: ToolResult) -> String {
+        match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    fn store() -> Uteke {
+        Uteke::open_with_backend(":memory:", None).expect("open without embedder")
+    }
+
+    #[test]
+    fn remember_non_default_namespace_appends_warning() {
+        let u = store();
+        let t = text(
+            exec_remember(
+                &u,
+                &serde_json::json!({"content": "x", "namespace": "ns-mcp-a"}),
+            )
+            .unwrap(),
+        );
+        assert!(t.starts_with("✓ Stored memory with ID: "), "{t}");
+        assert!(
+            t.ends_with(&format!("\n⚠ {NAMESPACE_DEPRECATION_WARNING}")),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn remember_default_or_omitted_is_unchanged() {
+        let u = store();
+        for args in [
+            serde_json::json!({"content": "a"}),
+            serde_json::json!({"content": "b", "namespace": "default"}),
+        ] {
+            let t = text(exec_remember(&u, &args).unwrap());
+            assert!(!t.contains("deprecated"), "{t}");
+            assert!(!t.contains('\n'), "{t}");
+        }
+    }
+
+    #[test]
+    fn room_create_warns_only_for_non_default() {
+        let u = store();
+        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "r1"})).unwrap());
+        assert_eq!(t, "Room created: r1 (namespace: default)");
+        let t = text(
+            exec_room_create(
+                &u,
+                &serde_json::json!({"room_id": "r2", "namespace": "ns-mcp-r"}),
+            )
+            .unwrap(),
+        );
+        assert!(t.contains(NAMESPACE_DEPRECATION_WARNING), "{t}");
+    }
+
+    #[test]
+    fn every_tool_with_a_namespace_argument_says_deprecated() {
+        let mut checked = 0;
+        let list = handle_request(&store(), "tools/list", None, Access::Full).unwrap();
+        for t in list["tools"].as_array().unwrap() {
+            let name = t["name"].as_str().unwrap().to_string();
+            if let Some(arg) = t["inputSchema"]["properties"]["namespace"]["description"].as_str() {
+                assert!(arg.contains("DEPRECATED"), "{name}: {arg}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 10, "only {checked} namespace args found");
+    }
+}
+
+#[cfg(test)]
+mod read_only_gate_tests {
+    use super::*;
+
+    fn store() -> Uteke {
+        Uteke::open_with_backend(":memory:", None).expect("open without embedder")
+    }
+
+    fn call(u: &Uteke, access: Access, tool: &str, args: serde_json::Value) -> serde_json::Value {
+        let raw = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool, "arguments": args}
+        })
+        .to_string();
+        let out = handle_jsonrpc_as(u, &raw, access).expect("request, not notification");
+        serde_json::from_str(&out).unwrap()
+    }
+
+    fn listed_tools(u: &Uteke) -> Vec<String> {
+        let raw = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let out: serde_json::Value =
+            serde_json::from_str(&handle_jsonrpc(u, raw).unwrap()).unwrap();
+        out["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn every_read_only_tool_exists() {
+        let u = store();
+        let listed = listed_tools(&u);
+        for t in READ_ONLY_TOOLS {
+            // uteke_room_document is a dispatch alias of uteke_room_summary_document.
+            if *t == "uteke_room_document" {
+                continue;
+            }
+            assert!(listed.iter().any(|l| l == t), "{t} is not a listed tool");
+        }
+    }
+
+    #[test]
+    fn read_only_refuses_a_write_tool_and_writes_nothing() {
+        let u = store();
+        let resp = call(
+            &u,
+            Access::ReadOnly,
+            "uteke_remember",
+            serde_json::json!({"content": "x"}),
+        );
+        assert!(resp.get("error").is_none(), "{resp}");
+        assert_eq!(resp["result"]["isError"], true);
+        assert_eq!(
+            resp["result"]["content"][0]["text"],
+            "Read-only token cannot use uteke_remember"
+        );
+        assert_eq!(u.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_only_tool_set_is_the_reviewed_one() {
+        // Adding a name to READ_ONLY_TOOLS opens a tool to read-only tokens:
+        // it must be a deliberate edit of this test too.
+        let expected: std::collections::BTreeSet<&str> = [
+            "uteke_recall",
+            "uteke_search",
+            "uteke_list",
+            "uteke_get",
+            "uteke_provenance",
+            "uteke_timeline",
+            "uteke_contradictions",
+            "uteke_stats",
+            "uteke_doc_get",
+            "uteke_doc_list",
+            "uteke_doc_search",
+            "uteke_doc_list_rooms",
+            "uteke_graph",
+            "uteke_room_list",
+            "uteke_room_recall",
+            "uteke_room_memories",
+            "uteke_room_stats",
+            "uteke_room_summary",
+            "uteke_room_summary_document",
+            "uteke_room_document",
+            "uteke_room_list_documents",
+            "uteke_tags_list",
+        ]
+        .into_iter()
+        .collect();
+        let actual: std::collections::BTreeSet<&str> = READ_ONLY_TOOLS.iter().copied().collect();
+        assert_eq!(actual, expected);
+        assert_eq!(READ_ONLY_TOOLS.len(), expected.len(), "duplicate entry");
+    }
+
+    #[test]
+    fn read_only_room_document_alias_does_not_write() {
+        let u = store();
+        let resp = call(
+            &u,
+            Access::ReadOnly,
+            "uteke_room_document",
+            serde_json::json!({"room_id": "nope"}),
+        );
+        assert!(
+            !resp.to_string().contains("Read-only token cannot use"),
+            "{resp}"
+        );
+        assert_eq!(u.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_only_notification_on_write_tool_runs_nothing() {
+        let u = store();
+        let raw = serde_json::json!({
+            "jsonrpc": "2.0", "method": "tools/call",
+            "params": {"name": "uteke_remember", "arguments": {"content": "x"}}
+        })
+        .to_string();
+        assert!(handle_jsonrpc_as(&u, &raw, Access::ReadOnly).is_none());
+        assert_eq!(u.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_only_allows_a_read_tool() {
+        let u = store();
+        let resp = call(&u, Access::ReadOnly, "uteke_stats", serde_json::json!({}));
+        assert!(resp.get("error").is_none(), "{resp}");
+    }
+
+    #[test]
+    fn full_access_is_unchanged() {
+        let u = store();
+        let resp = call(
+            &u,
+            Access::Full,
+            "uteke_remember",
+            serde_json::json!({"content": "x"}),
+        );
+        assert!(resp.get("error").is_none(), "{resp}");
+        assert_eq!(u.count(None).unwrap(), 1);
     }
 }

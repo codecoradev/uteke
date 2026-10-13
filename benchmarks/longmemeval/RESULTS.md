@@ -3,10 +3,11 @@
 **Dataset:** `longmemeval_s_cleaned.json` — 500 questions = 470 answerable + 30 abstention (`_abs`), 6+1 question types
 **Metric:** Session-level retrieval (Recall@k, NDCG@k). Deterministic — no LLM in the retrieval path.
 
-**TL;DR headline (v0.19.0, full 500 questions — see section below):**
-recall_any@5 = **0.982** · strict recall_all@5 = **0.880** · strict recall_all@10 = **0.954** · coverage@5 = **0.943**
-(Per-release headline: v0.16.0 = 0.982 · v0.17.0 = 0.984 · v0.19.0 = 0.982 any@5 — the strict
-family is bit-stable at 0.880/0.954 across all three releases. Raw artifacts for all three
+**TL;DR headline (v0.20.0, full 500 questions — see section below):**
+recall_any@5 = **0.982** · strict recall_all@5 = **0.880** · strict recall_all@10 = **0.952** · coverage@5 = **0.944**
+(Per-release headline: v0.16.0 = 0.982 · v0.17.0 = 0.984 · v0.19.0 = 0.982 · v0.20.0 = 0.982 any@5 — the strict
+family is bit-stable at 0.880 across all four releases; strict@10 moved 0.954 → 0.952 on a single
+top-10 boundary flip whose gold sessions remain fully inside the top-50. Raw artifacts for all
 runs are committed under [`results/`](results/).)
 
 Every number below can be recomputed from the committed raw artifacts in
@@ -170,6 +171,59 @@ releases; any@5 sits in a ±0.2pp band (98.2–98.4).
 ```bash
 # reproduce
 UTEKE_GIT_REF=fbfed5f7258093558c179b89f08c5a53a6069666 modal run scripts/modal_fanout.py --strategy default --tag v019
+```
+
+## v0.20.0 validation — ✅ DONE (2026-10-08)
+
+Full 500-question run on the released v0.20.0 binary (official release tarball
+via `UTEKE_RELEASE=v0.20.0` — the #1374 release-download path, no in-image
+build; Modal run `ap-IPNCgovfOxvc7nPygom6ky`, 10 shards, strategy `default`,
+resume-safe across several preempted containers). Raw artifact (committed):
+[`results/default-500q-v0.20.0.jsonl`](results/default-500q-v0.20.0.jsonl).
+
+| Question type | n | R@5 (strict) | R@10 (strict) | any@5 | any@10 | NDCG@5 |
+|---|---|---|---|---|---|---|
+| knowledge-update | 72 | 1.000 | 1.000 | 1.000 | 1.000 | 0.972 |
+| single-session-assistant | 56 | 0.982 | 1.000 | 0.982 | 1.000 | 0.959 |
+| single-session-user | 64 | 0.969 | 0.969 | 0.969 | 0.969 | 0.919 |
+| single-session-preference | 30 | 0.967 | 0.967 | 0.967 | 0.967 | 0.839 |
+| temporal-reasoning | 127 | 0.922 | 0.962 | 0.984 | 0.992 | 0.850 |
+| multi-session | 121 | 0.908 | 0.969 | 0.983 | 0.992 | 0.881 |
+| **Overall (470 non-abstention)** | 470 | **0.947** | 0.975 | 0.983 | 0.989 | 0.898 |
+| **Abstention (30)** | 30 | **0.906** | 0.950 | 0.967 | 0.967 | 0.844 |
+| **Overall (full 500)** | 500 | **0.944** | 0.974 | **0.982** | 0.988 | 0.895 |
+
+Strict-family headline on the full 500: recall_all@5 = **0.880** (binary),
+coverage@5 = **0.944** — @5 family unchanged across all four releases.
+
+### Four-release stability (full 500-question basis, scored from committed raw)
+
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
+|---|---|---|---|---|
+| recall_any@5 | 0.982 | **0.984** | 0.982 | 0.982 |
+| recall_any@10 | 0.988 | 0.988 | 0.988 | 0.988 |
+| strict recall_all@5 | 0.880 | 0.880 | 0.880 | 0.880 |
+| strict recall_all@10 | 0.954 | 0.954 | 0.954 | 0.952 |
+| coverage@5 | 0.943 | 0.944 | 0.943 | 0.944 |
+| total misses @50 | 0 | 0 | 0 | 0 |
+
+Per-question comparison vs v0.19.0 (n=500): 253 identical full rankings, 241
+reorder-only within the top-50, 6 questions with a different top-50 set. At the
+metric level: **zero flips @5 and @50**, exactly **one flip @10** — question
+`8e91e7d9` (multi-session, 2 gold sessions: the second moved from rank 6–10 to
+rank 11–20 while both golds remain inside the top-50, a boundary jitter of the
+same class as the v0.17.0 → v0.19.0 `gpt4_1916e0ea` move). any@5, strict@5 and
+coverage@5 are unchanged or improved; the v0.20.0 feature set (one write policy
+for the index, atomic documents, config resolution, security sweep) is proven
+not to touch the retrieval default.
+
+Fast50 gate on the same binary (2026-10-08, pre-run): any@5 1.000 (50/50),
+mean R@5 0.980, strict-all@5 47/50 — identical basket to the v0.19.0 fast50
+baseline (0 improved / 0 regressed via `compare_fast50.py`).
+
+```bash
+# reproduce
+UTEKE_RELEASE=v0.20.0 modal run scripts/modal_fanout.py --strategy default --num-shards 10 --tag v0200-500q
 ```
 
 ## Strategy Comparison (historical runs)

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at TEXT NOT NULL,
     namespace TEXT NOT NULL DEFAULT 'default',
     access_count INTEGER NOT NULL DEFAULT 0,
+    recall_count INTEGER NOT NULL DEFAULT 0,
     last_accessed TEXT,
     deprecated INTEGER NOT NULL DEFAULT 0,
     deprecate_reason TEXT,
@@ -180,7 +181,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 20;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 21;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -329,6 +330,7 @@ impl Store {
             importance: f64,
             pinned: bool,
             access_count: i64,
+            recall_count: i64,
             last_accessed: Option<chrono::DateTime<chrono::Utc>>,
             metadata: serde_json::Value,
         }
@@ -336,7 +338,7 @@ impl Store {
             let mut stmt = self
                 .conn
                 .prepare(
-                    "SELECT id, importance, pinned, access_count, last_accessed, metadata \
+                    "SELECT id, importance, pinned, access_count, last_accessed, metadata, recall_count \
                      FROM memories WHERE embedding IS NOT NULL AND deprecated = 0",
                 )
                 .map_err(|e| Error::db("prepare recompute_importance", e))?;
@@ -348,6 +350,7 @@ impl Store {
                     importance: r.get::<_, f64>(1)?,
                     pinned: r.get::<_, i64>(2)? != 0,
                     access_count: r.get(3)?,
+                    recall_count: r.get(6)?,
                     last_accessed: last.as_deref().and_then(parse_datetime_opt),
                     metadata: meta
                         .and_then(|m| serde_json::from_str(&m).ok())
@@ -384,7 +387,9 @@ impl Store {
             }
 
             // access_score: normalized by count (cap at 10 accesses = 1.0)
-            let access_score = (m.access_count as f64 / 10.0).min(1.0);
+            let access_signal = m.access_count as f64
+                + f64::from(crate::memory::types::RECALL_ACCESS_WEIGHT) * m.recall_count as f64;
+            let access_score = (access_signal / 10.0).min(1.0);
 
             // recency_score: exponential decay (half-life 30 days)
             let days_since = m
@@ -511,7 +516,7 @@ macro_rules! memory_columns {
         "id, content, embedding, tags, metadata, created_at, updated_at, namespace, \
          access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, \
          importance, pinned, content_type, slug, source, source_type, author_type, \
-         deprecated_at"
+         deprecated_at, recall_count"
     };
 }
 
@@ -521,7 +526,7 @@ macro_rules! memory_columns_m {
         "m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, \
          m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, \
          m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, \
-         m.source, m.source_type, m.author_type, m.deprecated_at"
+         m.source, m.source_type, m.author_type, m.deprecated_at, m.recall_count"
     };
 }
 
@@ -586,6 +591,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     let source: Option<String> = row.get(18).ok().flatten();
     let source_type: String = row.get(19).unwrap_or_else(|_| "unknown".to_string());
     let author_type: String = row.get(20).unwrap_or_else(|_| "agent".to_string());
+    let recall_count: u32 = row.get(22).unwrap_or(0);
 
     Ok(Memory {
         id,
@@ -597,6 +603,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         updated_at,
         namespace,
         access_count,
+        recall_count,
         last_accessed,
         deprecated,
         deprecated_at,
@@ -630,6 +637,7 @@ mod tests {
             updated_at: Utc::now(),
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -657,6 +665,7 @@ mod tests {
             updated_at: Utc::now(),
             namespace: namespace.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -1348,9 +1357,11 @@ mod tests {
         m.source = Some("notes.md".to_string());
         m.source_type = "file".to_string();
         m.author_type = "human".to_string();
+        m.recall_count = 7;
         store.insert(&m).unwrap();
 
         let check = |what: &str, got: &Memory| {
+            assert_eq!(got.recall_count, 7, "{what}: recall_count");
             assert_eq!(got.slug.as_deref(), Some("my-slug"), "{what}: slug");
             assert_eq!(got.source.as_deref(), Some("notes.md"), "{what}: source");
             assert_eq!(got.source_type, "file", "{what}: source_type");
@@ -1389,7 +1400,7 @@ mod tests {
         one("find_similar", store.find_similar("default", 10).unwrap());
         one("find_aged", store.find_aged(0, u32::MAX, None).unwrap());
 
-        // deprecated_at is the last column (index 21): it must survive too.
+        // deprecated_at (index 21) and recall_count (index 22) must survive too.
         store.deprecate("full-row").unwrap();
         let got = store.get_by_id("full-row").unwrap().unwrap();
         assert!(
@@ -1404,7 +1415,7 @@ mod tests {
     fn test_memory_column_macros_agree() {
         let plain: Vec<&str> = memory_columns!().split(',').map(str::trim).collect();
         let aliased: Vec<&str> = memory_columns_m!().split(',').map(str::trim).collect();
-        assert_eq!(plain.len(), 22, "row_to_memory decodes 22 columns");
+        assert_eq!(plain.len(), 23, "row_to_memory decodes 23 columns");
         assert_eq!(plain.len(), aliased.len());
         for (p, a) in plain.iter().zip(&aliased) {
             assert_eq!(format!("m.{p}"), *a);
@@ -1531,6 +1542,55 @@ mod tests {
         let m = store.get_by_id("t1").unwrap().unwrap();
         assert_eq!(m.access_count, 2);
         assert!(m.last_accessed.is_some());
+    }
+
+    /// #1337: recall/search hits and explicit gets are counted apart.
+    #[test]
+    fn test_recall_and_access_counters_are_separate() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(&make_test_memory("t1", "test", &[])).unwrap();
+
+        store.touch_recall_batch(&["t1"]).unwrap();
+        store.touch_recall_batch(&["t1"]).unwrap();
+        store.touch_recall_batch(&["t1"]).unwrap();
+        let m = store.get_by_id("t1").unwrap().unwrap();
+        assert_eq!((m.access_count, m.recall_count), (0, 3));
+        assert!(m.last_accessed.is_some());
+
+        store.touch_access("t1").unwrap();
+        let m = store.get_by_id("t1").unwrap().unwrap();
+        assert_eq!((m.access_count, m.recall_count), (1, 3));
+        // 1 explicit get + 3 recall hits at half weight
+        assert!((m.access_signal() - 2.5).abs() < 1e-6);
+        // empty batches are a no-op
+        store.touch_recall_batch(&[]).unwrap();
+    }
+
+    /// #1337: a v20 store (no `recall_count`) upgrades in place and keeps its
+    /// data; the new column starts at 0.
+    #[test]
+    fn test_migration_v21_adds_recall_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v20.db");
+        let path = path.to_str().unwrap();
+        {
+            let store = Store::open(path).unwrap();
+            let mut m = make_test_memory("old", "legacy memory", &[]);
+            m.access_count = 4;
+            store.insert(&m).unwrap();
+            store
+                .conn
+                .execute_batch(
+                    "ALTER TABLE memories DROP COLUMN recall_count;
+                     UPDATE schema_version SET version = 20;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path).unwrap();
+        let m = store.get_by_id("old").unwrap().unwrap();
+        assert_eq!((m.access_count, m.recall_count), (4, 0));
+        store.touch_recall_batch(&["old"]).unwrap();
+        assert_eq!(store.get_by_id("old").unwrap().unwrap().recall_count, 1);
     }
 
     #[test]
@@ -1985,6 +2045,7 @@ mod tests {
             updated_at: created_at,
             namespace: crate::memory::types::DEFAULT_NAMESPACE.to_string(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated,
             deprecated_at: None,

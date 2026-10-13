@@ -12,8 +12,6 @@ use tiny_http::{Header, Method, Request, Response, StatusCode};
 use tracing::{error, warn};
 
 use uteke_core::Uteke;
-use uteke_core::memory::types::MemoryType;
-use uteke_core::memory::types::validate_author_type;
 
 use crate::api_registry;
 use crate::context::{self, ApiRole, AuthResult, ReqCtx};
@@ -85,35 +83,25 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // Enforce read-only restriction (#409, #524):
     // ReadOnly tokens can use GET endpoints + read-only POST endpoints.
     // Write operations (POST /remember, POST /forget, etc.) are blocked.
-    if let AuthResult::Authenticated(ApiRole::ReadOnly) = auth_role {
-        // POST endpoints that are reads (semantic search, list, stats).
-        // Exact match to avoid prefix-based bypass (e.g. /recallfoo).
-        let read_only_post_paths = [
-            "/list",
-            "/recall",
-            "/search",
-            "/stats",
-            "/room/recall",
-            "/room/summary",
-            "/room/summary-document",
-            "/room/stats",
-            "/room/document/list",
-            "/doc/get",
-            "/doc/list",
-            "/doc/search",
-            "/doc/room/list",
-            "/memory/doc-refs",
-            "/doc/mem-refs",
-            "/orphans",
-        ];
-        let is_read = method == Method::Get || read_only_post_paths.iter().any(|ep| path == *ep);
-        if !is_read {
+    let read_only = matches!(auth_role, AuthResult::Authenticated(ApiRole::ReadOnly));
+    if read_only {
+        // The gate is derived from the registry's `writes` flag (#1344): GET
+        // plus the POST rows that do not write (semantic search, list,
+        // stats). Exact path match avoids prefix-based bypass (/recallfoo).
+        if !api_registry::read_only_allows(method.as_str(), &path) {
             return ctx.error_response_for(
                 req,
                 403,
                 "Read-only token cannot perform write operations",
             );
         }
+    }
+
+    // The registry is the route table (#1344): a (method, path) without a row
+    // is a 404 whatever arms the match below still carries, so a handler
+    // cannot be reachable while unregistered (or ungated).
+    if api_registry::find(method.as_str(), route_path).is_none() {
+        return ctx.error_response_for(req, 404, "Not found");
     }
 
     // Lock the Uteke instance for the duration of this request.
@@ -181,72 +169,17 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── Remember ───────────────────────────────────────────────────
         (Method::Post, "/remember") => match read_body::<RememberRequest>(req.as_reader()) {
-            Ok(req_data) => {
-                // Validate input
-                if let Err(e) = uteke_core::validate_input(&req_data.content, &req_data.tags) {
-                    return ctx.error_response_for(req, 400, e.to_string());
-                }
-
-                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
-
-                // Build metadata from optional fields — matches CLI behavior.
-                let mut meta = serde_json::Map::new();
-                if let Some(t) = &req_data.r#type {
-                    meta.insert("type".into(), serde_json::Value::String(t.clone()));
-                }
-                if let Some(vf) = &req_data.valid_from {
-                    meta.insert("valid_from".into(), serde_json::Value::String(vf.clone()));
-                }
-                if let Some(vu) = &req_data.valid_until {
-                    meta.insert("valid_until".into(), serde_json::Value::String(vu.clone()));
-                }
-                if let Some(entity) = &req_data.entity {
-                    meta.insert("entity".into(), serde_json::Value::String(entity.clone()));
-                }
-                if let Some(category) = &req_data.category {
-                    meta.insert(
-                        "category".into(),
-                        serde_json::Value::String(category.clone()),
-                    );
-                }
-                // Merge caller-supplied metadata object into the map (#682).
-                if let Some(serde_json::Value::Object(extra)) = &req_data.metadata {
-                    for (k, v) in extra {
-                        meta.insert(k.clone(), v.clone());
-                    }
-                }
-                let metadata = if meta.is_empty() {
-                    None
-                } else {
-                    Some(serde_json::Value::Object(meta))
+            Ok(raw) => {
+                // Validation (content/tags, author_type, type) and the
+                // metadata map live in the typed request shared with MCP and
+                // the CLI (#1343). Order: content/tags, author_type, type; all
+                // before any write (#1083, #1302).
+                let req_data = match raw.decode() {
+                    Ok(t) => t,
+                    Err(e) => return ctx.error_response_for(req, 400, e.message().to_string()),
                 };
-
-                // Validate author_type BEFORE any write (#1083, cora finding):
-                // invalid values must reject the whole request — inserting then
-                // failing would leave a persisted memory the client believes failed.
-                if let Some(at) = req_data.author_type.as_deref() {
-                    if let Err(e) = validate_author_type(at) {
-                        return ctx.error_response_for(req, 400, e.to_string());
-                    }
-                }
-                // #1302: validate the requested memory type BEFORE any write and
-                // honor it on the plain path — parity with rooms. The previous
-                // behavior only copied `type` into metadata and fell through to
-                // `remember_detailed` (auto-inference), silently storing `fact`
-                // for every explicit caller type — a contract break for typed
-                // writers (tole #143). Unknown values now fail loudly (400)
-                // listing the supported vocabulary instead of defaulting.
-                if let Some(t) = req_data.r#type.as_deref() {
-                    if MemoryType::from_str_opt(t).is_none() {
-                        return ctx.error_response_for(
-                            req,
-                            400,
-                            format!(
-                                "Unknown memory type '{t}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
-                            ),
-                        );
-                    }
-                }
+                let tag_refs = req_data.tag_refs();
+                let metadata = req_data.metadata.clone();
 
                 let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
                     if req_data.detect_contradiction {
@@ -256,12 +189,12 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 &tag_refs,
                                 metadata,
                                 ns(&req_data.namespace),
-                                req_data.r#type.as_deref(),
+                                req_data.memory_type.as_deref(),
                                 true,
                                 0.65,
                             )
                             .map(|(outcome, _)| outcome)
-                    } else if let Some(t) = req_data.r#type.as_deref() {
+                    } else if let Some(t) = req_data.memory_type.as_deref() {
                         uteke.remember_typed_detailed(
                             &req_data.content,
                             &tag_refs,
@@ -307,7 +240,12 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 "id": id,
                                 "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
                                 "embedding_written": outcome.embedding_written,
-                                "warning": outcome.warning,
+                                "warning": uteke_core::namespace_deprecation::merge_warning(
+                                    outcome.warning,
+                                    uteke_core::namespace_deprecation::namespace_write_warning(
+                                        ns(&req_data.namespace),
+                                    ),
+                                ),
                             }),
                         )
                     }
@@ -323,122 +261,47 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Recall (semantic search) ────────────────────────────────────
         (Method::Post, "/recall") => match read_body::<RecallRequest>(req.as_reader()) {
             Ok(req_data) => {
-                // #907: Reject empty/whitespace queries — they return misleading
-                // results (top-N by recency, not relevance).
-                if req_data.query.trim().is_empty() {
-                    return ctx.error_response_for(
-                        req,
-                        400,
-                        "Query must not be empty or whitespace-only",
-                    );
-                }
-                // #903: Cap limit to prevent DoS via unbounded queries.
-                let limit = req_data.limit.min(MAX_LIMIT);
-
-                let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
-                let tags_filter = if tag_refs.is_empty() {
-                    None
-                } else {
-                    Some(tag_refs.as_slice())
+                // Defaults, the limit cap (#903), the blank-query rejection (#907)
+                // and the RFC3339 parsing of at/after/before live in the typed
+                // request shared with MCP and the CLI (#1343).
+                let typed = match req_data.decode() {
+                    Ok(t) => t,
+                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                 };
-                // Resolve threshold: min_score > strict (→ from config or default 0.5) > 0.0
-                // Server reads [recall] section from uteke.toml, matching CLI behavior.
-                let min_score = if req_data.strict {
-                    req_data.min_score.unwrap_or(
-                        ctx.recall_config
-                            .as_ref()
-                            .and_then(|r| r.min_score_strict)
-                            .unwrap_or(STRICT_THRESHOLD as f64) as f32,
-                    )
-                } else {
-                    req_data.min_score.unwrap_or(
-                        ctx.recall_config
-                            .as_ref()
-                            .and_then(|r| r.min_score)
-                            .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
-                    )
-                };
+                let limit = typed.limit;
+                let tag_vec = typed.tag_filter();
+                let tags_filter = tag_vec.as_deref();
+                // Threshold: min_score > [recall] min_score(_strict) > built-in
+                // (strict 0.5, otherwise 0.0).
+                let min_score = typed.resolve_min_score(
+                    ctx.recall_config.as_ref().and_then(|r| r.min_score),
+                    ctx.recall_config.as_ref().and_then(|r| r.min_score_strict),
+                );
                 // Entity/category filters are now pushed into the core recall
                 // candidate loop (#663) — no 10x fetch amplification needed.
 
-                // Time-travel mode: parse --at and use recall_at_time
-                let point_in_time = match req_data.at.as_deref() {
-                    Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
-                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                    req,
-                                    400,
-                                    format!(
-                                        "Invalid 'at' timestamp: {at_str}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
-                                    ),
-                                );
-                        }
-                    },
-                    None => None,
-                };
+                // Time-travel mode: recall_at_time
+                let point_in_time = typed.at;
 
                 let entity_filter = req_data.entity.as_deref();
                 let category_filter = req_data.category.as_deref();
 
-                // #902: Parse temporal range filters (before/after RFC3339).
-                let after_ts = match req_data.after.as_deref() {
-                    Some(ts) => match chrono::DateTime::parse_from_rfc3339(ts) {
-                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid 'after' timestamp: {ts}. Use RFC3339 format (e.g. 2026-01-01T00:00:00Z)"
-                                ),
-                            );
-                        }
-                    },
-                    None => None,
-                };
-                let before_ts = match req_data.before.as_deref() {
-                    Some(ts) => match chrono::DateTime::parse_from_rfc3339(ts) {
-                        Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid 'before' timestamp: {ts}. Use RFC3339 format (e.g. 2026-01-01T00:00:00Z)"
-                                ),
-                            );
-                        }
-                    },
-                    None => None,
-                };
+                // #902: temporal range filters (before/after).
+                let after_ts = typed.after;
+                let before_ts = typed.before;
                 let has_temporal = after_ts.is_some() || before_ts.is_some();
 
                 // Resolve recall strategy ONCE for every path (#1034):
                 // request `strategy` > config `[recall] default_strategy` >
                 // Hybrid — matching the CLI default. Unknown values are a
                 // loud 400 on all paths, never a silent no-op.
-                let strategy_name = req_data.strategy.as_deref().or_else(|| {
+                let strategy = match typed.strategy(
                     ctx.recall_config
                         .as_ref()
-                        .and_then(|r| r.default_strategy.as_deref())
-                });
-                let strategy = match strategy_name {
-                    Some(name) => match uteke_core::RecallStrategy::from_str_opt(name) {
-                        Some(s) => s,
-                        None => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid strategy: '{name}'. Use 'vector', 'fts5', 'hybrid', 'graph', or 'fusion'."
-                                ),
-                            );
-                        }
-                    },
-                    // Implicit default since 0.16.0 (#1123): fusion.
-                    // Matches the core enum default and CLI default_strategy.
-                    None => uteke_core::RecallStrategy::Fusion,
+                        .and_then(|r| r.default_strategy.as_deref()),
+                ) {
+                    Ok(s) => s,
+                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                 };
 
                 // Explain mode (#1160): memory-only recall with per-result
@@ -500,21 +363,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                             "pack is not supported with at/after/before filters; rerun without time filters",
                         );
                     }
-                    let parsed_search_type = match req_data.search_type.as_deref() {
-                        Some("memory") => uteke_core::SearchType::Memory,
-                        Some("doc") => uteke_core::SearchType::Document,
-                        Some("all") | None => uteke_core::SearchType::All,
-                        Some(other) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
-                                ),
-                            );
-                        }
+                    let parsed_search_type = match typed.search_type() {
+                        Ok(t) => t,
+                        Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                     };
-                    let exclude_ids = req_data.exclude_ids.clone().unwrap_or_default();
+                    let exclude_ids = typed.exclude_ids.clone();
                     return match uteke.recall_unified_packed(
                         &req_data.query,
                         limit,
@@ -526,7 +379,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                         category_filter,
                         req_data.enrich,
                         strategy,
-                        req_data.budget_chars.unwrap_or(4000),
+                        typed.budget_chars_or_default(),
                         &exclude_ids,
                     ) {
                         Ok(pack) => ctx.ok_response_for(req, &pack),
@@ -541,19 +394,9 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 // use recall_unified. Entity/category filters are passed
                 // through to the core recall candidate loop (#663).
                 let unified_result = if req_data.search_type.is_some() && point_in_time.is_none() {
-                    let search_type = match req_data.search_type.as_deref() {
-                        Some("memory") => uteke_core::SearchType::Memory,
-                        Some("doc") => uteke_core::SearchType::Document,
-                        Some("all") | None => uteke_core::SearchType::All,
-                        Some(other) => {
-                            return ctx.error_response_for(
-                                req,
-                                400,
-                                format!(
-                                    "Invalid search_type: '{other}'. Use 'all', 'memory', or 'doc'."
-                                ),
-                            );
-                        }
+                    let search_type = match typed.search_type() {
+                        Ok(t) => t,
+                        Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
                     };
                     Some(uteke.recall_unified(
                         &req_data.query,
@@ -717,63 +560,47 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
         // ── List ────────────────────────────────────────────────────────
         (Method::Post, "/list") => match read_body::<ListParams>(req.as_reader()) {
-            Ok(mut req_data) => {
-                req_data.limit = req_data.limit.min(MAX_LIST_LIMIT);
-                // Time-travel mode: parse --at and use list_at_time
-                let list_result = match req_data.at.as_deref() {
-                    Some(at_str) => match chrono::DateTime::parse_from_rfc3339(at_str) {
-                        Ok(dt) => {
-                            let pit = dt.with_timezone(&chrono::Utc);
-                            uteke.list_at_time(
-                                req_data.tag.as_deref(),
-                                req_data.limit,
-                                req_data.offset,
-                                ns(&req_data.namespace),
-                                pit,
-                            )
-                        }
-                        Err(_) => {
-                            return ctx.error_response_for(
-                                    req,
-                                    400,
-                                    format!(
-                                        "Invalid 'at' timestamp: {at_str}. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
-                                    ),
-                                );
-                        }
-                    },
+            Ok(params) => {
+                // #1343: limit cap and `at` parsing live in the typed request.
+                let list_req = match params.decode() {
+                    Ok(r) => r,
+                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
+                };
+                // Time-travel mode: use list_at_time
+                let list_result = match list_req.at {
+                    Some(pit) => uteke.list_at_time(
+                        list_req.tag.as_deref(),
+                        list_req.limit,
+                        list_req.offset,
+                        ns(&list_req.namespace),
+                        pit,
+                    ),
                     None => uteke.list(
-                        req_data.tag.as_deref(),
-                        req_data.limit,
-                        req_data.offset,
-                        ns(&req_data.namespace),
+                        list_req.tag.as_deref(),
+                        list_req.limit,
+                        list_req.offset,
+                        ns(&list_req.namespace),
                     ),
                 };
                 match list_result {
                     Ok(memories) => {
                         // #1188: opt-in pagination envelope. The default
                         // response stays a bare array for existing clients.
-                        if req_data.include_meta && req_data.at.is_none() {
+                        if list_req.wants_envelope() {
                             // Total matching rows (same filters as the page).
-                            let total = match &req_data.tag {
-                                Some(tag) => uteke.count_by_tag(tag, ns(&req_data.namespace)),
-                                None => uteke.count(ns(&req_data.namespace)),
+                            let total = match &list_req.tag {
+                                Some(tag) => uteke.count_by_tag(tag, ns(&list_req.namespace)),
+                                None => uteke.count(ns(&list_req.namespace)),
                             }
                             .unwrap_or(0);
-                            let fetched = memories.len();
-                            let has_more = req_data.offset + fetched < total;
-                            let next_offset = if has_more {
-                                Some(req_data.offset + fetched)
-                            } else {
-                                None
-                            };
+                            let meta = list_req.page_meta(total, memories.len());
                             return ctx.ok_response_for(
                                 req,
                                 &serde_json::json!({
                                     "memories": memories,
                                     "total": total,
-                                    "has_more": has_more,
-                                    "next_offset": next_offset,
+                                    "has_more": meta.has_more,
+                                    "next_offset": meta.next_offset,
                                 }),
                             );
                         }
@@ -791,61 +618,54 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         // ── Forget by ID or tag (DELETE /forget?id=xxx or ?tag=xxx) ────
         (Method::Delete, "/forget") => {
             let query = path.split('?').nth(1).unwrap_or("");
-            let params: std::collections::HashMap<String, String> = query
-                .split('&')
-                .filter_map(|pair| {
-                    let mut kv = pair.splitn(2, '=');
-                    Some((kv.next()?.to_string(), kv.next()?.to_string()))
-                })
-                .collect();
-
-            if let Some(id) = params.get("id") {
-                // Accept full UUID or short ID prefix (#794).
-                // `list` and `room_recall` display only 8-char prefixes, so
-                // `forget` must resolve them back to full UUIDs.
-                let resolved_id = if uuid::Uuid::parse_str(id).is_ok() {
-                    id.clone()
-                } else {
-                    match uteke.resolve_id_prefix(id) {
-                        Ok(Some(full)) => full,
-                        Ok(None) => {
-                            return ctx.error_response_for(
-                                req,
-                                404,
-                                format!("Memory not found: {id}"),
-                            );
+            // Typed request shared with MCP and the CLI (#1343).
+            let request = match uteke_core::ForgetRequest::decode(
+                uteke_core::ForgetInput::from_http_query(query),
+                uteke_core::ForgetPolicy::HTTP,
+            ) {
+                Ok(r) => r,
+                Err(e) => return ctx.error_response_for(req, 400, e.message()),
+            };
+            match request {
+                uteke_core::ForgetRequest::Id(_) => {
+                    // Accept full UUID or short ID prefix (#794); the
+                    // existence check (#762) is part of the HTTP policy
+                    // because forget() silently returns Ok(()) for unknown ids.
+                    let resolved_id = match request.resolve(&uteke, uteke_core::ForgetPolicy::HTTP)
+                    {
+                        Ok(Some(id)) => id,
+                        Ok(None) => unreachable!("an id request resolves to an id"),
+                        Err(e) => {
+                            return match e.kind() {
+                                uteke_core::ForgetErrorKind::NotFound => {
+                                    ctx.error_response_for(req, 404, e.message())
+                                }
+                                _ => {
+                                    error!("Resolve error: {e}");
+                                    ctx.error_response_for(req, 400, e.message())
+                                }
+                            };
+                        }
+                    };
+                    match uteke.forget(&resolved_id) {
+                        Ok(()) => {
+                            ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id}))
                         }
                         Err(e) => {
-                            error!("Resolve error: {e}");
-                            return ctx.error_response_for(req, 400, e.to_string());
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
                         }
                     }
-                };
-                // Check existence before deleting (#762) — forget() silently
-                // returns Ok(()) even when the ID doesn't exist.
-                if uteke.get_by_id(&resolved_id).ok().flatten().is_none() {
-                    return ctx.error_response_for(req, 404, format!("Memory not found: {id}"));
                 }
-                match uteke.forget(&resolved_id) {
-                    Ok(()) => {
-                        ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id}))
-                    }
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
+                uteke_core::ForgetRequest::Tag { tag, namespace } => {
+                    match uteke.bulk_forget_by_tag(&tag, namespace.as_deref()) {
+                        Ok(result) => ctx.ok_response_for(req, &result),
+                        Err(e) => {
+                            error!("Internal error: {e}");
+                            ctx.error_response_for(req, 500, "Internal server error")
+                        }
                     }
                 }
-            } else if let Some(tag) = params.get("tag") {
-                let namespace = params.get("namespace").map(|s| s.as_str());
-                match uteke.bulk_forget_by_tag(tag, namespace) {
-                    Ok(result) => ctx.ok_response_for(req, &result),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
-                }
-            } else {
-                ctx.error_response_for(req, 400, "Provide ?id= or ?tag= parameter")
             }
         }
 
@@ -1611,7 +1431,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 return ctx.error_response_for(req, status, e.to_string());
                             }
                         }
-                        ctx.ok_response_for(req, &serde_json::json!({"updated": req_data.id}))
+                        ctx.ok_response_for(
+                            req,
+                            &with_namespace_warning(
+                                serde_json::json!({"updated": req_data.id}),
+                                req_data.namespace.as_deref(),
+                            ),
+                        )
                     }
                     Ok(false) => ctx.error_response_for(
                         req,
@@ -1772,10 +1598,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     ) {
                         Ok(()) => ctx.ok_response_for(
                             req,
-                            &serde_json::json!({
-                                "created": req_data.room_id,
-                                "namespace": req_data.namespace
-                            }),
+                            &with_namespace_warning(
+                                serde_json::json!({
+                                    "created": req_data.room_id,
+                                    "namespace": req_data.namespace
+                                }),
+                                Some(req_data.namespace.as_str()),
+                            ),
                         ),
                         Err(e) => {
                             let msg = format!("Failed to create room: {e}");
@@ -1926,7 +1755,12 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                                 "id": outcome.id,
                                 "room_id": req_data.room_id,
                                 "embedding_written": outcome.embedding_written,
-                                "warning": outcome.warning,
+                                "warning": uteke_core::namespace_deprecation::merge_warning(
+                                    outcome.warning,
+                                    uteke_core::namespace_deprecation::namespace_write_warning(
+                                        ns(&req_data.namespace),
+                                    ),
+                                ),
                             }),
                         ),
                         Err(e) => {
@@ -2171,7 +2005,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
             let cors = ctx.cors_headers_for(req);
             // None = notification (no response per JSON-RPC 2.0 §4.1) → 204 No Content
-            let mut resp = match uteke_mcp::handle_jsonrpc(&uteke, &body) {
+            // Read-only tokens reach /mcp (#1439); uteke-mcp refuses the
+            // tools outside READ_ONLY_TOOLS as tool errors.
+            let access = if read_only {
+                uteke_mcp::Access::ReadOnly
+            } else {
+                uteke_mcp::Access::Full
+            };
+            let mut resp = match uteke_mcp::handle_jsonrpc_as(&uteke, &body, access) {
                 Some(response) => tiny_http::Response::from_string(response)
                     .with_header(
                         tiny_http::Header::from_bytes(
@@ -2704,12 +2545,15 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 
                 ctx.ok_response_for(
                     req,
-                    &serde_json::json!({
-                        "facts": facts.iter().map(|f| &f.content).collect::<Vec<_>>(),
-                        "count": facts.len(),
-                        "stored": stored_ids.len(),
-                        "stored_ids": stored_ids,
-                    }),
+                    &with_namespace_warning(
+                        serde_json::json!({
+                            "facts": facts.iter().map(|f| &f.content).collect::<Vec<_>>(),
+                            "count": facts.len(),
+                            "stored": stored_ids.len(),
+                            "stored_ids": stored_ids,
+                        }),
+                        fact_ns,
+                    ),
                 )
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -2735,10 +2579,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                 match uteke.import(&req_data.content, import_ns) {
                     Ok(result) => ctx.ok_response_for(
                         req,
-                        &serde_json::json!({
-                            "imported": result.imported,
-                            "skipped": result.skipped,
-                        }),
+                        &with_namespace_warning(
+                            serde_json::json!({
+                                "imported": result.imported,
+                                "skipped": result.skipped,
+                            }),
+                            import_ns,
+                        ),
                     ),
                     Err(e) => {
                         error!("Import error: {e}");
@@ -2958,8 +2805,21 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
 
         // ── 404 ─────────────────────────────────────────────────────────
-        _ => ctx.error_response_for(req, 404, "Not found"),
+        // Unreachable while every registry row has an arm (enforced by the
+        // `every_registry_row_has_a_handler_arm` test); kept for exhaustiveness.
+        _ => {
+            #[cfg(test)]
+            UNHANDLED_ROW.with(|c| c.set(true));
+            ctx.error_response_for(req, 404, "Not found")
+        }
     }
+}
+
+// Test probe: set when a registry row reached the match fallback, i.e. it
+// has no handler arm.
+#[cfg(test)]
+thread_local! {
+    static UNHANDLED_ROW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Helper: validate content for extract/import to prevent abuse.
@@ -3045,6 +2905,21 @@ fn filter_room_memories_at_time(
         .collect()
 }
 
+/// Add the namespace deprecation `warning` (#1427) to a write response that
+/// has no warning field of its own. Nothing is added for the default
+/// namespace, so those responses stay byte-identical.
+fn with_namespace_warning(
+    mut body: serde_json::Value,
+    namespace: Option<&str>,
+) -> serde_json::Value {
+    if let Some(w) = uteke_core::namespace_deprecation::namespace_write_warning(namespace)
+        && let Some(obj) = body.as_object_mut()
+    {
+        obj.insert("warning".into(), serde_json::Value::String(w.to_string()));
+    }
+    body
+}
+
 #[cfg(test)]
 mod room_memories_namespace_tests {
     use super::*;
@@ -3121,10 +2996,7 @@ mod room_memories_namespace_tests {
             ids.push(resp["id"].as_str().expect("memory id").to_string());
         }
 
-        // URL constants: query-string URLs live in consts because the registry
-        // coverage test treats any method-plus-URL literal on one line as a
-        // handler route, and a query string would look like an unregistered
-        // path.
+        // URL constants for the query-string URLs used below.
         const URL_ALL: &str = "/room/memories?room_id=ns-room";
         const URL_CMO: &str = "/room/memories?room_id=ns-room&namespace=cmo";
         const URL_CMO_OTHER_AUTHOR: &str =
@@ -3175,6 +3047,7 @@ mod room_recall_at_tests {
             updated_at: Utc::now(),
             namespace: "default".into(),
             access_count: 0,
+            recall_count: 0,
             last_accessed: None,
             deprecated: false,
             deprecated_at: None,
@@ -3435,8 +3308,6 @@ mod room_recall_at_tests {
         );
         assert!(touching.len() >= 2, "{hood}");
 
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let capped_url = "/graph?limit=1";
         let (_, capped) = app.call(Method::Get, capped_url, None);
         assert_eq!(capped["edges"].as_array().unwrap().len(), 1, "{capped}");
@@ -3518,8 +3389,6 @@ mod room_recall_at_tests {
     #[test]
     fn graph_edge_delete_requires_both_params() {
         let app = GraphEdgeApp::new();
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let url = "/graph/edge?source=only-one";
         let (status, _) = app.call(Method::Delete, url, None);
         assert_eq!(status, 400, "missing target param must 400");
@@ -3754,8 +3623,6 @@ mod room_recall_at_tests {
         assert_eq!(resp["affected"], serde_json::json!(1));
         assert_eq!(resp["empty"], serde_json::json!(false));
 
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let counts_url = "/namespaces?with_counts=true";
         let (_, counts) = app.call(Method::Get, counts_url, None);
         let arr = counts.as_array().expect("counts array");
@@ -3888,8 +3755,6 @@ mod contradiction_api_tests {
         let new = app.remember_in("deploy target is VM-2", "ops");
         app.supersede(&old, &new);
 
-        // URL built separately so the api_registry route scanner does not
-        // mistake this test call for a handler route arm.
         let list_url = "/contradictions?namespace=ops";
         let (status, ledger) = app.call(Method::Get, list_url, None);
         assert_eq!(status, 200, "{ledger}");
@@ -4181,8 +4046,6 @@ mod explain_recall_api_tests {
             "explain-ns",
         );
 
-        // Body built separately so the api_registry route scanner does not
-        // mistake this literal for a handler route arm.
         let body = serde_json::json!({
             "query": "quick brown fox",
             "limit": 5,
@@ -4310,8 +4173,6 @@ mod list_pagination_tests {
         assert_eq!(resp.as_array().unwrap().len(), 7);
 
         // include_meta: envelope with total/has_more/next_offset.
-        // URL built separately so the api_registry route scanner does not
-        // mistake this literal for a handler route arm.
         let body = serde_json::json!({
             "namespace": "pg",
             "limit": 3,
@@ -4679,6 +4540,80 @@ mod routes_introspection_tests {
         assert!(json.as_array().is_some(), "RO token gets the registry");
     }
 
+    fn method_of(name: &str) -> Method {
+        match name {
+            "GET" => Method::Get,
+            "POST" => Method::Post,
+            "PUT" => Method::Put,
+            "DELETE" => Method::Delete,
+            other => panic!("unexpected registry method {other}"),
+        }
+    }
+
+    /// Every registry row must have a handler arm: the router consults the
+    /// table first, so a row whose arm is missing would silently 404 through
+    /// the fallback. Built from the table, not from source text (#1344).
+    #[test]
+    fn every_registry_row_has_a_handler_arm() {
+        let app = RoutesApp::new();
+        for e in crate::api_registry::ENDPOINTS {
+            UNHANDLED_ROW.with(|c| c.set(false));
+            let _ = app.call(method_of(e.method), e.path, None);
+            assert!(
+                !UNHANDLED_ROW.with(|c| c.get()),
+                "{} {} is registered but has no handler arm",
+                e.method,
+                e.path
+            );
+        }
+    }
+
+    /// A route that is not in the table is a 404 that never reaches a
+    /// handler, even when the path exists under another verb.
+    #[test]
+    fn unregistered_method_path_pairs_are_404_before_dispatch() {
+        let app = RoutesApp::new();
+        for (method, path) in [
+            (Method::Put, "/list"),
+            (Method::Delete, "/recall"),
+            (Method::Get, "/remember"),
+            (Method::Post, "/health"),
+            (Method::Get, "/no-such-route"),
+        ] {
+            UNHANDLED_ROW.with(|c| c.set(false));
+            let (status, json) = app.call(method.clone(), path, None);
+            assert_eq!(status, 404, "{method} {path}: {json}");
+            assert!(
+                !UNHANDLED_ROW.with(|c| c.get()),
+                "{method} {path} must be refused by the table, not the match fallback"
+            );
+        }
+    }
+
+    /// The read-only token is refused (403, gate message) on exactly the
+    /// rows the table marks as writes, and never on the others.
+    #[test]
+    fn read_only_token_gets_403_on_exactly_the_writing_rows() {
+        const GATE_MSG: &str = "Read-only token cannot perform write operations";
+        let app = RoutesApp::with_read_only_token("ro-secret");
+        let mut gated = 0;
+        for e in crate::api_registry::ENDPOINTS {
+            let (status, json) = app.call(method_of(e.method), e.path, Some("Bearer ro-secret"));
+            let refused = status == 403 && json["error"] == GATE_MSG;
+            let expect_refused = e.method != "GET" && !(e.method == "POST" && !e.writes);
+            assert_eq!(
+                refused, expect_refused,
+                "{} {}: {status} {json}",
+                e.method, e.path
+            );
+            if e.writes {
+                assert!(refused, "{} {} writes but was not gated", e.method, e.path);
+                gated += 1;
+            }
+        }
+        assert!(gated > 0, "table must contain writing rows");
+    }
+
     #[test]
     fn routes_post_is_not_routed() {
         let app = RoutesApp::new();
@@ -4945,6 +4880,417 @@ mod mcp_http_hardening_tests {
                     && h.value.as_str() == origin),
             "missing ACAO on /mcp: {:?}",
             resp.headers()
+        );
+    }
+}
+
+// #1439: /mcp is open to read-only tokens; the per-tool gate inside uteke-mcp
+// refuses the write tools, write tokens are unchanged.
+#[cfg(test)]
+mod mcp_read_only_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use tiny_http::TestRequest;
+
+    fn ro_ctx() -> ReqCtx {
+        ReqCtx {
+            auth_token_hash: Some(Sha256::digest(b"rw-secret").into()),
+            read_only_token_hash: Some(Sha256::digest(b"ro-secret").into()),
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        }
+    }
+
+    fn mcp(uteke: &Mutex<Uteke>, token: &str, tool: &str, args: &str) -> (u16, serde_json::Value) {
+        let body: &'static str = Box::leak(
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}","arguments":{args}}}}}"#
+            )
+            .into_boxed_str(),
+        );
+        let auth: &'static str = Box::leak(format!("Bearer {token}").into_boxed_str());
+        let mut req = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/mcp")
+            .with_header(tiny_http::Header::from_bytes("Authorization", auth).unwrap())
+            .with_body(body)
+            .into();
+        let resp = route(uteke, &ro_ctx(), &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    fn store() -> Mutex<Uteke> {
+        Mutex::new(Uteke::open_with_backend(":memory:", None).unwrap())
+    }
+
+    #[test]
+    fn read_only_token_reaches_read_tools() {
+        let u = store();
+        let (status, json) = mcp(&u, "ro-secret", "uteke_stats", "{}");
+        assert_eq!(status, 200, "{json}");
+        assert!(json.get("error").is_none(), "{json}");
+        assert_ne!(json["result"]["isError"], true, "{json}");
+    }
+
+    #[test]
+    fn read_only_token_is_refused_write_tools() {
+        let u = store();
+        let (status, json) = mcp(&u, "ro-secret", "uteke_remember", r#"{"content":"x"}"#);
+        assert_eq!(status, 200, "{json}");
+        assert_eq!(json["result"]["isError"], true, "{json}");
+        assert_eq!(
+            json["result"]["content"][0]["text"],
+            "Read-only token cannot use uteke_remember"
+        );
+        assert_eq!(u.lock().unwrap().count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn write_token_is_unchanged() {
+        let u = store();
+        let (status, json) = mcp(&u, "rw-secret", "uteke_remember", r#"{"content":"x"}"#);
+        assert_eq!(status, 200, "{json}");
+        assert!(json.get("error").is_none(), "{json}");
+        assert_ne!(json["result"]["isError"], true, "{json}");
+        assert_eq!(u.lock().unwrap().count(None).unwrap(), 1);
+    }
+}
+
+#[cfg(test)]
+mod namespace_deprecation_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    fn call(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        url: &str,
+        body: serde_json::Value,
+    ) -> (u16, String) {
+        let leaked: &'static str = Box::leak(body.to_string().into_boxed_str());
+        let mut req: Request = TestRequest::new()
+            .with_method(method)
+            .with_path(url)
+            .with_body(leaked)
+            .into();
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        };
+        let resp = route(uteke, &ctx, &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        (status, String::from_utf8(bytes).unwrap())
+    }
+
+    fn app() -> Mutex<Uteke> {
+        Mutex::new(Uteke::open_with_backend(":memory:", None).expect("open without embedder"))
+    }
+
+    fn warning(raw: &str) -> serde_json::Value {
+        serde_json::from_str::<serde_json::Value>(raw).unwrap()["warning"].clone()
+    }
+
+    #[test]
+    fn remember_non_default_namespace_carries_warning() {
+        let u = app();
+        let (st, raw) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            serde_json::json!({"content": "x", "namespace": "ns-http-remember"}),
+        );
+        assert_eq!(st, 200, "{raw}");
+        let w = warning(&raw);
+        let w = w.as_str().expect("warning is a string");
+        assert!(w.contains(uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING));
+    }
+
+    #[test]
+    fn remember_default_or_omitted_namespace_has_no_deprecation() {
+        let u = app();
+        for body in [
+            serde_json::json!({"content": "a"}),
+            serde_json::json!({"content": "b", "namespace": "default"}),
+        ] {
+            let (st, raw) = call(&u, Method::Post, "/remember", body);
+            assert_eq!(st, 200, "{raw}");
+            let w = warning(&raw);
+            assert!(
+                w.is_null() || !w.as_str().unwrap().contains("Namespaces are deprecated"),
+                "{raw}"
+            );
+            // Same keys as before the change: warning stays a key, no new ones.
+            let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+            keys.sort();
+            assert_eq!(keys, ["author_type", "embedding_written", "id", "warning"]);
+        }
+    }
+
+    #[test]
+    fn room_create_warning_only_for_non_default() {
+        let u = app();
+        let (_, raw) = call(
+            &u,
+            Method::Post,
+            "/room/create",
+            serde_json::json!({"room_id": "r-default"}),
+        );
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(v.get("warning").is_none(), "{raw}");
+        assert_eq!(v["namespace"], "default");
+
+        let (_, raw) = call(
+            &u,
+            Method::Post,
+            "/room/create",
+            serde_json::json!({"room_id": "r-ns", "namespace": "ns-http-room"}),
+        );
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            v["warning"],
+            uteke_core::namespace_deprecation::NAMESPACE_DEPRECATION_WARNING
+        );
+        assert_eq!(v["created"], "r-ns");
+    }
+
+    #[test]
+    fn with_namespace_warning_is_identity_for_default() {
+        let body = serde_json::json!({"imported": 1, "skipped": 0});
+        assert_eq!(with_namespace_warning(body.clone(), None), body);
+        assert_eq!(with_namespace_warning(body.clone(), Some("default")), body);
+        let w = with_namespace_warning(body, Some("other"));
+        assert!(w["warning"].is_string());
+        assert_eq!(w["imported"], 1);
+    }
+}
+
+// ── #1343: `DELETE /forget` goes through the typed forget request ──────────
+
+#[cfg(test)]
+mod forget_route_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use uteke_core::memory::types::Memory;
+
+    const ID_A: &str = "abcd0000-0000-4000-8000-00000000000a";
+    const ID_B: &str = "abcd0000-0000-4000-8000-00000000000b";
+    const ID_C: &str = "cafe0000-0000-4000-8000-00000000000c";
+
+    fn memory(id: &str, ns: &str, tag: &str) -> Memory {
+        let now = chrono::Utc::now();
+        Memory {
+            id: id.to_string(),
+            content: format!("forget route probe {id}"),
+            embedding: vec![0.21; 768],
+            tags: vec![tag.to_string()],
+            metadata: serde_json::json!({}),
+            created_at: now,
+            updated_at: now,
+            namespace: ns.to_string(),
+            access_count: 0,
+            recall_count: 0,
+            last_accessed: None,
+            deprecated: false,
+            deprecated_at: None,
+            valid_from: None,
+            valid_until: None,
+            memory_type: "fact".to_string(),
+            importance: 0.5,
+            pinned: false,
+            content_type: "text".to_string(),
+            slug: None,
+            source: None,
+            source_type: "user".to_string(),
+            author_type: "agent".to_string(),
+        }
+    }
+
+    fn app() -> Mutex<Uteke> {
+        let uteke = Uteke::open_with_backend(":memory:", None)
+            .expect("open in-memory uteke without embedder");
+        uteke.store().insert(&memory(ID_A, "ns-a", "t1")).unwrap();
+        uteke.store().insert(&memory(ID_B, "ns-a", "t1")).unwrap();
+        uteke.store().insert(&memory(ID_C, "ns-b", "t2")).unwrap();
+        Mutex::new(uteke)
+    }
+
+    fn call(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        url: &str,
+        bearer: Option<&str>,
+        tokens: bool,
+    ) -> (u16, serde_json::Value) {
+        let mut builder = tiny_http::TestRequest::new()
+            .with_method(method)
+            .with_path(url);
+        if let Some(h) = bearer {
+            builder =
+                builder.with_header(tiny_http::Header::from_bytes("Authorization", h).unwrap());
+        }
+        let mut req: tiny_http::Request = builder.into();
+        let ctx = ReqCtx {
+            auth_token_hash: tokens.then(|| Sha256::digest("rw").into()),
+            read_only_token_hash: tokens.then(|| Sha256::digest("ro").into()),
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        };
+        let resp = route(uteke, &ctx, &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    fn del(uteke: &Mutex<Uteke>, url: &str) -> (u16, serde_json::Value) {
+        call(uteke, Method::Delete, url, None, false)
+    }
+
+    #[test]
+    fn forget_by_full_id() {
+        let u = app();
+        let (s, body) = del(&u, &format!("/forget?id={ID_A}"));
+        assert_eq!((s, &body), (200, &serde_json::json!({"forgotten": ID_A})));
+    }
+
+    #[test]
+    fn forget_by_unambiguous_short_prefix() {
+        let u = app();
+        let (s, body) = del(&u, "/forget?id=cafe");
+        assert_eq!((s, &body), (200, &serde_json::json!({"forgotten": ID_C})));
+    }
+
+    #[test]
+    fn error_statuses_and_texts_are_unchanged() {
+        let u = app();
+        let (s, body) = del(&u, "/forget?id=ffff");
+        assert_eq!(s, 404);
+        assert_eq!(body["error"], "Memory not found: ffff");
+        let absent = "11111111-1111-4111-8111-111111111111";
+        let (s, body) = del(&u, &format!("/forget?id={absent}"));
+        assert_eq!(s, 404);
+        assert_eq!(body["error"], format!("Memory not found: {absent}"));
+        let (s, body) = del(&u, "/forget?id=abcd");
+        assert_eq!(s, 400);
+        assert_eq!(
+            body["error"],
+            "Validation error: Ambiguous ID prefix 'abcd' — matches 2 memories. Use a longer prefix."
+        );
+        for url in ["/forget", "/forget?namespace=ns-a", "/forget?flag"] {
+            let (s, body) = del(&u, url);
+            assert_eq!(s, 400, "{url}");
+            assert_eq!(body["error"], "Provide ?id= or ?tag= parameter", "{url}");
+        }
+    }
+
+    #[test]
+    fn id_wins_over_tag() {
+        let u = app();
+        let (s, body) = del(&u, &format!("/forget?tag=t1&id={ID_C}"));
+        assert_eq!((s, &body), (200, &serde_json::json!({"forgotten": ID_C})));
+        // The tag was not applied: the `t1` memories are untouched.
+        assert!(
+            !u.lock()
+                .unwrap()
+                .get_by_id(ID_A)
+                .unwrap()
+                .unwrap()
+                .deprecated
+        );
+    }
+
+    #[test]
+    fn tag_forget_honours_namespace_and_none_means_default() {
+        let u = app();
+        // Wrong namespace: nothing matches.
+        let (s, body) = del(&u, "/forget?tag=t1&namespace=ns-b");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 0);
+        let (s, body) = del(&u, "/forget?tag=t1&namespace=ns-a");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 2);
+        // No namespace means the default namespace, NOT every namespace:
+        // `t2` lives in `ns-b`, so it is untouched until ns-b is named.
+        let (s, body) = del(&u, "/forget?tag=t2");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 0);
+        let (s, body) = del(&u, "/forget?tag=t2&namespace=ns-b");
+        assert_eq!(s, 200);
+        assert_eq!(body["deleted"], 1);
+    }
+
+    #[test]
+    fn read_only_token_cannot_forget() {
+        let u = app();
+        for url in [format!("/forget?id={ID_C}"), "/forget?tag=t2".to_string()] {
+            let (s, body) = call(&u, Method::Delete, &url, Some("Bearer ro"), true);
+            assert_eq!(s, 403, "{url}");
+            assert_eq!(
+                body["error"],
+                "Read-only token cannot perform write operations"
+            );
+        }
+        // Nothing was deleted by the blocked requests.
+        assert!(
+            !u.lock()
+                .unwrap()
+                .get_by_id(ID_C)
+                .unwrap()
+                .unwrap()
+                .deprecated
+        );
+        // The write token still can.
+        let (s, _) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={ID_C}"),
+            Some("Bearer rw"),
+            true,
+        );
+        assert_eq!(s, 200);
+        // Recorded disagreement: the gate is HTTP-only.
+        let may = |p: uteke_core::ForgetPolicy| p.read_only_token_may_forget;
+        assert_eq!(
+            (
+                may(uteke_core::ForgetPolicy::HTTP),
+                may(uteke_core::ForgetPolicy::MCP)
+            ),
+            (false, true)
+        );
+    }
+
+    #[test]
+    fn http_and_mcp_resolve_the_same_ids_to_the_same_memory() {
+        let u = app();
+        let guard = u.lock().unwrap();
+        let resolve = |input: &str, p| uteke_core::resolve_memory_id(&guard, input, p);
+        for input in [ID_A, "cafe", ID_B] {
+            let http = resolve(input, uteke_core::ForgetPolicy::HTTP);
+            let mcp = resolve(input, uteke_core::ForgetPolicy::MCP);
+            assert_eq!(http.unwrap(), mcp.unwrap(), "{input}");
+        }
+        // Where they disagree, each keeps its own text (pinned).
+        let http = resolve("ffff", uteke_core::ForgetPolicy::HTTP);
+        let mcp = resolve("ffff", uteke_core::ForgetPolicy::MCP);
+        assert_eq!(http.unwrap_err().message(), "Memory not found: ffff");
+        assert_eq!(
+            mcp.unwrap_err().message(),
+            "No memory matches id prefix 'ffff'"
         );
     }
 }
