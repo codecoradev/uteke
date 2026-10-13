@@ -83,7 +83,8 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // Enforce read-only restriction (#409, #524):
     // ReadOnly tokens can use GET endpoints + read-only POST endpoints.
     // Write operations (POST /remember, POST /forget, etc.) are blocked.
-    if let AuthResult::Authenticated(ApiRole::ReadOnly) = auth_role {
+    let read_only = matches!(auth_role, AuthResult::Authenticated(ApiRole::ReadOnly));
+    if read_only {
         // The gate is derived from the registry's `writes` flag (#1344): GET
         // plus the POST rows that do not write (semantic search, list,
         // stats). Exact path match avoids prefix-based bypass (/recallfoo).
@@ -2004,7 +2005,14 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
             let cors = ctx.cors_headers_for(req);
             // None = notification (no response per JSON-RPC 2.0 §4.1) → 204 No Content
-            let mut resp = match uteke_mcp::handle_jsonrpc(&uteke, &body) {
+            // Read-only tokens reach /mcp (#1439); uteke-mcp refuses the
+            // tools outside READ_ONLY_TOOLS as tool errors.
+            let access = if read_only {
+                uteke_mcp::Access::ReadOnly
+            } else {
+                uteke_mcp::Access::Full
+            };
+            let mut resp = match uteke_mcp::handle_jsonrpc_as(&uteke, &body, access) {
                 Some(response) => tiny_http::Response::from_string(response)
                     .with_header(
                         tiny_http::Header::from_bytes(
@@ -4873,6 +4881,85 @@ mod mcp_http_hardening_tests {
             "missing ACAO on /mcp: {:?}",
             resp.headers()
         );
+    }
+}
+
+// #1439: /mcp is open to read-only tokens; the per-tool gate inside uteke-mcp
+// refuses the write tools, write tokens are unchanged.
+#[cfg(test)]
+mod mcp_read_only_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use tiny_http::TestRequest;
+
+    fn ro_ctx() -> ReqCtx {
+        ReqCtx {
+            auth_token_hash: Some(Sha256::digest(b"rw-secret").into()),
+            read_only_token_hash: Some(Sha256::digest(b"ro-secret").into()),
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+        }
+    }
+
+    fn mcp(uteke: &Mutex<Uteke>, token: &str, tool: &str, args: &str) -> (u16, serde_json::Value) {
+        let body: &'static str = Box::leak(
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}","arguments":{args}}}}}"#
+            )
+            .into_boxed_str(),
+        );
+        let auth: &'static str = Box::leak(format!("Bearer {token}").into_boxed_str());
+        let mut req = TestRequest::new()
+            .with_method(Method::Post)
+            .with_path("/mcp")
+            .with_header(tiny_http::Header::from_bytes("Authorization", auth).unwrap())
+            .with_body(body)
+            .into();
+        let resp = route(uteke, &ro_ctx(), &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    fn store() -> Mutex<Uteke> {
+        Mutex::new(Uteke::open_with_backend(":memory:", None).unwrap())
+    }
+
+    #[test]
+    fn read_only_token_reaches_read_tools() {
+        let u = store();
+        let (status, json) = mcp(&u, "ro-secret", "uteke_stats", "{}");
+        assert_eq!(status, 200, "{json}");
+        assert!(json.get("error").is_none(), "{json}");
+        assert_ne!(json["result"]["isError"], true, "{json}");
+    }
+
+    #[test]
+    fn read_only_token_is_refused_write_tools() {
+        let u = store();
+        let (status, json) = mcp(&u, "ro-secret", "uteke_remember", r#"{"content":"x"}"#);
+        assert_eq!(status, 200, "{json}");
+        assert_eq!(json["result"]["isError"], true, "{json}");
+        assert_eq!(
+            json["result"]["content"][0]["text"],
+            "Read-only token cannot use uteke_remember"
+        );
+        assert_eq!(u.lock().unwrap().count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn write_token_is_unchanged() {
+        let u = store();
+        let (status, json) = mcp(&u, "rw-secret", "uteke_remember", r#"{"content":"x"}"#);
+        assert_eq!(status, 200, "{json}");
+        assert!(json.get("error").is_none(), "{json}");
+        assert_ne!(json["result"]["isError"], true, "{json}");
+        assert_eq!(u.lock().unwrap().count(None).unwrap(), 1);
     }
 }
 

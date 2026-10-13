@@ -871,7 +871,8 @@ pub const ENDPOINTS: &[Endpoint] = &[
         method: "POST",
         path: "/mcp",
         tier: Tier::Lab,
-        writes: true,
+        // Per-tool gate inside uteke-mcp (READ_ONLY_TOOLS), #1439.
+        writes: false,
         description: "MCP (Model Context Protocol) bridge endpoint for AI agent tool calls.",
         request_type: Some("serde_json::Value"),
         response_type: None,
@@ -1016,6 +1017,7 @@ mod tests {
             "/memory/doc-refs",
             "/doc/mem-refs",
             "/orphans",
+            "/mcp",
         ]
         .into_iter()
         .collect();
@@ -1052,5 +1054,56 @@ mod tests {
         assert!(!read_only_allows("POST", "/recall?x=1"));
         // Prefix tricks stay blocked.
         assert!(!read_only_allows("POST", "/recallfoo"));
+    }
+
+    // #1439: every MCP tool a read-only token may call maps to an HTTP row
+    // that does not write. A tool added to READ_ONLY_TOOLS must be mapped
+    // here, so the two read-only surfaces cannot drift apart unnoticed.
+    #[test]
+    fn mcp_read_only_tools_map_to_non_writing_rows() {
+        const MAP: &[(&str, &str, &str)] = &[
+            ("uteke_recall", "POST", "/recall"),
+            ("uteke_search", "POST", "/search"),
+            ("uteke_list", "POST", "/list"),
+            ("uteke_get", "GET", "/memory"),
+            ("uteke_provenance", "GET", "/provenance"),
+            ("uteke_timeline", "GET", "/timeline"),
+            ("uteke_contradictions", "GET", "/contradictions"),
+            ("uteke_stats", "POST", "/stats"),
+            ("uteke_doc_get", "POST", "/doc/get"),
+            ("uteke_doc_list", "POST", "/doc/list"),
+            ("uteke_doc_search", "POST", "/doc/search"),
+            ("uteke_doc_list_rooms", "POST", "/doc/room/list"),
+            ("uteke_graph", "GET", "/graph"),
+            ("uteke_room_list", "GET", "/room/list"),
+            ("uteke_room_recall", "POST", "/room/recall"),
+            ("uteke_room_memories", "GET", "/room/memories"),
+            ("uteke_room_stats", "POST", "/room/stats"),
+            ("uteke_room_summary", "POST", "/room/summary"),
+            (
+                "uteke_room_summary_document",
+                "POST",
+                "/room/summary-document",
+            ),
+            // MCP alias of the summary document, not POST /room/document (writes).
+            ("uteke_room_document", "POST", "/room/summary-document"),
+            ("uteke_room_list_documents", "POST", "/room/document/list"),
+            ("uteke_tags_list", "GET", "/tags"),
+        ];
+        for tool in uteke_mcp::READ_ONLY_TOOLS {
+            let (_, method, path) = MAP
+                .iter()
+                .find(|(t, _, _)| t == tool)
+                .unwrap_or_else(|| panic!("{tool} has no HTTP row mapping"));
+            let row =
+                find(method, path).unwrap_or_else(|| panic!("{method} {path} not registered"));
+            assert!(!row.writes, "{tool} maps to writing row {method} {path}");
+        }
+        for (tool, _, _) in MAP {
+            assert!(
+                uteke_mcp::READ_ONLY_TOOLS.contains(tool),
+                "{tool} is mapped but not in READ_ONLY_TOOLS"
+            );
+        }
     }
 }
