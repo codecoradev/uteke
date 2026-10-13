@@ -618,7 +618,9 @@ impl crate::Uteke {
             .lock()
             .map_err(|_| Error::lock("embedder lock during recall"))?
             .as_ref()
-            .expect("embedder ensured above")
+            .ok_or_else(|| {
+                Error::embed_msg("No embedder configured; semantic recall is unavailable")
+            })?
             .embed(query)?;
         // Embedder lock dropped here — other threads can embed or recall concurrently.
 
@@ -3395,5 +3397,40 @@ mod retry_embed_tests {
         let err = retry_embed(&embedder, "hello").unwrap_err();
         assert!(matches!(err, Error::Embedding { .. }), "{err:?}");
         assert!(err.to_string().contains("No embedder"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod recall_no_embedder_tests {
+    #[cfg(feature = "onnx")]
+    use crate::Uteke;
+
+    /// A store whose embedder slot is empty and cannot be filled: the
+    /// "custom" backend with no injected embedder. `ensure_embedder` fails,
+    /// so vector recall must return an error, never panic. Gated on `onnx`
+    /// because non-onnx builds reject "custom" at open().
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn recall_without_embedder_returns_error() {
+        let (_db_str, store) = Uteke::open_store(":memory:").expect("open_store");
+        let u = Uteke::finish_open_full(
+            store,
+            None,
+            "custom".to_string(),
+            crate::TierConfig::default(),
+            crate::RecallConfig::default(),
+            crate::EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full");
+
+        let res = u.recall("anything", 5, None, None, 0.0, None, None);
+        let err = res.expect_err("recall without an embedder must be an error");
+        assert!(
+            err.to_string()
+                .contains("Custom embedder backend set but no embedder was provided"),
+            "got: {err}"
+        );
     }
 }
