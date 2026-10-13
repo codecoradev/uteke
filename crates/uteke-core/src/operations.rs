@@ -17,7 +17,8 @@ use std::time::Duration;
 /// 200ms, 400ms, then 800ms delays between attempts.
 ///
 /// A store with no embedder configured (#1166) gets an embedding error
-/// instead of a panic.
+/// instead of a panic. Validation errors are returned immediately: they
+/// can never succeed on retry.
 pub(crate) fn retry_embed(
     embedder: &Mutex<Option<Box<dyn crate::embed::Embedder>>>,
     text: &str,
@@ -36,6 +37,7 @@ pub(crate) fn retry_embed(
         };
         match embedder.embed(text) {
             Ok(embedding) => return Ok(embedding),
+            Err(e @ Error::Validation(_)) => return Err(e),
             Err(e) => {
                 drop(lock); // Release lock before sleeping
                 if attempt < MAX_RETRIES - 1 {
@@ -3073,7 +3075,7 @@ mod remember_embedding_status_tests {
     impl Embedder for FailingEmbedder {
         fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Err(Error::Validation("simulated provider outage".to_string()))
+            Err(Error::embed_msg("simulated provider outage"))
         }
         fn dims(&self) -> usize {
             4
@@ -3097,7 +3099,7 @@ mod remember_embedding_status_tests {
         fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_times {
-                Err(Error::Validation(format!("transient failure #{n}")))
+                Err(Error::embed_msg(format!("transient failure #{n}")))
             } else {
                 Ok(vec![0.1f32; 4])
             }
@@ -3324,6 +3326,68 @@ mod recall_touch_tests {
 #[cfg(test)]
 mod retry_embed_tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Fake embedder that counts calls and fails the first `failures` calls
+    /// with the error built by `make_err`, then succeeds.
+    struct ScriptedEmbedder {
+        calls: Arc<AtomicUsize>,
+        failures: usize,
+        make_err: fn() -> Error,
+    }
+
+    impl crate::embed::Embedder for ScriptedEmbedder {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.failures {
+                Err((self.make_err)())
+            } else {
+                Ok(vec![0.0; 4])
+            }
+        }
+        fn dims(&self) -> usize {
+            4
+        }
+        fn max_seq_len(&self) -> usize {
+            8
+        }
+        fn name(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    fn scripted(
+        failures: usize,
+        make_err: fn() -> Error,
+    ) -> (
+        Mutex<Option<Box<dyn crate::embed::Embedder>>>,
+        Arc<AtomicUsize>,
+    ) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let embedder: Box<dyn crate::embed::Embedder> = Box::new(ScriptedEmbedder {
+            calls: Arc::clone(&calls),
+            failures,
+            make_err,
+        });
+        (Mutex::new(Some(embedder)), calls)
+    }
+
+    #[test]
+    fn validation_error_is_not_retried() {
+        let (embedder, calls) = scripted(usize::MAX, || Error::Validation("bad input".into()));
+        let err = retry_embed(&embedder, "hello").unwrap_err();
+        assert!(matches!(err, Error::Validation(_)), "{err}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn transient_error_is_retried_then_succeeds() {
+        let (embedder, calls) = scripted(1, || Error::embed_msg("timeout"));
+        let embedding = retry_embed(&embedder, "hello").unwrap();
+        assert_eq!(embedding.len(), 4);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
 
     #[test]
     fn no_embedder_is_an_error_not_a_panic() {
