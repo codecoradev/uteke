@@ -16,9 +16,9 @@ use std::time::Duration;
 /// index to desync from SQLite. This helper retries up to 3 times with
 /// 200ms, 400ms, then 800ms delays between attempts.
 ///
-/// A store with no embedder configured (#1166) gets an embedding error
-/// instead of a panic. Validation errors are returned immediately: they
-/// can never succeed on retry.
+/// If the embedder slot is empty (it should not be after `ensure_embedder`),
+/// returns an embedding error instead of panicking. Validation errors are
+/// returned immediately: they can never succeed on retry.
 pub(crate) fn retry_embed(
     embedder: &Mutex<Option<Box<dyn crate::embed::Embedder>>>,
     text: &str,
@@ -3393,6 +3393,7 @@ mod retry_embed_tests {
     fn no_embedder_is_an_error_not_a_panic() {
         let embedder: Mutex<Option<Box<dyn crate::embed::Embedder>>> = Mutex::new(None);
         let err = retry_embed(&embedder, "hello").unwrap_err();
+        assert!(matches!(err, Error::Embedding { .. }), "{err:?}");
         assert!(err.to_string().contains("No embedder"), "{err}");
     }
 }
