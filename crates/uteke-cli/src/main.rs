@@ -36,6 +36,13 @@ pub(crate) fn resolve_store_path(cli: &Cli, config: &Config) -> String {
     Config::expand_tilde(&config.store.path)
 }
 
+/// Whether to route this invocation through a running server (#1439 B4).
+/// An explicit `--store` names a database the server does not serve, so it
+/// always runs locally.
+fn should_route_via_server(cli: &Cli, server_enabled: bool) -> bool {
+    server_enabled && cli.store.is_none()
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -121,7 +128,12 @@ fn main() {
 
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
-    let server_available = config.server.enabled && commands::is_server_running(&server_url);
+    if config.server.enabled && cli.store.is_some() {
+        tracing::debug!("Explicit --store given, skipping server routing");
+    }
+    // Cheap check first: no network probe when --store is set.
+    let server_available = should_route_via_server(&cli, config.server.enabled)
+        && commands::is_server_running(&server_url);
 
     if server_available {
         tracing::info!("Server detected at {server_url}, routing via HTTP");
@@ -325,5 +337,21 @@ mod resolve_store_tests {
         // 5) config "default" literal falls through to "default"
         cfg.store.namespace = "default".to_string();
         assert_eq!(resolve_namespace(&cli, &cfg), "default");
+    }
+
+    /// #1439 B4: an explicit `--store` names a database the server does not
+    /// serve, so it must never be routed through a running server.
+    #[test]
+    fn explicit_store_never_routes_via_server() {
+        let cli = Cli::try_parse_from(["uteke", "--store", "/tmp/x", "stats"]).unwrap();
+        assert!(!should_route_via_server(&cli, true));
+        assert!(!should_route_via_server(&cli, false));
+    }
+
+    #[test]
+    fn no_store_routes_when_server_enabled() {
+        let cli = Cli::try_parse_from(["uteke", "stats"]).unwrap();
+        assert!(should_route_via_server(&cli, true));
+        assert!(!should_route_via_server(&cli, false));
     }
 }
