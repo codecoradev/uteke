@@ -1192,9 +1192,14 @@ impl crate::Uteke {
             .filter_map(|(id, score)| {
                 // Every RRF id is inserted into `memories` in the same loop,
                 // so this cannot miss today. If that invariant ever breaks,
-                // skip the id with a warning instead of panicking.
+                // skip the id with a warning instead of panicking (the result
+                // may then hold fewer than `limit` items; `take` stays first so
+                // the normal path is unchanged).
                 let Some(memory) = memories.remove(&id) else {
-                    tracing::warn!(id = %id, "RRF score references a memory missing from the fused set; skipping");
+                    tracing::warn!(
+                        id = %id,
+                        "RRF score references a memory missing from the fused set; skipping"
+                    );
                     return None;
                 };
                 // RRF score is sum of 1/(k+rank) from both channels.
