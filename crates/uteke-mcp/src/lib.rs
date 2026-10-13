@@ -63,7 +63,9 @@ struct ToolResult {
 /// always `Full` (the process belongs to the local caller).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Access {
+    /// Every tool.
     Full,
+    /// Only the tools in [`READ_ONLY_TOOLS`].
     ReadOnly,
 }
 
@@ -90,6 +92,8 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "uteke_room_stats",
     "uteke_room_summary",
     "uteke_room_summary_document",
+    // MCP alias of the read-only summary document above; NOT the HTTP
+    // `POST /room/document` route, which writes.
     "uteke_room_document",
     "uteke_room_list_documents",
     "uteke_tags_list",
@@ -252,7 +256,16 @@ fn handle_request(
                 .unwrap_or(Value::Object(Default::default()));
 
             if access == Access::ReadOnly && !READ_ONLY_TOOLS.contains(&tool_name) {
-                return Err(format!("Read-only token cannot use {tool_name}"));
+                // A tool error, not a JSON-RPC error: the call was understood
+                // and refused (uteke-cloud answers route refusals the same way).
+                let refused = ToolResult {
+                    content: vec![McpContent::Text {
+                        r#type: "text".to_string(),
+                        text: format!("Read-only token cannot use {tool_name}"),
+                    }],
+                    is_error: true,
+                };
+                return serde_json::to_value(refused).map_err(|e| e.to_string());
             }
 
             let result = match tool_name {
@@ -3823,10 +3836,75 @@ mod read_only_gate_tests {
             "uteke_remember",
             serde_json::json!({"content": "x"}),
         );
+        assert!(resp.get("error").is_none(), "{resp}");
+        assert_eq!(resp["result"]["isError"], true);
         assert_eq!(
-            resp["error"]["message"],
+            resp["result"]["content"][0]["text"],
             "Read-only token cannot use uteke_remember"
         );
+        assert_eq!(u.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_only_tool_set_is_the_reviewed_one() {
+        // Adding a name to READ_ONLY_TOOLS opens a tool to read-only tokens:
+        // it must be a deliberate edit of this test too.
+        let expected: std::collections::BTreeSet<&str> = [
+            "uteke_recall",
+            "uteke_search",
+            "uteke_list",
+            "uteke_get",
+            "uteke_provenance",
+            "uteke_timeline",
+            "uteke_contradictions",
+            "uteke_stats",
+            "uteke_doc_get",
+            "uteke_doc_list",
+            "uteke_doc_search",
+            "uteke_doc_list_rooms",
+            "uteke_graph",
+            "uteke_room_list",
+            "uteke_room_recall",
+            "uteke_room_memories",
+            "uteke_room_stats",
+            "uteke_room_summary",
+            "uteke_room_summary_document",
+            "uteke_room_document",
+            "uteke_room_list_documents",
+            "uteke_tags_list",
+        ]
+        .into_iter()
+        .collect();
+        let actual: std::collections::BTreeSet<&str> = READ_ONLY_TOOLS.iter().copied().collect();
+        assert_eq!(actual, expected);
+        assert_eq!(READ_ONLY_TOOLS.len(), expected.len(), "duplicate entry");
+    }
+
+    #[test]
+    fn read_only_room_document_alias_does_not_write() {
+        let u = store();
+        let resp = call(
+            &u,
+            Access::ReadOnly,
+            "uteke_room_document",
+            serde_json::json!({"room_id": "nope"}),
+        );
+        assert!(
+            !resp.to_string().contains("Read-only token cannot use"),
+            "{resp}"
+        );
+        assert_eq!(u.count(None).unwrap(), 0);
+    }
+
+    #[test]
+    fn read_only_notification_on_write_tool_runs_nothing() {
+        let u = store();
+        let raw = serde_json::json!({
+            "jsonrpc": "2.0", "method": "tools/call",
+            "params": {"name": "uteke_remember", "arguments": {"content": "x"}}
+        })
+        .to_string();
+        assert!(handle_jsonrpc_as(&u, &raw, Access::ReadOnly).is_none());
         assert_eq!(u.count(None).unwrap(), 0);
     }
 
