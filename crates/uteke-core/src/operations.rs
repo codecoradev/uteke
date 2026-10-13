@@ -1189,19 +1189,23 @@ impl crate::Uteke {
         let mut results: Vec<SearchResult> = scored
             .into_iter()
             .take(limit)
-            .map(|(id, score)| {
-                let memory = memories
-                    .remove(&id)
-                    .expect("RRF score references memory that should exist");
+            .filter_map(|(id, score)| {
+                // Every RRF id is inserted into `memories` in the same loop,
+                // so this cannot miss today. If that invariant ever breaks,
+                // skip the id with a warning instead of panicking.
+                let Some(memory) = memories.remove(&id) else {
+                    tracing::warn!(id = %id, "RRF score references a memory missing from the fused set; skipping");
+                    return None;
+                };
                 // RRF score is sum of 1/(k+rank) from both channels.
                 // Max possible: 2/(k+1) when rank=0 in both.
                 // Normalize by dividing by that theoretical max.
                 let max_rrf = 2.0 / (RRF_K as f64 + 1.0);
                 let normalized = (score / max_rrf).clamp(0.0, 1.0);
-                SearchResult {
+                Some(SearchResult {
                     memory,
                     score: normalized as f32,
-                }
+                })
             })
             .collect();
 
