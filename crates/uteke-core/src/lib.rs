@@ -4559,8 +4559,9 @@ mod fallback_settings_tests {
         // SAFETY: serialised with the other env-mutating tests.
         unsafe { std::env::set_var(VAR, "/env-path") };
         let got = file().with_env_overrides();
+        // Only the variable this test owns is asserted: the others may be set
+        // in a developer's shell. Default::default() (the missed mutant) gives
+        // an empty endpoint_path.
         assert_eq!(got.endpoint_path, "/env-path");
-        assert_eq!(got.base_url, "https://file.example");
-        assert_eq!(got.model, "file-model");
     }
 }
