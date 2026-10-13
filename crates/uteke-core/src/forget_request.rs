@@ -552,4 +552,10 @@ mod tests {
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn display_writes_the_exact_message() {
+        let e = ForgetRequest::decode(input(None, None, None), ForgetPolicy::HTTP).unwrap_err();
+        assert_eq!(e.to_string(), "Provide ?id= or ?tag= parameter");
+    }
 }

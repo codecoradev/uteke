@@ -3443,3 +3443,84 @@ mod recall_no_embedder_tests {
         );
     }
 }
+
+/// Exact-value tests for `recall_rrf` that the 0.21.0 mutation gate missed:
+/// the vector candidate window (`limit * 3`) and the score normalisation
+/// (`score / max_rrf`). They call `recall_rrf` directly so the boost window
+/// and salience/recency boosts of `recall_hybrid` stay out of the numbers.
+/// The keyword embedder hashes words into 64 buckets; "zebra" and "aab",
+/// "afk", "ajg", "ans", "aol" share bucket 15, which lets a memory be close
+/// in vector space without matching the FTS query.
+#[cfg(test)]
+mod mutant_kill_tests_0_21 {
+    use crate::test_support::open_keyword;
+
+    const K: f64 = 60.0;
+
+    fn rrf_at(rank: usize) -> f64 {
+        1.0 / (K + rank as f64 + 1.0)
+    }
+
+    fn normalized(score: f64) -> f32 {
+        (score / (2.0 / (K + 1.0))) as f32
+    }
+
+    /// Rank 0 in both channels normalises to exactly 1.0 (the theoretical
+    /// max); a memory found by one channel only, at rank 0, to exactly 0.5.
+    /// With `limit = 1` the vector window is 3; `limit / 3` would make it 0
+    /// and leave the top memory with FTS credit only (0.5).
+    #[test]
+    fn rank_zero_in_both_channels_scores_exactly_one() {
+        let u = open_keyword();
+        let top = u.remember("zebra", &[], None, None).unwrap();
+        u.remember("apple river stone", &[], None, None).unwrap();
+
+        let got = u.recall_rrf("zebra", 1, None, None, 0.0).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].memory.id, top);
+        assert_eq!(got[0].score, 1.0);
+        assert_eq!(got[0].score, normalized(rrf_at(0) + rrf_at(0)));
+    }
+
+    #[test]
+    fn rank_zero_in_one_channel_scores_exactly_half() {
+        let u = open_keyword();
+        // Vector neighbour of "zebra" (shared bucket) without the FTS word.
+        let vec_only = u.remember("aab", &[], None, None).unwrap();
+        u.remember("apple river stone", &[], None, None).unwrap();
+
+        let got = u.recall_rrf("zebra", 1, None, None, 0.0).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].memory.id, vec_only);
+        assert_eq!(got[0].score, 0.5);
+    }
+
+    /// With `limit = 2` the vector window is 6. The only FTS hit sits at
+    /// vector rank 5 (the 6th), so it gets credit from both channels and
+    /// ranks first. With a window of `limit + 3` = 5 it would get FTS credit
+    /// only, tie at 0.5 with the vector-only leader and lose its score.
+    #[test]
+    fn vector_window_is_three_times_the_limit() {
+        let u = open_keyword();
+        // Cosine to "zebra" = 1/sqrt(2): vector ranks 0..=4, no FTS match.
+        for c in [
+            "aab apple",
+            "afk stone",
+            "ajg cloud",
+            "ans maple",
+            "aol tiger",
+        ] {
+            u.remember(c, &[], None, None).unwrap();
+        }
+        // Cosine 1/2: vector rank 5; FTS rank 0 (the only FTS hit).
+        let target = u
+            .remember("zebra piano lemon candle", &[], None, None)
+            .unwrap();
+
+        let got = u.recall_rrf("zebra", 2, None, None, 0.0).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].memory.id, target);
+        assert_eq!(got[0].score, normalized(rrf_at(5) + rrf_at(0)));
+        assert_eq!(got[1].score, 0.5);
+    }
+}

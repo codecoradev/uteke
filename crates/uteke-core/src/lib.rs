@@ -4535,4 +4535,32 @@ mod fallback_settings_tests {
         assert!(!partial.is_configured());
         assert!(!FallbackSettings::default().is_configured());
     }
+
+    /// Removes the variable on drop, so a failing assertion cannot leak it
+    /// into other tests of this binary.
+    struct EnvVarGuard(&'static str);
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: serialised with the other env-mutating tests.
+            unsafe { std::env::remove_var(self.0) };
+        }
+    }
+
+    /// `with_env_overrides` reads the real process environment: a set
+    /// variable overrides its field, unset ones keep the current value.
+    /// Only `UTEKE_EMBED_FALLBACK_ENDPOINT_PATH` is touched; no other test
+    /// in this crate sets it.
+    #[test]
+    #[serial_test::serial]
+    fn with_env_overrides_reads_the_process_environment() {
+        const VAR: &str = "UTEKE_EMBED_FALLBACK_ENDPOINT_PATH";
+        let _guard = EnvVarGuard(VAR);
+        // SAFETY: serialised with the other env-mutating tests.
+        unsafe { std::env::set_var(VAR, "/env-path") };
+        let got = file().with_env_overrides();
+        assert_eq!(got.endpoint_path, "/env-path");
+        assert_eq!(got.base_url, "https://file.example");
+        assert_eq!(got.model, "file-model");
+    }
 }

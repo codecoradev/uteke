@@ -465,4 +465,10 @@ mod tests {
             json!({"content": "hi", "tags": [], "namespace": null})
         );
     }
+
+    #[test]
+    fn display_writes_the_exact_message() {
+        let e = RememberRequest::decode(input("  "), RememberPolicy::HTTP).unwrap_err();
+        assert_eq!(e.to_string(), "Validation error: Content must not be empty");
+    }
 }

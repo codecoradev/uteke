@@ -292,4 +292,18 @@ mod tests {
             serde_json::json!({"tag": null, "limit": 20, "offset": 0, "namespace": null, "at": "2026-06-01T12:00:00Z"})
         );
     }
+
+    #[test]
+    fn display_writes_the_exact_message() {
+        let i = ListInput {
+            at: Some("nope".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ListRequest::decode(i, ListPolicy::HTTP)
+                .unwrap_err()
+                .to_string(),
+            "Invalid 'at' timestamp: nope. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
+        );
+    }
 }
