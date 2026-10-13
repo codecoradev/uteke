@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- **Read-only tokens and MCP (#1439)** - `POST /mcp` used to be a write route, so a read-only token could not call any MCP tool, and a token that could reach it could call every tool. MCP now gates each tool: a read-only token can call the read tools (recall, search, list, get, stats, room and document reads) and gets a tool error (`isError: true`) from every write tool. Write tokens and the stdio transport are unchanged.
+
 ### Deprecated
 
 - **Namespaces (#1427, phase 1: the signal)** - namespaces are deprecated and will be removed in a future 0.x release; organise with rooms, tags and author instead. Nothing changes in routing, storage or reads, and the `namespace` parameter keeps working everywhere. Writing to a non-default namespace (omitting it or passing `default` is not deprecated) now returns a one-sentence warning: the `warning` field of HTTP `/remember` and `/room/remember`, an optional `warning` on `/extract`, `/import`, `/room/create` and `PUT /memory` (absent for the default namespace, so those responses are byte-identical), the tool text of MCP `uteke_remember`, `uteke_update` and `uteke_room_create`, and one stderr line from `uteke remember`, `uteke import` and `uteke room create` (stdout and `--json` unchanged). The server logs it at WARN once per distinct namespace. MCP tool descriptions, `uteke guide`, the skill and the docs ("Namespaces are deprecated" in `docs/multi-agent.md`, with the phase plan) steer to rooms, tags and author.

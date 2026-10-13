@@ -1058,7 +1058,9 @@ mod tests {
 
     // #1439: every MCP tool a read-only token may call maps to an HTTP row
     // that does not write. A tool added to READ_ONLY_TOOLS must be mapped
-    // here, so the two read-only surfaces cannot drift apart unnoticed.
+    // here, so the two read-only surfaces cannot drift apart unnoticed. GET rows
+    // never write and are always open to read-only tokens, so for them this only
+    // proves the route is registered; the POST rows carry the weight.
     #[test]
     fn mcp_read_only_tools_map_to_non_writing_rows() {
         const MAP: &[(&str, &str, &str)] = &[

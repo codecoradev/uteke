@@ -273,6 +273,21 @@ token is refreshed automatically. What you can do instead:
 
 OAuth-based sign-in for MCP clients is not part of the self-hosted server.
 
+### Read-only tokens
+
+A client authenticated with `UTEKE_READ_ONLY_TOKEN` can call these tools over
+`POST /mcp`: `uteke_recall`, `uteke_search`, `uteke_list`, `uteke_get`,
+`uteke_provenance`, `uteke_timeline`, `uteke_contradictions`, `uteke_stats`,
+`uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_list_rooms`,
+`uteke_graph`, `uteke_room_list`, `uteke_room_recall`, `uteke_room_memories`,
+`uteke_room_stats`, `uteke_room_summary`, `uteke_room_summary_document` (alias
+`uteke_room_document`), `uteke_room_list_documents` and `uteke_tags_list`.
+
+Every other tool is refused with a tool error (`isError: true`, text
+`Read-only token cannot use <tool>`) and nothing is written. `tools/list` still
+lists every tool. The stdio transport (`uteke-mcp`) has no tokens and is
+unaffected.
+
 ### Docker on a VPS
 
 ```bash

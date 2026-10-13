@@ -87,7 +87,8 @@ agent) on a network you trust:
    a `WARN ... Authentication: disabled` line in its log. For a client that only
    needs to read, give it `UTEKE_READ_ONLY_TOKEN` instead: it may use GET requests
    and the read-only POST routes (recall, search, list, stats, room and document
-   reads) but gets `403` on every write route.
+   reads), plus the read-only MCP tools over `POST /mcp`, but gets `403` on every
+   write route and a tool error from every MCP write tool.
 2. **Bind to the LAN.** Either `uteke-serve --host 0.0.0.0` (all interfaces) or,
    narrower, the machine's LAN address (`--host 192.168.1.20`); or `[server] host`
    in `~/.codecora/uteke/uteke.toml`. A project-local `.uteke/uteke.toml` is not
@@ -473,8 +474,11 @@ uteke-serve --auth-token admin-secret --read-only-token viewer-key
 UTEKE_AUTH_TOKEN=admin-secret UTEKE_READ_ONLY_TOKEN=viewer-key uteke-serve
 ```
 
-Read-only tokens can only access GET endpoints (recall, search, list, stats, graph, health).
-POST/DELETE operations return `403 Forbidden`.
+Read-only tokens can use GET endpoints and the POST routes that do not write
+(recall, search, list, stats, room and document reads). Every other POST, PUT and
+DELETE route returns `403 Forbidden`. Over `POST /mcp` they can call the read-only
+MCP tools (see [MCP: read-only tokens](mcp.md#read-only-tokens)); an MCP write tool
+returns a tool error instead of running.
 
 `GET /health` also answers without a token (for load balancers and uptime probes),
 but tokenless — or invalidly-authenticated — requests receive only `{"status":"ok"}`.
