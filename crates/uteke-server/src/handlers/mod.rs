@@ -2130,6 +2130,49 @@ mod routes_introspection_tests {
         }
     }
 
+    /// The dispatch match and the registry name exactly the same
+    /// (method, path) pairs, with no duplicates (#1344). The match has one
+    /// `(Method::X, "/path") => module::handler(&mut call),` line per route,
+    /// so it is read from this file's source; the test above proves the
+    /// rows reach a handler at run time, this one also catches an arm with
+    /// no row (dead, since the table 404s it before the match).
+    #[test]
+    fn dispatch_match_routes_equal_the_registry_rows() {
+        let src = include_str!("mod.rs");
+        let body = src
+            .split_once("    match (method, route_path) {")
+            .expect("route's dispatch match")
+            .1
+            .split_once("        _ => {")
+            .expect("route's fallback arm")
+            .0;
+        let mut arms: Vec<(String, String)> = body
+            .lines()
+            .filter_map(|l| {
+                let rest = l.trim_start().strip_prefix("(Method::")?;
+                let (method, rest) = rest.split_once(", \"")?;
+                let (path, rest) = rest.split_once("\")")?;
+                rest.trim_start().strip_prefix("=>")?;
+                Some((method.to_ascii_uppercase(), path.to_string()))
+            })
+            .collect();
+        let mut rows: Vec<(String, String)> = crate::api_registry::ENDPOINTS
+            .iter()
+            .map(|e| (e.method.to_string(), e.path.to_string()))
+            .collect();
+        let (arm_count, row_count) = (arms.len(), rows.len());
+        arms.sort();
+        arms.dedup();
+        rows.sort();
+        rows.dedup();
+        assert_eq!(arms.len(), arm_count, "duplicate (method, path) arm");
+        assert_eq!(rows.len(), row_count, "duplicate (method, path) row");
+        assert_eq!(
+            arms, rows,
+            "dispatch match and api_registry::ENDPOINTS differ"
+        );
+    }
+
     /// A route that is not in the table is a 404 that never reaches a
     /// handler, even when the path exists under another verb.
     #[test]
