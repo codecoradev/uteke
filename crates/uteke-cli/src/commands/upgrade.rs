@@ -26,6 +26,22 @@ const MAX_ARCHIVE_BYTES: u64 = 128 * 1024 * 1024;
 /// read bounded.
 const MAX_CHECKSUMS_BYTES: u64 = 1024 * 1024;
 
+/// A minisign signature file is ~4 lines and about 330 bytes; 4 KiB is generous.
+const MAX_SIGNATURE_BYTES: u64 = 4 * 1024;
+
+/// Minisign public keys (base64 line of the `.pub` file) trusted to sign
+/// `checksums-sha256.txt`. Mirrors `scripts/uteke-release.pub` (a test keeps
+/// them in sync). It is a slice so a backup key can be added later.
+///
+/// Key rotation requires a uteke release: binaries already installed only
+/// trust the keys compiled into them, so they cannot learn a new key by
+/// themselves and must be upgraded (manually) to a build that carries it.
+const RELEASE_PUBLIC_KEYS: &[&str] = &["RWSLBBvjdkuSlvaQ/yoyoMlpQAOLTt5jACZGTgSOCKb+/1JoqhjOmT8G"];
+
+/// Appended to every signature failure so the user can verify by hand.
+const SIGNATURE_HELP: &str = "See the \"Verifying a release\" section of SECURITY.md \
+    (https://github.com/codecoradev/uteke/blob/main/SECURITY.md) to verify the release manually.";
+
 /// Entry point for `uteke upgrade`.
 pub fn run(yes: bool) -> Result<(), String> {
     // 1. Detect current version
@@ -138,6 +154,8 @@ pub fn run(yes: bool) -> Result<(), String> {
         "https://github.com/{REPO}/releases/download/{latest_version}/checksums-sha256.txt"
     );
 
+    let signature_url = format!("{checksums_url}.minisig");
+
     println!("[INFO] Verifying checksum ...");
 
     let skip_checksum = std::env::var("UTEKE_UPGRADE_SKIP_CHECKSUM")
@@ -147,7 +165,8 @@ pub fn run(yes: bool) -> Result<(), String> {
     if skip_checksum {
         eprintln!("[WARN] ============================================================");
         eprintln!("[WARN] UTEKE_UPGRADE_SKIP_CHECKSUM is set: the downloaded archive is");
-        eprintln!("[WARN] NOT verified. A corrupted, tampered or malicious download will");
+        eprintln!("[WARN] NOT verified, and neither is the minisign signature of the");
+        eprintln!("[WARN] checksums file. A corrupted, tampered or malicious download will");
         eprintln!("[WARN] be installed and executed as-is. Unset it unless you fully");
         eprintln!("[WARN] trust the network path and the release source.");
         eprintln!("[WARN] ============================================================");
@@ -178,6 +197,19 @@ pub fn run(yes: bool) -> Result<(), String> {
             MAX_CHECKSUMS_BYTES,
             "Checksums file",
         )?;
+
+        // Verify the signature over the RAW bytes before trusting any hash in
+        // the file. Missing/invalid signature is a hard failure (#1327).
+        println!("[INFO] Verifying checksums signature (minisign) ...");
+        let signature_text = fetch_signature(&client, &signature_url, &latest_version)?;
+        verify_checksums_signature(
+            &checksums_buf,
+            &signature_text,
+            &latest_version,
+            RELEASE_PUBLIC_KEYS,
+        )?;
+        println!("[INFO] Signature verified (uteke {latest_version})");
+
         let checksums_text = String::from_utf8(checksums_buf)
             .map_err(|e| format!("Checksums file is not valid UTF-8: {e}"))?;
 
@@ -621,6 +653,99 @@ fn is_safe_archive_path(path: &Path) -> bool {
         .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
 }
 
+/// Download the `.minisig` for the release, bounded and fail-closed.
+fn fetch_signature(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    tag: &str,
+) -> Result<String, String> {
+    let resp = client.get(url).send().map_err(|e| {
+        format!(
+            "Failed to download the checksums signature: {e}. \
+             Refusing to install an unverified binary. {SIGNATURE_HELP}"
+        )
+    })?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        return Err(format!(
+            "No checksums signature for {tag} (HTTP {status}); the release may not be signed yet. \
+             Refusing to install an unverified binary. {SIGNATURE_HELP}"
+        ));
+    }
+    check_declared_len(resp.content_length(), MAX_SIGNATURE_BYTES, "Signature file")?;
+    let mut resp = resp;
+    let mut buf: Vec<u8> = Vec::new();
+    copy_capped(&mut resp, &mut buf, MAX_SIGNATURE_BYTES, "Signature file")?;
+    String::from_utf8(buf).map_err(|e| {
+        format!("Signature file is not valid UTF-8: {e}. Refusing to install. {SIGNATURE_HELP}")
+    })
+}
+
+/// Verify that `signature_text` (a minisign `.minisig`) is a valid signature
+/// of `checksums` by one of `trusted_keys`, and that its trusted comment is
+/// exactly `uteke {tag}`. The comment is covered by the signature, so binding
+/// it to the tag stops an older, validly signed release being replayed as a
+/// newer one. Legacy (non-prehashed) signatures are rejected.
+fn verify_checksums_signature(
+    checksums: &[u8],
+    signature_text: &str,
+    tag: &str,
+    trusted_keys: &[&str],
+) -> Result<(), String> {
+    use minisign_verify::{Error as MsError, PublicKey, Signature};
+
+    let signature = Signature::decode(signature_text).map_err(|e| {
+        format!("The checksums signature is not a valid minisign signature ({e}). {SIGNATURE_HELP}")
+    })?;
+
+    // Prefer reporting a key that matched but failed over "wrong key".
+    let mut failure: Option<MsError> = None;
+    let mut verified = false;
+    for key_b64 in trusted_keys {
+        let key = PublicKey::from_base64(key_b64).map_err(|e| {
+            format!("Embedded release public key is invalid ({e}). {SIGNATURE_HELP}")
+        })?;
+        match key.verify(checksums, &signature, false) {
+            Ok(()) => {
+                verified = true;
+                break;
+            }
+            Err(MsError::UnexpectedKeyId) if failure.is_some() => {}
+            Err(e) => failure = Some(e),
+        }
+    }
+    if !verified {
+        let why = match failure {
+            Some(MsError::UnexpectedKeyId) | None => {
+                "the signature was made by a different key than the trusted release key (wrong key)"
+                    .to_string()
+            }
+            Some(MsError::InvalidSignature) => {
+                "the signature does not match checksums-sha256.txt (data mismatch: the file was \
+                 modified or is not the signed one)"
+                    .to_string()
+            }
+            Some(MsError::UnexpectedAlgorithm) => {
+                "legacy (non-prehashed) signatures are not accepted".to_string()
+            }
+            Some(e) => format!("{e}"),
+        };
+        return Err(format!(
+            "Checksums signature verification failed: {why}. Refusing to install. {SIGNATURE_HELP}"
+        ));
+    }
+
+    let expected = format!("uteke {tag}");
+    let got = signature.trusted_comment();
+    if got != expected {
+        return Err(format!(
+            "Checksums signature is for a different release (trusted comment mismatch): \
+             expected \"{expected}\", got \"{got}\". Refusing to install. {SIGNATURE_HELP}"
+        ));
+    }
+    Ok(())
+}
+
 fn parse_checksum(checksums_text: &str, archive_name: &str) -> Option<String> {
     for line in checksums_text.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -892,5 +1017,91 @@ mod tests {
         assert!(install_bundle(&bundle2, &inst2).is_err());
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&dir2);
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::*;
+
+    const CHECKSUMS: &str = include_str!("../../tests/fixtures/minisign/checksums-sha256.txt");
+    const OK_SIG: &str = include_str!("../../tests/fixtures/minisign/ok.minisig");
+    const OLD_TAG_SIG: &str = include_str!("../../tests/fixtures/minisign/oldtag.minisig");
+    const OTHER_KEY_SIG: &str = include_str!("../../tests/fixtures/minisign/otherkey.minisig");
+    // Throwaway test key (its secret half was deleted after signing).
+    const TEST_KEY: &str = include_str!("../../tests/fixtures/minisign/test-key.b64");
+
+    fn keys() -> Vec<&'static str> {
+        vec![TEST_KEY.trim()]
+    }
+
+    fn check(data: &str, sig: &str, tag: &str) -> Result<(), String> {
+        verify_checksums_signature(data.as_bytes(), sig, tag, &keys())
+    }
+
+    #[test]
+    fn valid_signature_for_the_right_tag_passes() {
+        assert_eq!(check(CHECKSUMS, OK_SIG, "v9.9.9"), Ok(()));
+    }
+
+    #[test]
+    fn a_second_trusted_key_is_tried() {
+        let two = [RELEASE_PUBLIC_KEYS[0], TEST_KEY.trim()];
+        assert_eq!(
+            verify_checksums_signature(CHECKSUMS.as_bytes(), OK_SIG, "v9.9.9", &two),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn tampered_data_is_a_data_mismatch() {
+        let bad = CHECKSUMS.replacen("a", "c", 1);
+        let e = check(&bad, OK_SIG, "v9.9.9").unwrap_err();
+        assert!(e.contains("data mismatch"), "{e}");
+        assert!(e.contains("SECURITY.md"), "{e}");
+    }
+
+    #[test]
+    fn signature_for_another_tag_is_rejected() {
+        let e = check(CHECKSUMS, OLD_TAG_SIG, "v9.9.9").unwrap_err();
+        assert!(e.contains("trusted comment mismatch"), "{e}");
+        assert!(
+            e.contains("expected \"uteke v9.9.9\", got \"uteke v1.0.0\""),
+            "{e}"
+        );
+        assert!(e.contains("SECURITY.md"), "{e}");
+    }
+
+    #[test]
+    fn signature_by_a_different_key_is_rejected() {
+        let e = check(CHECKSUMS, OTHER_KEY_SIG, "v9.9.9").unwrap_err();
+        assert!(e.contains("wrong key"), "{e}");
+        assert!(e.contains("SECURITY.md"), "{e}");
+    }
+
+    #[test]
+    fn garbage_empty_and_truncated_signatures_are_rejected() {
+        for sig in [
+            "this is not a signature",
+            "",
+            "untrusted comment: x\nnot-base64!!\n",
+        ] {
+            let e = check(CHECKSUMS, sig, "v9.9.9").unwrap_err();
+            assert!(e.contains("not a valid minisign signature"), "{sig:?}: {e}");
+            assert!(e.contains("SECURITY.md"), "{e}");
+        }
+        // Truncated: drop the last (global signature) line, and cut mid-line.
+        let lines: Vec<&str> = OK_SIG.lines().collect();
+        let no_global = lines[..3].join("\n");
+        let e = check(CHECKSUMS, &no_global, "v9.9.9").unwrap_err();
+        assert!(e.contains("not a valid minisign signature"), "{e}");
+        let cut = &OK_SIG[..OK_SIG.len() / 2];
+        let e = check(CHECKSUMS, cut, "v9.9.9").unwrap_err();
+        assert!(e.contains("not a valid minisign signature"), "{e}");
+    }
+
+    #[test]
+    fn the_embedded_release_key_is_a_valid_minisign_key() {
+        assert!(minisign_verify::PublicKey::from_base64(RELEASE_PUBLIC_KEYS[0]).is_ok());
     }
 }
