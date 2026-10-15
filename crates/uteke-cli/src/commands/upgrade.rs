@@ -63,7 +63,10 @@ pub fn run(yes: bool) -> Result<(), String> {
     let arch = detect_arch();
 
     // 4. Get latest release version
-    let latest_version = get_latest_version()?;
+    // Only stable releases are ever installed (owner rule): enforced here,
+    // before the prompt and any download, with no override. The tag is
+    // normalised to `vX.Y.Z` (the API fallback may return it without `v`).
+    let latest_version = ensure_stable_tag(&get_latest_version()?)?;
 
     // 5. Check if already up to date. The release tag carries a leading `v`
     // that CARGO_PKG_VERSION does not — compare normalized, or an up-to-date
@@ -192,26 +195,15 @@ pub fn run(yes: bool) -> Result<(), String> {
 
         println!("[INFO] Verifying checksums signature (minisign) ...");
         let signature = fetch_signature(&client, &signature_url, &latest_version);
-        authenticate_checksums(
+        let hash = verified_expected_hash(
             &checksums_buf,
             signature,
             &latest_version,
             RELEASE_PUBLIC_KEYS,
+            &archive_name,
         )?;
         println!("[INFO] Signature verified (uteke {latest_version})");
-
-        let checksums_text = String::from_utf8(checksums_buf)
-            .map_err(|e| format!("Checksums file is not valid UTF-8: {e}"))?;
-
-        Some(
-            parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
-                format!(
-                    "Checksum for '{archive_name}' not found in checksums file. \
-                 Refusing to install unverified binary. \
-                 Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
-                )
-            })?,
-        )
+        Some(hash)
     };
 
     let mut resp = client
@@ -704,6 +696,45 @@ fn authenticate_checksums(
 ) -> Result<(), String> {
     let signature_text = signature?;
     verify_checksums_signature(checksums, &signature_text, tag, trusted_keys)
+}
+
+/// The only way `run()` obtains an expected archive hash: the checksums bytes
+/// must first be authenticated by the signature (fail closed), and only then
+/// is the hash for `archive_name` read from them.
+fn verified_expected_hash(
+    checksums: &[u8],
+    signature: Result<String, String>,
+    tag: &str,
+    trusted_keys: &[&str],
+    archive_name: &str,
+) -> Result<String, String> {
+    authenticate_checksums(checksums, signature, tag, trusted_keys)?;
+    let text = std::str::from_utf8(checksums)
+        .map_err(|e| format!("Checksums file is not valid UTF-8: {e}"))?;
+    parse_checksum(text, archive_name).ok_or_else(|| {
+        format!(
+            "Checksum for '{archive_name}' not found in checksums file. \
+             Refusing to install unverified binary. \
+             Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
+        )
+    })
+}
+
+/// Accept only a stable release tag: `vX.Y.Z` (the `v` may be missing, it is
+/// normalised) with numeric components only; no pre-release, no build
+/// metadata. Returns the normalised `vX.Y.Z`.
+fn ensure_stable_tag(tag: &str) -> Result<String, String> {
+    let bare = tag.strip_prefix('v').unwrap_or(tag);
+    let parts: Vec<&str> = bare.split('.').collect();
+    let stable = parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    if stable {
+        Ok(format!("v{bare}"))
+    } else {
+        Err(format!("Refusing to install a non-stable release: {tag}"))
+    }
 }
 
 /// Parsed `major.minor.patch[-pre][+build]`.
@@ -1257,6 +1288,77 @@ mod signature_tests {
         for bad in ["vfoo", "v1.2", "v1.2.3.4", "v1.2.x", "v1..3", "v1.2.3-", ""] {
             assert!(compare_versions("0.21.0", bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn whitespace_only_signature_is_rejected() {
+        let e = check(CHECKSUMS, "   \n", "v9.9.9").unwrap_err();
+        assert!(e.contains("not a valid minisign signature"), "{e}");
+    }
+
+    const ARCHIVE: &str = "uteke-x86_64-apple-darwin-v9.9.9.tar.gz";
+
+    fn hash(data: &str, sig: Result<String, String>, archive: &str) -> Result<String, String> {
+        verified_expected_hash(data.as_bytes(), sig, "v9.9.9", &keys(), archive)
+    }
+
+    #[test]
+    fn expected_hash_requires_a_good_signature() {
+        let ok = || Ok(OK_SIG.to_string());
+        assert_eq!(hash(CHECKSUMS, ok(), ARCHIVE), Ok("a".repeat(64)));
+        assert!(hash(CHECKSUMS, Err("HTTP 404".into()), ARCHIVE).is_err());
+        assert!(hash(CHECKSUMS, Ok(String::new()), ARCHIVE).is_err());
+        assert!(hash(CHECKSUMS, Ok(OLD_TAG_SIG.into()), ARCHIVE).is_err());
+        assert!(hash(CHECKSUMS, Ok(OTHER_KEY_SIG.into()), ARCHIVE).is_err());
+        // Signature for other bytes: tampered checksums never yield a hash.
+        let tampered = CHECKSUMS.replacen("aaaa", "cccc", 1);
+        let e = hash(&tampered, ok(), ARCHIVE).unwrap_err();
+        assert!(e.contains("data mismatch"), "{e}");
+        let e = hash(CHECKSUMS, ok(), "uteke-missing.tar.gz").unwrap_err();
+        assert!(e.contains("not found in checksums file"), "{e}");
+    }
+
+    #[test]
+    fn only_stable_tags_are_installable() {
+        assert_eq!(ensure_stable_tag("v0.22.0").unwrap(), "v0.22.0");
+        assert_eq!(ensure_stable_tag("0.22.0").unwrap(), "v0.22.0");
+        for bad in [
+            "v0.23.0-rc.1",
+            "v0.23.0-beta",
+            "v0.23.0-alpha.2",
+            "v0.23.0+build",
+            "v0.23.0-rc.1+build",
+            "0.23.0-rc.1",
+            "vv0.23.0",
+            "v1.2",
+            "1.2",
+            "v1.2.3.4",
+            "v1..3",
+            "v1.2.",
+            "v.1.2",
+            "v1.2.x",
+            "v-1.2.3",
+            "",
+            "v",
+        ] {
+            let e = ensure_stable_tag(bad).unwrap_err();
+            assert_eq!(
+                e,
+                format!("Refusing to install a non-stable release: {bad}")
+            );
+        }
+    }
+
+    #[test]
+    fn stable_current_refuses_prerelease_latest_and_prerelease_current_upgrades() {
+        use std::cmp::Ordering::*;
+        // 0.22.0 vs latest 0.22.0-rc.1 is a downgrade (and rc.1 is not stable anyway).
+        assert_eq!(compare_versions("0.22.0", "v0.22.0-rc.1"), Ok(Greater));
+        assert!(ensure_stable_tag("v0.22.0-rc.1").is_err());
+        // A dev/pre-release build upgrades to a newer stable.
+        assert_eq!(compare_versions("0.22.0-dev", "v0.22.0"), Ok(Less));
+        assert_eq!(compare_versions("0.22.0-dev", "v0.23.0"), Ok(Less));
+        assert!(ensure_stable_tag("v0.23.0").is_ok());
     }
 
     #[test]
