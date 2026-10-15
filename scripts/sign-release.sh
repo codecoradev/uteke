@@ -4,6 +4,8 @@
 #
 #   scripts/sign-release.sh [--dry-run] [--force] vX.Y.Z
 #
+# Requires gh, minisign and cosign (the cosign bundle is verified before signing).
+#
 # Environment:
 #   UTEKE_MINISIGN_KEY  secret key path (default: $HOME/.minisign/uteke-release.key)
 #
@@ -30,11 +32,11 @@ for arg in "$@"; do
 done
 [ -n "$TAG" ] || usage
 if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]; then
-  echo "error: '$TAG' does not look like a release tag (vX.Y.Z)" >&2
+  echo "error: '$TAG' is not a release tag: it must start with 'v' and look like vX.Y.Z (e.g. v0.22.0)" >&2
   exit 2
 fi
 
-for tool in gh minisign; do
+for tool in gh minisign cosign; do
   command -v "$tool" >/dev/null 2>&1 || { echo "error: '$tool' is required" >&2; exit 1; }
 done
 
@@ -43,11 +45,13 @@ KEY="${UTEKE_MINISIGN_KEY:-$HOME/.minisign/uteke-release.key}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PUB="$SCRIPT_DIR/uteke-release.pub"
 SIG_NAME="checksums-sha256.txt.minisig"
+BUNDLE_NAME="checksums-sha256.txt.bundle"
 
 [ -f "$KEY" ] || { echo "error: secret key not found: $KEY (set UTEKE_MINISIGN_KEY)" >&2; exit 1; }
 [ -f "$PUB" ] || { echo "error: public key not found: $PUB" >&2; exit 1; }
 
-if gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name' | grep -qx "$SIG_NAME"; then
+ASSETS="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+if grep -qx "$SIG_NAME" <<<"$ASSETS"; then
   if [ "$FORCE" -ne 1 ]; then
     echo "error: $TAG already has $SIG_NAME; use --force to replace it" >&2
     exit 1
@@ -60,6 +64,35 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo "==> Downloading checksums-sha256.txt for $TAG"
 gh release download "$TAG" --repo "$REPO" --pattern checksums-sha256.txt --dir "$WORK"
+
+# Never sign blind: prove the file is what the Release workflow produced.
+echo "==> Verifying the cosign bundle (the file must come from the Release workflow)"
+if ! grep -qx "$BUNDLE_NAME" <<<"$ASSETS"; then
+  echo "error: $TAG has no $BUNDLE_NAME; refusing to sign a file that cannot be traced to the Release workflow" >&2
+  exit 1
+fi
+gh release download "$TAG" --repo "$REPO" --pattern "$BUNDLE_NAME" --dir "$WORK"
+IDENTITY="https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG"
+if ! cosign verify-blob \
+  --bundle "$WORK/$BUNDLE_NAME" \
+  --certificate-identity "$IDENTITY" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  "$WORK/checksums-sha256.txt"; then
+  echo "error: cosign verification failed. Signing is refused: the minisign signature must only cover a checksums file proven (via the cosign bundle) to be what the Release workflow produced." >&2
+  exit 1
+fi
+
+echo
+echo "---- checksums-sha256.txt ----"
+cat "$WORK/checksums-sha256.txt"
+echo "------------------------------"
+echo "Verified cosign identity: $IDENTITY"
+printf 'Sign exactly this file as "uteke %s"? [y/N] ' "$TAG"
+read -r answer
+case "$answer" in
+  y | Y | yes | YES) ;;
+  *) echo "aborted"; exit 1 ;;
+esac
 
 echo "==> Signing (minisign will ask for the key password)"
 minisign -S -s "$KEY" -m "$WORK/checksums-sha256.txt" -t "uteke $TAG" -x "$WORK/$SIG_NAME"
