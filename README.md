@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/assets/uteke-icon.png" alt="Uteke owl logo" width="96" />
+</p>
+
+<p align="center">
   <img src="docs/assets/uteke-banner.png" alt="Uteke: One memory. Every agent. Local-first." width="640" />
 </p>
 
