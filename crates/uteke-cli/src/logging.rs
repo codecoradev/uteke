@@ -1,6 +1,6 @@
 //! Logging setup: console + daily rotating file.
 //!
-//! Console shows WARN by default (DEBUG with --verbose).
+//! Console (stderr) shows WARN by default (DEBUG with --verbose).
 //! File always captures DEBUG to `{uteke_home}/uteke.log` with daily rotation.
 
 use tracing::Level;
@@ -24,7 +24,10 @@ pub fn init(verbose: bool) -> Box<dyn std::any::Any + Send> {
         .with_filter(EnvFilter::from_default_env().add_directive(Level::DEBUG.into()));
 
     let console_level = if verbose { Level::DEBUG } else { Level::WARN };
+    // stderr, never stdout: stdout carries the command's own output (including
+    // `--json`), and a log line in front of it makes it unparseable (#1461).
     let console_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
         .with_filter(EnvFilter::from_default_env().add_directive(console_level.into()));
 
     tracing_subscriber::registry()

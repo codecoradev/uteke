@@ -61,7 +61,7 @@ pub struct Endpoint {
 }
 
 /// Complete API route registry.
-/// This must be kept in sync with `handlers.rs`.
+/// This must be kept in sync with the dispatch match in `handlers/mod.rs`.
 pub const ENDPOINTS: &[Endpoint] = &[
     // ── Health & Info ────────────────────────────────────────────────────
     Endpoint {

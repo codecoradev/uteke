@@ -133,10 +133,16 @@ uteke upgrade --yes    # Skip confirmation
 
 `upgrade` keeps every installed artifact in sync with the release bundle: the
 CLI, `uteke-serve`, `uteke-mcp`, and the bundled ONNX Runtime shared libraries
-are all replaced from the same checksum-verified archive (binaries are
+are all replaced from the same signature- and checksum-verified archive (binaries are
 run-verified and swapped atomically). The version comparison normalizes the
 release tag's `v` prefix, so an up-to-date install reports
 "Already up to date" instead of re-offering the same release.
+
+`upgrade` installs only stable releases (`vX.Y.Z`, never a pre-release), verifies
+the release's minisign signature and refuses to downgrade;
+this check exists only in `uteke upgrade`. The install script, `install.ps1` and
+Homebrew do not verify it (Homebrew relies on the formula SHA256s); verify
+manually as described in [SECURITY.md](../SECURITY.md#verifying-a-release).
 
 ## What Gets Installed
 
