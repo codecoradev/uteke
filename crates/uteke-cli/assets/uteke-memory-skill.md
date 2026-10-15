@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.21.1** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "forbid"` workspace-wide.
+Version: **0.21.1** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
 
 > This skill ships with each release — its version tracks the CLI version
 > (a CI gate fails when they drift, see `skill-version-parity` test).
@@ -211,7 +211,7 @@ Version: **0.21.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 - **Embedding:** ONNX EmbeddingGemma Q4 (768d), auto-downloaded
 - **Tiered memory:** Hot (<7d, +0.1 boost), Warm (<30d), Cold (>30d)
 - **Schema versioning:** Integer counter, auto-migration on upgrade
-- **`unsafe_code = "forbid"`** at the workspace level
+- **`unsafe_code = "deny"`** at the workspace level, inherited by every crate (test modules that mutate the environment allow it)
 - **Project-scoped stores:** `uteke --store .uteke remember "..."`
 
 ## Usage Patterns

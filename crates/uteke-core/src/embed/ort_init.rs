@@ -365,6 +365,7 @@ pub fn init_ort_environment() -> Result<OrtLibInfo, String> {
     Ok(info)
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     use super::*;

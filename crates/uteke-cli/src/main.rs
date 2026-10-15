@@ -306,6 +306,7 @@ pub(crate) fn resolve_namespace(cli: &Cli, config: &Config) -> String {
     "default".to_string()
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod resolve_store_tests {
     use super::*;

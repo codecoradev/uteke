@@ -38,3 +38,6 @@ uuid = "1"
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
+
+[lints]
+workspace = true

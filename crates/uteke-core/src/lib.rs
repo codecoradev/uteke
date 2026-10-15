@@ -2769,6 +2769,7 @@ fn restrict_dir_permissions(dir: &Path) {
     let _ = dir;
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     /// #1166: `open()` must not request a backend the build cannot
@@ -4476,6 +4477,7 @@ mod documents_fts_heal_tests {
     }
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod fallback_settings_tests {
     //! #1355 step A — one env-override implementation for `[embed_fallback]`.

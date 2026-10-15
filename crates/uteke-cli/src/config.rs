@@ -1058,6 +1058,7 @@ fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     use super::*;
