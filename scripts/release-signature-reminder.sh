@@ -64,9 +64,9 @@ TRUST='def trusted: (.author // {}) as $a | ($a.login // "") as $l
 
 # List open issues WITHOUT --search: the search index lags, so a just-created
 # reminder could be invisible to the next run and get duplicated. The listing is
-# limited to the 100 most recent open issues (a reminder older than that on a
-# huge tracker would be missed; acceptable). Exact-title and author filtering
-# happen in jq.
+# limited to the 100 most recent open issues; a reminder older than that would
+# not be seen and a second one would be created, which this tracker is far too
+# small to reach. Exact-title and author filtering happen in jq.
 list_reminders() {
   gh issue list --repo "$REPO" --state open --limit 100 \
     --json number,title,createdAt,comments,author \
