@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Detect whether the latest stable release carries a
-# checksums-sha256.txt.minisig and print "<tag> is signed" or "<tag> is unsigned".
-# Part 1 of the release-signature reminder: detection only. Opening, re-pinging
-# and closing the "Sign release <tag> (minisign)" issue arrive in the next parts,
-# so SIGNER, HOURS, NOW and mutate() below are not used yet. Signing itself
-# stays offline (scripts/sign-release.sh); this script holds no key and reads no
-# secret beyond the GitHub token gh already uses.
+# Open (and re-ping) a "Sign release <tag> (minisign)" issue while the latest
+# stable release has no checksums-sha256.txt.minisig, and close it once the
+# signature is on the release. Signing itself stays offline
+# (scripts/sign-release.sh); this script only watches and nags, holds no key
+# and reads no secret beyond the GitHub token gh already uses.
 #
 #   scripts/release-signature-reminder.sh [--dry-run]
 #
