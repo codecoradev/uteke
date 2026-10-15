@@ -12,7 +12,7 @@
 
 ### Changed
 
-- Internal: `release-signature-reminder` workflow and script open and re-ping a `Sign release vX.Y.Z (minisign)` issue until the offline minisign signature is on the release (#1327).
+- Internal: `release-signature-reminder` workflow and script open and re-ping a `Sign release vX.Y.Z (minisign)` issue until the offline minisign signature is on the release, and close reminders for superseded releases automatically (#1327).
 
 ## [0.21.0] - 2026-10-13
 

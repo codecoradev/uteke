@@ -48,6 +48,49 @@ if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
   exit 0
 fi
 
+# All open reminder issues (exact-title filtering happens in jq).
+ISSUES="$(gh issue list --repo "$REPO" --state open --limit 100 \
+  --search "Sign release in:title" --json number,title,createdAt,comments,author)"
+# Trust boundary: only issues authored by the Actions bot or the signer count.
+# Anything else (a look-alike planted by anyone who can open issues) is ignored
+# entirely, so it is never commented on or closed and never blocks creation.
+# gh shows the bot as app/github-actions; accept the other spellings too.
+ISSUES="$(printf '%s' "$ISSUES" | jq -c --arg s "$SIGNER" \
+  '[.[] | select(.author.login as $a
+     | ["app/github-actions","github-actions[bot]","github-actions",$s] | index($a) != null)]')"
+
+# Stale pass: reminders for releases that are no longer the latest. At most 20
+# per run; only titles matching the pattern exactly are ever touched.
+STALE="$(printf '%s' "$ISSUES" | jq -r --arg latest "$TAG" \
+  '[.[] | select(.title | test("^Sign release v[0-9]+\\.[0-9]+\\.[0-9]+ \\(minisign\\)$"))
+        | {number, tag: (.title | capture("^Sign release (?<t>[^ ]+) \\(minisign\\)$").t)}
+        | select(.tag != $latest)] | sort_by(.number) | .[0:20][]
+   | "\(.number) \(.tag)"')"
+if [ -n "$STALE" ]; then
+  while read -r SNUM STAG; do
+    printf '%s' "$STAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || continue
+    ERR="$(mktemp)"
+    if OLD="$(gh api "repos/$REPO/releases/tags/$STAG" 2>"$ERR")"; then
+      if printf '%s' "$OLD" | jq -e '[.assets[]?.name] | index("checksums-sha256.txt.minisig") != null' >/dev/null; then
+        MSG="Signature found on the release, closing."
+      else
+        MSG="Superseded: $TAG is now the latest release, and \`uteke upgrade\` only installs the latest release, so this release no longer needs signing. Closing."
+      fi
+    elif grep -q '404' "$ERR"; then
+      MSG="Superseded: $TAG is now the latest release, and \`uteke upgrade\` only installs the latest release, so this release no longer needs signing. Closing."
+    else
+      echo "Could not look up $STAG for reminder #$SNUM; leaving it open."
+      rm -f "$ERR"; continue
+    fi
+    rm -f "$ERR"
+    echo "Reminder #$SNUM is for $STAG, not the latest ($TAG); closing."
+    mutate issue comment "$SNUM" --repo "$REPO" --body "$MSG"
+    mutate issue close "$SNUM" --repo "$REPO"
+  done <<STALE_EOF
+$STALE
+STALE_EOF
+fi
+
 has_asset() {
   printf '%s' "$REL" | jq -e --arg n "$1" '[.assets[]?.name] | index($n) != null' >/dev/null
 }
@@ -59,8 +102,6 @@ SIGNED=0
 if has_asset "checksums-sha256.txt.minisig"; then SIGNED=1; fi
 
 TITLE="Sign release $TAG (minisign)"
-ISSUES="$(gh issue list --repo "$REPO" --state open --limit 100 \
-  --search "\"$TITLE\" in:title" --json number,title,createdAt,comments)"
 # Exact title match in jq, lowest number first; empty when none.
 EXISTING="$(printf '%s' "$ISSUES" | jq -c --arg t "$TITLE" \
   '[.[] | select(.title == $t)] | sort_by(.number) | .[0] // empty')"
