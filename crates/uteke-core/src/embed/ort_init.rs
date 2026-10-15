@@ -5,6 +5,7 @@
 //!
 //! Resolution order:
 //! 1. `ORT_LIB_PATH` env var — explicit override (for testing / custom setups).
+//!    Names the library file; a directory holding the library is accepted too.
 //! 2. If AVX2 is detected → `<exe_dir>/libonnxruntime.so` (AVX2 build, ships in standard bundle).
 //!    If not found, falls through to step 4 (does NOT error immediately).
 //! 3. If AVX2 is NOT detected → `<exe_dir>/ort-legacy/libonnxruntime.so` (SSE4.2 build, sidecar).
@@ -61,6 +62,38 @@ pub fn has_avx2() -> bool {
     }
 }
 
+/// Resolve an explicit `ORT_LIB_PATH` value to the library file to load.
+///
+/// The value should name the library file. A directory is accepted too, as long
+/// as the platform library name is inside it: the Homebrew shims exported the
+/// `libexec` directory from v0.19.0 on, and `dlopen` fails on a directory, so
+/// every such install silently ran without embeddings (#1459).
+fn resolve_explicit_ort_path(path: &std::path::Path) -> Result<PathBuf, String> {
+    if path.is_dir() {
+        let inside = path.join(ORT_LIB_NAME);
+        if inside.exists() {
+            tracing::warn!(
+                "ORT_LIB_PATH '{}' is a directory; using {}. Set it to the library file.",
+                path.display(),
+                inside.display()
+            );
+            return Ok(inside);
+        }
+        return Err(format!(
+            "ORT_LIB_PATH '{}' is a directory with no {ORT_LIB_NAME} inside; \
+             set it to the library file",
+            path.display()
+        ));
+    }
+    if path.exists() {
+        return Ok(path.to_path_buf());
+    }
+    Err(format!(
+        "ORT_LIB_PATH set to '{}' but file does not exist",
+        path.display()
+    ))
+}
+
 /// Resolve the path to the ONNX Runtime shared library.
 ///
 /// Search order:
@@ -77,21 +110,15 @@ pub fn has_avx2() -> bool {
 pub fn resolve_ort_lib() -> Result<OrtLibInfo, String> {
     // 1. Explicit env var override
     if let Ok(env_path) = std::env::var("ORT_LIB_PATH") {
-        let path = PathBuf::from(&env_path);
-        if path.exists() {
-            tracing::info!(
-                "ORT: using explicit library path from ORT_LIB_PATH: {}",
-                path.display()
-            );
-            return Ok(OrtLibInfo {
-                lib_path: path,
-                has_avx2: has_avx2(),
-            });
-        }
-        return Err(format!(
-            "ORT_LIB_PATH set to '{}' but file does not exist",
-            env_path
-        ));
+        let lib_path = resolve_explicit_ort_path(&PathBuf::from(env_path))?;
+        tracing::info!(
+            "ORT: using explicit library path from ORT_LIB_PATH: {}",
+            lib_path.display()
+        );
+        return Ok(OrtLibInfo {
+            lib_path,
+            has_avx2: has_avx2(),
+        });
     }
 
     let exe_dir = exe_dir()?;
@@ -384,6 +411,64 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    /// Unique empty temp dir for one test (the file name keeps parallel tests apart).
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("uteke_ort_explicit_{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn explicit_path_to_a_file_is_used_as_is() {
+        let dir = scratch_dir("file");
+        let lib = dir.join("custom-name.bin");
+        std::fs::write(&lib, b"fake").unwrap();
+
+        assert_eq!(resolve_explicit_ort_path(&lib).unwrap(), lib);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The Homebrew shims exported ORT_LIB_PATH=<libexec> (a directory) from
+    /// v0.19.0 on; dlopen fails on a directory, so every install silently ran
+    /// without embeddings (#1459).
+    #[test]
+    fn explicit_path_to_a_directory_finds_the_library_inside() {
+        let dir = scratch_dir("dir_with_lib");
+        let lib = dir.join(ORT_LIB_NAME);
+        std::fs::write(&lib, b"fake").unwrap();
+
+        assert_eq!(resolve_explicit_ort_path(&dir).unwrap(), lib);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn explicit_path_to_a_directory_without_the_library_is_an_error() {
+        let dir = scratch_dir("dir_without_lib");
+
+        let err = resolve_explicit_ort_path(&dir).unwrap_err();
+        assert_eq!(
+            err,
+            format!(
+                "ORT_LIB_PATH '{}' is a directory with no {ORT_LIB_NAME} inside; \
+                 set it to the library file",
+                dir.display()
+            )
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn explicit_path_that_does_not_exist_is_an_error() {
+        let missing = PathBuf::from("/nonexistent/path/libonnxruntime.so");
+
+        let err = resolve_explicit_ort_path(&missing).unwrap_err();
+        assert_eq!(
+            err,
+            "ORT_LIB_PATH set to '/nonexistent/path/libonnxruntime.so' but file does not exist"
+        );
     }
 
     #[test]
