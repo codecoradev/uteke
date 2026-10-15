@@ -95,6 +95,12 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    (stub gh/cosign, throwaway key; not wired into CI). Verify the
    `.minisig` is on the release before announcing. Until it is uploaded,
    `uteke upgrade` fails closed for that release (#1327).
+   Reminder: `.github/workflows/release-signature-reminder.yml` runs after the
+   Release workflow and every 6 hours; while the latest release has a bundle but no
+   `.minisig` it opens the issue `Sign release vX.Y.Z (minisign)` (assigned to the
+   owner), re-pings it every 12 h and closes it itself once the `.minisig` is
+   uploaded. It signs nothing and holds no key. Test its script with
+   `bash scripts/tests/release-signature-reminder.test.sh` (stub gh, not wired into CI).
 7. **After the tag.** Merge the homebrew-tap PR the workflow opened (its title/body
    follow the tap's rules since #1384, and the job already re-verified every SHA256
    against `checksums-sha256.txt`; Cora there was fixed in homebrew-tap#6), then
