@@ -68,10 +68,20 @@ pub fn run(yes: bool) -> Result<(), String> {
     // 5. Check if already up to date. The release tag carries a leading `v`
     // that CARGO_PKG_VERSION does not — compare normalized, or an up-to-date
     // install is re-offered the same release (#1245).
-    let latest_clean = latest_version.trim_start_matches('v');
-    if latest_clean == current_version {
-        println!("[INFO] Already up to date ({current_version})");
-        return Ok(());
+    match compare_versions(current_version, &latest_version)? {
+        std::cmp::Ordering::Equal => {
+            println!("[INFO] Already up to date ({current_version})");
+            return Ok(());
+        }
+        std::cmp::Ordering::Greater => {
+            return Err(format!(
+                "Refusing to downgrade from {current_version} to {}. The release \
+                 pointed to by \"latest\" is older than this install; if that is \
+                 intended, reinstall the older version by hand.",
+                latest_version.trim_start_matches('v')
+            ));
+        }
+        std::cmp::Ordering::Less => {}
     }
 
     println!("[INFO] Latest version:  {latest_version}");
@@ -129,31 +139,12 @@ pub fn run(yes: bool) -> Result<(), String> {
         .timeout(std::time::Duration::from_secs(300))
         .build()
         .map_err(|e| format!("HTTP client build failed: {e}"))?;
-    let mut resp = client
-        .get(&download_url)
-        .send()
-        .map_err(|e| format!("Download failed: {e}"))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!("Download failed (HTTP {status}): {body}"));
-    }
-
-    // Cheap early reject from the header, then enforce the cap while
-    // streaming: Content-Length may be absent (chunked) or simply wrong.
-    check_declared_len(resp.content_length(), MAX_ARCHIVE_BYTES, "Release archive")?;
-    let mut file = fs::File::create(&archive_path)
-        .map_err(|e| format!("Failed to create archive file: {e}"))?;
-    copy_capped(&mut resp, &mut file, MAX_ARCHIVE_BYTES, "Release archive")?;
-    drop(file);
-
-    // 8. Verify checksum — fail-hard to prevent MITM on unchecked binaries.
-    // Use --no-verify (via env UTEKE_UPGRADE_SKIP_CHECKSUM=1) to opt out.
+    // 8. Authenticate the checksums BEFORE the (up to 128 MiB) archive download:
+    // fetch checksums + minisign signature, verify, and only then trust a hash.
+    // Use UTEKE_UPGRADE_SKIP_CHECKSUM=1 to opt out of both checks.
     let checksums_url = format!(
         "https://github.com/{REPO}/releases/download/{latest_version}/checksums-sha256.txt"
     );
-
     let signature_url = format!("{checksums_url}.minisig");
 
     println!("[INFO] Verifying checksum ...");
@@ -162,7 +153,7 @@ pub fn run(yes: bool) -> Result<(), String> {
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
 
-    if skip_checksum {
+    let expected_hash: Option<String> = if skip_checksum {
         eprintln!("[WARN] ============================================================");
         eprintln!("[WARN] UTEKE_UPGRADE_SKIP_CHECKSUM is set: the downloaded archive is");
         eprintln!("[WARN] NOT verified, and neither is the minisign signature of the");
@@ -170,6 +161,7 @@ pub fn run(yes: bool) -> Result<(), String> {
         eprintln!("[WARN] be installed and executed as-is. Unset it unless you fully");
         eprintln!("[WARN] trust the network path and the release source.");
         eprintln!("[WARN] ============================================================");
+        None
     } else {
         let checksums_resp = client.get(&checksums_url).send().map_err(|e| {
             format!("Failed to download checksums: {e}. Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to skip.")
@@ -198,13 +190,11 @@ pub fn run(yes: bool) -> Result<(), String> {
             "Checksums file",
         )?;
 
-        // Verify the signature over the RAW bytes before trusting any hash in
-        // the file. Missing/invalid signature is a hard failure (#1327).
         println!("[INFO] Verifying checksums signature (minisign) ...");
-        let signature_text = fetch_signature(&client, &signature_url, &latest_version)?;
-        verify_checksums_signature(
+        let signature = fetch_signature(&client, &signature_url, &latest_version);
+        authenticate_checksums(
             &checksums_buf,
-            &signature_text,
+            signature,
             &latest_version,
             RELEASE_PUBLIC_KEYS,
         )?;
@@ -213,14 +203,37 @@ pub fn run(yes: bool) -> Result<(), String> {
         let checksums_text = String::from_utf8(checksums_buf)
             .map_err(|e| format!("Checksums file is not valid UTF-8: {e}"))?;
 
-        let expected = parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
-            format!(
-                "Checksum for '{archive_name}' not found in checksums file. \
+        Some(
+            parse_checksum(&checksums_text, &archive_name).ok_or_else(|| {
+                format!(
+                    "Checksum for '{archive_name}' not found in checksums file. \
                  Refusing to install unverified binary. \
                  Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
-            )
-        })?;
+                )
+            })?,
+        )
+    };
 
+    let mut resp = client
+        .get(&download_url)
+        .send()
+        .map_err(|e| format!("Download failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().unwrap_or_default();
+        return Err(format!("Download failed (HTTP {status}): {body}"));
+    }
+
+    // Cheap early reject from the header, then enforce the cap while
+    // streaming: Content-Length may be absent (chunked) or simply wrong.
+    check_declared_len(resp.content_length(), MAX_ARCHIVE_BYTES, "Release archive")?;
+    let mut file = fs::File::create(&archive_path)
+        .map_err(|e| format!("Failed to create archive file: {e}"))?;
+    copy_capped(&mut resp, &mut file, MAX_ARCHIVE_BYTES, "Release archive")?;
+    drop(file);
+
+    if let Some(expected) = expected_hash {
         let actual = sha256_file(&archive_path)?;
         if actual != expected {
             return Err(format!(
@@ -681,6 +694,90 @@ fn fetch_signature(
     })
 }
 
+/// Fail-closed glue between the signature fetch and the verifier: a fetch
+/// error (404, network, oversize) is an error, never a skipped check.
+fn authenticate_checksums(
+    checksums: &[u8],
+    signature: Result<String, String>,
+    tag: &str,
+    trusted_keys: &[&str],
+) -> Result<(), String> {
+    let signature_text = signature?;
+    verify_checksums_signature(checksums, &signature_text, tag, trusted_keys)
+}
+
+/// Parsed `major.minor.patch[-pre][+build]`.
+fn parse_version(v: &str) -> Option<(u64, u64, u64, Option<Vec<String>>)> {
+    let v = v.trim().trim_start_matches('v');
+    let v = v.split('+').next()?;
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
+    let mut it = core.split('.');
+    let mut num = || -> Option<u64> {
+        let part = it.next()?;
+        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        part.parse().ok()
+    };
+    let (ma, mi, pa) = (num()?, num()?, num()?);
+    if it.next().is_some() {
+        return None;
+    }
+    let pre = match pre {
+        None => None,
+        Some(p) => {
+            let ids: Vec<String> = p.split('.').map(str::to_string).collect();
+            if ids.iter().any(|i| i.is_empty()) {
+                return None;
+            }
+            Some(ids)
+        }
+    };
+    Some((ma, mi, pa, pre))
+}
+
+/// Semver ordering of `latest` relative to `current` (`Less` means latest is
+/// newer, i.e. an upgrade). Unparseable versions are an error.
+fn compare_versions(current: &str, latest: &str) -> Result<std::cmp::Ordering, String> {
+    use std::cmp::Ordering;
+    let c =
+        parse_version(current).ok_or_else(|| format!("Unparseable current version '{current}'"))?;
+    let l =
+        parse_version(latest).ok_or_else(|| format!("Unparseable release version '{latest}'"))?;
+    let core = (c.0, c.1, c.2).cmp(&(l.0, l.1, l.2));
+    if core != Ordering::Equal {
+        return Ok(core);
+    }
+    Ok(match (&c.3, &l.3) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => {
+            let mut ord = Ordering::Equal;
+            for (x, y) in a.iter().zip(b.iter()) {
+                let o = match (x.parse::<u64>(), y.parse::<u64>()) {
+                    (Ok(x), Ok(y)) => x.cmp(&y),
+                    (Ok(_), Err(_)) => Ordering::Less,
+                    (Err(_), Ok(_)) => Ordering::Greater,
+                    (Err(_), Err(_)) => x.cmp(y),
+                };
+                if o != Ordering::Equal {
+                    ord = o;
+                    break;
+                }
+            }
+            if ord == Ordering::Equal {
+                a.len().cmp(&b.len())
+            } else {
+                ord
+            }
+        }
+    })
+}
+
 /// Verify that `signature_text` (a minisign `.minisig`) is a valid signature
 /// of `checksums` by one of `trusted_keys`, and that its trusted comment is
 /// exactly `uteke {tag}`. The comment is covered by the signature, so binding
@@ -1028,6 +1125,9 @@ mod signature_tests {
     const OK_SIG: &str = include_str!("../../tests/fixtures/minisign/ok.minisig");
     const OLD_TAG_SIG: &str = include_str!("../../tests/fixtures/minisign/oldtag.minisig");
     const OTHER_KEY_SIG: &str = include_str!("../../tests/fixtures/minisign/otherkey.minisig");
+    const LEGACY_SIG: &str = include_str!("../../tests/fixtures/minisign/legacy.minisig");
+    const TRAILING_SIG: &str = include_str!("../../tests/fixtures/minisign/trailing.minisig");
+    const DOUBLE_SIG: &str = include_str!("../../tests/fixtures/minisign/double.minisig");
     // Throwaway test key (its secret half was deleted after signing).
     const TEST_KEY: &str = include_str!("../../tests/fixtures/minisign/test-key.b64");
 
@@ -1098,6 +1198,65 @@ mod signature_tests {
         let cut = &OK_SIG[..OK_SIG.len() / 2];
         let e = check(CHECKSUMS, cut, "v9.9.9").unwrap_err();
         assert!(e.contains("not a valid minisign signature"), "{e}");
+    }
+
+    #[test]
+    fn legacy_signature_is_rejected() {
+        let e = check(CHECKSUMS, LEGACY_SIG, "v9.9.9").unwrap_err();
+        assert!(e.contains("legacy"), "{e}");
+        assert!(e.contains("SECURITY.md"), "{e}");
+    }
+
+    #[test]
+    fn trusted_comment_must_match_exactly() {
+        for sig in [TRAILING_SIG, DOUBLE_SIG] {
+            let e = check(CHECKSUMS, sig, "v9.9.9").unwrap_err();
+            assert!(e.contains("trusted comment mismatch"), "{e}");
+        }
+    }
+
+    #[test]
+    fn authenticate_fails_closed_on_fetch_errors() {
+        let k = keys();
+        let e = authenticate_checksums(
+            CHECKSUMS.as_bytes(),
+            Err("No checksums signature for v9.9.9 (HTTP 404 Not Found)".into()),
+            "v9.9.9",
+            &k,
+        )
+        .unwrap_err();
+        assert!(e.contains("404"), "{e}");
+        assert_eq!(
+            authenticate_checksums(CHECKSUMS.as_bytes(), Ok(OK_SIG.into()), "v9.9.9", &k),
+            Ok(())
+        );
+        assert!(
+            authenticate_checksums(CHECKSUMS.as_bytes(), Ok(String::new()), "v9.9.9", &k).is_err()
+        );
+    }
+
+    #[test]
+    fn version_comparison() {
+        use std::cmp::Ordering::*;
+        let c = |a, b| compare_versions(a, b).unwrap();
+        assert_eq!(c("0.21.0", "v0.21.0"), Equal);
+        assert_eq!(c("0.21.0", "v0.21.1"), Less);
+        assert_eq!(c("0.21.1", "v0.21.0"), Greater);
+        assert_eq!(c("0.21.0", "v0.22.0"), Less);
+        assert_eq!(c("0.22.0", "v0.21.9"), Greater);
+        assert_eq!(c("0.21.0", "v1.0.0"), Less);
+        assert_eq!(c("1.0.0", "v0.99.99"), Greater);
+        assert_eq!(c("0.9.0", "v0.10.0"), Less);
+        assert_eq!(c("0.10.0", "v0.9.0"), Greater);
+        assert_eq!(c("0.22.0-rc.1", "v0.22.0"), Less);
+        assert_eq!(c("0.22.0", "v0.22.0-rc.1"), Greater);
+        assert_eq!(c("0.22.0-rc.1", "v0.22.0-rc.2"), Less);
+        assert_eq!(c("0.22.0-rc.2", "v0.22.0-rc.10"), Less);
+        assert_eq!(c("0.22.0-alpha", "v0.22.0-alpha.1"), Less);
+        assert_eq!(c("0.22.0-1", "v0.22.0-alpha"), Less);
+        for bad in ["vfoo", "v1.2", "v1.2.3.4", "v1.2.x", "v1..3", "v1.2.3-", ""] {
+            assert!(compare_versions("0.21.0", bad).is_err(), "{bad}");
+        }
     }
 
     #[test]
