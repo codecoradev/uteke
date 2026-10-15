@@ -62,7 +62,7 @@ uteke upgrade --yes
 |------|-------------|
 | `--yes` | Skip confirmation prompt |
 
-> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies SHA-256 checksums by default. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip verification (not recommended).
+> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies the minisign signature of `checksums-sha256.txt` and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade (see SECURITY.md). Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
 
 ## uteke remember
 

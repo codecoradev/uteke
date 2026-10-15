@@ -133,7 +133,7 @@ uteke upgrade --yes    # Skip confirmation
 
 `upgrade` keeps every installed artifact in sync with the release bundle: the
 CLI, `uteke-serve`, `uteke-mcp`, and the bundled ONNX Runtime shared libraries
-are all replaced from the same checksum-verified archive (binaries are
+are all replaced from the same signature- and checksum-verified archive (binaries are
 run-verified and swapped atomically). The version comparison normalizes the
 release tag's `v` prefix, so an up-to-date install reports
 "Already up to date" instead of re-offering the same release.

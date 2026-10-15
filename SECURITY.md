@@ -68,6 +68,28 @@ cosign verify-blob \
 sha256sum --check --ignore-missing checksums-sha256.txt
 ```
 
-`uteke upgrade` does not verify this signature yet; it still checks the archive
-against the unsigned `checksums-sha256.txt` of the same release (corruption
-detection only).
+### minisign signature
+
+The release maintainer also signs `checksums-sha256.txt` offline with a
+[minisign](https://jedisct1.github.io/minisign/) key that never leaves their
+machine (CI holds no signing key). The signature is published as
+`checksums-sha256.txt.minisig`; its trusted comment is `uteke <tag>`, binding it
+to one release. The public key is `scripts/uteke-release.pub`, key id
+`96924B76E31B048B`.
+
+```bash
+curl -fsSLO "https://github.com/codecoradev/uteke/releases/download/$VER/checksums-sha256.txt.minisig"
+
+minisign -Vm checksums-sha256.txt \
+  -P RWSLBBvjdkuSlvaQ/yoyoMlpQAOLTt5jACZGTgSOCKb+/1JoqhjOmT8G
+# the output must show: Trusted comment: uteke vX.Y.Z  (your $VER)
+```
+
+Since the release that ships this change, `uteke upgrade` verifies this
+minisign signature over `checksums-sha256.txt` (and that the trusted comment is
+`uteke <tag>` for the release being installed) before trusting any hash in it,
+then checks the archive against that file. A missing or invalid signature is a
+hard failure, never a silent downgrade to checksum-only. Setting
+`UTEKE_UPGRADE_SKIP_CHECKSUM=1` skips both checks (not recommended). Releases
+published before the signature existed cannot be installed with `uteke upgrade`
+from a build that verifies it; use the install script or verify by hand as above.

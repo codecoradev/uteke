@@ -83,7 +83,15 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    the tag at the previous release (v0.15.0). The Release workflow takes ~35 min
    (the legacy-ORT build is the long pole) and publishes GitHub assets, crates.io
    (uteke-core/cli/mcp), Docker tags and opens the Homebrew tap PR.
-6. **After the tag.** Merge the homebrew-tap PR the workflow opened (its title/body
+6. **Sign the checksums (offline).** After the Release workflow is green, run
+   `scripts/sign-release.sh vX.Y.Z` on the owner's machine (`--dry-run` stops before
+   upload). It signs `checksums-sha256.txt` with the minisign key (trusted comment
+   `uteke vX.Y.Z`), verifies it against `scripts/uteke-release.pub` and uploads
+   `checksums-sha256.txt.minisig` after a confirmation. Key custody: password
+   manager plus an offline backup; never in CI or GitHub secrets. Verify the
+   `.minisig` is on the release before announcing. Until it is uploaded,
+   `uteke upgrade` fails closed for that release (#1327).
+7. **After the tag.** Merge the homebrew-tap PR the workflow opened (its title/body
    follow the tap's rules since #1384, and the job already re-verified every SHA256
    against `checksums-sha256.txt`; Cora there was fixed in homebrew-tap#6), then
    `brew update && brew upgrade codecoradev/tap/uteke`. Verify crates.io and the
