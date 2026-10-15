@@ -90,7 +90,9 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    `checksums-sha256.txt` with the minisign key (trusted comment
    `uteke vX.Y.Z`), verifies it against `scripts/uteke-release.pub` and uploads
    `checksums-sha256.txt.minisig` after a confirmation. Key custody: password
-   manager plus an offline backup; never in CI or GitHub secrets. Verify the
+   manager plus an offline backup; never in CI or GitHub secrets. It can only sign releases that carry a cosign
+   bundle (v0.21.0 and later). Test it with `bash scripts/tests/sign-release.test.sh`
+   (stub gh/cosign, throwaway key; not wired into CI). Verify the
    `.minisig` is on the release before announcing. Until it is uploaded,
    `uteke upgrade` fails closed for that release (#1327).
 7. **After the tag.** Merge the homebrew-tap PR the workflow opened (its title/body

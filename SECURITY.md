@@ -90,7 +90,8 @@ minisign signature over `checksums-sha256.txt` before trusting any hash in it,
 then checks the archive against that file. The signature is bound to the tag
 (the trusted comment must be `uteke <tag>`), so one release's files cannot be
 served as another's, and `uteke upgrade` refuses to downgrade to an older
-release. A missing or invalid signature is a hard failure, never a silent
+release. It installs only stable, published releases (`vX.Y.Z`): a pre-release
+or build-metadata tag is refused. A missing or invalid signature is a hard failure, never a silent
 downgrade to checksum-only. Setting `UTEKE_UPGRADE_SKIP_CHECKSUM=1` skips both
 checks (not recommended). Releases published before the signature existed
 cannot be installed with `uteke upgrade` from a build that verifies it.
