@@ -1,0 +1,47 @@
+name: Release Signature Reminder
+
+# Opens (and re-pings) a "Sign release vX.Y.Z (minisign)" issue while the latest
+# release has no checksums-sha256.txt.minisig, and closes it once the signature
+# is uploaded. It signs nothing and holds no signing secret: the minisign key
+# stays offline (scripts/sign-release.sh, AGENTS.md "Release procedure" step 6).
+#
+# workflow_run is used because a release created with GITHUB_TOKEN does not
+# trigger `release` events; the schedule re-pings and notices the signature.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: release-signature-reminder
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  remind:
+    name: Remind to sign
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check the latest release for a signature
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_SIGNER: ajianaz
+          REMINDER_AFTER_HOURS: "12"
+        run: bash scripts/release-signature-reminder.sh
