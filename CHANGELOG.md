@@ -2,9 +2,23 @@
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-10-15
+
+Patch release. Theme: **`uteke upgrade` verifies a minisign signature, Homebrew
+installs keep their embeddings, and `--json` output stays clean.** 0.21.1 is the
+first release whose `checksums-sha256.txt` carries a minisign signature. A
+0.21.0 binary only checks the SHA-256 and never verifies the signature, so the
+signature protects `uteke upgrade` from 0.21.1 on.
+
+### ⚠️ Behavior Change
+
+- **`uteke upgrade` is stricter (#1327, #1462)** - it installs only stable releases (`vX.Y.Z`), refuses to downgrade, and fails closed unless the release has a valid minisign signature for `checksums-sha256.txt`. A release without a `.minisig` cannot be installed by `uteke upgrade` until the maintainer signs it.
+- **CLI log lines go to stderr (#1461, #1471)** - scripts that read log lines from stdout must read stderr instead; `--json` output is now parseable even when a warning is logged.
+
 ### Security
 
 - **`uteke upgrade` verifies a minisign signature over `checksums-sha256.txt` (#1327)** - the release maintainer signs the checksums offline (`scripts/sign-release.sh`) and uploads `checksums-sha256.txt.minisig`; the embedded public key (`scripts/uteke-release.pub`) and the trusted comment `uteke <tag>` are checked before any hash in the file is trusted, so a tampered file is rejected, one release's files cannot be served as another's (the signature is bound to the tag), and `uteke upgrade` now refuses to downgrade to an older release. It also installs only stable releases (`vX.Y.Z`), never a pre-release or build-metadata tag. The signature is checked by `uteke upgrade` only: `install.sh`, `install.ps1` and Homebrew do not verify it (verify manually per SECURITY.md). A missing or invalid signature is a hard failure; `UTEKE_UPGRADE_SKIP_CHECKSUM=1` skips it too. Manual steps are in SECURITY.md.
+- **rustls 0.23.46 (#1455)** - fixes RUSTSEC-2026-0346 to RUSTSEC-2026-0349 in the TLS stack used by the HTTP client.
 
 ### Fixed
 
@@ -13,6 +27,7 @@
 
 ### Changed
 
+- Internal: the server dispatch is split into one named handler per route group (#1344, #1458); dependabot batch for `toml`, `usearch`, `uuid` and `serde_json` (#1457).
 - Internal: `release-signature-reminder` workflow and script open and re-ping a `Sign release vX.Y.Z (minisign)` issue until the offline minisign signature is on the release, and close reminders for superseded releases automatically (#1327).
 
 ## [0.21.0] - 2026-10-13
