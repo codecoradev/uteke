@@ -9,6 +9,7 @@
 ### Fixed
 
 - **`ORT_LIB_PATH` pointing at a directory no longer leaves uteke without embeddings (#1459)** - the Homebrew shims exported the `libexec` directory (v0.19.0 onwards), `dlopen` failed on it, and every such install silently stored memories FTS5-only (`embedding_written: false`, `uteke verify` MISMATCH). A directory that holds the platform library (`libonnxruntime.so`, `libonnxruntime.dylib` or `onnxruntime.dll`) is now accepted with a warning; a directory without it is a clear error that says to set the library file. The tap fix is codecoradev/homebrew-tap#10 (`brew update && brew reinstall codecoradev/tap/uteke`). Docker and the release tarballs were not affected.
+- **CLI log lines no longer corrupt `--json` output (#1461)** - the console log layer wrote to stdout, so any WARN or ERROR (for example a failed embedding) was printed in front of the command's JSON and `json.loads(stdout)` failed. Console logs now go to stderr; the log file and the command output are unchanged.
 
 ## [0.21.0] - 2026-10-13
 
