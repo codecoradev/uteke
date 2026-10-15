@@ -193,8 +193,8 @@ fn handle_request(
 
         "notifications/initialized" => Ok(Value::Null),
 
-        "tools/list" => Ok(serde_json::json!({
-            "tools": [
+        "tools/list" => {
+            let mut tools = vec![
                 tool_remember(),
                 tool_recall(),
                 tool_search(),
@@ -244,8 +244,18 @@ fn handle_request(
                 tool_namespace_delete(),
                 tool_pin(),
                 tool_unpin(),
-            ]
-        })),
+            ];
+            // A read-only caller sees only the tools it can call (#1446);
+            // tools/call keeps its own gate below.
+            if access == Access::ReadOnly {
+                tools.retain(|t| {
+                    t["name"]
+                        .as_str()
+                        .is_some_and(|n| READ_ONLY_TOOLS.contains(&n))
+                });
+            }
+            Ok(serde_json::json!({ "tools": tools }))
+        }
 
         "tools/call" => {
             let params = params.ok_or("Missing params for tools/call")?;
@@ -3767,6 +3777,36 @@ mod namespace_deprecation_tests {
             .unwrap(),
         );
         assert!(t.contains(NAMESPACE_DEPRECATION_WARNING), "{t}");
+    }
+
+    #[test]
+    fn read_only_tools_list_is_exactly_the_read_tools() {
+        let u = store();
+        let names = |access| -> std::collections::BTreeSet<String> {
+            handle_request(&u, "tools/list", None, access).unwrap()["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let read_only = names(Access::ReadOnly);
+        // `uteke_room_document` is a dispatch alias that tools/list never advertises.
+        let expected: std::collections::BTreeSet<String> = READ_ONLY_TOOLS
+            .iter()
+            .filter(|n| **n != "uteke_room_document")
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(read_only, expected);
+        let full = names(Access::Full);
+        assert!(read_only.is_subset(&full));
+        assert_eq!(full.len(), 49, "full catalog must not change");
+        for write in ["uteke_remember", "uteke_forget", "uteke_doc_create"] {
+            assert!(
+                full.contains(write) && !read_only.contains(write),
+                "{write}"
+            );
+        }
     }
 
     #[test]

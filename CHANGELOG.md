@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`tools/list` for a read-only token lists only the tools it can call (#1446)** - MCP over HTTP advertised every tool to read-only callers, which then failed at call time. A read-only caller now sees exactly the read tools; full-access callers, the stdio transport and `tools/call` are unchanged. Contract: uteke-cloud#203 (approved by the owner).
+
 ## [0.21.1] - 2026-10-15
 
 Patch release. Theme: **`uteke upgrade` verifies a minisign signature, Homebrew
