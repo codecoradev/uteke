@@ -138,6 +138,11 @@ run-verified and swapped atomically). The version comparison normalizes the
 release tag's `v` prefix, so an up-to-date install reports
 "Already up to date" instead of re-offering the same release.
 
+`upgrade` verifies the release's minisign signature (and refuses to downgrade);
+this check exists only in `uteke upgrade`. The install script, `install.ps1` and
+Homebrew do not verify it (Homebrew relies on the formula SHA256s); verify
+manually as described in [SECURITY.md](../SECURITY.md#verifying-a-release).
+
 ## What Gets Installed
 
 The install script deploys three binaries plus the bundled ONNX Runtime shared library (required for local embeddings, no API keys needed):

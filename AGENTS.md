@@ -85,7 +85,9 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    (uteke-core/cli/mcp), Docker tags and opens the Homebrew tap PR.
 6. **Sign the checksums (offline).** After the Release workflow is green, run
    `scripts/sign-release.sh vX.Y.Z` on the owner's machine (`--dry-run` stops before
-   upload). It signs `checksums-sha256.txt` with the minisign key (trusted comment
+   upload). It first verifies the release's cosign bundle (so `cosign` must be installed on the
+   signing machine), shows the checksums and asks for confirmation, then signs
+   `checksums-sha256.txt` with the minisign key (trusted comment
    `uteke vX.Y.Z`), verifies it against `scripts/uteke-release.pub` and uploads
    `checksums-sha256.txt.minisig` after a confirmation. Key custody: password
    manager plus an offline backup; never in CI or GitHub secrets. Verify the

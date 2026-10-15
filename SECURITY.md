@@ -86,10 +86,15 @@ minisign -Vm checksums-sha256.txt \
 ```
 
 Since the release that ships this change, `uteke upgrade` verifies this
-minisign signature over `checksums-sha256.txt` (and that the trusted comment is
-`uteke <tag>` for the release being installed) before trusting any hash in it,
-then checks the archive against that file. A missing or invalid signature is a
-hard failure, never a silent downgrade to checksum-only. Setting
-`UTEKE_UPGRADE_SKIP_CHECKSUM=1` skips both checks (not recommended). Releases
-published before the signature existed cannot be installed with `uteke upgrade`
-from a build that verifies it; use the install script or verify by hand as above.
+minisign signature over `checksums-sha256.txt` before trusting any hash in it,
+then checks the archive against that file. The signature is bound to the tag
+(the trusted comment must be `uteke <tag>`), so one release's files cannot be
+served as another's, and `uteke upgrade` refuses to downgrade to an older
+release. A missing or invalid signature is a hard failure, never a silent
+downgrade to checksum-only. Setting `UTEKE_UPGRADE_SKIP_CHECKSUM=1` skips both
+checks (not recommended). Releases published before the signature existed
+cannot be installed with `uteke upgrade` from a build that verifies it.
+
+The minisign signature is checked by `uteke upgrade` ONLY. `install.sh`,
+`install.ps1` and Homebrew do not verify it: Homebrew relies on the SHA256s in
+the formula, and for the scripts you should verify manually as described above.
