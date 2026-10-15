@@ -76,7 +76,8 @@ ISSUES="$(list_reminders)"
 # The jq program is kept in a variable (a quoted here-document) so it reads as the
 # jq program it is; it only ever receives the issue list as JSON input.
 STALE_FILTER="$(cat <<'JQ'
-[.[] | select(.title | test("^Sign release v[0-9]+\\.[0-9]+\\.[0-9]+ \\(minisign\\)$"))
+[.[] | select(.title
+              | test("^Sign release v[0-9]+\\.[0-9]+\\.[0-9]+ \\(minisign\\)$"))
      | {number, tag: (.title | capture("^Sign release (?<t>[^ ]+) \\(minisign\\)$").t)}
      | select(.tag != $latest)]
 | sort_by(.number) | .[0:20][]
