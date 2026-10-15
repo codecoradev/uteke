@@ -74,6 +74,44 @@ list_reminders() {
 }
 ISSUES="$(list_reminders)"
 
+# Stale pass: reminders for releases that are no longer the latest. At most 20
+# per run; only titles matching the pattern exactly are ever touched.
+# The jq program is kept in a variable (a quoted here-document) so it reads as the
+# jq program it is; it only ever receives the issue list as JSON input.
+STALE_FILTER="$(cat <<'JQ'
+[.[] | select(.title
+              | test("^Sign release v[0-9]+\\.[0-9]+\\.[0-9]+ \\(minisign\\)$"))
+     | {number, tag: (.title | capture("^Sign release (?<t>[^ ]+) \\(minisign\\)$").t)}
+     | select(.tag != $latest)]
+| sort_by(.number) | .[0:20][]
+| "\(.number) \(.tag)"
+JQ
+)"
+STALE="$(printf '%s' "$ISSUES" | jq -r --arg latest "$TAG" "$STALE_FILTER")"
+if [ -n "$STALE" ]; then
+  while read -r SNUM STAG; do
+    printf '%s' "$STAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || continue
+    ERR="$(mktemp)"
+    if OLD="$(gh api "repos/$REPO/releases/tags/$STAG" 2>"$ERR" </dev/null)"; then
+      if printf '%s' "$OLD" | jq -e '[.assets[]?.name] | index("checksums-sha256.txt.minisig") != null' >/dev/null; then
+        MSG="Signature found on the release, closing."
+      else
+        MSG="Superseded: $TAG is now the latest release, and \`uteke upgrade\` only installs the latest release, so this release no longer needs signing. Closing."
+      fi
+    elif grep -q 'HTTP 404' "$ERR"; then
+      MSG="Superseded: $TAG is now the latest release, and \`uteke upgrade\` only installs the latest release, so this release no longer needs signing. Closing."
+    else
+      echo "Could not look up $STAG for reminder #$SNUM; leaving it open."
+      rm -f "$ERR"; continue
+    fi
+    rm -f "$ERR"
+    echo "Reminder #$SNUM is for $STAG, not the latest ($TAG); closing."
+    mutate issue close "$SNUM" --repo "$REPO" --comment "$MSG"
+  done <<STALE_EOF
+$STALE
+STALE_EOF
+fi
+
 has_asset() {
   printf '%s' "$REL" | jq -e --arg n "$1" '[.assets[]?.name] | index($n) != null' >/dev/null
 }

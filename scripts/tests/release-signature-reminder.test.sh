@@ -21,6 +21,10 @@ case "$1" in
   api)
     case "$2" in
       */releases/latest) printf '%s' "$STUB_RELEASE" ;;
+      */releases/tags/*)
+        f="$STUB_TAGDIR/${2##*/}.json"
+        if [ -n "${STUB_API_ERR-}" ]; then echo "$STUB_API_ERR" >&2; exit 1; fi
+        if [ -f "$f" ]; then cat "$f"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
     esac ;;
   issue)
     case "$2" in
@@ -158,15 +162,56 @@ t "unknown flag before --dry-run -> exit 2" rc_is 2
 run "$(rel v1.2.3 "$A_BUNDLE")" '[]' --dry-run --dry-run
 t "repeated --dry-run is harmless" no_mutation
 
+# --- stale pass: reminders for superseded releases ---
+rm -f "$T/tags/"*
+echo "{\"assets\":$A_SIGNED}" > "$T/tags/v1.0.0.json"
+echo "{\"assets\":$A_BUNDLE}" > "$T/tags/v1.1.0.json"
+LATEST="$(rel v1.2.3 "$A_SIGNED")"
+
+run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "old reminder, signed old release -> exit 0" rc_is 0
+grep -q '^CLOSE issue close 3 .*Signature found on the release, closing' "$T/log"; check "old signed -> Signature found comment" $?
+grep -q '^CLOSE issue close 3 ' "$T/log"; check "old signed -> closed" $?
+
+run "$LATEST" "[$(oldissue 4 v1.1.0)]"
+grep -q '^CLOSE issue close 4 .*Superseded: v1.2.3 is now the latest release' "$T/log"; check "old unsigned -> superseded comment" $?
+grep -q '^CLOSE issue close 4 ' "$T/log"; check "old unsigned -> closed" $?
+
+run "$LATEST" "[$(oldissue 7 v1.2.3 "")]"
+t "latest-tag reminder (signed latest) handled only by main logic: one close" test "$(nlog '^CLOSE ')" = 1
+grep -q 'Signature found' "$T/log"; check "latest-tag reminder gets the normal close, not superseded" $?
+run "$(rel v1.2.3 "$A_BUNDLE")" "[$(oldissue 7 v1.2.3 "" app/github-actions 2)]"
+t "latest-tag unsigned young reminder untouched by stale pass" no_mutation
+
+run "$LATEST" "[$(oldissue 5 v1.0.0 'Sign release v1.0.0 (minisign) please'),$(oldissue 6 v1.0.0 'Sign release v1.0.0-rc.1 (minisign)'),$(oldissue 9 x 'Unrelated issue')]"
+t "non-matching titles never touched" no_mutation
+
+run "$LATEST" "[$(oldissue 3 v1.0.0),$(oldissue 4 v1.1.0)]"
+t "two stale issues -> two closes" test "$(nlog '^CLOSE ')" = 2
+t "two stale issues -> comments ride on the closes" test "$(nlog '^COMMENT ')" = 0
+
+run "$LATEST" "[$(oldissue 8 v0.9.0)]"
+grep -q '^CLOSE issue close 8 .*Superseded' "$T/log"; check "404 on old tag -> superseded" $?
+grep -q '^CLOSE issue close 8 ' "$T/log"; check "404 on old tag -> closed" $?
+
+run "$LATEST" "[$(oldissue 3 v1.0.0)]" --dry-run
+t "--dry-run stale pass -> no mutating call" no_mutation
+
 # --- trust boundary: issue authors ---
 BUN="$(rel v1.2.3 "$A_BUNDLE")"
 run "$BUN" "[$(oldissue 20 v1.2.3 "" stranger 2)]"
 t "stranger look-alike ignored, genuine issue still created" test "$(nlog '^CREATE ')" = 1
 t "stranger look-alike never commented or closed" test "$(nlog '^COMMENT \|^CLOSE ')" = 0
+run "$LATEST" "[$(oldissue 21 v1.2.3 "" stranger 2),$(oldissue 22 v1.0.0 "" stranger)]"
+t "stranger look-alikes (latest and stale) never touched when signed" no_mutation
 run "$BUN" "[$(oldissue 23 v1.2.3 "" 'github-actions[bot]' 13)]"
 grep -q '^COMMENT issue comment 23 ' "$T/log"; check "github-actions[bot] issue is acted on" $?
 run "$BUN" "[$(oldissue 24 v1.2.3 "" ajianaz 13)]"
 grep -q '^COMMENT issue comment 24 ' "$T/log"; check "RELEASE_SIGNER issue is acted on" $?
+run "$LATEST" "[$(oldissue 25 v1.0.0 "" ajianaz)]"
+grep -q '^CLOSE issue close 25 ' "$T/log"; check "signer-authored stale issue closed" $?
+run "$LATEST" "[$(oldissue 26 v1.0.0 "" stranger)]"
+t "stranger stale look-alike not closed" no_mutation
 
 # --- review hardening ---
 # listing never uses --search (stub fails the run if it does)
@@ -189,6 +234,14 @@ OUT="$(env PATH="$T/bin:$PATH" STUB_LOG="$T/log" STUB_TAGDIR="$T/tags" STUB_RELE
 t "REMINDER_AFTER_HOURS=08 accepted, 10h old -> re-pings" test "$RC" = 0 -a "$(nlog '^COMMENT ')" = 1
 OUT="$(env PATH="$T/bin:$PATH" REMINDER_AFTER_HOURS=abc GH_REPO=o/r bash "$SCRIPT" 2>&1)"; RC=$?
 t "non-numeric hours -> exit 2" rc_is 2
+
+# 404 parsing
+STUB_API_ERR="gh: Internal error mentions 404 (HTTP 502)" run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "5xx whose text contains 404 -> issue left open" no_mutation
+STUB_API_ERR="gh: Server Error (HTTP 500)" run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "HTTP 500 on old tag -> issue left open" no_mutation
+STUB_API_ERR="gh: API rate limit exceeded (HTTP 403)" run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "rate limit on old tag -> issue left open" no_mutation
 
 # assign failure: re-list before retrying
 STUB_FAIL_ASSIGN=1 STUB_ISSUES2="[$(oldissue 30 v1.2.3 "" app/github-actions 1)]" run "$BUN" '[]'
