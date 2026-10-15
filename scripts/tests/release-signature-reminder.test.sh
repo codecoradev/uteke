@@ -23,11 +23,15 @@ case "$1" in
       */releases/latest) printf '%s' "$STUB_RELEASE" ;;
       */releases/tags/*)
         f="$STUB_TAGDIR/${2##*/}.json"
+        if [ -n "${STUB_API_ERR-}" ]; then echo "$STUB_API_ERR" >&2; exit 1; fi
         if [ -f "$f" ]; then cat "$f"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
     esac ;;
   issue)
     case "$2" in
-      list) printf '%s' "$STUB_ISSUES" ;;
+      list)
+        case "$*" in *--search*) echo "SEARCH_USED $*" >> "$STUB_LOG"; exit 1 ;; esac
+        n=$(( $(cat "$STUB_LOG.n" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_LOG.n"
+        if [ "$n" -gt 1 ] && [ -n "${STUB_ISSUES2-}" ]; then printf '%s' "$STUB_ISSUES2"; else printf '%s' "$STUB_ISSUES"; fi ;;
       create)
         echo "CREATE $*" >> "$STUB_LOG"
         if [ -n "${STUB_FAIL_ASSIGN-}" ]; then
@@ -52,24 +56,31 @@ A_BUNDLE='[{"name":"checksums-sha256.txt"},{"name":"checksums-sha256.txt.bundle"
 A_SIGNED='[{"name":"checksums-sha256.txt"},{"name":"checksums-sha256.txt.bundle"},{"name":"checksums-sha256.txt.minisig"}]'
 A_NOBUNDLE='[{"name":"checksums-sha256.txt"}]'
 TITLE="Sign release v1.2.3 (minisign)"
-AUTH='"author":{"login":"app/github-actions"}'
+# author JSON in gh's real shape; "login[:false]" forces is_bot=false
+author() {
+  local l="${1%%:*}" b=false
+  case "$1" in *:false) ;; app/github-actions|github-actions\[bot\]) b=true ;; esac
+  printf '{"id":"X","is_bot":%s,"login":"%s","name":"n"}' "$b" "$l"
+}
+AUTH="\"author\":$(author app/github-actions)"
 issue() { # age-hours-of-creation [comment-age-hours]
   local c='[]'
-  [ -n "${2-}" ] && c="[{\"createdAt\":\"$(iso $((NOW - $2*H)))\"}]"
+  [ -n "${2-}" ] && c="[{\"author\":$(author "${3:-app/github-actions}"),\"body\":\"b\",\"createdAt\":\"$(iso $((NOW - $2*H)))\"}]"
   printf '[{"number":7,"title":"%s","createdAt":"%s","comments":%s,%s},{"number":8,"title":"%s extra","createdAt":"%s","comments":[],%s}]' \
     "$TITLE" "$(iso $((NOW - $1*H)))" "$c" "$AUTH" "$TITLE" "$(iso $((NOW - 99*H)))" "$AUTH"
 }
 
 FAILS=0
 oldissue() { # number tag [title-override] [author-login] [age-hours]
-  printf '{"number":%s,"title":"%s","createdAt":"%s","comments":[],"author":{"login":"%s"}}' "$1" "${3:-Sign release $2 (minisign)}" "$(iso $((NOW - ${5:-50}*H)))" "${4:-app/github-actions}"
+  printf '{"number":%s,"title":"%s","createdAt":"%s","comments":[],"author":%s}' "$1" "${3:-Sign release $2 (minisign)}" "$(iso $((NOW - ${5:-50}*H)))" "$(author "${4:-app/github-actions}")"
 }
 # run <release-json> <issues-json> args...  ; sets RC, OUT, and $T/log
 run() {
   local r="$1" i="$2"; shift 2
-  : > "$T/log"
+  : > "$T/log"; rm -f "$T/log.n"
   OUT="$(env PATH="$T/bin:$PATH" STUB_LOG="$T/log" STUB_TAGDIR="$T/tags" STUB_RELEASE="$r" STUB_ISSUES="$i" \
     GH_REPO=o/r RELEASE_SIGNER=ajianaz REMINDER_NOW_EPOCH=$NOW \
+    STUB_ISSUES2="${STUB_ISSUES2-}" STUB_API_ERR="${STUB_API_ERR-}" \
     STUB_FAIL_ASSIGN="${STUB_FAIL_ASSIGN-}" bash "$SCRIPT" "$@" 2>&1)"
   RC=$?
 }
@@ -83,7 +94,8 @@ t() { local n="$1"; shift; if "$@"; then check "$n" 0; else check "$n" 1; fi; }
 
 run "$(rel v1.2.3 "$A_SIGNED")" "$(issue 5)"
 t "signed + open reminder -> exit 0" rc_is 0
-t "signed + open reminder -> one comment" test "$(nlog '^COMMENT issue comment 7 ')" = 1
+grep -q '^CLOSE issue close 7 .*--comment Signature found on the release, closing' "$T/log"; check "signed -> single close call carries the comment" $?
+t "signed + open reminder -> no separate comment call" test "$(nlog '^COMMENT ')" = 0
 t "signed + open reminder -> closes #7 only" test "$(nlog '^CLOSE ')" = 1
 grep -q '^CLOSE issue close 7 ' "$T/log"; check "signed -> closed the exact-title issue, not #8" $?
 
@@ -152,11 +164,11 @@ LATEST="$(rel v1.2.3 "$A_SIGNED")"
 
 run "$LATEST" "[$(oldissue 3 v1.0.0)]"
 t "old reminder, signed old release -> exit 0" rc_is 0
-grep -q '^COMMENT issue comment 3 .*Signature found on the release, closing' "$T/log"; check "old signed -> Signature found comment" $?
+grep -q '^CLOSE issue close 3 .*Signature found on the release, closing' "$T/log"; check "old signed -> Signature found comment" $?
 grep -q '^CLOSE issue close 3 ' "$T/log"; check "old signed -> closed" $?
 
 run "$LATEST" "[$(oldissue 4 v1.1.0)]"
-grep -q '^COMMENT issue comment 4 .*Superseded: v1.2.3 is now the latest release' "$T/log"; check "old unsigned -> superseded comment" $?
+grep -q '^CLOSE issue close 4 .*Superseded: v1.2.3 is now the latest release' "$T/log"; check "old unsigned -> superseded comment" $?
 grep -q '^CLOSE issue close 4 ' "$T/log"; check "old unsigned -> closed" $?
 
 run "$LATEST" "[$(oldissue 7 v1.2.3 "")]"
@@ -170,10 +182,10 @@ t "non-matching titles never touched" no_mutation
 
 run "$LATEST" "[$(oldissue 3 v1.0.0),$(oldissue 4 v1.1.0)]"
 t "two stale issues -> two closes" test "$(nlog '^CLOSE ')" = 2
-t "two stale issues -> two comments" test "$(nlog '^COMMENT ')" = 2
+t "two stale issues -> comments ride on the closes" test "$(nlog '^COMMENT ')" = 0
 
 run "$LATEST" "[$(oldissue 8 v0.9.0)]"
-grep -q '^COMMENT issue comment 8 .*Superseded' "$T/log"; check "404 on old tag -> superseded" $?
+grep -q '^CLOSE issue close 8 .*Superseded' "$T/log"; check "404 on old tag -> superseded" $?
 grep -q '^CLOSE issue close 8 ' "$T/log"; check "404 on old tag -> closed" $?
 
 run "$LATEST" "[$(oldissue 3 v1.0.0)]" --dry-run
@@ -194,6 +206,40 @@ run "$LATEST" "[$(oldissue 25 v1.0.0 "" ajianaz)]"
 grep -q '^CLOSE issue close 25 ' "$T/log"; check "signer-authored stale issue closed" $?
 run "$LATEST" "[$(oldissue 26 v1.0.0 "" stranger)]"
 t "stranger stale look-alike not closed" no_mutation
+
+# --- review hardening ---
+# listing never uses --search (stub fails the run if it does)
+run "$BUN" '[]'
+t "listing does not use --search" test "$(nlog SEARCH_USED)" = 0
+
+# stranger comment does not reset activity; trusted comment does
+run "$BUN" "[$(issue 40 1 stranger | sed 's/^\[//; s/,{"number":8.*$//')]"
+t "stranger comment 1h ago + old issue -> still re-pings" test "$(nlog '^COMMENT issue comment 7 ')" = 1
+run "$BUN" "[$(issue 40 1 | sed 's/^\[//; s/,{"number":8.*$//')]"
+t "trusted comment 1h ago -> no re-ping" no_mutation
+run "$BUN" "[$(issue 40 1 'github-actions:false' | sed 's/^\[//; s/,{"number":8.*$//')]"
+t "human named github-actions (is_bot false) comment not trusted -> re-pings" test "$(nlog '^COMMENT issue comment 7 ')" = 1
+run "$BUN" "[$(oldissue 30 v1.2.3 "" 'github-actions:false' 2)]"
+t "human 'github-actions' (is_bot false) issue not trusted -> genuine created" test "$(nlog '^CREATE ')" = 1
+
+# HOURS=08
+: > "$T/log"
+OUT="$(env PATH="$T/bin:$PATH" STUB_LOG="$T/log" STUB_TAGDIR="$T/tags" STUB_RELEASE="$BUN" STUB_ISSUES="$(issue 10 | sed 's/^\[//; s/,{"number":8.*$//; s/^/[/; s/$/]/')" GH_REPO=o/r REMINDER_NOW_EPOCH=$NOW REMINDER_AFTER_HOURS=08 bash "$SCRIPT" 2>&1)"; RC=$?
+t "REMINDER_AFTER_HOURS=08 accepted, 10h old -> re-pings" test "$RC" = 0 -a "$(nlog '^COMMENT ')" = 1
+OUT="$(env PATH="$T/bin:$PATH" REMINDER_AFTER_HOURS=abc GH_REPO=o/r bash "$SCRIPT" 2>&1)"; RC=$?
+t "non-numeric hours -> exit 2" rc_is 2
+
+# 404 parsing
+STUB_API_ERR="gh: Internal error mentions 404 (HTTP 502)" run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "5xx whose text contains 404 -> issue left open" no_mutation
+STUB_API_ERR="gh: Server Error (HTTP 500)" run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "HTTP 500 on old tag -> issue left open" no_mutation
+STUB_API_ERR="gh: API rate limit exceeded (HTTP 403)" run "$LATEST" "[$(oldissue 3 v1.0.0)]"
+t "rate limit on old tag -> issue left open" no_mutation
+
+# assign failure: re-list before retrying
+STUB_FAIL_ASSIGN=1 STUB_ISSUES2="[$(oldissue 30 v1.2.3 "" app/github-actions 1)]" run "$BUN" '[]'
+t "assign fails but issue now exists -> no second create" test "$(nlog '^CREATE ')" = 1
 
 if [ "$FAILS" -ne 0 ]; then echo "$FAILS failure(s)"; exit 1; fi
 echo "all passed"

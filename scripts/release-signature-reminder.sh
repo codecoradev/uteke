@@ -24,6 +24,7 @@ REPO="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
 SIGNER="${RELEASE_SIGNER:-ajianaz}"
 HOURS="${REMINDER_AFTER_HOURS:-12}"
 case "$HOURS" in ''|*[!0-9]*) echo "error: REMINDER_AFTER_HOURS must be an integer" >&2; exit 2 ;; esac
+HOURS=$((10#$HOURS))   # "08" is a valid number here, not a bad octal
 NOW="${REMINDER_NOW_EPOCH:-$(date +%s)}"
 command -v gh >/dev/null 2>&1 || { echo "error: gh is required" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
@@ -48,16 +49,27 @@ if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
   exit 0
 fi
 
-# All open reminder issues (exact-title filtering happens in jq).
-ISSUES="$(gh issue list --repo "$REPO" --state open --limit 100 \
-  --search "Sign release in:title" --json number,title,createdAt,comments,author)"
-# Trust boundary: only issues authored by the Actions bot or the signer count.
+# Trust boundary: only issues (and comments) authored by the Actions bot or the
+# signer count. The bot spellings need is_bot == true, so a human account that
+# is merely named "github-actions" is not trusted; the signer matches on login.
 # Anything else (a look-alike planted by anyone who can open issues) is ignored
-# entirely, so it is never commented on or closed and never blocks creation.
+# entirely: never commented on, never closed, never blocks creation.
 # gh shows the bot as app/github-actions; accept the other spellings too.
-ISSUES="$(printf '%s' "$ISSUES" | jq -c --arg s "$SIGNER" \
-  '[.[] | select(.author.login as $a
-     | ["app/github-actions","github-actions[bot]","github-actions",$s] | index($a) != null)]')"
+TRUST='def trusted: (.author // {}) as $a | ($a.login // "") as $l
+  | ($l == $s) or (($a.is_bot == true)
+     and (["app/github-actions","github-actions[bot]","github-actions"] | index($l) != null));'
+
+# List open issues WITHOUT --search: the search index lags, so a just-created
+# reminder could be invisible to the next run and get duplicated. The listing is
+# limited to the 100 most recent open issues (a reminder older than that on a
+# huge tracker would be missed; acceptable). Exact-title and author filtering
+# happen in jq.
+list_reminders() {
+  gh issue list --repo "$REPO" --state open --limit 100 \
+    --json number,title,createdAt,comments,author \
+  | jq -c --arg s "$SIGNER" "$TRUST"'[.[] | select(trusted)]'
+}
+ISSUES="$(list_reminders)"
 
 # Stale pass: reminders for releases that are no longer the latest. At most 20
 # per run; only titles matching the pattern exactly are ever touched.
@@ -76,7 +88,7 @@ if [ -n "$STALE" ]; then
       else
         MSG="Superseded: $TAG is now the latest release, and \`uteke upgrade\` only installs the latest release, so this release no longer needs signing. Closing."
       fi
-    elif grep -q '404' "$ERR"; then
+    elif grep -q 'HTTP 404' "$ERR"; then
       MSG="Superseded: $TAG is now the latest release, and \`uteke upgrade\` only installs the latest release, so this release no longer needs signing. Closing."
     else
       echo "Could not look up $STAG for reminder #$SNUM; leaving it open."
@@ -84,8 +96,7 @@ if [ -n "$STALE" ]; then
     fi
     rm -f "$ERR"
     echo "Reminder #$SNUM is for $STAG, not the latest ($TAG); closing."
-    mutate issue comment "$SNUM" --repo "$REPO" --body "$MSG"
-    mutate issue close "$SNUM" --repo "$REPO"
+    mutate issue close "$SNUM" --repo "$REPO" --comment "$MSG"
   done <<STALE_EOF
 $STALE
 STALE_EOF
@@ -111,8 +122,7 @@ if [ -n "$EXISTING" ]; then NUM="$(printf '%s' "$EXISTING" | jq -r '.number')"; 
 if [ "$SIGNED" -eq 1 ]; then
   if [ -n "$NUM" ]; then
     echo "$TAG is signed; closing reminder #$NUM."
-    mutate issue comment "$NUM" --repo "$REPO" --body "Signature found on the release, closing."
-    mutate issue close "$NUM" --repo "$REPO"
+    mutate issue close "$NUM" --repo "$REPO" --comment "Signature found on the release, closing."
   else
     echo "$TAG is signed and no reminder is open; nothing to do."
   fi
@@ -139,15 +149,23 @@ This issue closes itself once \`checksums-sha256.txt.minisig\` is on the release
     echo "[dry-run] gh issue create --repo $REPO --title \"$TITLE\" --assignee $SIGNER"
     printf '%s\n' "$BODY" | sed 's/^/[dry-run]   /'
   elif ! gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY" --assignee "$SIGNER"; then
-    echo "Creating with assignee $SIGNER failed; retrying without an assignee."
+    echo "Creating with assignee $SIGNER failed; checking whether the issue exists before retrying."
+    # A lost response may still have created it.
+    AGAIN="$(list_reminders | jq -c --arg t "$TITLE" '[.[] | select(.title == $t)] | length')"
+    if [ "${AGAIN:-0}" -gt 0 ]; then
+      echo "Reminder for $TAG already exists; not creating another."
+      exit 0
+    fi
+    echo "Retrying without an assignee."
     gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"
   fi
   exit 0
 fi
 
-# Last activity = issue creation or the newest comment.
-LAST="$(printf '%s' "$EXISTING" | jq -r \
-  '([.createdAt] + [.comments[]?.createdAt]) | map(fromdateiso8601) | max')"
+# Last activity = issue creation or the newest TRUSTED comment (a stranger's
+# comment must not silence the reminder).
+LAST="$(printf '%s' "$EXISTING" | jq -r --arg s "$SIGNER" "$TRUST"'
+  ([.createdAt] + [.comments[]? | select(trusted) | .createdAt]) | map(fromdateiso8601) | max')"
 AGE=$(( NOW - LAST ))
 if [ "$AGE" -lt $(( HOURS * 3600 )) ]; then
   echo "Reminder #$NUM is recent (last activity $(( AGE / 3600 ))h ago, interval ${HOURS}h); not commenting."
