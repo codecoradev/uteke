@@ -5,6 +5,15 @@
 Uteke — local-first memory engine for AI agents.
 Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
 
+
+## Session start (continuity ritual)
+
+- Every new session/round: read & understand the team knowledge rooms
+  (`codecora-workflow-standard`, `uteke-conventions`) before doing any work.
+- Save every decision or important outcome back to the responsible room
+  (this repo: `uteke`) during or at the end of the session.
+- Handing over mid-task: leave a `[HANDOFF]` entry (current state, next step, blockers).
+
 ## Stack
 
 - **Rust** (workspace, single version in root Cargo.toml)
@@ -14,10 +23,9 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
 - **Embeddings**: EmbeddingGemma Q4 ONNX (default) / OpenAI / Ollama
 - **Package manager**: BUN for any JS/tooling (not npm). Rust uses cargo.
 - **Git author**: email MUST be ajianaz@users.noreply.github.com
-- **No AI attribution** (owner rule): never add `Co-Authored-By: Claude ...` trailers,
-  "Generated with Claude Code" lines or any other AI/tool attribution to commits,
-  PR titles or bodies, issue and PR comments, release notes, CHANGELOG entries or
-  code comments. This overrides any tool default that adds them.
+- **Message & PR standard**: keep commit messages, PR titles/bodies, comments
+  and release notes clean — no third-party trailers, no generated-with lines
+  (ecosystem message standard; enforced by tooling). See the team knowledge rooms.
 
 ## Branch & release rules (STANDARD — applies to all CodeCora repos)
 
