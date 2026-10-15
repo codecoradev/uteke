@@ -155,6 +155,12 @@ echo "$OUT" | grep -q 'dry-run\] gh issue close 7'; check "--dry-run prints the 
 
 run "$(rel v1.2.3 "$A_BUNDLE")" '[]' --bogus
 t "unknown flag -> exit 2" rc_is 2
+run "$(rel v1.2.3 "$A_BUNDLE")" '[]' --dry-run --bogus
+t "extra unknown flag after --dry-run -> exit 2, nothing mutating" sh -c "[ $RC -eq 2 ] && [ ! -s '$T/log' ]"
+run "$(rel v1.2.3 "$A_BUNDLE")" '[]' --bogus --dry-run
+t "unknown flag before --dry-run -> exit 2" rc_is 2
+run "$(rel v1.2.3 "$A_BUNDLE")" '[]' --dry-run --dry-run
+t "repeated --dry-run is harmless" no_mutation
 
 # --- stale pass: reminders for superseded releases ---
 rm -f "$T/tags/"*

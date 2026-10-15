@@ -13,11 +13,12 @@
 set -euo pipefail
 
 DRY=0
-case "${1-}" in
-  "") ;;
-  --dry-run) DRY=1 ;;
-  *) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
-esac
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY=1 ;;
+    *) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
+  esac
+done
 
 REPO="${GH_REPO:-${GITHUB_REPOSITORY:-}}"
 [ -n "$REPO" ] || { echo "error: set GH_REPO or GITHUB_REPOSITORY" >&2; exit 2; }
@@ -31,7 +32,9 @@ command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
 
 # Run a mutating gh command, or only print it under --dry-run.
 mutate() {
-  if [ "$DRY" -eq 1 ]; then echo "[dry-run] gh $*"; else gh "$@"; fi
+  # </dev/null: this runs inside a `while read` loop fed by a here-document, and a
+  # command that reads stdin would swallow the rest of the list.
+  if [ "$DRY" -eq 1 ]; then echo "[dry-run] gh $*"; else gh "$@" </dev/null; fi
 }
 
 # /releases/latest already excludes drafts and pre-releases; re-check anyway.
@@ -89,7 +92,7 @@ if [ -n "$STALE" ]; then
   while read -r SNUM STAG; do
     printf '%s' "$STAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || continue
     ERR="$(mktemp)"
-    if OLD="$(gh api "repos/$REPO/releases/tags/$STAG" 2>"$ERR")"; then
+    if OLD="$(gh api "repos/$REPO/releases/tags/$STAG" 2>"$ERR" </dev/null)"; then
       if printf '%s' "$OLD" | jq -e '[.assets[]?.name] | index("checksums-sha256.txt.minisig") != null' >/dev/null; then
         MSG="Signature found on the release, closing."
       else
