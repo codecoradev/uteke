@@ -3968,3 +3968,183 @@ mod read_only_gate_tests {
         assert_eq!(u.count(None).unwrap(), 1);
     }
 }
+
+/// Scope-isolation regression gate over MCP (#1467, part 3).
+///
+/// The two-namespace store of `uteke_core::test_support::seed_two_scopes`
+/// (records of `alpha` and `beta` share one vocabulary, each ends in
+/// `of <namespace>`) is read through every read-only tool that takes a scope
+/// and must never return the other namespace's records or project tag.
+/// `every_read_tool_is_covered_or_exempt` fails when a read-only tool is added
+/// without an isolation check or a documented exemption.
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+    use serde_json::{Value, json};
+    use uteke_core::test_support::{ISOLATION_QUERY as Q, ISOLATION_SCOPES, seed_two_scopes};
+
+    fn call(u: &Uteke, tool: &str, args: Value) -> String {
+        let raw = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool, "arguments": args}
+        })
+        .to_string();
+        handle_jsonrpc_as(u, &raw, Access::ReadOnly).expect("a response")
+    }
+
+    /// (tool, arguments, the response must hold an `of <scope>` marker).
+    fn surfaces(scope: &str) -> Vec<(&'static str, Value, bool)> {
+        let mut v = vec![
+            (
+                "uteke_search",
+                json!({"query": Q, "namespace": scope, "limit": 20}),
+                true,
+            ),
+            ("uteke_list", json!({"namespace": scope, "limit": 50}), true),
+            (
+                "uteke_list",
+                json!({"namespace": scope, "tag": "shared", "limit": 50}),
+                true,
+            ),
+            ("uteke_graph", json!({"namespace": scope}), true),
+            (
+                "uteke_room_recall",
+                json!({"room_id": format!("room-{scope}"), "query": Q}),
+                true,
+            ),
+            (
+                "uteke_room_memories",
+                json!({"room_id": format!("room-{scope}")}),
+                true,
+            ),
+            ("uteke_tags_list", json!({"namespace": scope}), false),
+            ("uteke_room_list", json!({"namespace": scope}), false),
+            ("uteke_stats", json!({"namespace": scope}), false),
+            ("uteke_contradictions", json!({"namespace": scope}), false),
+        ];
+        for strategy in ["hybrid", "vector", "fts5", "graph", "fusion"] {
+            for kind in ["memory", "all"] {
+                v.push((
+                    "uteke_recall",
+                    json!({"query": Q, "namespace": scope, "limit": 20, "strategy": strategy, "type": kind}),
+                    true,
+                ));
+            }
+        }
+        v.push((
+            "uteke_recall",
+            json!({"query": Q, "namespace": scope, "pack": true, "budget_chars": 4000}),
+            true,
+        ));
+        v.push((
+            "uteke_recall",
+            json!({"query": Q, "namespace": scope, "explain": true}),
+            true,
+        ));
+        v.push((
+            "uteke_recall",
+            json!({"query": Q, "namespace": scope, "tags": ["shared"]}),
+            true,
+        ));
+        v
+    }
+
+    #[test]
+    fn every_scoped_read_tool_returns_only_its_own_namespace() {
+        let u = seed_two_scopes();
+        for scope in ISOLATION_SCOPES {
+            let foreign = if scope == "alpha" { "beta" } else { "alpha" };
+            for (tool, args, expects_hits) in surfaces(scope) {
+                let text = call(&u, tool, args.clone());
+                let what = format!("{tool} {args}");
+                let shown: String = text.chars().take(300).collect();
+                assert!(!text.contains("\"isError\":true"), "{what}: {shown}");
+                assert!(
+                    !text.contains(&format!("of {foreign}")),
+                    "{what} scoped to {scope} returned {foreign} records: {shown}"
+                );
+                assert!(
+                    !text.contains(&format!("project:{foreign}")),
+                    "{what} scoped to {scope} exposed the {foreign} project tag: {shown}"
+                );
+                if expects_hits {
+                    assert!(
+                        text.contains(&format!("of {scope}")),
+                        "{what} found no {scope} record, the check would be vacuous: {shown}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Read-only tools the suite does not scope-check, each with the reason.
+    const EXEMPT: &[(&str, &str)] = &[
+        ("uteke_get", "fetch by ID: IDs are global handles"),
+        ("uteke_provenance", "by memory ID"),
+        ("uteke_timeline", "by memory ID"),
+        (
+            "uteke_doc_get",
+            "by document slug; documents are global (#1271)",
+        ),
+        (
+            "uteke_doc_list",
+            "documents are global (#1271), no memory content",
+        ),
+        (
+            "uteke_doc_search",
+            "documents are global (#1271), no memory content",
+        ),
+        ("uteke_doc_list_rooms", "by document slug"),
+        ("uteke_room_stats", "by room ID; the room is the scope"),
+        ("uteke_room_summary", "by room ID; the room is the scope"),
+        (
+            "uteke_room_summary_document",
+            "by room ID; the room is the scope",
+        ),
+        (
+            "uteke_room_document",
+            "dispatch alias of uteke_room_summary_document, never advertised",
+        ),
+        (
+            "uteke_room_list_documents",
+            "by room ID; documents are global",
+        ),
+    ];
+
+    /// Every read-only tool must be covered by `surfaces` or exempt with a
+    /// reason, and a tool that advertises a `namespace` argument can never be
+    /// exempt: a new retrieval tool cannot skip the isolation suite unnoticed.
+    #[test]
+    fn every_read_tool_is_covered_or_exempt() {
+        let covered: std::collections::BTreeSet<&str> =
+            surfaces("alpha").iter().map(|(t, _, _)| *t).collect();
+        let exempt: std::collections::BTreeSet<&str> = EXEMPT.iter().map(|(t, _)| *t).collect();
+        for tool in READ_ONLY_TOOLS {
+            assert!(
+                covered.contains(tool) || exempt.contains(tool),
+                "{tool} is a read-only tool with no isolation check: add it to `surfaces` or to `EXEMPT` with a reason (#1467)"
+            );
+        }
+        for tool in covered.iter().chain(exempt.iter()) {
+            assert!(
+                READ_ONLY_TOOLS.contains(tool),
+                "{tool} is not a read-only tool"
+            );
+        }
+        assert!(
+            covered.is_disjoint(&exempt),
+            "a tool is both covered and exempt"
+        );
+        let u = seed_two_scopes();
+        let list = handle_request(&u, "tools/list", None, Access::ReadOnly).unwrap();
+        for t in list["tools"].as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            if t["inputSchema"]["properties"]["namespace"].is_object() {
+                assert!(
+                    covered.contains(name),
+                    "{name} takes a namespace but is not covered by the isolation suite"
+                );
+            }
+        }
+    }
+}
