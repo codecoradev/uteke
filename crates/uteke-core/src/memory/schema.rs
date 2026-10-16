@@ -472,6 +472,9 @@ impl super::Store {
                 // v21: recall_count column — recall/search hits are counted apart
                 // from explicit gets (#1337)
                 21 => self.migrate_v20_to_v21()?,
+                // v22: memories.author — who wrote it, with or without a room
+                // (#1427 phase 2)
+                22 => self.migrate_v21_to_v22()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1131,6 +1134,34 @@ impl super::Store {
                 .map_err(|e| Error::db("schema migration v20 to v21", e))?;
         }
         tracing::info!("Migration v20 to v21 complete: recall_count column added");
+        Ok(())
+    }
+
+    /// v22: add `author` (#1427 phase 2), the agent or user that wrote a memory,
+    /// usable without a room. Nullable and additive. A memory that belongs to
+    /// exactly one room takes the author recorded on that room link; the rest
+    /// stay NULL (unknown), never guessed.
+    fn migrate_v21_to_v22(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v21 to v22: author column");
+        if !self.column_exists("author") {
+            self.conn
+                .execute_batch("ALTER TABLE memories ADD COLUMN author TEXT;")
+                .map_err(|e| Error::db("schema migration v21 to v22", e))?;
+        }
+        let backfilled = self
+            .conn
+            .execute(
+                "UPDATE memories SET author = ( \
+                     SELECT rm.author FROM room_memories rm WHERE rm.memory_id = memories.id \
+                 ) \
+                 WHERE author IS NULL \
+                   AND (SELECT COUNT(*) FROM room_memories rm WHERE rm.memory_id = memories.id) = 1",
+                [],
+            )
+            .map_err(|e| Error::db("backfill memories.author", e))?;
+        tracing::info!(
+            "Migration v21 to v22 complete: author column added, {backfilled} backfilled"
+        );
         Ok(())
     }
 

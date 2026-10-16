@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS memories (
     source TEXT,
     source_type TEXT NOT NULL DEFAULT 'user',
     author_type TEXT NOT NULL DEFAULT 'agent',
+    author TEXT,
     source_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories(tags);
@@ -181,7 +182,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 21;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 22;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -316,6 +317,22 @@ impl Store {
                 rusqlite::params![author_type, id],
             )
             .map_err(|e| Error::db("set author_type", e))?;
+        Ok(rows > 0)
+    }
+
+    /// Set or clear who wrote a memory (#1427 phase 2). `None` clears it.
+    /// Returns false if the memory does not exist.
+    pub fn set_author(&self, id: &str, author: Option<&str>) -> Result<bool, Error> {
+        let author = author
+            .map(crate::memory::types::validate_author)
+            .transpose()?;
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET author = ?1 WHERE id = ?2",
+                rusqlite::params![author, id],
+            )
+            .map_err(|e| Error::db("set author", e))?;
         Ok(rows > 0)
     }
 
@@ -516,7 +533,7 @@ macro_rules! memory_columns {
         "id, content, embedding, tags, metadata, created_at, updated_at, namespace, \
          access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, \
          importance, pinned, content_type, slug, source, source_type, author_type, \
-         deprecated_at, recall_count"
+         deprecated_at, recall_count, author"
     };
 }
 
@@ -526,7 +543,7 @@ macro_rules! memory_columns_m {
         "m.id, m.content, m.embedding, m.tags, m.metadata, m.created_at, m.updated_at, \
          m.namespace, m.access_count, m.last_accessed, m.deprecated, m.valid_from, \
          m.valid_until, m.memory_type, m.importance, m.pinned, m.content_type, m.slug, \
-         m.source, m.source_type, m.author_type, m.deprecated_at, m.recall_count"
+         m.source, m.source_type, m.author_type, m.deprecated_at, m.recall_count, m.author"
     };
 }
 
@@ -592,6 +609,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
     let source_type: String = row.get(19).unwrap_or_else(|_| "unknown".to_string());
     let author_type: String = row.get(20).unwrap_or_else(|_| "agent".to_string());
     let recall_count: u32 = row.get(22).unwrap_or(0);
+    let author: Option<String> = row.get(23).ok().flatten();
 
     Ok(Memory {
         id,
@@ -617,6 +635,7 @@ pub(crate) fn row_to_memory(row: &rusqlite::Row<'_>) -> Result<Memory, rusqlite:
         source,
         source_type,
         author_type,
+        author,
     })
 }
 
@@ -651,6 +670,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 
@@ -679,6 +699,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 
@@ -1358,6 +1379,7 @@ mod tests {
         m.source_type = "file".to_string();
         m.author_type = "human".to_string();
         m.recall_count = 7;
+        m.author = Some("full-row-author".to_string());
         store.insert(&m).unwrap();
 
         let check = |what: &str, got: &Memory| {
@@ -1366,6 +1388,11 @@ mod tests {
             assert_eq!(got.source.as_deref(), Some("notes.md"), "{what}: source");
             assert_eq!(got.source_type, "file", "{what}: source_type");
             assert_eq!(got.author_type, "human", "{what}: author_type");
+            assert_eq!(
+                got.author.as_deref(),
+                Some("full-row-author"),
+                "{what}: author"
+            );
         };
         let one = |what: &str, v: Vec<Memory>| {
             assert_eq!(v.len(), 1, "{what}: expected exactly the inserted row");
@@ -1400,7 +1427,7 @@ mod tests {
         one("find_similar", store.find_similar("default", 10).unwrap());
         one("find_aged", store.find_aged(0, u32::MAX, None).unwrap());
 
-        // deprecated_at (index 21) and recall_count (index 22) must survive too.
+        // deprecated_at (index 21), recall_count (22) and author (23) must survive too.
         store.deprecate("full-row").unwrap();
         let got = store.get_by_id("full-row").unwrap().unwrap();
         assert!(
@@ -1415,7 +1442,7 @@ mod tests {
     fn test_memory_column_macros_agree() {
         let plain: Vec<&str> = memory_columns!().split(',').map(str::trim).collect();
         let aliased: Vec<&str> = memory_columns_m!().split(',').map(str::trim).collect();
-        assert_eq!(plain.len(), 23, "row_to_memory decodes 23 columns");
+        assert_eq!(plain.len(), 24, "row_to_memory decodes 24 columns");
         assert_eq!(plain.len(), aliased.len());
         for (p, a) in plain.iter().zip(&aliased) {
             assert_eq!(format!("m.{p}"), *a);
@@ -1591,6 +1618,85 @@ mod tests {
         assert_eq!((m.access_count, m.recall_count), (4, 0));
         store.touch_recall_batch(&["old"]).unwrap();
         assert_eq!(store.get_by_id("old").unwrap().unwrap().recall_count, 1);
+    }
+
+    /// #1427 phase 2: a v21 store (no `author`) upgrades in place. A memory in
+    /// exactly one room takes that room link's author; one in two rooms, one in
+    /// no room and one already attributed are not guessed.
+    #[test]
+    fn test_migration_v22_adds_author_and_backfills_single_room_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v21.db");
+        let path = path.to_str().unwrap();
+        {
+            let store = Store::open(path).unwrap();
+            for id in ["solo", "twice", "none"] {
+                store.insert(&make_test_memory(id, "legacy", &[])).unwrap();
+            }
+            store
+                .conn
+                .execute_batch(
+                    "INSERT INTO rooms (id, title, namespace, created_at, updated_at) \
+                         VALUES ('r1', NULL, 'default', 't', 't'), ('r2', NULL, 'default', 't', 't'); \
+                     INSERT INTO room_memories (room_id, memory_id, author, joined_at) VALUES \
+                         ('r1', 'solo', 'agent-a', 't'), \
+                         ('r1', 'twice', 'agent-a', 't'), ('r2', 'twice', 'agent-b', 't'); \
+                     ALTER TABLE memories DROP COLUMN author; \
+                     UPDATE schema_version SET version = 21;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path).unwrap();
+        let author = |id: &str| store.get_by_id(id).unwrap().unwrap().author;
+        assert_eq!(author("solo").as_deref(), Some("agent-a"));
+        assert_eq!(author("twice"), None, "two rooms: not guessed");
+        assert_eq!(author("none"), None);
+        // The migration is idempotent: reopening changes nothing.
+        drop(store);
+        let store = Store::open(path).unwrap();
+        assert_eq!(
+            store.get_by_id("solo").unwrap().unwrap().author.as_deref(),
+            Some("agent-a")
+        );
+    }
+
+    #[test]
+    fn test_author_roundtrips_and_is_validated() {
+        let store = Store::open(":memory:").unwrap();
+        let mut m = make_test_memory("a1", "attributed", &[]);
+        m.author = Some("claude-code".to_string());
+        store.insert(&m).unwrap();
+        assert_eq!(
+            store.get_by_id("a1").unwrap().unwrap().author.as_deref(),
+            Some("claude-code")
+        );
+        // Set, replace (trimmed) and clear.
+        store.insert(&make_test_memory("a2", "plain", &[])).unwrap();
+        assert_eq!(store.get_by_id("a2").unwrap().unwrap().author, None);
+        assert!(store.set_author("a2", Some("  hermes  ")).unwrap());
+        assert_eq!(
+            store.get_by_id("a2").unwrap().unwrap().author.as_deref(),
+            Some("hermes")
+        );
+        assert!(store.set_author("a2", None).unwrap());
+        assert_eq!(store.get_by_id("a2").unwrap().unwrap().author, None);
+        assert!(!store.set_author("missing", Some("x")).unwrap());
+        // Validation: empty, too long, control characters.
+        for bad in ["", "   ", "line\nbreak", &"x".repeat(129)] {
+            let e = store.set_author("a2", Some(bad)).unwrap_err();
+            assert!(e.to_string().contains("author"), "{bad:?}: {e}");
+        }
+        assert!(store.set_author("a2", Some(&"x".repeat(128))).unwrap());
+        // The field is omitted from JSON when unset and present when set.
+        let a2 = serde_json::to_value(store.get_by_id("a2").unwrap().unwrap()).unwrap();
+        let a1 = serde_json::to_value(store.get_by_id("a1").unwrap().unwrap()).unwrap();
+        assert_eq!(a2["author"], "x".repeat(128));
+        assert_eq!(a1["author"], "claude-code");
+        let none = serde_json::to_value(make_test_memory("a3", "x", &[])).unwrap();
+        assert!(
+            none.get("author").is_none(),
+            "unset author is not serialized"
+        );
     }
 
     #[test]
@@ -2059,6 +2165,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 

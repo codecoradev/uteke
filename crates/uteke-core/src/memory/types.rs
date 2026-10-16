@@ -89,6 +89,10 @@ pub struct Memory {
         skip_serializing_if = "is_default_author_type"
     )]
     pub author_type: String,
+    /// Who wrote the memory: the agent, user or tool name (#1427 phase 2).
+    /// Free text, set with or without a room; `None` when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
 
 /// Weight of one recall/search hit relative to one explicit `get` when
@@ -132,6 +136,29 @@ fn is_default_author_type(s: &str) -> bool {
 /// Returns `Ok(())` for "human" | "agent", otherwise a [`crate::Error::Validation`].
 /// Validation lives in the application layer — SQLite cannot add a CHECK
 /// constraint to an existing table via ALTER TABLE ADD COLUMN.
+/// Longest accepted `author` (#1427 phase 2): same bound as the room author.
+pub const MAX_AUTHOR_LEN: usize = 128;
+
+/// Validate and normalise a memory `author` (#1427 phase 2): free text, trimmed,
+/// not empty, at most [`MAX_AUTHOR_LEN`] characters, no control characters.
+pub fn validate_author(author: &str) -> Result<&str, crate::Error> {
+    let a = author.trim();
+    if a.is_empty() {
+        return Err(crate::Error::Validation("author must not be empty".into()));
+    }
+    if a.chars().count() > MAX_AUTHOR_LEN {
+        return Err(crate::Error::Validation(format!(
+            "author is longer than {MAX_AUTHOR_LEN} characters"
+        )));
+    }
+    if a.chars().any(char::is_control) {
+        return Err(crate::Error::Validation(
+            "author must not contain control characters".into(),
+        ));
+    }
+    Ok(a)
+}
+
 pub fn validate_author_type(author_type: &str) -> Result<(), crate::Error> {
     match author_type {
         "human" | "agent" => Ok(()),

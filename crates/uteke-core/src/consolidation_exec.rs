@@ -160,6 +160,7 @@ pub fn execute_plan<U: ConsolidationStore>(
             source: Some(format!("room:{room_id}#consolidation")),
             source_type: "derived".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
 
         let source_refs: Vec<&Memory> = sources.iter().collect();

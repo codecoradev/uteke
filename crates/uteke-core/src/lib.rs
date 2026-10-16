@@ -1437,6 +1437,13 @@ impl Uteke {
         self.store.set_author_type(id, author_type)
     }
 
+    /// Set or clear who wrote a memory (#1427 phase 2): free text, trimmed,
+    /// 1 to 128 characters, no control characters. Works with or without a
+    /// room. Returns false if the memory does not exist.
+    pub fn set_author(&self, id: &str, author: Option<&str>) -> Result<bool, Error> {
+        self.store.set_author(id, author)
+    }
+
     /// Recalculate importance scores for all memories.
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         let updated = self.store.recompute_importance()?;
@@ -3292,6 +3299,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -3343,6 +3351,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
 
         let sr = SearchResult {
@@ -4145,6 +4154,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
         uteke.store.insert(&m1).unwrap();
 

@@ -628,6 +628,7 @@ mod tests {
             source: None,
             source_type: "direct".to_string(),
             author_type: "agent".to_string(),
+            author: None,
             id: String::new(),
         }
     }

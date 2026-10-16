@@ -520,6 +520,7 @@ mod explain_tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
         uteke
             .store

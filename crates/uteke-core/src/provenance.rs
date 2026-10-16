@@ -224,6 +224,7 @@ mod tests {
             source: None,
             source_type: source_type.to_string(),
             author_type: author.to_string(),
+            author: None,
         }
     }
 

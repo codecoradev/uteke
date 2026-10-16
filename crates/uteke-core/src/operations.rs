@@ -466,6 +466,7 @@ impl crate::Uteke {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
 
         // SQLite is the source of truth and is written first, WITHOUT holding the
@@ -2517,6 +2518,7 @@ mod rrf_fuse_weighted_tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
         SearchResult { memory, score }
     }
@@ -2707,6 +2709,7 @@ mod dedup_tests {
             source: None,
             source_type: "direct".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 

@@ -619,6 +619,7 @@ mod room_recall_at_tests {
             source: None,
             source_type: "user".into(),
             author_type: "agent".into(),
+            author: None,
         }
     }
 
@@ -2746,6 +2747,7 @@ mod forget_route_tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 

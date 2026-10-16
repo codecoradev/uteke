@@ -159,6 +159,7 @@ mod tests {
             source: None,
             source_type: "unknown".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 
