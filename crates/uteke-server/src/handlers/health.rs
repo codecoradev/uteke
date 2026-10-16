@@ -1,4 +1,4 @@
-//! Health, guide and route-introspection handlers.
+//! Health, guide, route-introspection and store-identity handlers.
 
 use super::*;
 
@@ -61,4 +61,15 @@ pub(super) fn get_routes(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let ctx = c.ctx;
     let req = &mut *c.req;
     ctx.ok_response_for(req, &api_registry::ENDPOINTS)
+}
+
+/// `GET /store` (#1445): which store this server serves, as an id, never a path.
+pub(super) fn get_store(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
+    let ctx = c.ctx;
+    let req = &mut *c.req;
+    #[derive(serde::Serialize)]
+    struct StoreResponse<'a> {
+        id: &'a str,
+    }
+    ctx.ok_response_for(req, &StoreResponse { id: &ctx.store_id })
 }

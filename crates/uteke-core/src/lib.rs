@@ -412,6 +412,22 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Identity of the store rooted at `home`: the first 16 hex digits of the
+/// SHA-256 of its canonical path (the lexical path when it does not exist
+/// yet, trailing slashes trimmed). `GET /store` reports it so a client can tell
+/// whether a running server serves the store it resolved (#1445) without the
+/// server revealing its path. Two spellings of one directory give the same id.
+pub fn store_identity(home: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = std::fs::canonicalize(home).unwrap_or_else(|_| {
+        let lossy = home.to_string_lossy();
+        let trimmed = lossy.trim_end_matches('/');
+        PathBuf::from(if trimmed.is_empty() { "/" } else { trimmed })
+    });
+    let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
 /// ```text
 /// UTEKE_HOME=/data   → /data
 /// (not set)           → ~/.codecora/uteke  (auto-migrates from ~/.uteke)
@@ -4565,5 +4581,39 @@ mod fallback_settings_tests {
         // in a developer's shell. Default::default() (the missed mutant) gives
         // an empty endpoint_path.
         assert_eq!(got.endpoint_path, "/env-path");
+    }
+}
+
+#[cfg(test)]
+mod store_identity_tests {
+    use super::store_identity;
+
+    #[test]
+    fn spellings_of_one_directory_share_an_id_and_directories_differ() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let plain = store_identity(a.path());
+        assert_eq!(plain.len(), 16);
+        assert!(plain.bytes().all(|c| c.is_ascii_hexdigit()));
+        let with_slash = format!("{}/", a.path().display());
+        assert_eq!(store_identity(std::path::Path::new(&with_slash)), plain);
+        let dotted = a.path().join(".");
+        assert_eq!(store_identity(&dotted), plain);
+        assert_ne!(store_identity(b.path()), plain);
+    }
+
+    #[test]
+    fn a_missing_directory_is_identified_by_its_trimmed_path() {
+        let x = store_identity(std::path::Path::new("/nonexistent/uteke-a"));
+        assert_eq!(
+            x,
+            store_identity(std::path::Path::new("/nonexistent/uteke-a/"))
+        );
+        assert_ne!(
+            x,
+            store_identity(std::path::Path::new("/nonexistent/uteke-b"))
+        );
+        // Pinned value: the id is part of the wire format of GET /store.
+        assert_eq!(x, "a424b195034e711e");
     }
 }

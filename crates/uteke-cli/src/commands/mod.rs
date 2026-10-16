@@ -31,7 +31,7 @@ use crate::cli::FeedbackAction;
 use crate::resolve_namespace;
 use uteke_core::Uteke;
 
-pub(crate) use server::{is_server_running, run_via_server};
+pub(crate) use server::{is_server_running, run_via_server, server_serves_store};
 
 /// Deprecation notice (#1427, phase 1) for write commands that target a
 /// non-default namespace (`--namespace`, `UTEKE_NAMESPACE` or config). The

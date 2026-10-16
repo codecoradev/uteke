@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`UTEKE_HOME` pointing at another store no longer routes to a running server (#1445)** - with `[server] enabled = true` and `uteke-serve` running, `UTEKE_HOME=/tmp/iso uteke remember ...` was sent to the server and landed in the server's store instead of `/tmp/iso`. The server now reports which store it serves on the new `GET /store` (LAB route, token required when auth is on): `{"id": "<16 hex digits>"}`, a SHA-256 prefix of the store's canonical path, never the path itself. Before routing to a loopback server the CLI compares that id with the store it resolved and runs locally on a mismatch (with a warning on stderr). A server without the route (404), an unreachable one or a non-loopback one keeps the previous routing. `docs/core-contract.json` gains `/store` in the `lab` list only.
+
 ### Changed
 
 - **`tools/list` for a read-only token lists only the tools it can call (#1446)** - MCP over HTTP advertised every tool to read-only callers, which then failed at call time. A read-only caller now sees exactly the read tools; full-access callers, the stdio transport and `tools/call` are unchanged. Contract: uteke-cloud#203 (approved by the owner).

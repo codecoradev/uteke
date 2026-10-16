@@ -13,6 +13,48 @@ pub(crate) fn is_server_running(url: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the server at `url` serves the store at `store` (#1445).
+///
+/// Asks `GET /store` for the served store's id and compares it with the id of
+/// the store this invocation resolved (`UTEKE_HOME`, `--store`, `uteke.toml`).
+/// A mismatch returns `false` so the command runs against its own store
+/// instead of silently reading and writing the server's. Anything that stops
+/// the comparison (a server older than this route answers 404, a non-loopback
+/// server whose paths are not ours, a timeout, a body that is not an id)
+/// returns `true`: routing then behaves as before.
+pub(crate) fn server_serves_store(url: &str, store: &str) -> bool {
+    if !is_loopback_url(url) {
+        return true;
+    }
+    let Ok(resp) = build_client(url)
+        .get(format!("{url}/store"))
+        .timeout(std::time::Duration::from_millis(500))
+        .send()
+    else {
+        return true;
+    };
+    if !resp.status().is_success() {
+        return true;
+    }
+    let Some(served) = resp
+        .json::<serde_json::Value>()
+        .ok()
+        .and_then(|v| v["id"].as_str().map(str::to_string))
+    else {
+        return true;
+    };
+    let ours = uteke_core::store_identity(std::path::Path::new(
+        &crate::config::Config::expand_tilde(store),
+    ));
+    if served == ours {
+        return true;
+    }
+    tracing::warn!(
+        "the server at {url} serves a different store than {store}; using the local store"
+    );
+    false
+}
+
 /// Send a request and check HTTP status before parsing JSON.
 fn parse_response<T: serde::de::DeserializeOwned>(
     resp: reqwest::blocking::Response,
@@ -500,5 +542,72 @@ mod recall_flag_tests {
         let mut f = defaults();
         f.salience = Some(false);
         assert_eq!(recall_flags_unsupported_by_server(f), ["--salience"]);
+    }
+}
+
+#[cfg(test)]
+mod store_match_tests {
+    use super::server_serves_store;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serve one canned HTTP response on a loopback port; returns its base URL.
+    fn stub(status: &str, body: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let reply = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = conn.read(&mut buf);
+                let _ = conn.write_all(reply.as_bytes());
+            }
+        });
+        url
+    }
+
+    fn id_body(store: &std::path::Path) -> String {
+        format!(r#"{{"id":"{}"}}"#, uteke_core::store_identity(store))
+    }
+
+    #[test]
+    fn the_same_store_keeps_routing() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = stub("200 OK", &id_body(dir.path()));
+        assert!(server_serves_store(&url, dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn another_store_is_not_routed_to_the_server() {
+        let served = tempfile::tempdir().unwrap();
+        let ours = tempfile::tempdir().unwrap();
+        let url = stub("200 OK", &id_body(served.path()));
+        assert!(!server_serves_store(&url, ours.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn anything_that_blocks_the_comparison_keeps_the_old_routing() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().to_str().unwrap();
+        // A server older than GET /store answers 404.
+        assert!(server_serves_store(&stub("404 Not Found", "{}"), store));
+        // 401 (no token) and a body that is not an id.
+        assert!(server_serves_store(&stub("401 Unauthorized", "{}"), store));
+        assert!(server_serves_store(&stub("200 OK", "not json"), store));
+        assert!(server_serves_store(&stub("200 OK", r#"{"id":7}"#), store));
+        // Nothing listening.
+        let gone = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", gone.local_addr().unwrap());
+        drop(gone);
+        assert!(server_serves_store(&url, store));
+    }
+
+    #[test]
+    fn a_non_loopback_server_is_never_asked() {
+        // Its paths are not ours, so the ids could never match; no request is made.
+        assert!(server_serves_store("http://192.0.2.1:9", "/tmp/anything"));
     }
 }

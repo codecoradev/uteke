@@ -50,6 +50,12 @@ Returns the agent-facing memory tools guide for system prompt injection (#1010).
 
 *Related: `#1010`*
 
+#### 🟢 `GET` `/store`
+
+Identity of the store this server serves: {"id": "<16 hex digits>"}, the SHA-256 prefix of the store's canonical path (`uteke_core::store_identity`). The CLI compares it with the store it resolved before routing a command here, so `UTEKE_HOME` pointing elsewhere is not sent to this server (#1445). The path itself is never returned. Needs the usual token when auth is on.
+
+*Related: `#1445`*
+
 #### 🟢 `GET` `/namespaces`
 
 List all namespaces in the memory store. `?with_counts=true` adds `count` (total) plus `active`/`deprecated` breakdown fields (#1181).

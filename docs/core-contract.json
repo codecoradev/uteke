@@ -147,6 +147,10 @@
     },
     {
       "method": "GET",
+      "path": "/store"
+    },
+    {
+      "method": "GET",
       "path": "/stats"
     },
     {

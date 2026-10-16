@@ -65,6 +65,8 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("GET", "/guide", health::get_guide),
     // ── Route Introspection (#1289) ─────────────────────────────────
     ("GET", "/routes", health::get_routes),
+    // ── Served store identity (#1445) ───────────────────────────────
+    ("GET", "/store", health::get_store),
     // ── Remember ───────────────────────────────────────────────────
     ("POST", "/remember", memory::post_remember),
     // ── Recall (semantic search) ────────────────────────────────────
@@ -518,6 +520,7 @@ mod room_memories_namespace_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -748,6 +751,7 @@ mod room_recall_at_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -987,6 +991,7 @@ mod room_recall_at_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1271,6 +1276,7 @@ mod contradiction_api_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1409,6 +1415,7 @@ mod pack_recall_api_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1570,6 +1577,7 @@ mod explain_recall_api_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1695,6 +1703,7 @@ mod list_pagination_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1797,6 +1806,7 @@ mod payload_conformance_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: Default::default(),
+            store_id: String::new(),
         };
 
         let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
@@ -1875,6 +1885,7 @@ mod payload_conformance_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: Default::default(),
+            store_id: String::new(),
         };
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
@@ -1932,6 +1943,7 @@ mod payload_conformance_tests {
                     recall_config: None,
                     extraction_config: None,
                     host_guard: Default::default(),
+                    store_id: String::new(),
                 };
                 let resp = route(&self.uteke, &ctx, &mut req);
                 let status = resp.status_code().0;
@@ -2040,6 +2052,7 @@ mod routes_introspection_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: "0123456789abcdef".to_string(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2163,6 +2176,22 @@ mod routes_introspection_tests {
         assert!(handler_for("post", "/remember").is_none());
     }
 
+    /// `GET /store` reports the store id and nothing else, is reachable with
+    /// a read-only token, and is refused without a token when auth is on
+    /// (#1445). The id is never a path.
+    #[test]
+    fn get_store_reports_the_store_id_to_authenticated_callers_only() {
+        let app = RoutesApp::with_read_only_token("ro-token");
+        let (status, json) = app.call(Method::Get, "/store", Some("Bearer ro-token"));
+        assert_eq!(status, 200, "{json}");
+        assert_eq!(json, serde_json::json!({ "id": "0123456789abcdef" }));
+        let (status, _) = app.call(Method::Get, "/store", None);
+        assert_eq!(status, 401);
+        let (status, _) = app.call(Method::Post, "/store", Some("Bearer ro-token"));
+        // Only GET is registered; the read-only gate answers before the 404.
+        assert_eq!(status, 403, "POST /store is not a route");
+    }
+
     /// A route that is not in the table is a 404 that never reaches a
     /// handler, even when the path exists under another verb.
     #[test]
@@ -2264,6 +2293,7 @@ mod plain_remember_type_tests {
                 recall_config: None,
                 extraction_config: None,
                 host_guard: Default::default(),
+                store_id: String::new(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2389,6 +2419,7 @@ mod host_guard_route_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: guard,
+            store_id: String::new(),
         };
         let mut t = TestRequest::new().with_method(Method::Get).with_path(path);
         if let Some(h) = host {
@@ -2440,6 +2471,7 @@ mod mcp_http_hardening_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: Default::default(),
+            store_id: String::new(),
         }
     }
 
@@ -2495,6 +2527,7 @@ mod mcp_read_only_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: Default::default(),
+            store_id: String::new(),
         }
     }
 
@@ -2582,6 +2615,7 @@ mod namespace_deprecation_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: Default::default(),
+            store_id: String::new(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -2744,6 +2778,7 @@ mod forget_route_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: Default::default(),
+            store_id: String::new(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;

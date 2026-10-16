@@ -166,9 +166,12 @@ fn main() {
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
     // Cheap check first: no network probe when --store names another store.
+    // Then the server must serve the store this invocation resolved (#1445):
+    // `UTEKE_HOME` pointing elsewhere is not sent to a server for another store.
     let server_available =
         should_route_via_server(&cli, &default_store_path(&config), config.server.enabled)
-            && commands::is_server_running(&server_url);
+            && commands::is_server_running(&server_url)
+            && commands::server_serves_store(&server_url, &resolve_store_path(&cli, &config));
 
     if server_available {
         tracing::info!("Server detected at {server_url}, routing via HTTP");

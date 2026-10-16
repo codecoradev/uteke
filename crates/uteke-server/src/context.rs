@@ -136,6 +136,9 @@ pub struct ReqCtx {
     pub extraction_config: Option<uteke_core::extraction::ExtractionConfig>,
     /// `Host` header allowlist against DNS rebinding (#1326).
     pub host_guard: HostGuard,
+    /// Identity of the served store (`uteke_core::store_identity`), reported by
+    /// `GET /store` so a client can tell which store this server serves (#1445).
+    pub store_id: String,
 }
 
 /// `Host` header policy against DNS rebinding (#1326).
@@ -365,6 +368,7 @@ mod cors_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: HostGuard::default(),
+            store_id: String::new(),
         }
     }
 

@@ -100,6 +100,17 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         method: "GET",
+        path: "/store",
+        tier: Tier::Lab,
+        writes: false,
+        description: "Identity of the store this server serves: {\"id\": \"<16 hex digits>\"}, the SHA-256 prefix of the store's canonical path (`uteke_core::store_identity`). The CLI compares it with the store it resolved before routing a command here, so `UTEKE_HOME` pointing elsewhere is not sent to this server (#1445). The path itself is never returned. Needs the usual token when auth is on.",
+        request_type: None,
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1445"],
+    },
+    Endpoint {
+        method: "GET",
         path: "/namespaces",
         tier: Tier::Core,
         writes: false,
