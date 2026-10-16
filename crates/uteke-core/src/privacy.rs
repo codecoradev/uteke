@@ -1,0 +1,440 @@
+//! Secret detection for the write path (#1464, part 1).
+//!
+//! [`redact`] finds common secret shapes in text and replaces the secret part
+//! with a masked form that keeps the shape: `ghp_[REDACTED:github-token]`,
+//! `Bearer [REDACTED:bearer-token]`, `API_KEY=[REDACTED:env-secret]`. It reports
+//! what it removed (a kind and a count, never the value) so the caller can set
+//! `metadata.redacted` and write an audit entry.
+//!
+//! Precision comes first: the filter will run by default, so a pattern is only
+//! here when its shape is specific enough to rarely hit ordinary text. The one
+//! generic rule, `NAME=value` assignments, needs a secret-like name, a long
+//! value with enough entropy, and ignores hashes, UUIDs, paths and obvious
+//! placeholders. A caller-supplied allowlist (regexes) keeps a value that
+//! matches any entry. [`redact`] is idempotent.
+//!
+//! Nothing here touches storage; wiring into `remember`, import, room remember
+//! and update is part 2.
+
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+use regex::{Captures, Regex};
+
+use crate::Error;
+
+/// How many secrets of one kind were masked.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RedactionCount {
+    pub kind: &'static str,
+    pub count: usize,
+}
+
+/// Result of [`redact`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redaction {
+    /// The text with every detected secret masked.
+    pub text: String,
+    /// What was masked, ordered by kind. Empty when the text was clean.
+    pub redactions: Vec<RedactionCount>,
+}
+
+impl Redaction {
+    /// Whether nothing was masked.
+    pub fn is_clean(&self) -> bool {
+        self.redactions.is_empty()
+    }
+
+    /// Total number of masked secrets.
+    pub fn total(&self) -> usize {
+        self.redactions.iter().map(|r| r.count).sum()
+    }
+}
+
+/// Compile the `[privacy] allowlist` entries; the first invalid one is an error.
+pub fn compile_allowlist(patterns: &[String]) -> Result<Vec<Regex>, Error> {
+    patterns
+        .iter()
+        .map(|p| {
+            Regex::new(p).map_err(|e| {
+                Error::Validation(format!("invalid privacy allowlist regex '{p}': {e}"))
+            })
+        })
+        .collect()
+}
+
+/// A whole-secret rule: `mask` builds the replacement from the match.
+struct Rule {
+    kind: &'static str,
+    pattern: &'static str,
+    mask: fn(&Captures) -> String,
+}
+
+/// Order matters: a JWT sent as `Bearer <jwt>` is reported as a bearer token.
+const RULES: &[Rule] = &[
+    Rule {
+        kind: "private-key",
+        pattern: r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----",
+        mask: |_| "[REDACTED:private-key]".to_string(),
+    },
+    Rule {
+        kind: "aws-access-key",
+        pattern: r"\b(AKIA|ASIA)[0-9A-Z]{16}\b",
+        mask: |c| format!("{}[REDACTED:aws-access-key]", &c[1]),
+    },
+    Rule {
+        kind: "github-token",
+        pattern: r"\b(gh[pousr]_)[A-Za-z0-9]{36,}\b",
+        mask: |c| format!("{}[REDACTED:github-token]", &c[1]),
+    },
+    Rule {
+        kind: "github-token",
+        pattern: r"\b(github_pat_)[A-Za-z0-9_]{22,}\b",
+        mask: |c| format!("{}[REDACTED:github-token]", &c[1]),
+    },
+    Rule {
+        kind: "api-key",
+        pattern: r"\b(sk-)[A-Za-z0-9_-]{20,}\b",
+        mask: |c| format!("{}[REDACTED:api-key]", &c[1]),
+    },
+    Rule {
+        kind: "bearer-token",
+        pattern: r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}",
+        mask: |c| format!("{}[REDACTED:bearer-token]", &c[1]),
+    },
+    Rule {
+        kind: "jwt",
+        pattern: r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+        mask: |_| "[REDACTED:jwt]".to_string(),
+    },
+];
+
+/// `NAME=value`, `NAME: value`, `"NAME": "value"` with a secret-like name. The
+/// value ends at whitespace, a quote, `,` or `;` (captured, so code such as
+/// `self.api_key.clone()` or `key = make_key(x)` never matches: the value is
+/// followed by `(`).
+const ASSIGNMENT: &str = r#"(?im)\b([A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d|pwd)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*["']?)([^\s"',;()\[\]{}<>]{16,})(["',;\s]|$)"#;
+
+/// Shannon entropy of `s` in bits per character.
+fn entropy(s: &str) -> f64 {
+    let mut counts: BTreeMap<char, usize> = BTreeMap::new();
+    for c in s.chars() {
+        *counts.entry(c).or_default() += 1;
+    }
+    let n = s.chars().count() as f64;
+    counts
+        .values()
+        .map(|&k| {
+            let p = k as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+fn is_hex(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(&parts)
+            .all(|(len, p)| p.len() == *len && is_hex(p))
+}
+
+/// Words joined by `.`, `_` or `-`, all lowercase or all uppercase and without
+/// digits: a variable, field path or setting name (`config.embedding.api_key`,
+/// `VAULT_API_KEY_NAME`), not a secret.
+fn is_identifier_like(v: &str) -> bool {
+    let words: Vec<&str> = v.split(['.', '_', '-']).collect();
+    words.len() > 1
+        && words.iter().all(|w| {
+            w.len() > 1
+                && (w.bytes().all(|b| b.is_ascii_lowercase())
+                    || w.bytes().all(|b| b.is_ascii_uppercase()))
+        })
+}
+
+/// A value an assignment rule must leave alone: hashes, UUIDs, paths, URLs,
+/// environment references, placeholders and already-masked text.
+fn is_benign_value(v: &str) -> bool {
+    let lower = v.to_ascii_lowercase();
+    v.contains("[REDACTED")
+        || v.contains("::")
+        || is_identifier_like(v)
+        || is_uuid(v)
+        || (is_hex(v) && matches!(v.len(), 40 | 64))
+        || v.starts_with(['/', '~', '$', '<', '{', '%'])
+        || v.starts_with("./")
+        || v.starts_with("../")
+        || v.contains("://")
+        || v.chars().nth(1) == Some(':') && v.contains('\\')
+        || [
+            "example",
+            "your",
+            "placeholder",
+            "changeme",
+            "change-me",
+            "xxxx",
+            "****",
+            "dummy",
+            "sample",
+        ]
+        .iter()
+        .any(|w| lower.contains(w))
+}
+
+fn rules() -> &'static [(Regex, &'static Rule)] {
+    static COMPILED: OnceLock<Vec<(Regex, &'static Rule)>> = OnceLock::new();
+    COMPILED.get_or_init(|| {
+        RULES
+            .iter()
+            .map(|r| (Regex::new(r.pattern).expect("built-in privacy pattern"), r))
+            .collect()
+    })
+}
+
+fn assignment() -> &'static Regex {
+    static COMPILED: OnceLock<Regex> = OnceLock::new();
+    COMPILED.get_or_init(|| Regex::new(ASSIGNMENT).expect("built-in privacy assignment pattern"))
+}
+
+/// Mask every secret found in `input`; a match that any `allowlist` regex also
+/// matches is kept as it is.
+pub fn redact(input: &str, allowlist: &[Regex]) -> Redaction {
+    let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut text = input.to_string();
+    let allowed = |s: &str| allowlist.iter().any(|a| a.is_match(s));
+
+    for (re, rule) in rules() {
+        text = re
+            .replace_all(&text, |c: &Captures| {
+                if allowed(&c[0]) {
+                    return c[0].to_string();
+                }
+                *counts.entry(rule.kind).or_default() += 1;
+                (rule.mask)(c)
+            })
+            .into_owned();
+    }
+
+    text = assignment()
+        .replace_all(&text, |c: &Captures| {
+            let value = &c[3];
+            if is_benign_value(value) || entropy(value) < 3.0 || allowed(value) || allowed(&c[0]) {
+                return c[0].to_string();
+            }
+            *counts.entry("env-secret").or_default() += 1;
+            format!("{}{}[REDACTED:env-secret]{}", &c[1], &c[2], &c[4])
+        })
+        .into_owned();
+
+    Redaction {
+        text,
+        redactions: counts
+            .into_iter()
+            .map(|(kind, count)| RedactionCount { kind, count })
+            .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fake secrets are assembled at run time so the repository itself holds no
+    /// string a secret scanner would flag.
+    fn gh() -> String {
+        format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5")
+    }
+    fn aws() -> String {
+        format!("{}{}", "AKIA", "IOSFODNN7EXAMPLQ")
+    }
+    fn jwt() -> String {
+        [
+            "eyJhbGciOiJIUzI1NiJ9",
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+            "dBjftJeZ4CVPmB92K27uhbUJU1p1r",
+        ]
+        .join(".")
+    }
+    fn pem() -> String {
+        format!(
+            "-----BEGIN {} KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nabcdefgh\n-----END {} KEY-----",
+            "RSA PRIVATE", "RSA PRIVATE"
+        )
+    }
+
+    fn sample() -> String {
+        ["Zq8vN2xL5mP9", "aR4tW7yB3cD6"].concat()
+    }
+
+    fn kinds(r: &Redaction) -> Vec<(&'static str, usize)> {
+        r.redactions.iter().map(|x| (x.kind, x.count)).collect()
+    }
+
+    #[test]
+    fn github_tokens_keep_their_prefix() {
+        let r = redact(&format!("use {} for the repo", gh()), &[]);
+        assert_eq!(r.text, "use ghp_[REDACTED:github-token] for the repo");
+        assert_eq!(kinds(&r), vec![("github-token", 1)]);
+        let pat = format!(
+            "{}{}",
+            "github_pat_", "11ABCDEFG0abcdefghij_klmnopqrstuvwxyz0123456789"
+        );
+        let r = redact(&pat, &[]);
+        assert_eq!(r.text, "github_pat_[REDACTED:github-token]");
+    }
+
+    #[test]
+    fn aws_access_keys_keep_their_prefix() {
+        let r = redact(&format!("key id {}", aws()), &[]);
+        assert_eq!(r.text, "key id AKIA[REDACTED:aws-access-key]");
+        assert_eq!(kinds(&r), vec![("aws-access-key", 1)]);
+        // Wrong length is not a key.
+        assert!(redact("AKIAshort", &[]).is_clean());
+    }
+
+    #[test]
+    fn bearer_headers_and_jwts() {
+        let r = redact(&format!("Authorization: Bearer {}", jwt()), &[]);
+        assert_eq!(r.text, "Authorization: Bearer [REDACTED:bearer-token]");
+        let r = redact(&format!("cookie {}", jwt()), &[]);
+        assert_eq!(r.text, "cookie [REDACTED:jwt]");
+        assert!(redact("Bearer token handling is documented", &[]).is_clean());
+    }
+
+    #[test]
+    fn private_key_blocks_are_removed_whole() {
+        let r = redact(&format!("before\n{}\nafter", pem()), &[]);
+        assert_eq!(r.text, "before\n[REDACTED:private-key]\nafter");
+        assert_eq!(kinds(&r), vec![("private-key", 1)]);
+        assert!(
+            redact(
+                "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
+                &[]
+            )
+            .is_clean()
+        );
+    }
+
+    #[test]
+    fn api_keys_with_the_sk_prefix() {
+        let sample = format!("{}{}", "sk-", "proj-Ab3dE5gH7jK9mN1pQ3rS5tU7");
+        let r = redact(&sample, &[]);
+        assert_eq!(r.text, "sk-[REDACTED:api-key]");
+        assert!(redact("sk-short", &[]).is_clean());
+        assert!(redact("task-description-for-the-weekly-sync-meeting", &[]).is_clean());
+    }
+
+    #[test]
+    fn secret_named_assignments_with_a_high_entropy_value() {
+        let value = sample();
+        for (input, expected) in [
+            (
+                format!("API_KEY={value}"),
+                "API_KEY=[REDACTED:env-secret]".to_string(),
+            ),
+            (
+                format!("export DB_PASSWORD=\"{value}\""),
+                "export DB_PASSWORD=\"[REDACTED:env-secret]".to_string() + "\"",
+            ),
+            (
+                format!("{{\"client_secret\": \"{value}\"}}"),
+                "{\"client_secret\": \"[REDACTED:env-secret]\"}".to_string(),
+            ),
+            (
+                format!("auth_token: {value}"),
+                "auth_token: [REDACTED:env-secret]".to_string(),
+            ),
+        ] {
+            let r = redact(&input, &[]);
+            assert_eq!(r.text, expected, "{input}");
+            assert_eq!(kinds(&r), vec![("env-secret", 1)], "{input}");
+        }
+    }
+
+    #[test]
+    fn assignments_that_are_not_secrets_are_left_alone() {
+        for input in [
+            "TOKEN_LIMIT=10000",
+            "PASSWORD_MIN_LENGTH=12",
+            "API_KEY=short",
+            "KEY_FILE=/etc/ssl/private/server.key",
+            "SECRET_PATH=./config/secret.yaml",
+            "SSH_KEY=~/.ssh/id_ed25519_work_laptop",
+            "API_KEY=${VAULT_API_KEY_PRODUCTION_ENV}",
+            "api_key=<your-api-key-goes-here-ok>",
+            "API_KEY=your_api_key_goes_here_please",
+            "TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa",
+            "COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b",
+            "CACHE_KEY=2f9c1d3e-8a4b-4c6d-9e1f-0a1b2c3d4e5f",
+            "TOKEN_URL=https://auth.example.com/oauth/token/endpoint",
+            "keyboard shortcuts: press the key combination again to toggle",
+        ] {
+            let r = redact(input, &[]);
+            assert!(r.is_clean(), "false positive on {input:?}: {}", r.text);
+            assert_eq!(r.text, input);
+        }
+    }
+
+    #[test]
+    fn the_allowlist_keeps_a_matching_value() {
+        let allow = compile_allowlist(&["^ghp_aB3".to_string()]).unwrap();
+        let input = format!("token {}", gh());
+        let r = redact(&input, &allow);
+        assert!(r.is_clean());
+        assert_eq!(r.text, input);
+        // An allowlist entry that does not match changes nothing.
+        let other = compile_allowlist(&["^nothing$".to_string()]).unwrap();
+        assert_eq!(redact(&input, &other).total(), 1);
+        assert!(compile_allowlist(&["(unclosed".to_string()]).is_err());
+    }
+
+    #[test]
+    fn counts_are_per_kind_and_the_filter_is_idempotent() {
+        let input = format!(
+            "{} and {} and {} plus API_KEY={}",
+            gh(),
+            gh(),
+            aws(),
+            sample()
+        );
+        let once = redact(&input, &[]);
+        assert_eq!(
+            kinds(&once),
+            vec![
+                ("aws-access-key", 1),
+                ("env-secret", 1),
+                ("github-token", 2)
+            ]
+        );
+        assert_eq!(once.total(), 4);
+        let twice = redact(&once.text, &[]);
+        assert!(twice.is_clean(), "second pass changed {}", twice.text);
+        assert_eq!(twice.text, once.text);
+    }
+
+    #[test]
+    fn the_secret_value_does_not_survive_in_the_output() {
+        let input = format!("{} {} {} {}", gh(), aws(), jwt(), pem());
+        let r = redact(&input, &[]);
+        for secret in [
+            gh(),
+            aws(),
+            jwt(),
+            "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC".to_string(),
+        ] {
+            assert!(!r.text.contains(&secret), "{secret} survived: {}", r.text);
+        }
+    }
+
+    #[test]
+    fn entropy_matches_known_values() {
+        assert_eq!(entropy("aaaa"), 0.0);
+        assert!((entropy("abab") - 1.0).abs() < 1e-9);
+        assert!((entropy("abcd") - 2.0).abs() < 1e-9);
+    }
+}

@@ -36,6 +36,8 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 usearch = { version = "2", optional = true }
 vecq-core = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
+# Secret detection in the write path (#1464). Already in the graph via tokenizers.
+regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 thiserror = "2"
 dirs = "7"

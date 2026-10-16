@@ -2807,6 +2807,7 @@ dependencies = [
  "fs2",
  "ndarray",
  "ort",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",

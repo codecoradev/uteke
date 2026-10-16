@@ -35,6 +35,7 @@ pub mod namespace_deprecation;
 pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
+pub mod privacy;
 
 pub use forget_request::{
     ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
