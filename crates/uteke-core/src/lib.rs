@@ -53,6 +53,8 @@ pub use recall_request::{
 pub use remember_request::{
     RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
+#[cfg(test)]
+mod isolation_tests;
 mod orphans;
 pub mod provenance;
 mod recall_cache;

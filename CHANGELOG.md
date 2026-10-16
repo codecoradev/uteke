@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Internal: scope-isolation regression gate, part 1 (#1467): a two-namespace fixture with overlapping vocabulary and a core suite asserting that `recall` (every strategy), unified recall, `search`, `list`, tags, export, room recall and graph views never return a record from another namespace. The fixture ships behind the `test-support` feature of `uteke-core` for the server, MCP and CLI suites that follow.
 - **`tools/list` for a read-only token lists only the tools it can call (#1446)** - MCP over HTTP advertised every tool to read-only callers, which then failed at call time. A read-only caller now sees exactly the read tools; full-access callers, the stdio transport and `tools/call` are unchanged. Contract: uteke-cloud#203 (approved by the owner).
 - **`unsafe_code` is now enforced (#1456)** - the workspace declared `unsafe_code = "forbid"` but no crate inherited it, so nothing was enforced. Every crate now has `[lints] workspace = true` and the level is `deny`: production code cannot contain `unsafe`, and only the five test modules that call `std::env::set_var`/`remove_var` (edition 2024) opt out with `#[allow(unsafe_code)]`. `forbid` cannot be used because it cannot be relaxed per module.
 

@@ -17,6 +17,9 @@ readme = "../../README.md"
 # or --features "onnx,usearch" (classic single-engine desktop).
 default = ["onnx", "usearch", "vecq"]
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers"]
+# Test helpers (keyword embedder, seeded two-scope store) shared with the
+# server, MCP and CLI isolation suites (#1467). Never enabled by a release build.
+test-support = []
 # Default vector search backend (HNSW, C++ FFI).
 usearch = ["dep:usearch"]
 # Alternative pure-Rust vector search backend (training-free 4-bit quantization).
