@@ -443,20 +443,29 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 &req_data.room_id,
                 author,
             ) {
-                Ok(outcome) => ctx.ok_response_for(
-                    req,
-                    &serde_json::json!({
-                        "id": outcome.id,
-                        "room_id": req_data.room_id,
-                        "embedding_written": outcome.embedding_written,
-                        "warning": uteke_core::namespace_deprecation::merge_warning(
-                            outcome.warning,
-                            uteke_core::namespace_deprecation::namespace_write_warning(
-                                ns(&req_data.namespace),
+                Ok(outcome) => {
+                    // The named writer is also the memory's own author (#1427
+                    // phase 2); the "user" fallback of the room link is not.
+                    if let Some(a) = req_data.author.as_deref()
+                        && let Err(e) = uteke.set_author_if_valid(&outcome.id, a)
+                    {
+                        error!("Failed to set author for {}: {e}", outcome.id);
+                    }
+                    ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({
+                            "id": outcome.id,
+                            "room_id": req_data.room_id,
+                            "embedding_written": outcome.embedding_written,
+                            "warning": uteke_core::namespace_deprecation::merge_warning(
+                                outcome.warning,
+                                uteke_core::namespace_deprecation::namespace_write_warning(
+                                    ns(&req_data.namespace),
+                                ),
                             ),
-                        ),
-                    }),
-                ),
+                        }),
+                    )
+                }
                 Err(e) => {
                     error!("room/remember error: {e}");
                     let status = match e {

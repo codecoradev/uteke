@@ -103,7 +103,7 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | `--source-type <type>` | Source type: user, url, file, import, derived, system (default: user) |
 | `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
 | `--room <room_id>` | Link memory to a room (collaborative context) |
-| `--author <name>` | Author attribution when storing in a room |
+| `--author <name>` | Who wrote the memory (1 to 128 characters). Recorded on the memory with or without `--room`; with `--room` it is also the room author (default there: `anonymous`) |
 | `--json` | Output stored memory as JSON |
 
 ## uteke recall

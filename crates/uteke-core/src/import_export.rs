@@ -25,6 +25,7 @@ impl crate::Uteke {
                 created_at: m.created_at,
                 source: m.source,
                 namespace: m.namespace,
+                author: m.author,
             })
             .collect();
 
@@ -132,7 +133,12 @@ impl crate::Uteke {
                 source: Some(format!("import:{}", entry.source.unwrap_or_default())),
                 source_type: "import".to_string(),
                 author_type: "agent".to_string(),
-                author: None,
+                // A bad value in a file is dropped, it must not fail the import.
+                author: entry
+                    .author
+                    .as_deref()
+                    .and_then(|a| crate::memory::types::validate_author(a).ok())
+                    .map(str::to_string),
             };
 
             // Write-ahead: vector index first (can be rolled back), then SQLite.
@@ -218,11 +224,62 @@ mod tests {
             created_at: chrono::Utc::now(),
             source: None,
             namespace: "default".to_string(),
+            author: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
+        assert!(
+            !json.contains("author"),
+            "an unset author is not serialized: {json}"
+        );
         let restored: ExportEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.content, "hello world");
         assert_eq!(restored.tags.len(), 1);
+    }
+
+    /// #1427 phase 2: the author survives export and import; an invalid author
+    /// in a file is dropped without failing the row; old files have none.
+    #[test]
+    fn test_author_survives_export_import() {
+        let src = crate::test_support::open_keyword();
+        let a = src.remember("attributed note", &[], None, None).unwrap();
+        src.remember("plain note", &[], None, None).unwrap();
+        src.set_author(&a, Some("claude-code")).unwrap();
+        let exported = src.export(None).unwrap();
+        assert!(
+            exported.contains("\"author\":\"claude-code\""),
+            "{exported}"
+        );
+        assert_eq!(
+            exported.matches("\"author\"").count(),
+            1,
+            "only the attributed row"
+        );
+
+        let dst = crate::test_support::open_keyword();
+        assert_eq!(dst.import(&exported, None).unwrap().imported, 2);
+        let authors: std::collections::BTreeMap<String, Option<String>> = dst
+            .list(None, 10, 0, None)
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.content, m.author))
+            .collect();
+        assert_eq!(authors["attributed note"].as_deref(), Some("claude-code"));
+        assert_eq!(authors["plain note"], None);
+
+        // An invalid author in a file is dropped, the row is still imported.
+        let long = "x".repeat(200);
+        let file = format!(
+            "{{\"content\":\"bad author\",\"author\":\"{long}\"}}\n{{\"content\":\"blank author\",\"author\":\"  \"}}\n{{\"content\":\"old row\"}}"
+        );
+        let other = crate::test_support::open_keyword();
+        assert_eq!(other.import(&file, None).unwrap().imported, 3);
+        assert!(
+            other
+                .list(None, 10, 0, None)
+                .unwrap()
+                .iter()
+                .all(|m| m.author.is_none())
+        );
     }
 
     /// #1036: export must carry per-row namespace; import must reconstruct

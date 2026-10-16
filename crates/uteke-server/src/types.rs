@@ -216,6 +216,10 @@ pub struct RememberRequest {
     /// Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted.
     #[serde(default)]
     pub author_type: Option<String>,
+    /// Who wrote the memory (#1427 phase 2): free text, trimmed, 1 to 128
+    /// characters. Optional, with or without a room; returned on the memory.
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 impl RememberRequest {
@@ -237,12 +241,12 @@ impl RememberRequest {
             source_type: self.source_type.clone(),
             author_type: self.author_type.clone(),
             room: None,
-            author: None,
+            author: self.author.clone(),
             timestamp: None,
         }
     }
 
-    /// Decode under the HTTP policy: content/tags, `author_type` and `type`
+    /// Decode under the HTTP policy: content/tags, `author_type`, `author` and `type`
     /// validated before any write, `type` mirrored into metadata.
     pub fn decode(&self) -> Result<uteke_core::RememberRequest, uteke_core::RememberRequestError> {
         uteke_core::RememberRequest::decode(self.to_input(), uteke_core::RememberPolicy::HTTP)
@@ -1189,7 +1193,8 @@ mod remember_request_cross_surface_tests {
         let h = http(json!({"content": "x", "entity": "e", "source": "s"})).unwrap();
         assert_eq!(h.metadata, Some(json!({"entity": "e"})));
         assert_eq!(h.source.as_deref(), Some("s"));
-        // MCP ignores them; `room` and `author` are MCP-only (HTTP: unknown key).
+        // MCP ignores them; `room` is MCP-only (HTTP: unknown key). `author` is
+        // accepted by both (#1427 phase 2).
         let m =
             mcp(json!({"content": "x", "entity": "e", "source": "s", "room": "r", "author": "a"}))
                 .unwrap();
@@ -1197,6 +1202,14 @@ mod remember_request_cross_surface_tests {
         assert_eq!(m.source, None);
         assert_eq!(m.room.as_deref(), Some("r"));
         assert_eq!(m.author.as_deref(), Some("a"));
+        assert_eq!(
+            http(json!({"content": "x", "author": " a "}))
+                .unwrap()
+                .author
+                .as_deref(),
+            Some("a"),
+            "HTTP trims the author"
+        );
         assert!(http(json!({"content": "x", "room": "r"})).is_err());
     }
 
@@ -1230,20 +1243,33 @@ mod remember_request_cross_surface_tests {
     }
 
     #[test]
-    fn cli_room_author_and_timestamp_are_rejected_by_the_server_today() {
-        for field in ["room", "author", "timestamp"] {
+    fn cli_room_and_timestamp_are_rejected_by_the_server_today() {
+        for field in ["room", "timestamp"] {
             let mut input = uteke_core::RememberInput {
                 content: "x".into(),
                 ..uteke_core::RememberInput::default()
             };
             match field {
                 "room" => input.room = Some("r".into()),
-                "author" => input.author = Some("a".into()),
                 _ => input.timestamp = Some("t".into()),
             }
             let err = http(input.to_http_body()).unwrap_err();
             assert!(err.contains(field), "{field}: {err}");
         }
+    }
+
+    /// #1427 phase 2: the CLI forwards `--author` and the server accepts it.
+    #[test]
+    fn cli_author_is_accepted_by_the_server() {
+        let input = uteke_core::RememberInput {
+            content: "x".into(),
+            author: Some("claude-code".into()),
+            ..uteke_core::RememberInput::default()
+        };
+        assert_eq!(
+            http(input.to_http_body()).unwrap().author.as_deref(),
+            Some("claude-code")
+        );
     }
 }
 

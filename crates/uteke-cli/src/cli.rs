@@ -78,7 +78,9 @@ pub enum Commands {
         /// Room ID to link this memory to (collaborative context)
         #[arg(long)]
         room: Option<String>,
-        /// Author attribution when storing in a room
+        /// Who wrote this memory: agent, user or tool name (1 to 128
+        /// characters). Recorded on the memory with or without --room; with
+        /// --room it is also the room author (default there: anonymous)
         #[arg(long)]
         author: Option<String>,
         /// Source provenance: URL, file path, or identifier (#348)

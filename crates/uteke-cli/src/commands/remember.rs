@@ -75,6 +75,14 @@ pub(crate) fn run(
         uteke_core::memory::types::validate_author_type(at)
             .map_err(|e| format!("Invalid --author-type: {e}"))?;
     }
+    // #1427 phase 2: the author is the memory's own, with or without a room;
+    // validated (and trimmed) before any write for the same reason.
+    let author: Option<&str> = author
+        .map(|a| {
+            uteke_core::memory::types::validate_author(a)
+                .map_err(|e| format!("Invalid --author: {e}"))
+        })
+        .transpose()?;
 
     // Read from stdin when content argument is "-" (#620).
     // Standard Unix convention: pipe content via echo "text" | uteke remember - --tags "test"
@@ -157,6 +165,11 @@ pub(crate) fn run(
                 return Err(format!("Failed to set author_type: {e}"));
             }
         }
+        if let Some(a) = author {
+            uteke
+                .set_author(&id, Some(a))
+                .map_err(|e| format!("Failed to set author: {e}"))?;
+        }
         if cli.json {
             let mut obj = serde_json::json!({
                 "id": id,
@@ -173,6 +186,9 @@ pub(crate) fn run(
                 if let Some(map) = obj.as_object_mut() {
                     map.insert("metadata".to_string(), meta.clone());
                 }
+            }
+            if let Some(a) = author {
+                obj["author"] = serde_json::json!(a);
             }
             println!("{obj}");
         } else {
@@ -226,6 +242,11 @@ pub(crate) fn run(
                 return Err(format!("Failed to set author_type: {e}"));
             }
         }
+        if let Some(a) = author {
+            uteke
+                .set_author(&id, Some(a))
+                .map_err(|e| format!("Failed to set author: {e}"))?;
+        }
         if cli.json {
             let mut obj = serde_json::json!({
                 "id": id,
@@ -254,6 +275,9 @@ pub(crate) fn run(
                 if let Some(map) = obj.as_object_mut() {
                     map.insert("metadata".to_string(), serde_json::Value::Object(m));
                 }
+            }
+            if let Some(a) = author {
+                obj["author"] = serde_json::json!(a);
             }
             println!("{obj}");
         } else {

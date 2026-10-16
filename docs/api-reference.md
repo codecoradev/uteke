@@ -774,6 +774,8 @@ Invalid values return HTTP 400. |
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `author` | any | No | Who wrote the memory (#1427 phase 2): free text, trimmed, 1 to 128
+characters. Optional, with or without a room; returned on the memory. |
 | `author_type` | any | No | Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted. |
 | `category` | any | No | Category — stored as metadata key "category". |
 | `content` | `string` | Yes |  |

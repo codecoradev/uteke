@@ -1444,6 +1444,18 @@ impl Uteke {
         self.store.set_author(id, author)
     }
 
+    /// Stamp the writer of a room write on the memory itself (#1427 phase 2),
+    /// when it is a valid author. The room link accepts any text, so an author
+    /// the memory field rejects (empty, over 128 characters, control
+    /// characters) leaves the memory unattributed instead of failing a write
+    /// that already succeeded. Returns whether the author was recorded.
+    pub fn set_author_if_valid(&self, id: &str, author: &str) -> Result<bool, Error> {
+        if crate::memory::types::validate_author(author).is_err() {
+            return Ok(false);
+        }
+        self.store.set_author(id, Some(author))
+    }
+
     /// Recalculate importance scores for all memories.
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         let updated = self.store.recompute_importance()?;

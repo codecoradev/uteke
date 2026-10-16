@@ -66,26 +66,35 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                             return ctx.error_response_for(req, 400, e.to_string());
                         }
                     }
+                    // Set the memory's own author after storage (#1427 phase 2).
+                    // Already validated and trimmed at decode.
+                    if let Some(a) = req_data.author.as_deref() {
+                        if let Err(e) = uteke.set_author(&id, Some(a)) {
+                            error!("Failed to set author for {id}: {e}");
+                        }
+                    }
                     // Echo author_type so clients can confirm what was
                     // recorded (#1106) — data was already stored correctly,
                     // the response just omitted the field. Default mirrors
                     // the schema default (author_type DEFAULT 'agent', #1083).
                     // #1273: honest embedding status — never a bare success
                     // when the vector write failed.
-                    ctx.ok_response_for(
-                        req,
-                        &serde_json::json!({
-                            "id": id,
-                            "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
-                            "embedding_written": outcome.embedding_written,
-                            "warning": uteke_core::namespace_deprecation::merge_warning(
-                                outcome.warning,
-                                uteke_core::namespace_deprecation::namespace_write_warning(
-                                    ns(&req_data.namespace),
-                                ),
+                    let mut body = serde_json::json!({
+                        "id": id,
+                        "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
+                        "embedding_written": outcome.embedding_written,
+                        "warning": uteke_core::namespace_deprecation::merge_warning(
+                            outcome.warning,
+                            uteke_core::namespace_deprecation::namespace_write_warning(
+                                ns(&req_data.namespace),
                             ),
-                        }),
-                    )
+                        ),
+                    });
+                    // Echo the author when one was recorded (#1427 phase 2).
+                    if let Some(a) = &req_data.author {
+                        body["author"] = serde_json::json!(a);
+                    }
+                    ctx.ok_response_for(req, &body)
                 }
                 Err(e) => {
                     error!("Internal error: {e}");

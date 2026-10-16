@@ -24,6 +24,8 @@ use crate::types::*;
 const API_LATEST: &str = "v2";
 const API_VERSIONS: &[&str] = &["v1", "v2"];
 
+#[cfg(test)]
+mod author_tests;
 mod docs;
 mod graph;
 mod health;

@@ -17,13 +17,14 @@
 //! | valid_from/valid_until    | honoured (into metadata)    | not accepted                | not sent                  |
 //! | detect_contradiction      | honoured                    | not accepted                | forwarded when set        |
 //! | source/source_type/author_type | honoured               | not accepted                | forwarded                 |
-//! | room/author               | rejected as unknown keys    | `room` routes to room write | sent (server rejects)     |
+//! | author                    | honoured, validated (1-128) | honoured, also room author  | forwarded                 |
+//! | room                      | rejected as unknown key     | routes to room write        | sent (server rejects)     |
 //! | timestamp                 | rejected as unknown key     | not accepted                | sent (server rejects)     |
 //! | namespace omitted         | core default                | core default                | `"default"` always sent   |
 //!
 //! Room remember is a separate operation and is not part of this module.
 
-use crate::memory::types::{MemoryType, validate_author_type};
+use crate::memory::types::{MemoryType, validate_author, validate_author_type};
 use serde_json::{Map, Value};
 use std::fmt;
 
@@ -79,7 +80,8 @@ pub struct RememberInput {
     pub author_type: Option<String>,
     /// Room id (MCP routes the write to a room; the CLI forwards it).
     pub room: Option<String>,
-    /// Room author (MCP) / forwarded by the CLI.
+    /// Who wrote the memory (#1427 phase 2): the memory's own `author`, also
+    /// the room link's author when `room` is set.
     pub author: Option<String>,
     /// CLI `--timestamp`. Only [`Self::to_http_body`] reads it.
     pub timestamp: Option<String>,
@@ -92,9 +94,10 @@ impl RememberInput {
     /// when set (`type` only when non-empty, `detect_contradiction` only when
     /// true, `metadata` only when a non-empty object). `entity`, `category`,
     /// `valid_from` and `valid_until` are not part of this encoding: the CLI
-    /// folds entity/category into `metadata`. `timestamp`, `room` and `author`
-    /// are forwarded even though the server rejects them as unknown keys
-    /// today; that is current behaviour, listed as an owner decision.
+    /// folds entity/category into `metadata`. `timestamp` and `room` are
+    /// forwarded even though the server rejects them as unknown keys today;
+    /// that is current behaviour, listed as an owner decision. `author` is
+    /// accepted by the server since #1427 phase 2.
     pub fn to_http_body(&self) -> Value {
         let mut body = serde_json::json!({
             "content": self.content,
@@ -244,6 +247,14 @@ impl RememberRequest {
         if let Some(at) = input.author_type.as_deref() {
             validate_author_type(at).map_err(|e| RememberRequestError(e.to_string()))?;
         }
+        // `author` (#1427 phase 2): free text, trimmed. With a room it is also
+        // the room link's author; without one it is the memory's own.
+        let author = input
+            .author
+            .as_deref()
+            .map(|a| validate_author(a).map(str::to_string))
+            .transpose()
+            .map_err(|e| RememberRequestError(e.to_string()))?;
         if policy.validate_type
             && let Some(t) = input.memory_type.as_deref()
             && MemoryType::from_str_opt(t).is_none()
@@ -268,7 +279,7 @@ impl RememberRequest {
             source_type: input.source_type,
             author_type: input.author_type,
             room: input.room,
-            author: input.author,
+            author,
         })
     }
 
@@ -422,6 +433,46 @@ mod tests {
         assert_eq!(r.source_type.as_deref(), Some("st"));
         assert_eq!(r.author_type.as_deref(), Some("human"));
         assert!(r.detect_contradiction);
+    }
+
+    /// #1427 phase 2: `author` is validated before any write, under every
+    /// policy, and trimmed; the error order is content, author_type, author, type.
+    #[test]
+    fn author_is_validated_and_trimmed() {
+        for policy in [RememberPolicy::HTTP, RememberPolicy::MCP] {
+            let mut i = input("x");
+            i.author = Some("  claude-code  ".into());
+            assert_eq!(
+                RememberRequest::decode(i, policy)
+                    .unwrap()
+                    .author
+                    .as_deref(),
+                Some("claude-code")
+            );
+            for bad in ["", "   ", "tab\there", &"y".repeat(129)] {
+                let mut i = input("x");
+                i.author = Some(bad.to_string());
+                let e = RememberRequest::decode(i, policy).unwrap_err().to_string();
+                assert!(e.starts_with("Validation error: author"), "{bad:?}: {e}");
+            }
+            let mut i = input("x");
+            i.author = Some("y".repeat(128));
+            assert!(
+                RememberRequest::decode(i, policy).is_ok(),
+                "128 is the bound"
+            );
+        }
+        let mut i = input("x");
+        i.author_type = Some("robot".into());
+        i.author = Some("".into());
+        i.memory_type = Some("nope".into());
+        let e = RememberRequest::decode(i, RememberPolicy::HTTP)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("author_type"),
+            "author_type is reported before author: {e}"
+        );
     }
 
     #[test]

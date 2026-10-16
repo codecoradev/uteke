@@ -356,7 +356,7 @@ fn tool_remember() -> Value {
                 "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for isolation (default: 'default'); a non-default value makes the result carry a deprecation warning." },
                 "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" },
                 "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
-                "author": { "type": "string", "description": "Author attribution when storing in a room (default: anonymous)" }
+                "author": { "type": "string", "description": "Who wrote this memory: the agent, user or tool name (1 to 128 characters). Recorded on the memory with or without a room; in a room it is also the room author (default there: anonymous)." }
             },
             "required": ["content"]
         }
@@ -1252,6 +1252,14 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             .remember_typed_detailed(content, &tags, None, namespace, memory_type)
             .map_err(|e| format!("Failed: {e}"))?
     };
+    // The named writer is the memory's own author, with or without a room
+    // (#1427 phase 2); already validated and trimmed when the arguments were
+    // decoded. The "anonymous" fallback of the room link is not an author.
+    if let Some(a) = req.author.as_deref() {
+        uteke
+            .set_author(&outcome.id, Some(a))
+            .map_err(|e| format!("Failed to set author: {e}"))?;
+    }
 
     let mut text = format!("✓ Stored memory with ID: {}", outcome.id);
     if let Some(ref warn) = outcome.warning {
@@ -4150,5 +4158,73 @@ mod isolation_tests {
                 );
             }
         }
+    }
+}
+
+/// `author` over MCP (#1427 phase 2): `uteke_remember` records it on the memory
+/// with or without a room, and rejects an invalid one before writing.
+#[cfg(test)]
+mod author_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn remember(u: &Uteke, args: Value) -> (bool, String) {
+        let raw = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "uteke_remember", "arguments": args}
+        })
+        .to_string();
+        let resp: Value = serde_json::from_str(&handle_jsonrpc(u, &raw).unwrap()).unwrap();
+        let result = &resp["result"];
+        let is_error = result["isError"].as_bool().unwrap_or(false) || resp.get("error").is_some();
+        // A tool error comes back either as an error result or as a JSON-RPC error.
+        let text = result["content"][0]["text"]
+            .as_str()
+            .or_else(|| resp["error"]["message"].as_str())
+            .unwrap_or_default();
+        (is_error, text.to_string())
+    }
+
+    fn stored_id(text: &str) -> String {
+        text.split("ID: ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn remember_records_the_author_with_or_without_a_room() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let author_of = |text: &str| u.get_by_id(&stored_id(text)).unwrap().unwrap().author;
+
+        let (err, text) = remember(&u, json!({"content": "no room", "author": " hermes "}));
+        assert!(!err, "{text}");
+        assert_eq!(author_of(&text).as_deref(), Some("hermes"));
+
+        let (err, text) = remember(
+            &u,
+            json!({"content": "in a room", "room": "r1", "author": "alice"}),
+        );
+        assert!(!err, "{text}");
+        assert_eq!(author_of(&text).as_deref(), Some("alice"));
+
+        // A room write that names no author leaves the memory unattributed.
+        let (err, text) = remember(&u, json!({"content": "unnamed", "room": "r1"}));
+        assert!(!err, "{text}");
+        assert_eq!(author_of(&text), None);
+    }
+
+    #[test]
+    fn an_invalid_author_is_refused_before_anything_is_stored() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        for bad in ["", "  ", "line\nbreak", &"y".repeat(129)] {
+            let (err, text) = remember(&u, json!({"content": "must not be stored", "author": bad}));
+            assert!(err, "{bad:?} was accepted: {text}");
+            assert!(text.contains("author"), "{text}");
+        }
+        assert_eq!(u.count(None).unwrap(), 0, "nothing is stored");
     }
 }

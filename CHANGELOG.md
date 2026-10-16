@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`author` on every write path (#1427, phase 2)** - a memory records who wrote it (the agent, user or tool name), with or without a room. `POST /remember`, MCP `uteke_remember` and `uteke remember --author` accept it (free text, trimmed, 1 to 128 characters; an invalid value is a 400, a tool error or a CLI error before anything is stored). A room write stamps the named writer on the memory as well as on the room link; the `anonymous` / `user` fallback of the room link is not an author. `author` is returned on the memory object by recall, search, list and get (omitted when unset), echoed by `POST /remember`, and kept by export and import. Stores migrate to schema v22 on first open (see Internal below): back up a production store first. Filtering by author is not part of this phase. Contract: uteke-cloud#219 (cloud already has the field).
+
 ### Fixed
 
 - **`UTEKE_HOME` pointing at another store no longer routes to a running server (#1445)** - with `[server] enabled = true` and `uteke-serve` running, `UTEKE_HOME=/tmp/iso uteke remember ...` was sent to the server and landed in the server's store instead of `/tmp/iso`. The server now reports which store it serves on the new `GET /store` (LAB route, token required when auth is on): `{"id": "<16 hex digits>"}`, a SHA-256 prefix of the store's canonical path, never the path itself. Before routing to a loopback server the CLI compares that id with the store it resolved and runs locally on a mismatch (with a warning on stderr). The probe sends `UTEKE_AUTH_TOKEN` like any routed command; without it an auth-enabled server refuses the command with 401, so nothing lands in the wrong store. A server without the route (404), an unreachable one or a non-loopback one keeps the previous routing. `docs/core-contract.json` gains `/store` in the `lab` list only.

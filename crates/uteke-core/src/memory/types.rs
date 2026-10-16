@@ -440,6 +440,10 @@ pub struct ExportEntry {
     /// falls back to the caller-provided namespace for those.
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Who wrote the memory (#1427 phase 2). Absent on rows from older export
+    /// files and on unattributed memories; an invalid value is dropped on import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
 
 fn default_metadata() -> serde_json::Value {
