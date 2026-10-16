@@ -431,6 +431,54 @@ mod tests {
         }
     }
 
+    /// `docs/privacy-filter-cases.json` is the shared test-vector file uteke-cloud
+    /// pins parity against (uteke-cloud#218): every case must hold here too.
+    #[test]
+    fn the_shared_cases_file_matches_the_implementation() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/privacy-filter-cases.json"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("cases file")).unwrap();
+        assert_eq!(doc["version"], 1);
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(cases.len() >= 30, "only {} cases", cases.len());
+        let mut masked = 0;
+        for case in cases {
+            let name = case["name"].as_str().unwrap();
+            let input: String = case["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f.as_str().unwrap())
+                .collect();
+            let r = redact(&input, &[]);
+            assert_eq!(r.text, case["expected"].as_str().unwrap(), "{name}");
+            let kinds: Vec<(String, u64)> = r
+                .redactions
+                .iter()
+                .map(|x| (x.kind.to_string(), x.count as u64))
+                .collect();
+            let expected: Vec<(String, u64)> = case["kinds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| (k[0].as_str().unwrap().to_string(), k[1].as_u64().unwrap()))
+                .collect();
+            assert_eq!(kinds, expected, "{name}");
+            if !expected.is_empty() {
+                masked += 1;
+            }
+            // The expected text is a fixed point of the filter.
+            assert!(redact(&r.text, &[]).is_clean(), "{name}: not idempotent");
+        }
+        assert!(
+            masked >= 10,
+            "the file must exercise every kind, not only clean text"
+        );
+    }
+
     #[test]
     fn entropy_matches_known_values() {
         assert_eq!(entropy("aaaa"), 0.0);

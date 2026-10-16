@@ -1,0 +1,397 @@
+{
+  "format": "Shared test vectors of the OSS privacy filter (uteke_core::privacy::redact, #1464) so uteke-cloud can pin parity in CI. For each case: join the strings of `input` (no separator) to get the text, run the filter with an empty allowlist, and expect exactly `expected` and the list `kinds` of [kind, count] pairs ordered by kind (empty when nothing is masked). Inputs are fragments so this file holds no string a secret scanner would flag.",
+  "version": 1,
+  "cases": [
+    {
+      "name": "github token keeps its prefix",
+      "input": [
+        "use ",
+        "ghp_",
+        "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5",
+        " for the repo"
+      ],
+      "expected": "use ghp_[REDACTED:github-token] for the repo",
+      "kinds": [
+        [
+          "github-token",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "fine-grained github token",
+      "input": [
+        "github_pat_",
+        "11ABCDEFG0abcdefghij_klmnopqrstuvwxyz0123456789"
+      ],
+      "expected": "github_pat_[REDACTED:github-token]",
+      "kinds": [
+        [
+          "github-token",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "aws access key keeps its prefix",
+      "input": [
+        "key id ",
+        "AKIA",
+        "IOSFODNN7EXAMPLQ"
+      ],
+      "expected": "key id AKIA[REDACTED:aws-access-key]",
+      "kinds": [
+        [
+          "aws-access-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "bearer header with a jwt is a bearer token",
+      "input": [
+        "Authorization: Bearer ",
+        "eyJhbGciOiJIUzI1NiJ9",
+        ".",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+        ".",
+        "dBjftJeZ4CVPmB92K27uhbUJU1p1r"
+      ],
+      "expected": "Authorization: Bearer [REDACTED:bearer-token]",
+      "kinds": [
+        [
+          "bearer-token",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "bare jwt",
+      "input": [
+        "cookie ",
+        "eyJhbGciOiJIUzI1NiJ9",
+        ".",
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+        ".",
+        "dBjftJeZ4CVPmB92K27uhbUJU1p1r"
+      ],
+      "expected": "cookie [REDACTED:jwt]",
+      "kinds": [
+        [
+          "jwt",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "private key block is removed whole",
+      "input": [
+        "before\n",
+        "-----BEGIN ",
+        "RSA PRIVATE",
+        " KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nabcdefgh\n-----END ",
+        "RSA PRIVATE",
+        " KEY-----",
+        "\nafter"
+      ],
+      "expected": "before\n[REDACTED:private-key]\nafter",
+      "kinds": [
+        [
+          "private-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "sk- api key",
+      "input": [
+        "sk-",
+        "proj-Ab3dE5gH7jK9mN1pQ3rS5tU7"
+      ],
+      "expected": "sk-[REDACTED:api-key]",
+      "kinds": [
+        [
+          "api-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "env assignment",
+      "input": [
+        "API_KEY=",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6"
+      ],
+      "expected": "API_KEY=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "quoted export",
+      "input": [
+        "export DB_PASSWORD=\"",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6",
+        "\""
+      ],
+      "expected": "export DB_PASSWORD=\"[REDACTED:env-secret]\"",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "json field",
+      "input": [
+        "{\"client_secret\": \"",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6",
+        "\"}"
+      ],
+      "expected": "{\"client_secret\": \"[REDACTED:env-secret]\"}",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "colon form",
+      "input": [
+        "auth_token: ",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6"
+      ],
+      "expected": "auth_token: [REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "counts are per kind",
+      "input": [
+        "ghp_",
+        "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5",
+        " and ",
+        "ghp_",
+        "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5",
+        " and ",
+        "AKIA",
+        "IOSFODNN7EXAMPLQ",
+        " plus API_KEY=",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6"
+      ],
+      "expected": "ghp_[REDACTED:github-token] and ghp_[REDACTED:github-token] and AKIA[REDACTED:aws-access-key] plus API_KEY=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "aws-access-key",
+          1
+        ],
+        [
+          "env-secret",
+          1
+        ],
+        [
+          "github-token",
+          2
+        ]
+      ]
+    },
+    {
+      "name": "left alone: TOKEN_LIMIT=10000",
+      "input": [
+        "TOKEN_LIMIT=10000"
+      ],
+      "expected": "TOKEN_LIMIT=10000",
+      "kinds": []
+    },
+    {
+      "name": "left alone: PASSWORD_MIN_LENGTH=12",
+      "input": [
+        "PASSWORD_MIN_LENGTH=12"
+      ],
+      "expected": "PASSWORD_MIN_LENGTH=12",
+      "kinds": []
+    },
+    {
+      "name": "left alone: API_KEY=short",
+      "input": [
+        "API_KEY=short"
+      ],
+      "expected": "API_KEY=short",
+      "kinds": []
+    },
+    {
+      "name": "left alone: KEY_FILE=/etc/ssl/private/server.key",
+      "input": [
+        "KEY_FILE=/etc/ssl/private/server.key"
+      ],
+      "expected": "KEY_FILE=/etc/ssl/private/server.key",
+      "kinds": []
+    },
+    {
+      "name": "left alone: SECRET_PATH=./config/secret.yaml",
+      "input": [
+        "SECRET_PATH=./config/secret.yaml"
+      ],
+      "expected": "SECRET_PATH=./config/secret.yaml",
+      "kinds": []
+    },
+    {
+      "name": "left alone: SSH_KEY=~/.ssh/id_ed25519_work_laptop",
+      "input": [
+        "SSH_KEY=~/.ssh/id_ed25519_work_laptop"
+      ],
+      "expected": "SSH_KEY=~/.ssh/id_ed25519_work_laptop",
+      "kinds": []
+    },
+    {
+      "name": "left alone: API_KEY=${VAULT_API_KEY_PRODUCTION_ENV}",
+      "input": [
+        "API_KEY=${VAULT_API_KEY_PRODUCTION_ENV}"
+      ],
+      "expected": "API_KEY=${VAULT_API_KEY_PRODUCTION_ENV}",
+      "kinds": []
+    },
+    {
+      "name": "left alone: api_key=<your-api-key-goes-here-ok>",
+      "input": [
+        "api_key=<your-api-key-goes-here-ok>"
+      ],
+      "expected": "api_key=<your-api-key-goes-here-ok>",
+      "kinds": []
+    },
+    {
+      "name": "left alone: API_KEY=your_api_key_goes_here_please",
+      "input": [
+        "API_KEY=your_api_key_goes_here_please"
+      ],
+      "expected": "API_KEY=your_api_key_goes_here_please",
+      "kinds": []
+    },
+    {
+      "name": "left alone: TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa",
+      "input": [
+        "TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "expected": "TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa",
+      "kinds": []
+    },
+    {
+      "name": "left alone: COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de230",
+      "input": [
+        "COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b"
+      ],
+      "expected": "COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b",
+      "kinds": []
+    },
+    {
+      "name": "left alone: CACHE_KEY=2f9c1d3e-8a4b-4c6d-9e1f-0a1b2c3d4e5f",
+      "input": [
+        "CACHE_KEY=2f9c1d3e-8a4b-4c6d-9e1f-0a1b2c3d4e5f"
+      ],
+      "expected": "CACHE_KEY=2f9c1d3e-8a4b-4c6d-9e1f-0a1b2c3d4e5f",
+      "kinds": []
+    },
+    {
+      "name": "left alone: TOKEN_URL=https://auth.example.com/oauth/token/e",
+      "input": [
+        "TOKEN_URL=https://auth.example.com/oauth/token/endpoint"
+      ],
+      "expected": "TOKEN_URL=https://auth.example.com/oauth/token/endpoint",
+      "kinds": []
+    },
+    {
+      "name": "left alone: keyboard shortcuts: press the key combination ag",
+      "input": [
+        "keyboard shortcuts: press the key combination again to toggle"
+      ],
+      "expected": "keyboard shortcuts: press the key combination again to toggle",
+      "kinds": []
+    },
+    {
+      "name": "left alone: Bearer token handling is documented",
+      "input": [
+        "Bearer token handling is documented"
+      ],
+      "expected": "Bearer token handling is documented",
+      "kinds": []
+    },
+    {
+      "name": "left alone: sk-short",
+      "input": [
+        "sk-short"
+      ],
+      "expected": "sk-short",
+      "kinds": []
+    },
+    {
+      "name": "left alone: task-description-for-the-weekly-sync-meeting",
+      "input": [
+        "task-description-for-the-weekly-sync-meeting"
+      ],
+      "expected": "task-description-for-the-weekly-sync-meeting",
+      "kinds": []
+    },
+    {
+      "name": "left alone: AKIAshort",
+      "input": [
+        "AKIAshort"
+      ],
+      "expected": "AKIAshort",
+      "kinds": []
+    },
+    {
+      "name": "left alone: -----BEGIN CERTIFICATE-----",
+      "input": [
+        "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+      ],
+      "expected": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
+      "kinds": []
+    },
+    {
+      "name": "left alone: api_key: self.api_key.clone(),",
+      "input": [
+        "api_key: self.api_key.clone(),"
+      ],
+      "expected": "api_key: self.api_key.clone(),",
+      "kinds": []
+    },
+    {
+      "name": "left alone: let key = self.make_key(query, namespace, limit)",
+      "input": [
+        "let key = self.make_key(query, namespace, limit);"
+      ],
+      "expected": "let key = self.make_key(query, namespace, limit);",
+      "kinds": []
+    },
+    {
+      "name": "left alone: api_key: config.embedding.api_key",
+      "input": [
+        "api_key: config.embedding.api_key"
+      ],
+      "expected": "api_key: config.embedding.api_key",
+      "kinds": []
+    },
+    {
+      "name": "left alone: SECRET_KEY_BASE_NAME_FOR_PRODUCTION",
+      "input": [
+        "SECRET_KEY_BASE_NAME_FOR_PRODUCTION"
+      ],
+      "expected": "SECRET_KEY_BASE_NAME_FOR_PRODUCTION",
+      "kinds": []
+    }
+  ]
+}
