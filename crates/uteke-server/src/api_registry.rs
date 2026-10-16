@@ -61,7 +61,8 @@ pub struct Endpoint {
 }
 
 /// Complete API route registry.
-/// This must be kept in sync with the dispatch match in `handlers/mod.rs`.
+/// `handlers::HANDLERS` (bin side) must list the same (method, path) rows; the
+/// `handler_table_equals_the_registry` test fails when the two drift.
 pub const ENDPOINTS: &[Endpoint] = &[
     // ── Health & Info ────────────────────────────────────────────────────
     Endpoint {

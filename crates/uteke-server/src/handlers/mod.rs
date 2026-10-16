@@ -2,7 +2,7 @@
 //!
 //! [`route`] runs the shared preflight (API version prefix, Host guard, CORS
 //! preflight, auth, read-only gate, registry 404), locks the store, packs the
-//! per-request state into a [`Call`] and dispatches on method + path to one
+//! per-request state into a [`Call`] and dispatches through the [`HANDLERS`] table to one
 //! named handler function per route. The handlers live in domain submodules
 //! (`health`, `memory`, `namespaces`, `tags`, `rooms`, `docs`, `graph`,
 //! `maintenance`, `mcp`); helpers shared by several handlers stay here.
@@ -48,6 +48,211 @@ pub(crate) struct Call<'a, 'r> {
     pub health_anonymous: bool,
     /// The caller holds a read-only token (#409).
     pub read_only: bool,
+}
+
+/// A route handler: one named function per (method, path) row.
+type Handler = fn(&mut Call<'_, '_>) -> Response<Cursor<Vec<u8>>>;
+
+/// The dispatch table (#1344): one row per route, naming its handler. It is
+/// the bin-side half of the route table: `api_registry::ENDPOINTS` carries the
+/// tier and the `writes` flag and is also compiled into the lib for docgen, so
+/// it cannot hold the handler fn; the `handler_table_equals_the_registry`
+/// test keeps the two row sets identical.
+const HANDLERS: &[(&str, &str, Handler)] = &[
+    // ── Health ──────────────────────────────────────────────────────
+    ("GET", "/health", health::get_health),
+    // ── Memory Tools Guide (#1010) ──────────────────────────────────
+    ("GET", "/guide", health::get_guide),
+    // ── Route Introspection (#1289) ─────────────────────────────────
+    ("GET", "/routes", health::get_routes),
+    // ── Remember ───────────────────────────────────────────────────
+    ("POST", "/remember", memory::post_remember),
+    // ── Recall (semantic search) ────────────────────────────────────
+    ("POST", "/recall", memory::post_recall),
+    // ── Search (keyword) ────────────────────────────────────────────
+    ("POST", "/search", memory::post_search),
+    // ── List ────────────────────────────────────────────────────────
+    ("POST", "/list", memory::post_list),
+    // ── Forget by ID or tag (DELETE /forget?id=xxx or ?tag=xxx) ────
+    ("DELETE", "/forget", memory::delete_forget),
+    // ── Stats (GET = all or ?namespace=<name>) ───────────────────
+    ("GET", "/stats", memory::get_stats),
+    ("POST", "/stats", memory::post_stats),
+    // ── Lifecycle (#936): status, cycle, promote ──────────────────
+    (
+        "GET",
+        "/lifecycle/status",
+        maintenance::get_lifecycle_status,
+    ),
+    (
+        "GET",
+        "/lifecycle/deprecated",
+        maintenance::get_lifecycle_deprecated,
+    ),
+    (
+        "POST",
+        "/lifecycle/cycle",
+        maintenance::post_lifecycle_cycle,
+    ),
+    (
+        "POST",
+        "/lifecycle/promote",
+        maintenance::post_lifecycle_promote,
+    ),
+    // ── Namespaces ──────────────────────────────────────────────────
+    ("GET", "/namespaces", namespaces::get_namespaces),
+    // ── Namespace Rename/Merge (#1181) ──────────────────────────────
+    (
+        "POST",
+        "/namespaces/rename",
+        namespaces::post_namespaces_rename,
+    ),
+    // ── Namespace Delete with explicit strategy (#1181) ─────────────
+    (
+        "POST",
+        "/namespaces/delete",
+        namespaces::post_namespaces_delete,
+    ),
+    // ── Recent (#528) ──────────────────────────────────────────────
+    ("GET", "/recent", memory::get_recent),
+    // ── Graph Visualization (#408) ───────────────────────────────────
+    ("GET", "/graph", graph::get_graph),
+    // ── Graph Mutation: Add Edge (#542) ──────────────────────────────
+    ("POST", "/graph/edge", graph::post_graph_edge),
+    // ── Graph Mutation: Remove Edge (#542) ────────────────────────────
+    ("DELETE", "/graph/edge", graph::delete_graph_edge),
+    // ── Room Summary ────────────────────────────────────────────────
+    ("POST", "/room/summary", rooms::post_room_summary),
+    // ── Room Summary Document ────────────────────────────────────────
+    (
+        "POST",
+        "/room/summary-document",
+        rooms::post_room_summary_document,
+    ),
+    // ── Room Consolidation (#1088) ───────────────────────────────────
+    ("POST", "/room/consolidate", rooms::post_room_consolidate),
+    // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
+    ("POST", "/room/document", rooms::post_room_document),
+    // ── Get memory by ID ──────────────────────────────────────────
+    ("GET", "/memory", memory::get_memory),
+    // ── Memory Pin/Unpin (#660) ──────────────────────────────────────
+    ("POST", "/memory/pin", memory::post_memory_pin),
+    // ── Memory Set Importance (#660) ──────────────────────────────────
+    ("POST", "/memory/importance", memory::post_memory_importance),
+    // ── Memory Feedback (Trust Scoring) (#718) ────────────────────
+    ("POST", "/memory/feedback", memory::post_memory_feedback),
+    // ── Update memory by ID (PUT /memory, #659) ──────────────────
+    ("PUT", "/memory", memory::put_memory),
+    // ── Room Memories (chronological listing — GET /room/memories) ────
+    ("GET", "/room/memories", rooms::get_room_memories),
+    // ── Room Recall (semantic with optional fallback to chronological) ──
+    ("POST", "/room/recall", rooms::post_room_recall),
+    // ── Room management endpoints (#395) ────────────────────────────
+    ("POST", "/room/create", rooms::post_room_create),
+    ("POST", "/room/rename", rooms::post_room_rename),
+    ("POST", "/room/update", rooms::post_room_update),
+    ("POST", "/room/memory/move", rooms::post_room_memory_move),
+    ("POST", "/room/remember", rooms::post_room_remember),
+    ("GET", "/room/list", rooms::get_room_list),
+    ("POST", "/room/stats", rooms::post_room_stats),
+    // ── Room ↔ Document junction (#689) ──────────────────────────────
+    (
+        "POST",
+        "/room/document/list",
+        rooms::post_room_document_list,
+    ),
+    ("PUT", "/room/document/add", rooms::put_room_document_add),
+    (
+        "DELETE",
+        "/room/document/remove",
+        rooms::delete_room_document_remove,
+    ),
+    ("POST", "/doc/room/list", rooms::post_doc_room_list),
+    ("DELETE", "/room/delete", rooms::delete_room_delete),
+    // ── Context Summary (#442) ───────────────────────────────────────
+    ("POST", "/context", maintenance::post_context),
+    // ── Dream Cycle (#442) ─────────────────────────────────────────────
+    ("POST", "/dream", maintenance::post_dream),
+    ("POST", "/mcp", mcp::post_mcp),
+    // ── Document: Create / Upsert ────────────────────────────────────
+    ("POST", "/doc/create", docs::post_doc_create),
+    // ── Document: Get ───────────────────────────────────────────────
+    ("POST", "/doc/get", docs::post_doc_get),
+    // ── Document: Update (partial) ────────────────────────────────
+    ("POST", "/doc/update", docs::post_doc_update),
+    // ── Document: List ─────────────────────────────────────────────
+    ("POST", "/doc/list", docs::post_doc_list),
+    // ── Document: Search ────────────────────────────────────────────
+    ("POST", "/doc/search", docs::post_doc_search),
+    // ── Document: Move ───────────────────────────────────────────────
+    ("POST", "/doc/move", docs::post_doc_move),
+    // ── Document: Delete ─────────────────────────────────────────────
+    ("DELETE", "/doc/delete", docs::delete_doc_delete),
+    // ── Cross-entity references (#689) ───────────────────────────────
+    ("POST", "/memory/doc-refs", memory::post_memory_doc_refs),
+    ("POST", "/doc/mem-refs", docs::post_doc_mem_refs),
+    // ── Tags: List with counts ───────────────────────────────────────
+    ("GET", "/tags", tags::get_tags),
+    // ── Tags: Rename ─────────────────────────────────────────────────
+    ("POST", "/tags/rename", tags::post_tags_rename),
+    // ── Tags: Delete ─────────────────────────────────────────────────
+    ("POST", "/tags/delete", tags::post_tags_delete),
+    // ── Pin ───────────────────────────────────────────────────────────
+    ("POST", "/pin", memory::post_pin),
+    // ── Unpin ─────────────────────────────────────────────────────────
+    ("POST", "/unpin", memory::post_unpin),
+    // ── Provenance chain (#1172) ─────────────────────────────────────
+    ("GET", "/provenance", graph::get_provenance),
+    // ── Contradiction resolutions ledger (#1172) ────────────────────
+    ("GET", "/contradictions", graph::get_contradictions),
+    // ── Undo a contradiction resolution (#1172) ─────────────────────
+    (
+        "POST",
+        "/contradictions/undo",
+        graph::post_contradictions_undo,
+    ),
+    // ── Timeline ─────────────────────────────────────────────────────
+    ("GET", "/timeline", graph::get_timeline),
+    // ── Edges ────────────────────────────────────────────────────────
+    ("GET", "/edges", graph::get_edges),
+    // ── Extract (LLM fact extraction → store) ────────────────────────
+    ("POST", "/extract", maintenance::post_extract),
+    // ── Import (JSONL) ──────────────────────────────────────────────
+    ("POST", "/import", maintenance::post_import),
+    // ── Export (JSONL) ──────────────────────────────────────────────
+    ("GET", "/export", maintenance::get_export),
+    // ── Prune (maintenance) ───────────────────────────────────────────
+    // ── Verify / Repair (index consistency, #1266) ───────────────────
+    ("POST", "/verify", maintenance::post_verify),
+    ("POST", "/repair", maintenance::post_repair),
+    ("POST", "/prune", maintenance::post_prune),
+    // ── Consolidate (maintenance) ────────────────────────────────────
+    ("POST", "/consolidate", maintenance::post_consolidate),
+    (
+        "POST",
+        "/consolidate/pair",
+        maintenance::post_consolidate_pair,
+    ),
+    // ── Aging (maintenance) ─────────────────────────────────────────
+    ("POST", "/aging", maintenance::post_aging),
+    // ── Importance (monitoring) ────────────────────────────────────────
+    ("POST", "/importance", maintenance::post_importance),
+    // ── Orphans (monitoring — read-only) ─────────────────────────────
+    ("POST", "/orphans", maintenance::post_orphans),
+    // ── Rebuild Backlinks (monitoring) ────────────────────────────────
+    (
+        "POST",
+        "/rebuild-backlinks",
+        maintenance::post_rebuild_backlinks,
+    ),
+];
+
+/// The handler registered for `(method, path)`, if any.
+fn handler_for(method: &str, path: &str) -> Option<Handler> {
+    HANDLERS
+        .iter()
+        .find(|(m, p, _)| *m == method && *p == path)
+        .map(|(_, _, h)| *h)
 }
 
 pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
@@ -151,225 +356,11 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         read_only,
     };
 
-    match (method, route_path) {
-        // ── Health ──────────────────────────────────────────────────────
-        (Method::Get, "/health") => health::get_health(&mut call),
-
-        // ── Memory Tools Guide (#1010) ──────────────────────────────────
-        (Method::Get, "/guide") => health::get_guide(&mut call),
-
-        // ── Route Introspection (#1289) ─────────────────────────────────
-        (Method::Get, "/routes") => health::get_routes(&mut call),
-
-        // ── Remember ───────────────────────────────────────────────────
-        (Method::Post, "/remember") => memory::post_remember(&mut call),
-
-        // ── Recall (semantic search) ────────────────────────────────────
-        (Method::Post, "/recall") => memory::post_recall(&mut call),
-
-        // ── Search (keyword) ────────────────────────────────────────────
-        (Method::Post, "/search") => memory::post_search(&mut call),
-
-        // ── List ────────────────────────────────────────────────────────
-        (Method::Post, "/list") => memory::post_list(&mut call),
-
-        // ── Forget by ID or tag (DELETE /forget?id=xxx or ?tag=xxx) ────
-        (Method::Delete, "/forget") => memory::delete_forget(&mut call),
-
-        // ── Stats (GET = all or ?namespace=<name>) ───────────────────
-        (Method::Get, "/stats") => memory::get_stats(&mut call),
-        (Method::Post, "/stats") => memory::post_stats(&mut call),
-
-        // ── Lifecycle (#936): status, cycle, promote ──────────────────
-        (Method::Get, "/lifecycle/status") => maintenance::get_lifecycle_status(&mut call),
-
-        (Method::Get, "/lifecycle/deprecated") => maintenance::get_lifecycle_deprecated(&mut call),
-
-        (Method::Post, "/lifecycle/cycle") => maintenance::post_lifecycle_cycle(&mut call),
-
-        (Method::Post, "/lifecycle/promote") => maintenance::post_lifecycle_promote(&mut call),
-
-        // ── Namespaces ──────────────────────────────────────────────────
-        (Method::Get, "/namespaces") => namespaces::get_namespaces(&mut call),
-
-        // ── Namespace Rename/Merge (#1181) ──────────────────────────────
-        (Method::Post, "/namespaces/rename") => namespaces::post_namespaces_rename(&mut call),
-
-        // ── Namespace Delete with explicit strategy (#1181) ─────────────
-        (Method::Post, "/namespaces/delete") => namespaces::post_namespaces_delete(&mut call),
-
-        // ── Recent (#528) ──────────────────────────────────────────────
-        (Method::Get, "/recent") => memory::get_recent(&mut call),
-
-        // ── Graph Visualization (#408) ───────────────────────────────────
-        (Method::Get, "/graph") => graph::get_graph(&mut call),
-
-        // ── Graph Mutation: Add Edge (#542) ──────────────────────────────
-        (Method::Post, "/graph/edge") => graph::post_graph_edge(&mut call),
-
-        // ── Graph Mutation: Remove Edge (#542) ────────────────────────────
-        (Method::Delete, "/graph/edge") => graph::delete_graph_edge(&mut call),
-
-        // ── Room Summary ────────────────────────────────────────────────
-        (Method::Post, "/room/summary") => rooms::post_room_summary(&mut call),
-
-        // ── Room Summary Document ────────────────────────────────────────
-        (Method::Post, "/room/summary-document") => rooms::post_room_summary_document(&mut call),
-
-        // ── Room Consolidation (#1088) ───────────────────────────────────
-        (Method::Post, "/room/consolidate") => rooms::post_room_consolidate(&mut call),
-
-        // ── DEPRECATED: POST /room/document → /room/summary-document (#735)
-        (Method::Post, "/room/document") => rooms::post_room_document(&mut call),
-
-        // ── Get memory by ID ──────────────────────────────────────────
-        (Method::Get, "/memory") => memory::get_memory(&mut call),
-
-        // ── Memory Pin/Unpin (#660) ──────────────────────────────────────
-        (Method::Post, "/memory/pin") => memory::post_memory_pin(&mut call),
-
-        // ── Memory Set Importance (#660) ──────────────────────────────────
-        (Method::Post, "/memory/importance") => memory::post_memory_importance(&mut call),
-
-        // ── Memory Feedback (Trust Scoring) (#718) ────────────────────
-        (Method::Post, "/memory/feedback") => memory::post_memory_feedback(&mut call),
-
-        // ── Update memory by ID (PUT /memory, #659) ──────────────────
-        (Method::Put, "/memory") => memory::put_memory(&mut call),
-
-        // ── Room Memories (chronological listing — GET /room/memories) ────
-        (Method::Get, "/room/memories") => rooms::get_room_memories(&mut call),
-
-        // ── Room Recall (semantic with optional fallback to chronological) ──
-        (Method::Post, "/room/recall") => rooms::post_room_recall(&mut call),
-
-        // ── Room management endpoints (#395) ────────────────────────────
-        (Method::Post, "/room/create") => rooms::post_room_create(&mut call),
-
-        (Method::Post, "/room/rename") => rooms::post_room_rename(&mut call),
-
-        (Method::Post, "/room/update") => rooms::post_room_update(&mut call),
-
-        (Method::Post, "/room/memory/move") => rooms::post_room_memory_move(&mut call),
-
-        (Method::Post, "/room/remember") => rooms::post_room_remember(&mut call),
-
-        (Method::Get, "/room/list") => rooms::get_room_list(&mut call),
-
-        (Method::Post, "/room/stats") => rooms::post_room_stats(&mut call),
-
-        // ── Room ↔ Document junction (#689) ──────────────────────────────
-        (Method::Post, "/room/document/list") => rooms::post_room_document_list(&mut call),
-
-        (Method::Put, "/room/document/add") => rooms::put_room_document_add(&mut call),
-
-        (Method::Delete, "/room/document/remove") => rooms::delete_room_document_remove(&mut call),
-
-        (Method::Post, "/doc/room/list") => rooms::post_doc_room_list(&mut call),
-
-        (Method::Delete, "/room/delete") => rooms::delete_room_delete(&mut call),
-        // ── Context Summary (#442) ───────────────────────────────────────
-        (Method::Post, "/context") => maintenance::post_context(&mut call),
-
-        // ── Dream Cycle (#442) ─────────────────────────────────────────────
-        (Method::Post, "/dream") => maintenance::post_dream(&mut call),
-
-        (Method::Post, "/mcp") => mcp::post_mcp(&mut call),
-
-        // ── Document: Create / Upsert ────────────────────────────────────
-        (Method::Post, "/doc/create") => docs::post_doc_create(&mut call),
-
-        // ── Document: Get ───────────────────────────────────────────────
-        (Method::Post, "/doc/get") => docs::post_doc_get(&mut call),
-
-        // ── Document: Update (partial) ────────────────────────────────
-        (Method::Post, "/doc/update") => docs::post_doc_update(&mut call),
-
-        // ── Document: List ─────────────────────────────────────────────
-        (Method::Post, "/doc/list") => docs::post_doc_list(&mut call),
-
-        // ── Document: Search ────────────────────────────────────────────
-        (Method::Post, "/doc/search") => docs::post_doc_search(&mut call),
-
-        // ── Document: Move ───────────────────────────────────────────────
-        (Method::Post, "/doc/move") => docs::post_doc_move(&mut call),
-
-        // ── Document: Delete ─────────────────────────────────────────────
-        (Method::Delete, "/doc/delete") => docs::delete_doc_delete(&mut call),
-
-        // ── Cross-entity references (#689) ───────────────────────────────
-        (Method::Post, "/memory/doc-refs") => memory::post_memory_doc_refs(&mut call),
-
-        (Method::Post, "/doc/mem-refs") => docs::post_doc_mem_refs(&mut call),
-
-        // ── Tags: List with counts ───────────────────────────────────────
-        (Method::Get, "/tags") => tags::get_tags(&mut call),
-
-        // ── Tags: Rename ─────────────────────────────────────────────────
-        (Method::Post, "/tags/rename") => tags::post_tags_rename(&mut call),
-
-        // ── Tags: Delete ─────────────────────────────────────────────────
-        (Method::Post, "/tags/delete") => tags::post_tags_delete(&mut call),
-
-        // ── Pin ───────────────────────────────────────────────────────────
-        (Method::Post, "/pin") => memory::post_pin(&mut call),
-
-        // ── Unpin ─────────────────────────────────────────────────────────
-        (Method::Post, "/unpin") => memory::post_unpin(&mut call),
-
-        // ── Provenance chain (#1172) ─────────────────────────────────────
-        (Method::Get, "/provenance") => graph::get_provenance(&mut call),
-
-        // ── Contradiction resolutions ledger (#1172) ────────────────────
-        (Method::Get, "/contradictions") => graph::get_contradictions(&mut call),
-
-        // ── Undo a contradiction resolution (#1172) ─────────────────────
-        (Method::Post, "/contradictions/undo") => graph::post_contradictions_undo(&mut call),
-
-        // ── Timeline ─────────────────────────────────────────────────────
-        (Method::Get, "/timeline") => graph::get_timeline(&mut call),
-
-        // ── Edges ────────────────────────────────────────────────────────
-        (Method::Get, "/edges") => graph::get_edges(&mut call),
-
-        // ── Extract (LLM fact extraction → store) ────────────────────────
-        (Method::Post, "/extract") => maintenance::post_extract(&mut call),
-
-        // ── Import (JSONL) ──────────────────────────────────────────────
-        (Method::Post, "/import") => maintenance::post_import(&mut call),
-
-        // ── Export (JSONL) ──────────────────────────────────────────────
-        (Method::Get, "/export") => maintenance::get_export(&mut call),
-
-        // ── Prune (maintenance) ───────────────────────────────────────────
-        // ── Verify / Repair (index consistency, #1266) ───────────────────
-        (Method::Post, "/verify") => maintenance::post_verify(&mut call),
-
-        (Method::Post, "/repair") => maintenance::post_repair(&mut call),
-
-        (Method::Post, "/prune") => maintenance::post_prune(&mut call),
-
-        // ── Consolidate (maintenance) ────────────────────────────────────
-        (Method::Post, "/consolidate") => maintenance::post_consolidate(&mut call),
-
-        (Method::Post, "/consolidate/pair") => maintenance::post_consolidate_pair(&mut call),
-
-        // ── Aging (maintenance) ─────────────────────────────────────────
-        (Method::Post, "/aging") => maintenance::post_aging(&mut call),
-
-        // ── Importance (monitoring) ────────────────────────────────────────
-        (Method::Post, "/importance") => maintenance::post_importance(&mut call),
-
-        // ── Orphans (monitoring — read-only) ─────────────────────────────
-        (Method::Post, "/orphans") => maintenance::post_orphans(&mut call),
-
-        // ── Rebuild Backlinks (monitoring) ────────────────────────────────
-        (Method::Post, "/rebuild-backlinks") => maintenance::post_rebuild_backlinks(&mut call),
-
-        // ── 404 ─────────────────────────────────────────────────────────
-        // Unreachable while every registry row has an arm (enforced by the
-        // `every_registry_row_has_a_handler_arm` test); kept for exhaustiveness.
-        _ => {
+    match handler_for(method.as_str(), route_path) {
+        Some(handler) => handler(&mut call),
+        // Unreachable while every registry row has a table row (enforced by the
+        // `every_registry_row_has_a_handler` test); kept as a safe fallback.
+        None => {
             #[cfg(test)]
             UNHANDLED_ROW.with(|c| c.set(true));
             ctx.error_response_for(req, 404, "Not found")
@@ -378,7 +369,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
 }
 
 // Test probe: set when a registry row reached the match fallback, i.e. it
-// has no handler arm.
+// has no handler row.
 #[cfg(test)]
 thread_local! {
     static UNHANDLED_ROW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -2112,65 +2103,64 @@ mod routes_introspection_tests {
         }
     }
 
-    /// Every registry row must have a handler arm: the router consults the
-    /// table first, so a row whose arm is missing would silently 404 through
+    /// Every registry row must have a handler row: the router consults the
+    /// table first, so a row whose handler row is missing would silently 404 through
     /// the fallback. Built from the table, not from source text (#1344).
     #[test]
-    fn every_registry_row_has_a_handler_arm() {
+    fn every_registry_row_has_a_handler() {
         let app = RoutesApp::new();
         for e in crate::api_registry::ENDPOINTS {
             UNHANDLED_ROW.with(|c| c.set(false));
             let _ = app.call(method_of(e.method), e.path, None);
             assert!(
                 !UNHANDLED_ROW.with(|c| c.get()),
-                "{} {} is registered but has no handler arm",
+                "{} {} is registered but has no handler row",
                 e.method,
                 e.path
             );
         }
     }
 
-    /// The dispatch match and the registry name exactly the same
-    /// (method, path) pairs, with no duplicates (#1344). The match has one
-    /// `(Method::X, "/path") => module::handler(&mut call),` line per route,
-    /// so it is read from this file's source; the test above proves the
-    /// rows reach a handler at run time, this one also catches an arm with
-    /// no row (dead, since the table 404s it before the match).
+    /// The handler table and the registry name exactly the same
+    /// (method, path) pairs, with no duplicates (#1344). Both are plain data,
+    /// so no source text is scanned: a table row without a registry row is
+    /// dead (the registry 404s it first) and a registry row without a table
+    /// row is a 404 at run time.
     #[test]
-    fn dispatch_match_routes_equal_the_registry_rows() {
-        let src = include_str!("mod.rs");
-        let body = src
-            .split_once("    match (method, route_path) {")
-            .expect("route's dispatch match")
-            .1
-            .split_once("        _ => {")
-            .expect("route's fallback arm")
-            .0;
-        let mut arms: Vec<(String, String)> = body
-            .lines()
-            .filter_map(|l| {
-                let rest = l.trim_start().strip_prefix("(Method::")?;
-                let (method, rest) = rest.split_once(", \"")?;
-                let (path, rest) = rest.split_once("\")")?;
-                rest.trim_start().strip_prefix("=>")?;
-                Some((method.to_ascii_uppercase(), path.to_string()))
-            })
+    fn handler_table_equals_the_registry() {
+        let mut table: Vec<(String, String)> = HANDLERS
+            .iter()
+            .map(|(m, p, _)| (m.to_string(), p.to_string()))
             .collect();
         let mut rows: Vec<(String, String)> = crate::api_registry::ENDPOINTS
             .iter()
             .map(|e| (e.method.to_string(), e.path.to_string()))
             .collect();
-        let (arm_count, row_count) = (arms.len(), rows.len());
-        arms.sort();
-        arms.dedup();
+        let (table_count, row_count) = (table.len(), rows.len());
+        table.sort();
+        table.dedup();
         rows.sort();
         rows.dedup();
-        assert_eq!(arms.len(), arm_count, "duplicate (method, path) arm");
-        assert_eq!(rows.len(), row_count, "duplicate (method, path) row");
         assert_eq!(
-            arms, rows,
-            "dispatch match and api_registry::ENDPOINTS differ"
+            table.len(),
+            table_count,
+            "duplicate (method, path) table row"
         );
+        assert_eq!(
+            rows.len(),
+            row_count,
+            "duplicate (method, path) registry row"
+        );
+        assert_eq!(table, rows, "HANDLERS and api_registry::ENDPOINTS differ");
+    }
+
+    #[test]
+    fn handler_for_matches_method_and_exact_path_only() {
+        assert!(handler_for("POST", "/remember").is_some());
+        assert!(handler_for("GET", "/remember").is_none());
+        assert!(handler_for("POST", "/remember/").is_none());
+        assert!(handler_for("POST", "/rememberx").is_none());
+        assert!(handler_for("post", "/remember").is_none());
     }
 
     /// A route that is not in the table is a 404 that never reaches a
