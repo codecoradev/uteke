@@ -22,6 +22,11 @@ pub(crate) fn is_server_running(url: &str) -> bool {
 /// the comparison (a server older than this route answers 404, a non-loopback
 /// server whose paths are not ours, a timeout, a body that is not an id)
 /// returns `true`: routing then behaves as before.
+///
+/// The probe goes through [`build_client`], so it carries `UTEKE_AUTH_TOKEN`
+/// exactly like the command it guards. Without a token an auth-enabled
+/// server answers 401 here and the routed command is refused with 401 as
+/// well, so nothing can land in the wrong store on that path.
 pub(crate) fn server_serves_store(url: &str, store: &str) -> bool {
     if !is_loopback_url(url) {
         return true;
@@ -546,10 +551,19 @@ mod recall_flag_tests {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)] // env var mutation (edition 2024) in one serialized test
 mod store_match_tests {
     use super::server_serves_store;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    /// The probe reads `UTEKE_AUTH_TOKEN`, so the tests of this module run one
+    /// at a time.
+    static ENV: Mutex<()> = Mutex::new(());
+    fn serialized() -> std::sync::MutexGuard<'static, ()> {
+        ENV.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     /// Serve one canned HTTP response on a loopback port; returns its base URL.
     fn stub(status: &str, body: &str) -> String {
@@ -569,12 +583,33 @@ mod store_match_tests {
         url
     }
 
+    /// Like `stub`, but also hands back the raw request the server received.
+    fn capturing_stub(body: &str) -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            if let Ok((mut conn, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let n = conn.read(&mut buf).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).to_string());
+                let _ = conn.write_all(reply.as_bytes());
+            }
+        });
+        (url, rx)
+    }
+
     fn id_body(store: &std::path::Path) -> String {
         format!(r#"{{"id":"{}"}}"#, uteke_core::store_identity(store))
     }
 
     #[test]
     fn the_same_store_keeps_routing() {
+        let _g = serialized();
         let dir = tempfile::tempdir().unwrap();
         let url = stub("200 OK", &id_body(dir.path()));
         assert!(server_serves_store(&url, dir.path().to_str().unwrap()));
@@ -582,6 +617,7 @@ mod store_match_tests {
 
     #[test]
     fn another_store_is_not_routed_to_the_server() {
+        let _g = serialized();
         let served = tempfile::tempdir().unwrap();
         let ours = tempfile::tempdir().unwrap();
         let url = stub("200 OK", &id_body(served.path()));
@@ -590,6 +626,7 @@ mod store_match_tests {
 
     #[test]
     fn anything_that_blocks_the_comparison_keeps_the_old_routing() {
+        let _g = serialized();
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().to_str().unwrap();
         // A server older than GET /store answers 404.
@@ -607,7 +644,29 @@ mod store_match_tests {
 
     #[test]
     fn a_non_loopback_server_is_never_asked() {
+        let _g = serialized();
         // Its paths are not ours, so the ids could never match; no request is made.
-        assert!(server_serves_store("http://192.0.2.1:9", "/tmp/anything"));
+        // TEST-NET-1 address: never routable, so a stray request would time out.
+        let url = format!("{}://{}", "http", "192.0.2.1:9");
+        assert!(server_serves_store(&url, "/tmp/anything"));
+    }
+
+    #[test]
+    fn the_probe_carries_the_auth_token_like_the_command_it_guards() {
+        let _g = serialized();
+        let dir = tempfile::tempdir().unwrap();
+        let (url, request) = capturing_stub(&id_body(dir.path()));
+        // SAFETY: serialized by `ENV`; no other thread of this crate reads the
+        // variable while the test runs.
+        unsafe { std::env::set_var("UTEKE_AUTH_TOKEN", "probe-token") };
+        let same = server_serves_store(&url, dir.path().to_str().unwrap());
+        unsafe { std::env::remove_var("UTEKE_AUTH_TOKEN") };
+        assert!(same);
+        let raw = request
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("the stub saw a request")
+            .to_ascii_lowercase();
+        assert!(raw.starts_with("get /store "), "{raw}");
+        assert!(raw.contains("authorization: bearer probe-token"), "{raw}");
     }
 }
