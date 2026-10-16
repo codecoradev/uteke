@@ -28,6 +28,9 @@ ignore:
     - "yarn.lock"
     - "vendor/"
     - "node_modules/"
+    # Test vectors of the privacy filter (#1464): inputs are secret-shaped on
+    # purpose (split into fragments, never a real credential).
+    - "docs/privacy-filter-cases.json"
   rules:
     - "Hardcoded password or secret"
     - "Command injection via exec/system with dynamic input"

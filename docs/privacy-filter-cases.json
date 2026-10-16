@@ -1,5 +1,5 @@
 {
-  "format": "Shared test vectors of the OSS privacy filter (uteke_core::privacy::redact, #1464) so uteke-cloud can pin parity in CI. For each case: join the strings of `input` (no separator) to get the text, run the filter with an empty allowlist, and expect exactly `expected` and the list `kinds` of [kind, count] pairs ordered by kind (empty when nothing is masked). Inputs are fragments so this file holds no string a secret scanner would flag.",
+  "format": "Shared test vectors of the OSS privacy filter (uteke_core::privacy::redact, #1464) so uteke-cloud can pin parity in CI. For each case: join the strings of `input` (no separator) to get the text, run the filter with an empty allowlist, and expect exactly `expected` and the list `kinds` of [kind, count] pairs ordered by kind (empty when nothing is masked). Inputs are split into fragments so no complete token appears; none of the values is a real credential, and secret scanners may still flag the assignment-shaped lines.",
   "version": 1,
   "cases": [
     {
