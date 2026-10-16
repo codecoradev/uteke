@@ -43,3 +43,6 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+uteke-core = { path = "../uteke-core", features = ["test-support"] }

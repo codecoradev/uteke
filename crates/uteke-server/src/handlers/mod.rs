@@ -27,6 +27,8 @@ const API_VERSIONS: &[&str] = &["v1", "v2"];
 mod docs;
 mod graph;
 mod health;
+#[cfg(test)]
+mod isolation_tests;
 mod maintenance;
 mod mcp;
 mod memory;
