@@ -80,11 +80,31 @@ impl crate::Uteke {
         let mut imported = 0;
         let mut deduped = 0;
 
-        for entry in entries {
+        for mut entry in entries {
             if entry.content.is_empty() {
                 skipped += 1;
                 continue;
             }
+
+            // Privacy filter (#1464), before the content is embedded or stored.
+            // Strict mode skips the row (counted as skipped) instead of
+            // aborting the whole import.
+            let prepared = match self
+                .privacy_config
+                .prepare(&entry.content, Some(std::mem::take(&mut entry.metadata)))
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Skipping import entry: {e}");
+                    skipped += 1;
+                    continue;
+                }
+            };
+            entry.content = prepared.content;
+            if let Some(m) = prepared.metadata {
+                entry.metadata = m;
+            }
+            let redactions = prepared.redactions;
 
             // Re-embed the content with retry (consistent with remember path, #1005).
             self.ensure_embedder()?;
@@ -164,6 +184,8 @@ impl crate::Uteke {
                 skipped += 1;
                 continue;
             }
+
+            self.record_redaction(&id, &redactions);
 
             // Auto-link cosine edges (consistent with remember path, #1005).
             // Must run AFTER index.insert() so the new memory is searchable.

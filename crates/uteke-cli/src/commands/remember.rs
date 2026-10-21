@@ -66,7 +66,12 @@ pub(crate) fn run(
     source_type: Option<&str>,
     timestamp: Option<&str>,
 ) -> Result<(), String> {
-    tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
+    // The content is not logged: it may hold a secret the privacy filter has
+    // not masked yet (#1464).
+    tracing::debug!(
+        "Remembering {} bytes (type: {type}, contradiction: {detect_contradiction})",
+        content.len()
+    );
 
     // #1106: validate BEFORE any write so an invalid value fails loudly
     // without leaving a stored row behind (the post-store set would have

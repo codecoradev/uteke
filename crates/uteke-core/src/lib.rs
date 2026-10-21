@@ -36,6 +36,8 @@ pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
 pub mod privacy;
+#[cfg(test)]
+mod privacy_write_tests;
 
 pub use forget_request::{
     ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
@@ -645,6 +647,9 @@ pub struct Uteke {
     /// Dream pipeline thresholds (#731). Used by contradiction scan,
     /// dedup/consolidate, and orphan detection phases.
     dream_config: DreamConfig,
+    /// Privacy filter applied to content before it is embedded or stored
+    /// (#1464). Default: mask secrets (`redact`), no allowlist.
+    privacy_config: privacy::PrivacyConfig,
     /// Memory lifecycle configuration (#928). Controls soft-delete behavior,
     /// dynamic deprecation caps, and TTL-based pruning.
     lifecycle_config: LifecycleConfig,
@@ -1050,6 +1055,7 @@ impl Uteke {
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
             jaccard_weight: 0.0,
             dream_config: DreamConfig::default(),
+            privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),
             embed_cache_path,
         })
@@ -1091,6 +1097,18 @@ impl Uteke {
     /// startup from CLI/server config.
     pub fn set_dream_config(&mut self, config: DreamConfig) {
         self.dream_config = config;
+    }
+
+    /// Set the privacy filter (#1464): `redact` (default), `strict` or `off`,
+    /// plus the allowlist of values to keep. Called once at startup from the
+    /// CLI and server config.
+    pub fn set_privacy_config(&mut self, config: privacy::PrivacyConfig) {
+        self.privacy_config = config;
+    }
+
+    /// The privacy filter in force.
+    pub fn privacy_config(&self) -> &privacy::PrivacyConfig {
+        &self.privacy_config
     }
 
     /// Set memory lifecycle configuration (#928).
