@@ -42,4 +42,4 @@ Two tests enforce this: the HTTP suite fails when a read row (a `GET`, or a `POS
 
 ## Requiring it
 
-The suite runs in the `Test` job. To make a failure block merging, `Test` has to be a required status check of the branch protection rule for `develop` (a repository setting).
+The suite runs in the `Test` job (`cargo test --workspace`). `Test` is a required status check of the `develop-protected` and `main-protected` rulesets (checked 2026-10-21), so a failing isolation test blocks the merge of a pull request. If a ruleset is ever rebuilt, keep `Test` in its required checks: the gate is only as strong as that setting.
