@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- **rustls-webpki 0.103.16 and webpki-roots 1.0.10 (RUSTSEC-2026-0382, RUSTSEC-2026-0381)** - certificate verification could accept intermediates that were distrusted (emSign). Both sit in the TLS stack of the HTTP client (`uteke upgrade`, the OpenAI and Ollama embedding backends, the extraction client, the CLI-to-server client over HTTPS). Lockfile only; no code change.
+
 ### Added
 
 - **`author` on every write path (#1427, phase 2)** - a memory records who wrote it (the agent, user or tool name), with or without a room. `POST /remember`, MCP `uteke_remember` and `uteke remember --author` accept it (free text, trimmed, 1 to 128 characters; an invalid value is a 400, a tool error or a CLI error before anything is stored). A room write stamps the named writer on the memory as well as on the room link; the `anonymous` / `user` fallback of the room link is not an author. `author` is returned on the memory object by recall, search, list and get (omitted when unset), echoed by `POST /remember`, and kept by export and import. Stores migrate to schema v22 on first open (see Internal below): back up a production store first. Filtering by author is not part of this phase. Contract: uteke-cloud#219 (cloud already has the field).
