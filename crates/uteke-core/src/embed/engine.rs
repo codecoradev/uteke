@@ -196,7 +196,10 @@ impl OnnxEmbedder {
         let num_threads = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        let session = ort::session::Session::builder()
+        let environment = ort_init::environment().ok_or_else(|| {
+            Error::embed_msg("ONNX Runtime environment is not initialized".to_string())
+        })?;
+        let session = ort::session::Session::builder(environment)
             .map_err(|e| Error::embed("ONNX session builder", e))?
             .with_intra_threads(num_threads)
             .map_err(|e| Error::embed("ONNX intra_threads config", e))?
