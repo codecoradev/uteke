@@ -72,6 +72,10 @@ impl crate::Uteke {
     ) -> Result<(RememberOutcome, ContradictionResult), Error> {
         crate::validate_input(content, tags)?;
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Privacy filter (#1464), before the content is embedded or stored.
+        let prepared = self.privacy_config.prepare(content, metadata)?;
+        let content = prepared.content.as_str();
+        let metadata = prepared.metadata.clone();
 
         // Embed first to check for contradictions before persisting
         self.ensure_embedder()?;
@@ -98,7 +102,7 @@ impl crate::Uteke {
         let content_type = crate::memory::crud::detect_content_type(content);
 
         // Use remember_precomputed to avoid double-embedding
-        let outcome = self.remember_precomputed_detailed(
+        let mut outcome = self.remember_precomputed_detailed(
             content,
             tags,
             metadata,
@@ -109,6 +113,8 @@ impl crate::Uteke {
             None,
         )?;
         let id = outcome.id.clone();
+        self.record_redaction(&id, &prepared.redactions);
+        outcome.redactions = prepared.redactions.clone();
 
         // Timeline: if this is a contradiction-aware remember that
         // supersedes an older memory, record a Consolidated event (#347)

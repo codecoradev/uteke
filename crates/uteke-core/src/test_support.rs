@@ -35,7 +35,12 @@ impl crate::embed::Embedder for KeywordEmbedder {
 }
 
 pub fn open_keyword() -> crate::Uteke {
-    let (_db, store) = crate::Uteke::open_store(":memory:").expect("open_store");
+    open_keyword_at(":memory:")
+}
+
+/// [`open_keyword`] on a database file, for tests that inspect the file.
+pub fn open_keyword_at(path: impl AsRef<std::path::Path>) -> crate::Uteke {
+    let (_db, store) = crate::Uteke::open_store(path).expect("open_store");
     crate::Uteke::finish_open_full(
         store,
         Some(Box::new(KeywordEmbedder)),
