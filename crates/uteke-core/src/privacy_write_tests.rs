@@ -442,7 +442,12 @@ fn import_masks_rows_and_strict_skips_them() {
         gh()
     );
     let u = store(PrivacyMode::Redact);
-    assert_eq!(u.import(&file, None).unwrap().imported, 2);
+    let r = u.import(&file, None).unwrap();
+    assert_eq!(
+        (r.imported, r.redacted, r.rejected_secret),
+        (2, 1, 0),
+        "one of the two rows had a secret masked"
+    );
     let rows = u.list(None, 10, 0, None).unwrap();
     assert!(rows.iter().all(|m| !m.content.contains(&gh())), "{rows:?}");
     let masked = rows
@@ -462,9 +467,9 @@ fn import_masks_rows_and_strict_skips_them() {
     let s = store(PrivacyMode::Strict);
     let r = s.import(&file, None).unwrap();
     assert_eq!(
-        (r.imported, r.skipped),
-        (1, 1),
-        "the row with a secret is skipped"
+        (r.imported, r.skipped, r.rejected_secret, r.redacted),
+        (1, 1, 1, 0),
+        "the row with a secret is skipped and counted"
     );
     assert_eq!(s.list(None, 10, 0, None).unwrap()[0].content, "plain row");
 }

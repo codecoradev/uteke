@@ -79,6 +79,8 @@ impl crate::Uteke {
 
         let mut imported = 0;
         let mut deduped = 0;
+        let mut redacted = 0;
+        let mut rejected_secret = 0;
 
         for mut entry in entries {
             if entry.content.is_empty() {
@@ -96,6 +98,9 @@ impl crate::Uteke {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!("Skipping import entry: {e}");
+                    if matches!(e, Error::SecretDetected { .. }) {
+                        rejected_secret += 1;
+                    }
                     skipped += 1;
                     continue;
                 }
@@ -186,6 +191,9 @@ impl crate::Uteke {
             }
 
             self.record_redaction(&id, &redactions);
+            if !redactions.is_empty() {
+                redacted += 1;
+            }
 
             // Auto-link cosine edges (consistent with remember path, #1005).
             // Must run AFTER index.insert() so the new memory is searchable.
@@ -209,7 +217,12 @@ impl crate::Uteke {
             );
         }
 
-        Ok(ImportResult { imported, skipped })
+        Ok(ImportResult {
+            imported,
+            skipped,
+            redacted,
+            rejected_secret,
+        })
     }
 
     /// Parse JSONL input: one self-contained JSON object per line.

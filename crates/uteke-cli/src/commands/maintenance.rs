@@ -462,10 +462,7 @@ fn import_with_extraction(
 
     if facts.is_empty() {
         tracing::warn!("Extraction produced no facts from input");
-        return Ok(ImportResult {
-            imported: 0,
-            skipped: 0,
-        });
+        return Ok(ImportResult::default());
     }
 
     let mut imported = 0usize;
@@ -505,7 +502,11 @@ fn import_with_extraction(
         }
     }
 
-    Ok(ImportResult { imported, skipped })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        ..Default::default()
+    })
 }
 
 /// Detect import format from file extension and content.
@@ -564,7 +565,11 @@ fn import_text(
         }
     }
 
-    Ok(ImportResult { imported, skipped })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        ..Default::default()
+    })
 }
 
 /// Split markdown by headings. Each heading + body becomes a chunk.

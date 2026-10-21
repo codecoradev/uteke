@@ -35,6 +35,8 @@ mod maintenance;
 mod mcp;
 mod memory;
 mod namespaces;
+#[cfg(test)]
+mod privacy_tests;
 mod rooms;
 mod tags;
 
@@ -2665,11 +2667,21 @@ mod namespace_deprecation_tests {
                 w.is_null() || !w.as_str().unwrap().contains("Namespaces are deprecated"),
                 "{raw}"
             );
-            // Same keys as before the change: warning stays a key, no new ones.
+            // Same keys as before the change: warning stays a key. `redacted`
+            // is the one additive key (#1464, agreed with cloud in #218).
             let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
             let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
             keys.sort();
-            assert_eq!(keys, ["author_type", "embedding_written", "id", "warning"]);
+            assert_eq!(
+                keys,
+                [
+                    "author_type",
+                    "embedding_written",
+                    "id",
+                    "redacted",
+                    "warning"
+                ]
+            );
         }
     }
 

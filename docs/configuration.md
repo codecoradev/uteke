@@ -422,6 +422,14 @@ allowlist = ["^dev-"]      # regexes; a value matching any of them is kept as it
 
 `UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content of `remember`, room remember, `update` and `import`; metadata, tags and `source` are not filtered yet.
 
+Over HTTP, `POST /remember` and `POST /room/remember` return `"redacted": true` when something was masked (the stored text then differs from the request). In `strict` mode a write that contains a secret is refused with `400`:
+
+```json
+{"error": "secret_detected", "message": "...", "kinds": ["github-token"]}
+```
+
+`PUT /memory` answers the same way when new content has a secret. `POST /import` reports `redacted` (rows masked) and `rejected_secret` (rows skipped in strict mode, also counted in `skipped`).
+
 ## CLI Flag Override
 
 CLI flags always take precedence over config file values:

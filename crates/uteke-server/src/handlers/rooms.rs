@@ -457,6 +457,7 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                             "id": outcome.id,
                             "room_id": req_data.room_id,
                             "embedding_written": outcome.embedding_written,
+                            "redacted": outcome.redacted(),
                             "warning": uteke_core::namespace_deprecation::merge_warning(
                                 outcome.warning,
                                 uteke_core::namespace_deprecation::namespace_write_warning(
@@ -465,6 +466,9 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                             ),
                         }),
                     )
+                }
+                Err(uteke_core::Error::SecretDetected { kinds }) => {
+                    ctx.secret_detected_response(req, &kinds)
                 }
                 Err(e) => {
                     error!("room/remember error: {e}");

@@ -51,6 +51,7 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
 
             match result {
                 Ok(outcome) => {
+                    let redacted = outcome.redacted();
                     let id = outcome.id;
                     // Set source provenance after storage (#682) — matches CLI.
                     if req_data.source.is_some() || req_data.source_type.is_some() {
@@ -83,6 +84,9 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "id": id,
                         "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
                         "embedding_written": outcome.embedding_written,
+                        // #1464: true when the privacy filter masked a secret,
+                        // so the stored text differs from the request.
+                        "redacted": redacted,
                         "warning": uteke_core::namespace_deprecation::merge_warning(
                             outcome.warning,
                             uteke_core::namespace_deprecation::namespace_write_warning(
@@ -95,6 +99,9 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         body["author"] = serde_json::json!(a);
                     }
                     ctx.ok_response_for(req, &body)
+                }
+                Err(uteke_core::Error::SecretDetected { kinds }) => {
+                    ctx.secret_detected_response(req, &kinds)
                 }
                 Err(e) => {
                     error!("Internal error: {e}");
@@ -813,6 +820,9 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 }
                 Ok(false) => {
                     ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
+                }
+                Err(uteke_core::Error::SecretDetected { kinds }) => {
+                    ctx.secret_detected_response(req, &kinds)
                 }
                 Err(e) => {
                     error!("Update memory error: {e}");

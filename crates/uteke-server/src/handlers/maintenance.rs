@@ -302,6 +302,8 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         serde_json::json!({
                             "imported": result.imported,
                             "skipped": result.skipped,
+                            "redacted": result.redacted,
+                            "rejected_secret": result.rejected_secret,
                         }),
                         import_ns,
                     ),

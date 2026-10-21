@@ -335,6 +335,33 @@ impl ReqCtx {
         )
     }
 
+    /// The privacy filter rejected the write in strict mode (#1464): 400 with
+    /// the kinds found, never the values.
+    pub fn secret_detected_response(
+        &self,
+        req: &Request,
+        kinds: &[String],
+    ) -> Response<Cursor<Vec<u8>>> {
+        let data = serde_json::json!({
+            "error": "secret_detected",
+            "message": format!(
+                "the content contains a secret ({}); remove it or set [privacy] mode to redact",
+                kinds.join(", ")
+            ),
+            "kinds": kinds,
+        })
+        .to_string();
+        let mut headers = self.cors_headers_for(req);
+        headers.push(json_header());
+        Response::new(
+            StatusCode::from(400),
+            headers,
+            Cursor::new(data.into_bytes()),
+            None,
+            None,
+        )
+    }
+
     /// Build an OK response with CORS headers specific to a request.
     pub fn ok_response_for<T: serde::Serialize>(
         &self,

@@ -455,12 +455,19 @@ fn default_created_at() -> chrono::DateTime<chrono::Utc> {
 }
 
 /// Result of an import operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportResult {
     /// Number of memories imported.
     pub imported: usize,
-    /// Number of entries skipped (duplicate or invalid).
+    /// Number of entries skipped (duplicate, invalid or rejected by the
+    /// privacy filter in strict mode).
     pub skipped: usize,
+    /// Imported memories in which the privacy filter masked a secret (#1464).
+    #[serde(default)]
+    pub redacted: usize,
+    /// Entries skipped because strict mode found a secret (also in `skipped`).
+    #[serde(default)]
+    pub rejected_secret: usize,
 }
 
 /// A tag with its usage count.
