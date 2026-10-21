@@ -1225,6 +1225,16 @@ fn namespace_deprecation_suffix(namespace: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
+/// The error text of a failed write. Strict privacy mode (#1464) is
+/// recognisable: it starts with `secret_detected`, the same code the HTTP API
+/// uses.
+fn write_error(e: uteke_core::Error) -> String {
+    match e {
+        uteke_core::Error::SecretDetected { .. } => format!("secret_detected: {e}"),
+        other => format!("Failed: {other}"),
+    }
+}
+
 fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let req = decode_remember_args(args)?;
     let content = req.content.as_str();
@@ -1246,11 +1256,11 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 room_id,
                 author,
             )
-            .map_err(|e| format!("Failed: {e}"))?
+            .map_err(write_error)?
     } else {
         uteke
             .remember_typed_detailed(content, &tags, None, namespace, memory_type)
-            .map_err(|e| format!("Failed: {e}"))?
+            .map_err(write_error)?
     };
     // The named writer is the memory's own author, with or without a room
     // (#1427 phase 2); already validated and trimmed when the arguments were
@@ -1265,6 +1275,11 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     if let Some(ref warn) = outcome.warning {
         text.push_str(&format!(
             "\n⚠ Embedding NOT written: {warn}\nMemory is keyword-searchable only; run `uteke repair` to backfill."
+        ));
+    }
+    if let Some(summary) = outcome.redaction_summary() {
+        text.push_str(&format!(
+            "\n⚠ Secrets masked in the stored text (#1464): {summary}"
         ));
     }
     text.push_str(&namespace_deprecation_suffix(namespace));
@@ -1656,7 +1671,7 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             pinned,
             memory_type,
         )
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(write_error)?;
 
     if !updated {
         return Ok(ToolResult {
@@ -4226,5 +4241,78 @@ mod author_tests {
             assert!(text.contains("author"), "{text}");
         }
         assert_eq!(u.count(None).unwrap(), 0, "nothing is stored");
+    }
+}
+
+/// The privacy filter over MCP (#1464): masked writes say so, strict mode is a
+/// tool error that starts with `secret_detected` and names kinds, not values.
+#[cfg(test)]
+mod privacy_mcp_tests {
+    use super::*;
+    use uteke_core::Uteke;
+    use uteke_core::privacy::{PrivacyConfig, PrivacyMode};
+
+    fn store(mode: PrivacyMode) -> Uteke {
+        let mut u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        u.set_privacy_config(PrivacyConfig {
+            mode,
+            allowlist: Vec::new(),
+        });
+        u
+    }
+
+    fn token() -> String {
+        format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5")
+    }
+
+    fn text(r: &ToolResult) -> String {
+        match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    #[test]
+    fn remember_says_when_a_secret_was_masked() {
+        let u = store(PrivacyMode::Redact);
+        let r = exec_remember(
+            &u,
+            &serde_json::json!({"content": format!("key {}", token())}),
+        )
+        .unwrap();
+        let t = text(&r);
+        assert!(
+            t.contains("Secrets masked") && t.contains("github-token x1"),
+            "{t}"
+        );
+        assert!(!t.contains("aB3dE5gH7jK9"), "{t}");
+
+        let clean = exec_remember(&u, &serde_json::json!({"content": "nothing secret"})).unwrap();
+        assert!(!text(&clean).contains("Secrets masked"));
+    }
+
+    #[test]
+    fn strict_mode_is_a_secret_detected_tool_error_for_remember_and_update() {
+        let u = store(PrivacyMode::Strict);
+        let err = exec_remember(
+            &u,
+            &serde_json::json!({"content": format!("key {}", token())}),
+        )
+        .err()
+        .expect("strict rejects");
+        assert!(err.starts_with("secret_detected:"), "{err}");
+        assert!(
+            err.contains("github-token") && !err.contains("aB3dE5gH7jK9"),
+            "{err}"
+        );
+
+        let ok = exec_remember(&u, &serde_json::json!({"content": "plain"})).unwrap();
+        let id = text(&ok).rsplit(' ').next().unwrap().trim().to_string();
+        let err = exec_update(
+            &u,
+            &serde_json::json!({"id": id, "content": format!("now {}", token())}),
+        )
+        .err()
+        .expect("strict rejects the update");
+        assert!(err.starts_with("secret_detected:"), "{err}");
     }
 }

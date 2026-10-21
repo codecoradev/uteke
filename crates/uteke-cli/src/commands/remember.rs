@@ -47,6 +47,13 @@ fn parse_meta_pairs(pairs: &[String]) -> serde_json::Map<String, serde_json::Val
     map
 }
 
+/// Tell the user when the privacy filter changed what was stored (#1464).
+fn print_redaction(outcome: &uteke_core::RememberOutcome) {
+    if let Some(summary) = outcome.redaction_summary() {
+        println!("  \u{26a0} Secrets masked in the stored text: {summary}");
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
     cli: &Cli,
@@ -180,6 +187,7 @@ pub(crate) fn run(
                 "id": id,
                 "author_type": author_type.unwrap_or("agent"),
                 "embedding_written": embed_warning.is_none(),
+                "redacted": outcome.redacted(),
                 "warning": embed_warning,
                 "contradiction": {
                     "detected": contradiction.contradicted,
@@ -198,6 +206,7 @@ pub(crate) fn run(
             println!("{obj}");
         } else {
             output::print_remember_human(&id);
+            print_redaction(&outcome);
             if let Some(ref warn) = embed_warning {
                 println!("  \u{26a0} Embedding NOT written: {warn}");
                 println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");
@@ -257,6 +266,7 @@ pub(crate) fn run(
                 "id": id,
                 "author_type": author_type.unwrap_or("agent"),
                 "embedding_written": outcome.embedding_written,
+                "redacted": outcome.redacted(),
                 "warning": outcome.warning,
             });
             // Reconstruct metadata for JSON output (already consumed by remember)
@@ -287,6 +297,7 @@ pub(crate) fn run(
             println!("{obj}");
         } else {
             output::print_remember_human(&id);
+            print_redaction(&outcome);
             if let Some(ref warn) = outcome.warning {
                 println!("  \u{26a0} Embedding NOT written: {warn}");
                 println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");

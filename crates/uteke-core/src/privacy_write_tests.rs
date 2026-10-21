@@ -575,3 +575,20 @@ fn an_update_with_content_and_metadata_flags_by_the_content() {
     assert_eq!(m.metadata["k"], "v");
     assert_eq!(m.metadata["redacted"], true);
 }
+
+#[test]
+fn the_redaction_summary_names_kinds_and_counts_not_values() {
+    let u = store(PrivacyMode::Redact);
+    let masked = u
+        .remember_detailed(&format!("a {} b {}", gh(), aws()), &[], None, None)
+        .unwrap();
+    let summary = masked.redaction_summary().expect("two kinds masked");
+    assert!(summary.contains("github-token x1"), "{summary}");
+    assert!(summary.contains("aws-access-key x1"), "{summary}");
+    assert!(!summary.contains(&gh()));
+
+    let clean = u
+        .remember_detailed("nothing secret", &[], None, None)
+        .unwrap();
+    assert_eq!(clean.redaction_summary(), None);
+}

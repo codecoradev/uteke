@@ -97,6 +97,18 @@ impl RememberOutcome {
     pub fn redacted(&self) -> bool {
         !self.redactions.is_empty()
     }
+
+    /// What was masked, for a human: `github-token x1, jwt x2`. `None` when
+    /// nothing was.
+    pub fn redaction_summary(&self) -> Option<String> {
+        self.redacted().then(|| {
+            self.redactions
+                .iter()
+                .map(|r| format!("{} x{}", r.kind, r.count))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
 }
 
 impl crate::Uteke {

@@ -375,6 +375,15 @@ pub(crate) fn run_import(
             "\u{2713} Imported {} memories ({} skipped) as {detected_format}",
             result.imported, result.skipped
         );
+        if result.redacted > 0 {
+            println!("  \u{26a0} Secrets masked in {} memories", result.redacted);
+        }
+        if result.rejected_secret > 0 {
+            println!(
+                "  \u{26a0} {} entries skipped: they contain a secret (strict privacy mode)",
+                result.rejected_secret
+            );
+        }
     }
     Ok(())
 }
