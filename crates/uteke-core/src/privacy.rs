@@ -843,6 +843,21 @@ fn is_pem_line(line: &str) -> bool {
                 .is_some_and(|k| k.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')))
 }
 
+/// How far past a BEGIN line the matching END line is looked for.
+const MAX_PEM_BYTES: usize = 16 * 1024;
+/// How much of the text after `name=` is read as the value.
+const MAX_VALUE_BYTES: usize = 4096;
+
+/// The longest prefix of `s` that is at most `max` bytes and ends on a char
+/// boundary. Bounds the work a scan does per match.
+fn bounded(s: &str, max: usize) -> &str {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Whether `body` (the text between BEGIN and END) is key material: only PEM
 /// lines, at least one long base64 line. A sentence that mentions both markers
 /// is not.
@@ -852,7 +867,8 @@ fn is_pem_body(body: &str) -> bool {
     let body = body
         .replace("\\r\\n", "\n")
         .replace("\\n", "\n")
-        .replace("\\r", "\n");
+        .replace("\\r", "\n")
+        .replace("\\/", "/");
     let base64ish = |l: &str| {
         let l = l.trim().trim_start_matches('>').trim();
         l.len() >= 32
@@ -860,6 +876,15 @@ fn is_pem_body(body: &str) -> bool {
                 .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
     };
     if body.lines().all(is_pem_line) && body.lines().any(base64ish) {
+        return true;
+    }
+    // Fail closed: prose has no unbroken 64-character base64 run, key material
+    // does, whatever else surrounds it.
+    if body.split_whitespace().any(|t| {
+        t.len() >= 64
+            && t.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
+    }) {
         return true;
     }
     // Line breaks collapsed into spaces: every token is base64 and the long
@@ -893,7 +918,8 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
             continue;
         }
         let end_marker = format!("-----END {}-----", &caps[1]);
-        let after = &text[begin.end()..];
+        // A key is a few KiB; do not search the rest of a huge text per BEGIN.
+        let after = bounded(&text[begin.end()..], MAX_PEM_BYTES);
         let end = match after.find(&end_marker) {
             Some(rel) if is_pem_body(&after[..rel]) => begin.end() + rel + end_marker.len(),
             Some(_) => continue,
@@ -937,7 +963,7 @@ fn assignment_value(text: &str, start: usize, sep: &str, password: bool) -> (usi
         .chars()
         .last()
         .filter(|c| matches!(c, '"' | '\''));
-    let rest = &text[start..];
+    let rest = bounded(&text[start..], MAX_VALUE_BYTES);
     let mut end = 0;
     let mut quoted = false;
     if let Some(q) = quote {
@@ -1364,5 +1390,32 @@ mod tests {
         assert_eq!(entropy("aaaa"), 0.0);
         assert!((entropy("abab") - 1.0).abs() < 1e-9);
         assert!((entropy("abcd") - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_key_with_stray_text_is_still_masked_and_hostile_input_stays_fast() {
+        let (b, e) = (
+            format!("-----BEGIN {} KEY-----", "RSA PRIVATE"),
+            format!("-----END {} KEY-----", "RSA PRIVATE"),
+        );
+        let run = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun";
+        // Escaped slashes and stray words around the base64 run.
+        let t = format!("{b} note: {run}\\/{run} {e}");
+        assert_eq!(redact(&t, &[]).text, "[REDACTED:private-key]");
+        // A sentence naming both markers stays.
+        let prose = format!("starts with {b} and ends with {e} markers");
+        assert_eq!(redact(&prose, &[]).text, prose);
+
+        // Many candidates in one long token must not take quadratic time.
+        let many = "password=".repeat(20_000);
+        let started = std::time::Instant::now();
+        let _ = redact(&many, &[]);
+        let many_begin = format!("{b} ").repeat(5_000);
+        let _ = redact(&many_begin, &[]);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "scan took {:?}",
+            started.elapsed()
+        );
     }
 }
