@@ -522,7 +522,8 @@ fn private_key_begin() -> &'static Regex {
 /// A line of a PEM body: base64, or an RFC 1421 header (`Proc-Type: 4,ENCRYPTED`).
 fn is_pem_line(line: &str) -> bool {
     // A quoted mail or Markdown block prefixes each line with `>`.
-    let line = line.trim().trim_start_matches('>').trim();
+    // A quoted mail, a comment or a string literal wraps each line.
+    let line = line.trim_matches(|c: char| c.is_whitespace() || "\"'`+,;>#/*".contains(c));
     line.is_empty()
         || (line.len() >= 4
             && line
@@ -560,7 +561,7 @@ fn is_pem_body(body: &str) -> bool {
         .replace("\\r", "\n")
         .replace("\\/", "/");
     let base64ish = |l: &str| {
-        let l = l.trim().trim_start_matches('>').trim();
+        let l = l.trim_matches(|c: char| c.is_whitespace() || "\"'`+,;>#/*".contains(c));
         l.len() >= 32
             && l.bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
@@ -987,5 +988,21 @@ mod tests {
         let body = format!("{line}\n").repeat(600); // ~39 KB
         let out = redact(&format!("a\n{b}\n{body}{e}\nz"), &[]).text;
         assert_eq!(out, "a\n[REDACTED:private-key]\nz");
+    }
+
+    #[test]
+    fn a_key_wrapped_in_string_literals_or_comments_is_masked() {
+        let (b, e) = (
+            format!("-----BEGIN {} KEY-----", "RSA PRIVATE"),
+            format!("-----END {} KEY-----", "RSA PRIVATE"),
+        );
+        let run = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lg";
+        let java = format!("String k = \"{b}\\n\" +\n  \"{run}\\n\" +\n  \"{e}\";");
+        assert_eq!(
+            redact(&java, &[]).text,
+            "String k = \"[REDACTED:private-key]\";"
+        );
+        let comment = format!("# {b}\n# {run}\n# {e}");
+        assert_eq!(redact(&comment, &[]).text, "# [REDACTED:private-key]");
     }
 }
