@@ -391,6 +391,202 @@ const RULES: &[Rule] = &[
     },
 ];
 
+/// The name and separator of `NAME=value`, `NAME: value`, `NAME := value`,
+/// `'NAME' => 'value'`, `"NAME": "value"`, escaped JSON (`\"NAME\":\"value\"`).
+/// The value is read by [`assignment_value`]; whether the name is secret-like
+/// and the value looks like a secret is decided in [`mask_assignments`].
+const ASSIGNMENT: &str =
+    r#"(?m)\b([A-Za-z_][A-Za-z0-9_.-]*)(\\?["']?\s*(?::=|=>|[:=|])\s*\\?["']?)"#;
+
+/// Names that are a secret word by themselves. A bare `key`, `pass`, `token` or
+/// `secret` is NOT here: they are ordinary words (a `key` field in a Postman
+/// header, a Terraform backend, a type annotation `token: &str`).
+const BARE_SECRET_WORDS: &[&str] = &[
+    "password",
+    "passwd",
+    "pwd",
+    "passphrase",
+    "apikey",
+    "secretkey",
+    "accesskey",
+    "privatekey",
+    "authtoken",
+    "accesstoken",
+    "credentials",
+    "credential",
+];
+/// Words a compound name ends with (`API_KEY`, `auth_token`, `DB_PASS`).
+const COMPOUND_SECRET_WORDS: &[&str] = &["key", "token", "secret", "pass", "auth"];
+/// Suffixes of a single-segment name (`PGPASSWORD`).
+const UNAMBIGUOUS_SUFFIXES: &[&str] = &[
+    "password",
+    "passwd",
+    "passphrase",
+    "apikey",
+    "secretkey",
+    "privatekey",
+    "accesskey",
+    "authtoken",
+    "accesstoken",
+];
+const PASSWORD_WORDS: &[&str] = &["password", "passwd", "pwd", "pass", "passphrase"];
+/// Trailing segments that only qualify a name: `API_KEY_V2`, `SECRET_KEY_BASE`,
+/// `DB_PASSWORD_PROD`.
+const QUALIFIER_WORDS: &[&str] = &[
+    "base",
+    "prod",
+    "production",
+    "dev",
+    "development",
+    "staging",
+    "stage",
+    "test",
+    "live",
+    "new",
+    "old",
+    "backup",
+    "local",
+    "primary",
+    "secondary",
+];
+/// A segment before the last one that makes the name something else:
+/// `public_key`, `cache_key`, `next_token`, `page_token`, `idempotency_key`.
+const NOT_SECRET_PREFIXES: &[&str] = &[
+    "public",
+    "publishable",
+    "site",
+    "cache",
+    "sort",
+    "partition",
+    "index",
+    "shard",
+    "lookup",
+    "foreign",
+    "checksum",
+    "next",
+    "page",
+    "continuation",
+    "cursor",
+    "sync",
+    "idempotency",
+    "release",
+    "object",
+];
+/// A segment that says the value is a hash or identifier, so a hex value is not
+/// a secret: `COMMIT_KEY`, `GIT_SHA_KEY`. Only used for a `key` name; a hex
+/// `GITHUB_TOKEN` or `ENCRYPTION_KEY` is a secret.
+const HASHY_WORDS: &[&str] = &[
+    "commit", "sha", "hash", "checksum", "digest", "etag", "rev", "revision", "uuid", "git", "id",
+];
+
+/// The lowercase segments of a name, split at `_`, `.`, `-` and camelCase
+/// boundaries: `GITHUB_TOKEN` is `github, token`; `apiKey` is `api, key`.
+fn name_segments(name: &str) -> Vec<String> {
+    let mut segs = Vec::new();
+    let mut cur = String::new();
+    let mut prev_lower = false;
+    for ch in name.chars() {
+        if matches!(ch, '_' | '.' | '-') {
+            if !cur.is_empty() {
+                segs.push(std::mem::take(&mut cur).to_ascii_lowercase());
+            }
+            prev_lower = false;
+            continue;
+        }
+        if ch.is_ascii_uppercase() && prev_lower && !cur.is_empty() {
+            segs.push(std::mem::take(&mut cur).to_ascii_lowercase());
+        }
+        prev_lower = ch.is_ascii_lowercase();
+        cur.push(ch);
+    }
+    if !cur.is_empty() {
+        segs.push(cur.to_ascii_lowercase());
+    }
+    segs
+}
+
+fn is_version_segment(s: &str) -> bool {
+    !s.is_empty()
+        && (s.bytes().all(|b| b.is_ascii_digit())
+            || (s.starts_with('v') && s.len() > 1 && s[1..].bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// `Some(is_password)` when `segs` name a secret: a bare secret word, a single
+/// segment ending in an unambiguous one, or a compound name whose last segment
+/// (after dropping version and environment qualifiers) is a secret word and
+/// that carries no segment turning it into something else.
+fn secret_name_kind(segs: &[String], equals_sign: bool) -> Option<bool> {
+    let mut segs: Vec<&str> = segs.iter().map(String::as_str).collect();
+    while segs.len() > 1
+        && segs
+            .last()
+            .is_some_and(|l| QUALIFIER_WORDS.contains(l) || is_version_segment(l))
+    {
+        segs.pop();
+    }
+    let (&last, before) = segs.split_last()?;
+    let password = PASSWORD_WORDS.contains(&last)
+        || (before.is_empty() && last.ends_with("password") || last.ends_with("passwd"));
+    if before.is_empty() {
+        // `token=...` and `key=...` with an equals sign are parameters (a query
+        // string, an env line); `token:` and `key:` are ordinary words.
+        let bare = BARE_SECRET_WORDS.contains(&last)
+            || UNAMBIGUOUS_SUFFIXES.iter().any(|s| last.ends_with(s))
+            || (equals_sign && ["key", "token", "secret"].contains(&last));
+        return bare.then_some(password);
+    }
+    if before.iter().any(|s| NOT_SECRET_PREFIXES.contains(s)) {
+        return None;
+    }
+    (COMPOUND_SECRET_WORDS.contains(&last)
+        || BARE_SECRET_WORDS.contains(&last)
+        || UNAMBIGUOUS_SUFFIXES.iter().any(|s| last.ends_with(s)))
+    .then_some(password)
+}
+
+/// Shannon entropy of `s` in bits per character.
+fn entropy(s: &str) -> f64 {
+    let mut counts: BTreeMap<char, usize> = BTreeMap::new();
+    for c in s.chars() {
+        *counts.entry(c).or_default() += 1;
+    }
+    let n = s.chars().count() as f64;
+    counts
+        .values()
+        .map(|&k| {
+            let p = k as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
+}
+
+/// How many of lowercase, uppercase, digit and (ASCII) punctuation characters
+/// `s` has.
+fn char_classes(s: &str) -> usize {
+    [
+        s.bytes().any(|b| b.is_ascii_lowercase()),
+        s.bytes().any(|b| b.is_ascii_uppercase()),
+        s.bytes().any(|b| b.is_ascii_digit()),
+        s.bytes().any(|b| b.is_ascii_punctuation()),
+    ]
+    .iter()
+    .filter(|b| **b)
+    .count()
+}
+
+fn is_hex(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn is_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == 5
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(&parts)
+            .all(|(len, p)| p.len() == *len && is_hex(p))
+}
+
 /// Words that mark a value as an example, not a credential.
 fn is_placeholder(v: &str) -> bool {
     let lower = v.to_ascii_lowercase();
@@ -418,81 +614,194 @@ fn is_placeholder(v: &str) -> bool {
         .any(|w| lower.contains(w))
 }
 
-/// `NAME=value`, `NAME: value`, `"NAME": "value"` with a secret-like name. The
-/// value ends at whitespace, a quote, `,` or `;` (captured, so code such as
-/// `self.api_key.clone()` or `key = make_key(x)` never matches: the value is
-/// followed by `(`).
-const ASSIGNMENT: &str = r#"(?im)\b([A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d|pwd)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*["']?)([^\s"',;()\[\]{}<>]{16,})(["',;\s]|$)"#;
-
-/// Shannon entropy of `s` in bits per character.
-fn entropy(s: &str) -> f64 {
-    let mut counts: BTreeMap<char, usize> = BTreeMap::new();
-    for c in s.chars() {
-        *counts.entry(c).or_default() += 1;
-    }
-    let n = s.chars().count() as f64;
-    counts
-        .values()
-        .map(|&k| {
-            let p = k as f64 / n;
-            -p * p.log2()
-        })
-        .sum()
-}
-
-fn is_hex(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-fn is_uuid(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('-').collect();
-    parts.len() == 5
-        && [8, 4, 4, 4, 12]
-            .iter()
-            .zip(&parts)
-            .all(|(len, p)| p.len() == *len && is_hex(p))
-}
-
-/// Words joined by `.`, `_` or `-`, all lowercase or all uppercase and without
-/// digits: a variable, field path or setting name (`config.embedding.api_key`,
-/// `VAULT_API_KEY_NAME`), not a secret.
-fn is_identifier_like(v: &str) -> bool {
-    let words: Vec<&str> = v.split(['.', '_', '-']).collect();
+/// Words joined by `.` or `_` (or by `-` for a non-password), all lowercase or
+/// all uppercase and without digits: a variable, field path or setting name
+/// (`config.embedding.api_key`, `VAULT_API_KEY_NAME`), not a secret. Hyphenated
+/// lowercase words are a passphrase when the name says password.
+fn is_identifier_like(v: &str, password: bool) -> bool {
+    let separators: &[char] = if password {
+        &['.', '_']
+    } else {
+        &['.', '_', '-']
+    };
+    let words: Vec<&str> = v.split(separators).collect();
+    // For a key or token a lowercase word may end in a short number (`v2`,
+    // `node20`, `credentials-v2`); an all-digit or digit-first part is not a word.
+    let word = |w: &str| {
+        let letters = w.bytes().take_while(u8::is_ascii_lowercase).count();
+        letters > 0 && w[letters..].len() <= 3 && w[letters..].bytes().all(|b| b.is_ascii_digit())
+    };
     words.len() > 1
         && words.iter().all(|w| {
             w.len() > 1
                 && (w.bytes().all(|b| b.is_ascii_lowercase())
-                    || w.bytes().all(|b| b.is_ascii_uppercase()))
+                    || w.bytes().all(|b| b.is_ascii_uppercase())
+                    || (!password && word(w)))
         })
 }
 
-/// A value an assignment rule must leave alone: hashes, UUIDs, paths, URLs,
-/// environment references, placeholders and already-masked text.
-fn is_benign_value(v: &str) -> bool {
-    let lower = v.to_ascii_lowercase();
-    v.contains("[REDACTED")
-        || v.contains("::")
-        || is_identifier_like(v)
+/// `2026-10-16...`
+fn is_date(v: &str) -> bool {
+    let b = v.as_bytes();
+    b.len() >= 10
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[4] == b'-'
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && b[7] == b'-'
+        && b[8..10].iter().all(u8::is_ascii_digit)
+}
+
+/// `1.2.3`, `v2.3.1-beta.2`.
+fn is_semver(v: &str) -> bool {
+    let core = v.trim_start_matches('v');
+    let head = core.split(['-', '+']).next().unwrap_or("");
+    let parts: Vec<&str> = head.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A 26-character ULID.
+fn is_ulid(v: &str) -> bool {
+    v.len() == 26
+        && v.bytes()
+            .all(|b| b.is_ascii_digit() || (b.is_ascii_uppercase() && !b"ILOU".contains(&b)))
+}
+
+/// `local@domain.tld` and nothing else: an address, not a password with an `@`.
+fn is_email(v: &str) -> bool {
+    let Some((local, domain)) = v.split_once('@') else {
+        return false;
+    };
+    let tld = domain.rsplit('.').next().unwrap_or("");
+    !local.is_empty()
+        && local
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._%+-".contains(&b))
+        && domain.contains('.')
+        && domain
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-.".contains(&b))
+        && tld.len() >= 2
+        && tld.bytes().all(|b| b.is_ascii_alphabetic())
+}
+
+/// `$VAR`, `${VAR}`, `$(cmd)` and the shell default `-$VAR`, as the WHOLE
+/// value. A password may contain `$` (`Pa$Word2026!x`), but not like this.
+fn is_variable_reference(v: &str) -> bool {
+    let v = v.trim_start_matches('-');
+    v.strip_prefix('$').is_some_and(|rest| {
+        rest.starts_with(['{', '('])
+            || rest
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_uppercase() || b == b'_')
+    })
+}
+
+/// `min-length=12`: a lowercase setting name, `=`, a short plain value.
+fn is_setting(v: &str) -> bool {
+    v.split_once('=').is_some_and(|(k, val)| {
+        !k.is_empty()
+            && k.bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'-' || b == b'_')
+            && !val.is_empty()
+            && val
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    })
+}
+
+/// A relative or absolute path: lowercase segments, or a file extension. A
+/// base64 secret has upper-case letters and no extension.
+fn is_path_like(v: &str) -> bool {
+    if !v.contains('/') {
+        return false;
+    }
+    let segs: Vec<&str> = v.split('/').filter(|s| !s.is_empty()).collect();
+    let has_ext = v
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.rsplit_once('.'))
+        .is_some_and(|(stem, ext)| {
+            !stem.is_empty()
+                && (1..=6).contains(&ext.len())
+                && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+        });
+    has_ext
+        || (segs.len() >= 2
+            && segs.iter().all(|s| {
+                s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
+            }))
+}
+
+/// An identifier with structure, not a secret: ARNs, digests, fingerprints,
+/// `0x` addresses and key IDs, `ssh-` key lines.
+fn is_structured_identifier(v: &str) -> bool {
+    v.starts_with("arn:")
+        || v.starts_with("sha256:")
+        || v.starts_with("SHA256:")
+        || v.starts_with("sha512-")
+        || v.starts_with("ssh-")
+        || (v.starts_with("0x") && is_hex(&v[2..]))
+        || v.split(':').count() >= 4
+}
+
+/// A value an assignment rule must leave alone.
+fn is_benign_value(v: &str, segs: &[String], password: bool) -> bool {
+    // Hex belongs to a hash-named `key` (`COMMIT_KEY`); a hex token, password
+    // or encryption key is a secret.
+    let hashy_key = segs.last().is_some_and(|l| l == "key")
+        && segs.iter().any(|s| HASHY_WORDS.contains(&s.as_str()));
+    // An AWS secret access key is 40 base64 characters and may start with `/`.
+    let aws_shape = v.len() == 40
+        && v.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+/".contains(&b))
+        && char_classes(v) >= 3;
+    v.contains("::")
+        || !v.is_ascii()
+        || is_variable_reference(v)
+        || is_placeholder(v)
         || is_uuid(v)
-        || (is_hex(v) && matches!(v.len(), 40 | 64))
-        || v.starts_with(['/', '~', '$', '<', '{', '%'])
+        || is_date(v)
+        || is_semver(v)
+        || is_ulid(v)
+        || is_email(v)
+        || is_identifier_like(v, password)
+        || is_structured_identifier(v)
+        || (hashy_key && is_hex(v))
+        || (v.starts_with('~') && !aws_shape)
+        || (v.starts_with('/') && !aws_shape && !v.contains(['+', '=']))
+        || (is_path_like(v) && !aws_shape)
+        || v.starts_with(['<', '{', '%'])
         || v.starts_with("./")
         || v.starts_with("../")
         || v.contains("://")
+        || (password && is_setting(v))
         || v.chars().nth(1) == Some(':') && v.contains('\\')
-        || [
-            "example",
-            "your",
-            "placeholder",
-            "changeme",
-            "change-me",
-            "xxxx",
-            "****",
-            "dummy",
-            "sample",
-        ]
-        .iter()
-        .any(|w| lower.contains(w))
+}
+
+/// Whether `value`, assigned to a secret-like name, looks like a secret.
+fn looks_like_secret(value: &str, segs: &[String], password: bool) -> bool {
+    if is_benign_value(value, segs, password) {
+        return false;
+    }
+    let (classes, bits) = (char_classes(value), entropy(value));
+    if password {
+        // A human password is short and weak: any non-benign 8+ character value
+        // with a digit or a symbol, or hyphenated words (a passphrase).
+        value.len() >= 8
+            && (has_digit(value)
+                || value.bytes().any(|b| b.is_ascii_punctuation())
+                || value.contains('-'))
+            && bits >= 2.5
+    } else {
+        // A key or token is long and random, and (outside plain words and
+        // camelCase code references) has a digit.
+        value.len() >= 16 && bits >= 3.0 && classes >= 2 && has_digit(value)
+    }
 }
 
 fn rules() -> &'static [(Regex, &'static Rule)] {
@@ -538,6 +847,11 @@ fn is_pem_line(line: &str) -> bool {
 /// How far past a BEGIN line the matching END line is looked for first (a block
 /// made only of key lines is read to its end).
 const MAX_PEM_BYTES: usize = 16 * 1024;
+/// The most a block of key lines is followed to its end.
+const MAX_PEM_WIDENED_BYTES: usize = 1 << 20;
+/// How much of the text after `name=` is read first as the value (one that
+/// runs past it is read to its true end).
+const MAX_VALUE_BYTES: usize = 4096;
 
 /// The longest prefix of `s` that is at most `max` bytes and ends on a char
 /// boundary. Bounds the work a scan does per match.
@@ -620,7 +934,7 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
                 .rsplit_once('\n')
                 .is_some_and(|(whole, _)| whole.lines().all(is_pem_line))
         {
-            after = full;
+            after = bounded(full, MAX_PEM_WIDENED_BYTES);
         }
         let end = match after.find(&end_marker) {
             Some(rel) if is_pem_body(&after[..rel]) => begin.end() + rel + end_marker.len(),
@@ -654,6 +968,119 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
     out
 }
 
+/// The value of an assignment starting at `start`, as `(value_start, value_end)`
+/// byte offsets with surrounding decoration trimmed, and the offset where the
+/// scan resumes. A quoted value runs to its closing quote on the same line (so
+/// it may hold spaces); an unquoted one ends at whitespace, a quote, `,` or a
+/// bracket, and is cut where `&name=` or `;name=` starts the next pair.
+fn assignment_value(text: &str, start: usize, sep: &str, password: bool) -> (usize, usize, usize) {
+    // The window only bounds the work: a value that runs to its end is read
+    // again over the whole text, so a long secret is never cut short.
+    let window = bounded(&text[start..], MAX_VALUE_BYTES);
+    let found = assignment_value_in(window, start, sep, password);
+    if found.2 - start == window.len() && window.len() < text.len() - start {
+        return assignment_value_in(&text[start..], start, sep, password);
+    }
+    found
+}
+
+fn assignment_value_in(
+    rest: &str,
+    start: usize,
+    sep: &str,
+    password: bool,
+) -> (usize, usize, usize) {
+    let quote = sep
+        .trim_end()
+        .chars()
+        .last()
+        .filter(|c| matches!(c, '"' | '\''));
+    let mut end = 0;
+    let mut quoted = false;
+    if let Some(q) = quote {
+        if let Some(close) = rest.find(['\n', q]) {
+            if rest[close..].starts_with(q) {
+                end = close;
+                quoted = true;
+            }
+        }
+    }
+    if !quoted {
+        end = rest
+            .find(|c: char| {
+                c.is_whitespace()
+                    || matches!(c, '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>')
+                    // A password may hold `,` and `\`; other values end there.
+                    || (!password && matches!(c, ',' | '\\'))
+            })
+            .unwrap_or(rest.len());
+        // `a=b&c=d`, `a=b;c=d`: the value ends where the next pair begins.
+        let value = &rest[..end];
+        for (i, _) in value.match_indices(['&', ';', ',']) {
+            let tail = &value[i + 1..];
+            let name_len = tail
+                .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
+                .unwrap_or(tail.len());
+            if name_len > 0 && tail[name_len..].starts_with('=') {
+                end = i;
+                break;
+            }
+        }
+    }
+    let raw = &rest[..end];
+    // `Value.` ends a sentence; backticks and curly quotes wrap a value.
+    let left = raw.len() - raw.trim_start_matches(['`', '“', '‘']).len();
+    let core = raw[left..].trim_end_matches(['.', ',', '`', '”', '’', '\\']);
+    (start + left, start + left + core.len(), start + end)
+}
+
+/// Mask the value of every `NAME=value` style assignment whose name is
+/// secret-like and whose value looks like a secret. Pairs that are not secret
+/// are skipped one separator at a time, so a secret next to them (`MODE=prod;
+/// API_KEY=...`, a URL with `?api_key=...`) is still found.
+fn mask_assignments(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usize) -> String {
+    let re = assignment();
+    let mut out = String::with_capacity(text.len());
+    let (mut pos, mut copied) = (0, 0);
+    while pos < text.len() {
+        let Some(caps) = re.captures_at(text, pos) else {
+            break;
+        };
+        let Some(whole) = caps.get(0) else {
+            break;
+        };
+        pos = whole.end().max(pos + 1);
+        let segs = name_segments(&caps[1]);
+        let equals_sign = caps[2]
+            .trim_matches(|c: char| c == '"' || c == '\'' || c == '\\' || c.is_whitespace())
+            == "=";
+        let Some(password) = secret_name_kind(&segs, equals_sign) else {
+            continue;
+        };
+        let (vs, ve, resume) = assignment_value(text, whole.end(), &caps[2], password);
+        let value = &text[vs..ve];
+        if vs < copied
+            || value.len() < 8
+            || !looks_like_secret(value, &segs, password)
+            || allowed(value)
+            || allowed(&text[whole.start()..ve])
+        {
+            // A value read past the window is not read again from inside it.
+            if resume - whole.end() > MAX_VALUE_BYTES {
+                pos = pos.max(resume);
+            }
+            continue;
+        }
+        out.push_str(&text[copied..vs]);
+        out.push_str("[REDACTED:env-secret]");
+        copied = ve;
+        pos = resume.max(ve);
+        *count += 1;
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 /// Mask every secret found in `input`; a match that any `allowlist` regex also
 /// matches is kept as it is.
 pub fn redact(input: &str, allowlist: &[Regex]) -> Redaction {
@@ -683,16 +1110,11 @@ pub fn redact(input: &str, allowlist: &[Regex]) -> Redaction {
             .into_owned();
     }
 
-    text = assignment()
-        .replace_all(&text, |c: &Captures| {
-            let value = &c[3];
-            if is_benign_value(value) || entropy(value) < 3.0 || allowed(value) || allowed(&c[0]) {
-                return c[0].to_string();
-            }
-            *counts.entry("env-secret").or_default() += 1;
-            format!("{}{}[REDACTED:env-secret]{}", &c[1], &c[2], &c[4])
-        })
-        .into_owned();
+    let mut env = 0;
+    text = mask_assignments(&text, &allowed, &mut env);
+    if env > 0 {
+        *counts.entry("env-secret").or_default() += env;
+    }
 
     Redaction {
         text,
@@ -906,7 +1328,7 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(path).expect("cases file")).unwrap();
         assert_eq!(doc["version"], 3);
         let cases = doc["cases"].as_array().unwrap();
-        assert!(cases.len() >= 100, "only {} cases", cases.len());
+        assert!(cases.len() >= 150, "only {} cases", cases.len());
         let mut masked = 0;
         for case in cases {
             let name = case["name"].as_str().unwrap();
@@ -939,9 +1361,63 @@ mod tests {
             assert!(redact(&r.text, &[]).is_clean(), "{name}: not idempotent");
         }
         assert!(
-            masked >= 40,
+            masked >= 10,
             "the file must exercise every kind, not only clean text"
         );
+    }
+
+    #[test]
+    fn names_are_split_into_segments_and_must_end_in_a_secret_word() {
+        let segs = |n: &str| name_segments(n);
+        assert_eq!(segs("GITHUB_TOKEN"), vec!["github", "token"]);
+        assert_eq!(segs("apiKey"), vec!["api", "key"]);
+        assert_eq!(segs("db.password"), vec!["db", "password"]);
+        // (name, separator is `=`, expected: Some(is_password) or None)
+        for (name, eq, expected) in [
+            ("API_KEY", false, Some(false)),
+            ("auth-token", false, Some(false)),
+            ("clientSecret", false, Some(false)),
+            ("API_KEY_V2", false, Some(false)),
+            ("SECRET_KEY_BASE", false, Some(false)),
+            ("REDIS_AUTH", false, Some(false)),
+            ("AZURE_COSMOS_PRIMARY_KEY", false, Some(false)),
+            ("DB_PASSWORD", false, Some(true)),
+            ("DB_PASSWORD_PROD", false, Some(true)),
+            ("DB_PASS", false, Some(true)),
+            ("PGPASSWORD", false, Some(true)),
+            ("password", false, Some(true)),
+            ("passphrase", false, Some(true)),
+            ("credentials", false, Some(false)),
+            // A bare generic word is an ordinary word, except with `=`.
+            ("key", false, None),
+            ("token", false, None),
+            ("secret", false, None),
+            ("pass", false, None),
+            ("PASS", true, None),
+            ("key", true, Some(false)),
+            ("token", true, Some(false)),
+            ("secret", true, Some(false)),
+            // Not a name that ENDS in a secret word.
+            ("monkey", true, None),
+            ("Tokenizer", true, None),
+            ("Secretary", false, None),
+            ("keyword", true, None),
+            ("token_expires_at", false, None),
+            ("key_contact", false, None),
+            ("PASSWORD_MIN_LENGTH", false, None),
+            // A qualifier that makes it something else.
+            ("public_key", false, None),
+            ("cache_key", false, None),
+            ("next_token", false, None),
+            ("page_token", false, None),
+            ("idempotency_key", false, None),
+        ] {
+            assert_eq!(
+                secret_name_kind(&name_segments(name), eq),
+                expected,
+                "{name} (equals: {eq})"
+            );
+        }
     }
 
     #[test]
@@ -1040,6 +1516,10 @@ mod tests {
 
     #[test]
     fn values_and_keys_longer_than_the_scan_windows_are_masked_whole() {
+        let long = "Ab3dE5gH7jK9".repeat(1_000); // 12 KB, no separator
+        let out = redact(&format!("password={long} next"), &[]).text;
+        assert_eq!(out, "password=[REDACTED:env-secret] next");
+
         let (b, e) = (
             format!("-----BEGIN {} KEY-----", "RSA PRIVATE"),
             format!("-----END {} KEY-----", "RSA PRIVATE"),
