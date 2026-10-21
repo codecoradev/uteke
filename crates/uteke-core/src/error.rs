@@ -19,6 +19,11 @@ pub enum Error {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// Strict privacy mode (#1464): the content holds a secret and the write is
+    /// refused. `kinds` names what was found (never the value).
+    #[error("Secret detected in content ({}); strict privacy mode rejects the write", .kinds.join(", "))]
+    SecretDetected { kinds: Vec<String> },
+
     #[error("Lock error: {context}")]
     Lock { context: String },
 

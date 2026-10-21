@@ -63,6 +63,153 @@ pub fn compile_allowlist(patterns: &[String]) -> Result<Vec<Regex>, Error> {
         .collect()
 }
 
+/// What the write path does with a secret (`[privacy] mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PrivacyMode {
+    /// Mask the secret, store the rest, flag the memory (the default).
+    #[default]
+    Redact,
+    /// Refuse the write with [`Error::SecretDetected`].
+    Strict,
+    /// Store the content as given.
+    Off,
+}
+
+impl PrivacyMode {
+    /// Parse `redact`, `strict` or `off` (case-insensitive).
+    pub fn parse(s: &str) -> Result<Self, Error> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "redact" => Ok(Self::Redact),
+            "strict" => Ok(Self::Strict),
+            "off" => Ok(Self::Off),
+            other => Err(Error::Validation(format!(
+                "invalid privacy mode '{other}' (expected redact, strict or off)"
+            ))),
+        }
+    }
+}
+
+/// The privacy filter as the write path applies it.
+#[derive(Debug, Clone, Default)]
+pub struct PrivacyConfig {
+    pub mode: PrivacyMode,
+    /// Values matching any of these regexes are kept as they are.
+    pub allowlist: Vec<Regex>,
+}
+
+/// Content and metadata ready to store, plus what the filter did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Prepared {
+    pub content: String,
+    pub metadata: Option<serde_json::Value>,
+    /// Empty when nothing was masked.
+    pub redactions: Vec<RedactionCount>,
+}
+
+impl PrivacyConfig {
+    /// Apply the filter to `content` before it is embedded or stored.
+    /// `Redact` masks secrets and merges `redacted: true` and `redactions`
+    /// (`[{kind, count}]`, never a value) into the metadata; `Strict` returns
+    /// [`Error::SecretDetected`] when there is anything to mask; `Off` and
+    /// clean content pass through unchanged.
+    pub fn prepare(
+        &self,
+        content: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> Result<Prepared, Error> {
+        let untouched = |metadata| Prepared {
+            content: content.to_string(),
+            metadata,
+            redactions: Vec::new(),
+        };
+        if self.mode == PrivacyMode::Off {
+            return Ok(untouched(metadata));
+        }
+        let r = redact(content, &self.allowlist);
+        if r.is_clean() {
+            return Ok(untouched(metadata));
+        }
+        if self.mode == PrivacyMode::Strict {
+            return Err(Error::SecretDetected {
+                kinds: r.redactions.iter().map(|x| x.kind.to_string()).collect(),
+            });
+        }
+        Ok(Prepared {
+            content: r.text,
+            metadata: with_redaction_flags(metadata, &r.redactions),
+            redactions: r.redactions,
+        })
+    }
+}
+
+/// Merge `redacted: true` and `redactions` into `metadata`. `None` becomes a new
+/// object; a metadata value that is not an object is left alone (there is
+/// nowhere to merge), and the caller still learns of the redaction from the
+/// returned counts.
+pub fn with_redaction_flags(
+    metadata: Option<serde_json::Value>,
+    redactions: &[RedactionCount],
+) -> Option<serde_json::Value> {
+    if redactions.is_empty() {
+        return metadata;
+    }
+    // A JSON `null` (an import row with `"metadata": null`) is no metadata.
+    let mut value = match metadata {
+        None | Some(serde_json::Value::Null) => serde_json::json!({}),
+        Some(v) => v,
+    };
+    if let serde_json::Value::Object(map) = &mut value {
+        map.insert("redacted".into(), serde_json::json!(true));
+        map.insert(
+            "redactions".into(),
+            serde_json::to_value(redactions).unwrap_or_default(),
+        );
+    }
+    Some(value)
+}
+
+/// `metadata` without the `redacted` and `redactions` keys, or `None` when it
+/// has neither (nothing to change). The flags describe the CURRENT content, so
+/// an update to clean content drops the ones an earlier version left; the
+/// `redacted` timeline event keeps the history.
+pub fn without_redaction_flags(metadata: &serde_json::Value) -> Option<serde_json::Value> {
+    let serde_json::Value::Object(map) = metadata else {
+        return None;
+    };
+    if !map.contains_key("redacted") && !map.contains_key("redactions") {
+        return None;
+    }
+    let mut map = map.clone();
+    map.remove("redacted");
+    map.remove("redactions");
+    Some(serde_json::Value::Object(map))
+}
+
+/// `new` with the redaction flags of `old` carried over, for an update that
+/// replaces the metadata but leaves the (still masked) content alone. `None`
+/// when `old` has no flags, `new` is not an object, or `new` sets its own.
+pub fn carry_redaction_flags(
+    new: &serde_json::Value,
+    old: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let (serde_json::Value::Object(new_map), serde_json::Value::Object(old_map)) = (new, old)
+    else {
+        return None;
+    };
+    if new_map.contains_key("redacted") || new_map.contains_key("redactions") {
+        return None;
+    }
+    let mut merged = new_map.clone();
+    let mut carried = false;
+    for key in ["redacted", "redactions"] {
+        if let Some(v) = old_map.get(key) {
+            merged.insert(key.to_string(), v.clone());
+            carried = true;
+        }
+    }
+    carried.then_some(serde_json::Value::Object(merged))
+}
+
 /// A whole-secret rule: `mask` builds the replacement from the match.
 struct Rule {
     kind: &'static str,
@@ -484,5 +631,65 @@ mod tests {
         assert_eq!(entropy("aaaa"), 0.0);
         assert!((entropy("abab") - 1.0).abs() < 1e-9);
         assert!((entropy("abcd") - 2.0).abs() < 1e-9);
+    }
+
+    fn cfg(mode: PrivacyMode) -> PrivacyConfig {
+        PrivacyConfig {
+            mode,
+            allowlist: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn modes_parse_and_default_to_redact() {
+        assert_eq!(PrivacyMode::default(), PrivacyMode::Redact);
+        assert_eq!(PrivacyMode::parse("strict").unwrap(), PrivacyMode::Strict);
+        assert_eq!(PrivacyMode::parse("off").unwrap(), PrivacyMode::Off);
+        assert!(PrivacyMode::parse("maybe").is_err());
+    }
+
+    #[test]
+    fn prepare_follows_the_mode() {
+        let text = format!("token {}", gh());
+        let masked = cfg(PrivacyMode::Redact).prepare(&text, None).unwrap();
+        assert!(masked.content.contains("[REDACTED:github-token]"));
+        assert_eq!(masked.metadata.unwrap()["redacted"], true);
+        assert_eq!(masked.redactions.len(), 1);
+
+        let off = cfg(PrivacyMode::Off).prepare(&text, None).unwrap();
+        assert_eq!(off.content, text);
+        assert!(off.redactions.is_empty() && off.metadata.is_none());
+
+        match cfg(PrivacyMode::Strict).prepare(&text, None) {
+            Err(Error::SecretDetected { kinds }) => assert_eq!(kinds, ["github-token"]),
+            other => panic!("expected SecretDetected, got {other:?}"),
+        }
+        let clean = cfg(PrivacyMode::Strict)
+            .prepare("nothing here", None)
+            .unwrap();
+        assert_eq!(clean.content, "nothing here");
+    }
+
+    #[test]
+    fn the_flag_helpers_add_drop_and_carry_the_flags() {
+        let counts = [RedactionCount {
+            kind: "jwt",
+            count: 2,
+        }];
+        let flagged = with_redaction_flags(Some(serde_json::json!({"k": "v"})), &counts).unwrap();
+        assert_eq!(flagged["k"], "v");
+        assert_eq!(flagged["redacted"], true);
+        assert_eq!(flagged["redactions"][0]["kind"], "jwt");
+        assert_eq!(flagged["redactions"][0]["count"], 2);
+
+        let clean = without_redaction_flags(&flagged).unwrap();
+        assert_eq!(clean, serde_json::json!({"k": "v"}));
+        assert!(without_redaction_flags(&clean).is_none(), "nothing to drop");
+
+        let carried = carry_redaction_flags(&serde_json::json!({"n": 1}), &flagged).unwrap();
+        assert_eq!(carried["n"], 1);
+        assert_eq!(carried["redacted"], true);
+        // The caller's own flags are never overridden.
+        assert!(carry_redaction_flags(&serde_json::json!({"redacted": false}), &flagged).is_none());
     }
 }
