@@ -26,6 +26,22 @@ impl ConsolidationStore for Uteke {
     }
 
     fn insert_memory(&self, memory: &mut Memory) -> Result<(), Error> {
+        // Privacy filter (#1464): the consolidated text comes from an LLM and
+        // is stored like any other write. (The embedding was computed from the
+        // text before this point; it does not carry the secret as text.)
+        let tag_refs: Vec<&str> = memory.tags.iter().map(String::as_str).collect();
+        let prepared = self.privacy_config().prepare_with_tags(
+            &memory.content,
+            &tag_refs,
+            Some(memory.metadata.clone()),
+        )?;
+        memory.content = prepared.content;
+        memory.tags = prepared.tags;
+        if let Some(m) = prepared.metadata {
+            memory.metadata = m;
+        }
+        let redactions = prepared.redactions;
+
         let room_id = memory
             .metadata
             .get("room_id")
@@ -34,6 +50,7 @@ impl ConsolidationStore for Uteke {
 
         // Persist (transactional insert, mirrors crud flow).
         self.store().insert(memory)?;
+        self.record_redaction(&memory.id, &redactions);
 
         // Insert into the vector index so recall finds it; roll back the row
         // if indexing fails so we never leave an un-searchable memory behind.
@@ -204,5 +221,32 @@ mod tests {
             after.is_empty(),
             "deprecated memory must not appear in room recall"
         );
+    }
+
+    #[test]
+    fn a_consolidated_memory_goes_through_the_privacy_filter() {
+        let mut uteke = Uteke::open(":memory:").unwrap();
+        uteke.set_privacy_config(crate::privacy::PrivacyConfig::default());
+        let token = format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5");
+        let mut m = mem("m1", &format!("the LLM wrote {token}"));
+        m.metadata = serde_json::json!({"summary": format!("see {token}")});
+        ConsolidationStore::insert_memory(&uteke, &mut m).unwrap();
+        let stored = uteke.store.get_by_id("m1").unwrap().unwrap();
+        assert!(
+            !stored.content.contains("aB3dE5gH7jK9"),
+            "{}",
+            stored.content
+        );
+        assert!(!stored.metadata.to_string().contains("aB3dE5gH7jK9"));
+        assert_eq!(stored.metadata["redacted"], true);
+
+        let mut strict = Uteke::open(":memory:").unwrap();
+        strict.set_privacy_config(crate::privacy::PrivacyConfig {
+            mode: crate::privacy::PrivacyMode::Strict,
+            allowlist: Vec::new(),
+        });
+        let mut m = mem("m2", &format!("the LLM wrote {token}"));
+        assert!(ConsolidationStore::insert_memory(&strict, &mut m).is_err());
+        assert!(strict.store.get_by_id("m2").unwrap().is_none());
     }
 }

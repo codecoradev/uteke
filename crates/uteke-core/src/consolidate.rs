@@ -73,9 +73,14 @@ impl crate::Uteke {
         crate::validate_input(content, tags)?;
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
         // Privacy filter (#1464), before the content is embedded or stored.
-        let prepared = self.privacy_config.prepare(content, metadata)?;
+        let prepared = self
+            .privacy_config
+            .prepare_with_tags(content, tags, metadata)?;
         let content = prepared.content.as_str();
         let metadata = prepared.metadata.clone();
+        let tag_owned = prepared.tags.clone();
+        let tags: Vec<&str> = tag_owned.iter().map(String::as_str).collect();
+        let tags = tags.as_slice();
 
         // Embed first to check for contradictions before persisting
         self.ensure_embedder()?;

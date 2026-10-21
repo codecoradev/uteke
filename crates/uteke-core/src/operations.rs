@@ -92,6 +92,36 @@ pub struct RememberOutcome {
     pub redactions: Vec<crate::privacy::RedactionCount>,
 }
 
+/// What an update did (#1464): whether the memory was found and updated, and
+/// what the privacy filter masked in the new content, tags or metadata.
+#[derive(Debug, Clone, Default)]
+pub struct UpdateOutcome {
+    pub updated: bool,
+    pub redactions: Vec<crate::privacy::RedactionCount>,
+}
+
+impl UpdateOutcome {
+    /// Whether the privacy filter masked anything in this update.
+    pub fn redacted(&self) -> bool {
+        !self.redactions.is_empty()
+    }
+
+    /// What was masked, for a human (see [`RememberOutcome::redaction_summary`]).
+    pub fn redaction_summary(&self) -> Option<String> {
+        redaction_summary(&self.redactions)
+    }
+}
+
+fn redaction_summary(redactions: &[crate::privacy::RedactionCount]) -> Option<String> {
+    (!redactions.is_empty()).then(|| {
+        redactions
+            .iter()
+            .map(|r| format!("{} x{}", r.kind, r.count))
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
 impl RememberOutcome {
     /// Whether the privacy filter masked anything in the stored content.
     pub fn redacted(&self) -> bool {
@@ -101,13 +131,7 @@ impl RememberOutcome {
     /// What was masked, for a human: `github-token x1, jwt x2`. `None` when
     /// nothing was.
     pub fn redaction_summary(&self) -> Option<String> {
-        self.redacted().then(|| {
-            self.redactions
-                .iter()
-                .map(|r| format!("{} x{}", r.kind, r.count))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
+        redaction_summary(&self.redactions)
     }
 }
 
@@ -289,9 +313,14 @@ impl crate::Uteke {
         })?;
         // Privacy filter (#1464): before the content is embedded, indexed or
         // stored, so a secret never reaches the vector, FTS5 or the row.
-        let prepared = self.privacy_config.prepare(content, metadata)?;
+        let prepared = self
+            .privacy_config
+            .prepare_with_tags(content, tags, metadata)?;
         let content = prepared.content.as_str();
         let metadata = prepared.metadata.clone();
+        let tag_owned = prepared.tags.clone();
+        let tags: Vec<&str> = tag_owned.iter().map(String::as_str).collect();
+        let tags = tags.as_slice();
         // Detect JSON content and use flattened text for embedding
         let content_type = crate::memory::crud::detect_content_type(content);
         let embed_text = if content_type == "json" {
@@ -1865,7 +1894,9 @@ impl crate::Uteke {
     /// Only provided fields are changed. If `content` is changed, the
     /// embedding is regenerated and the vector index is updated.
     /// Returns `Ok(true)` if the memory was found and updated,
-    /// `Ok(false)` if the memory ID doesn't exist.
+    /// `Ok(false)` if the memory ID doesn't exist. Use
+    /// [`update_memory_detailed`](Self::update_memory_detailed) to also learn
+    /// what the privacy filter masked.
     ///
     /// Acceptance criteria:
     /// - Partial update semantics (only provided fields changed)
@@ -1882,6 +1913,24 @@ impl crate::Uteke {
         pinned: Option<bool>,
         memory_type: Option<&str>,
     ) -> Result<bool, Error> {
+        self.update_memory_detailed(id, content, tags, metadata, importance, pinned, memory_type)
+            .map(|o| o.updated)
+    }
+
+    /// [`update_memory`](Self::update_memory) that returns an [`UpdateOutcome`]:
+    /// whether the memory was updated, and what the privacy filter masked in
+    /// the new content, tags or metadata (#1464).
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_memory_detailed(
+        &self,
+        id: &str,
+        content: Option<&str>,
+        tags: Option<&[String]>,
+        metadata: Option<&serde_json::Value>,
+        importance: Option<f64>,
+        pinned: Option<bool>,
+        memory_type: Option<&str>,
+    ) -> Result<UpdateOutcome, Error> {
         // Validate memory exists
         let existing = self
             .store
@@ -1924,10 +1973,37 @@ impl crate::Uteke {
             Some(c) => Some(self.privacy_config.prepare(c, None)?),
             None => None,
         };
-        let redactions = prepared
-            .as_ref()
-            .map(|p| p.redactions.clone())
-            .unwrap_or_default();
+        // The tags and the metadata strings are filtered too; what they hold
+        // counts with the content's redactions.
+        let (masked_metadata, meta_redactions) = match metadata {
+            Some(m) => {
+                let (v, r) = self.privacy_config.mask_metadata(m)?;
+                (Some(v), r)
+            }
+            None => (None, Vec::new()),
+        };
+        let metadata: Option<&serde_json::Value> = masked_metadata.as_ref();
+        let (masked_tags, tag_redactions) = match tags {
+            Some(t) => {
+                let (v, r) = self.privacy_config.mask_tags(t)?;
+                (Some(v), r)
+            }
+            None => (None, Vec::new()),
+        };
+        let tags: Option<&[String]> = masked_tags.as_deref();
+        let mut merged: std::collections::BTreeMap<&'static str, usize> = Default::default();
+        for r in prepared
+            .iter()
+            .flat_map(|p| p.redactions.iter())
+            .chain(&meta_redactions)
+            .chain(&tag_redactions)
+        {
+            *merged.entry(r.kind).or_default() += r.count;
+        }
+        let redactions: Vec<crate::privacy::RedactionCount> = merged
+            .into_iter()
+            .map(|(kind, count)| crate::privacy::RedactionCount { kind, count })
+            .collect();
         let masked_content: Option<String> = prepared.map(|p| p.content);
         let content: Option<&str> = masked_content.as_deref();
         let flagged_metadata: Option<serde_json::Value> = if redactions.is_empty() {
@@ -1993,7 +2069,7 @@ impl crate::Uteke {
             )?;
 
             if !updated {
-                return Ok(false);
+                return Ok(UpdateOutcome::default());
             }
 
             // Update vector index (insert handles dedup by removing old entry)
@@ -2026,7 +2102,7 @@ impl crate::Uteke {
                 now,
             )?;
             if !updated {
-                return Ok(false);
+                return Ok(UpdateOutcome::default());
             }
         }
 
@@ -2035,7 +2111,10 @@ impl crate::Uteke {
         // Invalidate recall cache for the memory's namespace
         self.recall_cache.invalidate_namespace(&existing.namespace);
 
-        Ok(true)
+        Ok(UpdateOutcome {
+            updated: true,
+            redactions,
+        })
     }
 
     /// Recall memories that existed at a specific point in time.

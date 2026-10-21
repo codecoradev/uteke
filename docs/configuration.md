@@ -420,7 +420,7 @@ allowlist = ["^dev-"]      # regexes; a value matching any of them is kept as it
 - `strict`: refuse the write (`secret_detected`; import skips the row).
 - `off`: store as given.
 
-`UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content of `remember`, room remember, `update` and `import`; metadata, tags and `source` are not filtered yet.
+`UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content, the tags, the strings inside the metadata and the `source` of `remember`, room remember, `update` and `import`, and the text written by room consolidation. Importing a structural export (`uteke export --full`, restored by `uteke import`) puts a backup back as it was and does not filter; restore backups you trust.
 
 Over HTTP, `POST /remember` and `POST /room/remember` return `"redacted": true` when something was masked (the stored text then differs from the request). In `strict` mode a write that contains a secret is refused with `400`:
 
@@ -428,7 +428,7 @@ Over HTTP, `POST /remember` and `POST /room/remember` return `"redacted": true` 
 {"error": "secret_detected", "message": "...", "kinds": ["github-token"]}
 ```
 
-`PUT /memory` answers the same way when new content has a secret. `POST /import` reports `redacted` (rows masked) and `rejected_secret` (rows skipped in strict mode, also counted in `skipped`).
+`PUT /memory` answers the same way when the new content, tags or metadata have a secret, and returns `redacted` when it masked one. `uteke_update` over MCP says so in its result. `POST /import` reports `redacted` (rows masked) and `rejected_secret` (rows skipped in strict mode, also counted in `skipped`).
 
 ## CLI Flag Override
 

@@ -1661,8 +1661,8 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tags_ref = tags.as_deref();
     let metadata = args.get("metadata").filter(|m| !m.is_null());
 
-    let updated = uteke
-        .update_memory(
+    let outcome = uteke
+        .update_memory_detailed(
             &id,
             content,
             tags_ref,
@@ -1673,7 +1673,7 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         )
         .map_err(write_error)?;
 
-    if !updated {
+    if !outcome.updated {
         return Ok(ToolResult {
             content: vec![McpContent::Text {
                 r#type: "text".to_string(),
@@ -1703,7 +1703,11 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: format!(
-                "✓ Updated memory {id}{}",
+                "✓ Updated memory {id}{}{}",
+                outcome
+                    .redaction_summary()
+                    .map(|s| format!("\n⚠ Secrets masked in the stored text (#1464): {s}"))
+                    .unwrap_or_default(),
                 namespace_deprecation_suffix(args["namespace"].as_str())
             ),
         }],
@@ -4288,6 +4292,21 @@ mod privacy_mcp_tests {
 
         let clean = exec_remember(&u, &serde_json::json!({"content": "nothing secret"})).unwrap();
         assert!(!text(&clean).contains("Secrets masked"));
+    }
+
+    #[test]
+    fn update_says_when_a_secret_was_masked() {
+        let u = store(PrivacyMode::Redact);
+        let ok = exec_remember(&u, &serde_json::json!({"content": "plain"})).unwrap();
+        let id = text(&ok).rsplit(' ').next().unwrap().trim().to_string();
+        let r = exec_update(&u, &serde_json::json!({"id": id, "tags": [token()]})).unwrap();
+        let t = text(&r);
+        assert!(
+            t.contains("Secrets masked") && t.contains("github-token x1"),
+            "{t}"
+        );
+        let r = exec_update(&u, &serde_json::json!({"id": id, "importance": 0.9})).unwrap();
+        assert!(!text(&r).contains("Secrets masked"));
     }
 
     #[test]

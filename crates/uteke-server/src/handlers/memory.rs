@@ -18,6 +18,14 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             };
             let tag_refs = req_data.tag_refs();
             let metadata = req_data.metadata.clone();
+            // #1464: the source is set after the memory is stored, so strict
+            // mode has to refuse it before anything is written.
+            if let Some(src) = req_data.source.as_deref()
+                && let Err(uteke_core::Error::SecretDetected { kinds }) =
+                    uteke.privacy_config().mask_text(src)
+            {
+                return ctx.secret_detected_response(req, &kinds);
+            }
 
             let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
                 if req_data.detect_contradiction {
@@ -789,7 +797,7 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             }
             let tag_refs: Option<Vec<String>> = req_data.tags;
             let tag_slice: Option<&[String]> = tag_refs.as_deref();
-            match uteke.update_memory(
+            match uteke.update_memory_detailed(
                 &req_data.id,
                 req_data.content.as_deref(),
                 tag_slice,
@@ -798,7 +806,7 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 req_data.pinned,
                 req_data.memory_type.as_deref(),
             ) {
-                Ok(true) => {
+                Ok(outcome) if outcome.updated => {
                     // Namespace move (#1181): separate op after the field
                     // update — plain column change, no re-embed needed.
                     if let Some(ns) = req_data.namespace.as_deref() {
@@ -810,15 +818,20 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                             return ctx.error_response_for(req, status, e.to_string());
                         }
                     }
+                    // #1464: true when the filter masked a secret in the new
+                    // content, tags or metadata.
                     ctx.ok_response_for(
                         req,
                         &with_namespace_warning(
-                            serde_json::json!({"updated": req_data.id}),
+                            serde_json::json!({
+                                "updated": req_data.id,
+                                "redacted": outcome.redacted(),
+                            }),
                             req_data.namespace.as_deref(),
                         ),
                     )
                 }
-                Ok(false) => {
+                Ok(_) => {
                     ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
                 }
                 Err(uteke_core::Error::SecretDetected { kinds }) => {

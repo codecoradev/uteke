@@ -184,6 +184,8 @@ fn config_or_default(settings: &PrivacySettings) -> PrivacyConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prepared {
     pub content: String,
+    /// The tags as given, with any secret masked.
+    pub tags: Vec<String>,
     pub metadata: Option<serde_json::Value>,
     /// Empty when nothing was masked.
     pub redactions: Vec<RedactionCount>,
@@ -200,28 +202,125 @@ impl PrivacyConfig {
         content: &str,
         metadata: Option<serde_json::Value>,
     ) -> Result<Prepared, Error> {
+        self.prepare_with_tags(content, &[], metadata)
+    }
+
+    /// [`prepare`](Self::prepare) for a whole write: the content, the tags and
+    /// every string value in the metadata are filtered, and the counts are
+    /// merged into one `redactions` list.
+    pub fn prepare_with_tags(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+    ) -> Result<Prepared, Error> {
         let untouched = |metadata| Prepared {
             content: content.to_string(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
             metadata,
             redactions: Vec::new(),
         };
         if self.mode == PrivacyMode::Off {
             return Ok(untouched(metadata));
         }
+        let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
         let r = redact(content, &self.allowlist);
-        if r.is_clean() {
+        merge_counts(&mut counts, &r.redactions);
+        let tags_out: Vec<String> = tags
+            .iter()
+            .map(|t| {
+                let r = redact(t, &self.allowlist);
+                merge_counts(&mut counts, &r.redactions);
+                r.text
+            })
+            .collect();
+        let metadata_out = metadata.as_ref().map(|m| self.mask_json(m, &mut counts));
+        if counts.is_empty() {
             return Ok(untouched(metadata));
         }
+        let redactions: Vec<RedactionCount> = counts
+            .into_iter()
+            .map(|(kind, count)| RedactionCount { kind, count })
+            .collect();
         if self.mode == PrivacyMode::Strict {
             return Err(Error::SecretDetected {
-                kinds: r.redactions.iter().map(|x| x.kind.to_string()).collect(),
+                kinds: redactions.iter().map(|x| x.kind.to_string()).collect(),
             });
         }
         Ok(Prepared {
             content: r.text,
-            metadata: with_redaction_flags(metadata, &r.redactions),
-            redactions: r.redactions,
+            tags: tags_out,
+            metadata: with_redaction_flags(metadata_out, &redactions),
+            redactions,
         })
+    }
+
+    /// Filter one free-text field (the `source` of a memory). Same modes as
+    /// [`prepare`](Self::prepare); returns the text to store and what was masked.
+    pub fn mask_text(&self, text: &str) -> Result<(String, Vec<RedactionCount>), Error> {
+        let p = self.prepare_with_tags("", &[text], None)?;
+        Ok((p.tags.into_iter().next().unwrap_or_default(), p.redactions))
+    }
+
+    /// Filter the metadata of an update that has no new content. Same modes as
+    /// [`prepare`](Self::prepare); the flags are not added here.
+    pub fn mask_metadata(
+        &self,
+        metadata: &serde_json::Value,
+    ) -> Result<(serde_json::Value, Vec<RedactionCount>), Error> {
+        if self.mode == PrivacyMode::Off {
+            return Ok((metadata.clone(), Vec::new()));
+        }
+        let mut counts = BTreeMap::new();
+        let masked = self.mask_json(metadata, &mut counts);
+        let redactions: Vec<RedactionCount> = counts
+            .into_iter()
+            .map(|(kind, count)| RedactionCount { kind, count })
+            .collect();
+        if self.mode == PrivacyMode::Strict && !redactions.is_empty() {
+            return Err(Error::SecretDetected {
+                kinds: redactions.iter().map(|x| x.kind.to_string()).collect(),
+            });
+        }
+        Ok((masked, redactions))
+    }
+
+    /// Filter the tags of an update.
+    pub fn mask_tags(&self, tags: &[String]) -> Result<(Vec<String>, Vec<RedactionCount>), Error> {
+        let refs: Vec<&str> = tags.iter().map(String::as_str).collect();
+        let p = self.prepare_with_tags("", &refs, None)?;
+        Ok((p.tags, p.redactions))
+    }
+
+    /// `value` with every string inside it filtered (keys are left alone).
+    fn mask_json(
+        &self,
+        value: &serde_json::Value,
+        counts: &mut BTreeMap<&'static str, usize>,
+    ) -> serde_json::Value {
+        use serde_json::Value;
+        match value {
+            Value::String(s) => {
+                let r = redact(s, &self.allowlist);
+                merge_counts(counts, &r.redactions);
+                Value::String(r.text)
+            }
+            Value::Array(items) => {
+                Value::Array(items.iter().map(|v| self.mask_json(v, counts)).collect())
+            }
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), self.mask_json(v, counts)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+}
+
+fn merge_counts(into: &mut BTreeMap<&'static str, usize>, from: &[RedactionCount]) {
+    for c in from {
+        *into.entry(c.kind).or_default() += c.count;
     }
 }
 

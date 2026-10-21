@@ -91,10 +91,17 @@ impl crate::Uteke {
             // Privacy filter (#1464), before the content is embedded or stored.
             // Strict mode skips the row (counted as skipped) instead of
             // aborting the whole import.
-            let prepared = match self
-                .privacy_config
-                .prepare(&entry.content, Some(std::mem::take(&mut entry.metadata)))
-            {
+            // The tags and the source are filtered with the content (the
+            // source rides along as the last "tag" and is taken off again).
+            let mut fields: Vec<&str> = entry.tags.iter().map(String::as_str).collect();
+            if let Some(src) = entry.source.as_deref() {
+                fields.push(src);
+            }
+            let prepared = match self.privacy_config.prepare_with_tags(
+                &entry.content,
+                &fields,
+                Some(std::mem::take(&mut entry.metadata)),
+            ) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::warn!("Skipping import entry: {e}");
@@ -106,6 +113,11 @@ impl crate::Uteke {
                 }
             };
             entry.content = prepared.content;
+            let mut masked_fields = prepared.tags;
+            if entry.source.is_some() {
+                entry.source = masked_fields.pop();
+            }
+            entry.tags = masked_fields;
             if let Some(m) = prepared.metadata {
                 entry.metadata = m;
             }

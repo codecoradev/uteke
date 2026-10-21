@@ -37,6 +37,8 @@ mod operations;
 pub mod pack_mode;
 pub mod privacy;
 #[cfg(test)]
+mod privacy_field_tests;
+#[cfg(test)]
 mod privacy_write_tests;
 
 pub use forget_request::{
@@ -47,7 +49,7 @@ pub use list_request::{
     LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
     ListPolicy, ListRequest, ListRequestError,
 };
-pub use operations::RememberOutcome;
+pub use operations::{RememberOutcome, UpdateOutcome};
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
     RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
@@ -1437,7 +1439,18 @@ impl Uteke {
         source: Option<&str>,
         source_type: &str,
     ) -> Result<bool, Error> {
-        self.store.set_source(id, source, source_type)
+        // #1464: the source text is filtered like the content. It is set after
+        // the memory is stored, so in strict mode the rejection leaves the
+        // memory without a source.
+        let masked = source
+            .map(|s| self.privacy_config.mask_text(s))
+            .transpose()?;
+        let source = masked.as_ref().map(|(text, _)| text.as_str());
+        let found = self.store.set_source(id, source, source_type)?;
+        if let Some((_, redactions)) = &masked {
+            self.record_redaction(id, redactions);
+        }
+        Ok(found)
     }
 
     /// Set the content hash recorded at write time (#1172 Fase 1).

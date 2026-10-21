@@ -96,6 +96,15 @@ pub(crate) fn run(
         })
         .transpose()?;
 
+    // #1464: the source is stored after the memory, so strict mode refuses a
+    // source with a secret before anything is written.
+    if let Some(src) = source {
+        uteke
+            .privacy_config()
+            .mask_text(src)
+            .map_err(|e| format!("Failed to store memory: {e}"))?;
+    }
+
     // Read from stdin when content argument is "-" (#620).
     // Standard Unix convention: pipe content via echo "text" | uteke remember - --tags "test"
     let content = if content == "-" {

@@ -143,3 +143,43 @@ fn room_remember_reports_redacted() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["redacted"], true);
 }
+
+#[test]
+fn put_memory_reports_redacted_and_strict_covers_source_and_metadata() {
+    let app = App::new(PrivacyMode::Redact);
+    let (_, ok, _) = app.call(Method::Post, "/remember", Some(json!({"content": "plain"})));
+    let id = ok["id"].as_str().unwrap().to_string();
+    let (status, body, _) = app.call(
+        Method::Put,
+        "/memory",
+        Some(json!({"id": id, "metadata": {"note": format!("k {}", token())}})),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["redacted"], true);
+    let (_, body, _) = app.call(
+        Method::Put,
+        "/memory",
+        Some(json!({"id": id, "importance": 0.8})),
+    );
+    assert_eq!(body["redacted"], false, "{body}");
+
+    let strict = App::new(PrivacyMode::Strict);
+    let (status, body, raw) = strict.call(
+        Method::Post,
+        "/remember",
+        Some(json!({"content": "plain", "source": token()})),
+    );
+    assert_eq!((status, &body["error"]), (400, &json!("secret_detected")));
+    assert!(!raw.contains("aB3dE5gH7jK9"), "{raw}");
+    assert_eq!(
+        strict.count(),
+        0,
+        "nothing is stored before the source check"
+    );
+    let (status, body, _) = strict.call(
+        Method::Post,
+        "/remember",
+        Some(json!({"content": "plain", "metadata": {"k": token()}})),
+    );
+    assert_eq!((status, &body["error"]), (400, &json!("secret_detected")));
+}
