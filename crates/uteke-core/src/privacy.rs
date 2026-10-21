@@ -843,9 +843,11 @@ fn is_pem_line(line: &str) -> bool {
                 .is_some_and(|k| k.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')))
 }
 
-/// How far past a BEGIN line the matching END line is looked for.
+/// How far past a BEGIN line the matching END line is looked for first (a block
+/// made only of key lines is read to its end).
 const MAX_PEM_BYTES: usize = 16 * 1024;
-/// How much of the text after `name=` is read as the value.
+/// How much of the text after `name=` is read first as the value (one that
+/// runs past it is read to its true end).
 const MAX_VALUE_BYTES: usize = 4096;
 
 /// The longest prefix of `s` that is at most `max` bytes and ends on a char
@@ -919,7 +921,18 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
         }
         let end_marker = format!("-----END {}-----", &caps[1]);
         // A key is a few KiB; do not search the rest of a huge text per BEGIN.
-        let after = bounded(&text[begin.end()..], MAX_PEM_BYTES);
+        let full = &text[begin.end()..];
+        let mut after = bounded(full, MAX_PEM_BYTES);
+        // A longer block (every line so far is key material) is read whole.
+        if after.len() < full.len()
+            && !after.contains(&end_marker)
+            // The last line of the window may be cut mid-way.
+            && after
+                .rsplit_once('\n')
+                .is_some_and(|(whole, _)| whole.lines().all(is_pem_line))
+        {
+            after = full;
+        }
         let end = match after.find(&end_marker) {
             Some(rel) if is_pem_body(&after[..rel]) => begin.end() + rel + end_marker.len(),
             Some(_) => continue,
@@ -958,12 +971,27 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
 /// it may hold spaces); an unquoted one ends at whitespace, a quote, `,` or a
 /// bracket, and is cut where `&name=` or `;name=` starts the next pair.
 fn assignment_value(text: &str, start: usize, sep: &str, password: bool) -> (usize, usize, usize) {
+    // The window only bounds the work: a value that runs to its end is read
+    // again over the whole text, so a long secret is never cut short.
+    let window = bounded(&text[start..], MAX_VALUE_BYTES);
+    let found = assignment_value_in(window, start, sep, password);
+    if found.2 - start == window.len() && window.len() < text.len() - start {
+        return assignment_value_in(&text[start..], start, sep, password);
+    }
+    found
+}
+
+fn assignment_value_in(
+    rest: &str,
+    start: usize,
+    sep: &str,
+    password: bool,
+) -> (usize, usize, usize) {
     let quote = sep
         .trim_end()
         .chars()
         .last()
         .filter(|c| matches!(c, '"' | '\''));
-    let rest = bounded(&text[start..], MAX_VALUE_BYTES);
     let mut end = 0;
     let mut quoted = false;
     if let Some(q) = quote {
@@ -1034,6 +1062,10 @@ fn mask_assignments(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usiz
             || allowed(value)
             || allowed(&text[whole.start()..ve])
         {
+            // A value read past the window is not read again from inside it.
+            if resume - whole.end() > MAX_VALUE_BYTES {
+                pos = pos.max(resume);
+            }
             continue;
         }
         out.push_str(&text[copied..vs]);
@@ -1417,5 +1449,21 @@ mod tests {
             "scan took {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn values_and_keys_longer_than_the_scan_windows_are_masked_whole() {
+        let long = "Ab3dE5gH7jK9".repeat(1_000); // 12 KB, no separator
+        let out = redact(&format!("password={long} next"), &[]).text;
+        assert_eq!(out, "password=[REDACTED:env-secret] next");
+
+        let (b, e) = (
+            format!("-----BEGIN {} KEY-----", "RSA PRIVATE"),
+            format!("-----END {} KEY-----", "RSA PRIVATE"),
+        );
+        let line = "MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun";
+        let body = format!("{line}\n").repeat(600); // ~39 KB
+        let out = redact(&format!("a\n{b}\n{body}{e}\nz"), &[]).text;
+        assert_eq!(out, "a\n[REDACTED:private-key]\nz");
     }
 }
