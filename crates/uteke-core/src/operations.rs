@@ -85,8 +85,9 @@ pub struct RememberOutcome {
     pub embedding_written: bool,
     /// Failure reason when the embedding could not be persisted.
     pub warning: Option<String>,
-    /// Secrets the privacy filter masked in the content (#1464): a kind and a
-    /// count each, never a value. Empty when nothing was masked.
+    /// Secrets the privacy filter masked in the content of THIS call (#1464): a
+    /// kind and a count each, never a value. Empty when nothing was masked. On a
+    /// dedup hit nothing new is stored, so the stored memory keeps its own flags.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub redactions: Vec<crate::privacy::RedactionCount>,
 }
@@ -1929,6 +1930,17 @@ impl crate::Uteke {
                 // A metadata-only update keeps the masked content, so it keeps
                 // the flags that describe it.
                 (None, Some(m)) => crate::privacy::carry_redaction_flags(m, &existing.metadata),
+                // New content and new metadata: the flags follow the content,
+                // never what the caller's metadata says about itself.
+                (Some(c), Some(m)) if c.contains("[REDACTED:") => {
+                    let own = crate::privacy::without_redaction_flags(m);
+                    crate::privacy::carry_redaction_flags(
+                        own.as_ref().unwrap_or(m),
+                        &existing.metadata,
+                    )
+                    .or(own)
+                }
+                (Some(_), Some(m)) => crate::privacy::without_redaction_flags(m),
                 _ => None,
             }
         } else {

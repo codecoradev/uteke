@@ -829,7 +829,8 @@ fn private_key_begin() -> &'static Regex {
 
 /// A line of a PEM body: base64, or an RFC 1421 header (`Proc-Type: 4,ENCRYPTED`).
 fn is_pem_line(line: &str) -> bool {
-    let line = line.trim();
+    // A quoted mail or Markdown block prefixes each line with `>`.
+    let line = line.trim().trim_start_matches('>').trim();
     line.is_empty()
         || (line.len() >= 4
             && line
@@ -846,13 +847,35 @@ fn is_pem_line(line: &str) -> bool {
 /// lines, at least one long base64 line. A sentence that mentions both markers
 /// is not.
 fn is_pem_body(body: &str) -> bool {
-    body.lines().all(is_pem_line)
-        && body.lines().any(|l| {
-            let l = l.trim();
-            l.len() >= 32
-                && l.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
-        })
+    // A key inside a JSON string or a log line has literal `\n`, `\r\n` or
+    // `\r` for each line break.
+    let body = body
+        .replace("\\r\\n", "\n")
+        .replace("\\n", "\n")
+        .replace("\\r", "\n");
+    let base64ish = |l: &str| {
+        let l = l.trim().trim_start_matches('>').trim();
+        l.len() >= 32
+            && l.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
+    };
+    if body.lines().all(is_pem_line) && body.lines().any(base64ish) {
+        return true;
+    }
+    // Line breaks collapsed into spaces: every token is base64 and the long
+    // ones carry most of the text.
+    let tokens: Vec<&str> = body.split_whitespace().collect();
+    let all_b64 = tokens.iter().all(|t| {
+        t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b))
+    });
+    let total: usize = tokens.iter().map(|t| t.len()).sum();
+    let long: usize = tokens
+        .iter()
+        .filter(|t| t.len() >= 16)
+        .map(|t| t.len())
+        .sum();
+    !tokens.is_empty() && all_b64 && tokens.iter().any(|t| t.len() >= 32) && long * 10 >= total * 8
 }
 
 /// Replace each private key block whole. A block with its matching END line is
@@ -872,10 +895,7 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
         let end_marker = format!("-----END {}-----", &caps[1]);
         let after = &text[begin.end()..];
         let end = match after.find(&end_marker) {
-            // A key inside a JSON string has a literal `\n` for each line break.
-            Some(rel) if is_pem_body(&after[..rel].replace("\\n", "\n")) => {
-                begin.end() + rel + end_marker.len()
-            }
+            Some(rel) if is_pem_body(&after[..rel]) => begin.end() + rel + end_marker.len(),
             Some(_) => continue,
             None => {
                 // Cut off: key lines directly after BEGIN, up to the first line
@@ -911,7 +931,7 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
 /// scan resumes. A quoted value runs to its closing quote on the same line (so
 /// it may hold spaces); an unquoted one ends at whitespace, a quote, `,` or a
 /// bracket, and is cut where `&name=` or `;name=` starts the next pair.
-fn assignment_value(text: &str, start: usize, sep: &str) -> (usize, usize, usize) {
+fn assignment_value(text: &str, start: usize, sep: &str, password: bool) -> (usize, usize, usize) {
     let quote = sep
         .trim_end()
         .chars()
@@ -932,15 +952,14 @@ fn assignment_value(text: &str, start: usize, sep: &str) -> (usize, usize, usize
         end = rest
             .find(|c: char| {
                 c.is_whitespace()
-                    || matches!(
-                        c,
-                        '"' | '\'' | ',' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | '\\'
-                    )
+                    || matches!(c, '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>')
+                    // A password may hold `,` and `\`; other values end there.
+                    || (!password && matches!(c, ',' | '\\'))
             })
             .unwrap_or(rest.len());
         // `a=b&c=d`, `a=b;c=d`: the value ends where the next pair begins.
         let value = &rest[..end];
-        for (i, _) in value.match_indices(['&', ';']) {
+        for (i, _) in value.match_indices(['&', ';', ',']) {
             let tail = &value[i + 1..];
             let name_len = tail
                 .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
@@ -954,7 +973,7 @@ fn assignment_value(text: &str, start: usize, sep: &str) -> (usize, usize, usize
     let raw = &rest[..end];
     // `Value.` ends a sentence; backticks and curly quotes wrap a value.
     let left = raw.len() - raw.trim_start_matches(['`', '“', '‘']).len();
-    let core = raw[left..].trim_end_matches(['.', '`', '”', '’', '\\']);
+    let core = raw[left..].trim_end_matches(['.', ',', '`', '”', '’', '\\']);
     (start + left, start + left + core.len(), start + end)
 }
 
@@ -981,7 +1000,7 @@ fn mask_assignments(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usiz
         let Some(password) = secret_name_kind(&segs, equals_sign) else {
             continue;
         };
-        let (vs, ve, resume) = assignment_value(text, whole.end(), &caps[2]);
+        let (vs, ve, resume) = assignment_value(text, whole.end(), &caps[2], password);
         let value = &text[vs..ve];
         if vs < copied
             || value.len() < 8

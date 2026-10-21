@@ -524,3 +524,49 @@ fn the_mode_parses_and_defaults_to_redact() {
     let u = open_keyword();
     assert_eq!(u.privacy_config().mode, PrivacyMode::Redact);
 }
+
+/// New content together with new metadata: the flags follow the content, not
+/// the caller's metadata and not the previous version.
+#[test]
+fn an_update_with_content_and_metadata_flags_by_the_content() {
+    let u = store(PrivacyMode::Redact);
+    let id = u
+        .remember_typed_detailed(&format!("key {}", gh()), &[], None, None, "fact")
+        .unwrap()
+        .id;
+
+    // Clean content: a flag the caller put in the metadata is dropped.
+    u.update_memory(
+        &id,
+        Some("nothing secret"),
+        None,
+        Some(&serde_json::json!({"k": "v", "redacted": true})),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        u.get_by_id(&id).unwrap().unwrap().metadata,
+        serde_json::json!({"k": "v"})
+    );
+
+    // Content that still carries a mask marker keeps the earlier flags.
+    let id2 = u
+        .remember_typed_detailed(&format!("key {}", gh()), &[], None, None, "fact")
+        .unwrap()
+        .id;
+    u.update_memory(
+        &id2,
+        Some("edited, still [REDACTED:github-token]"),
+        None,
+        Some(&serde_json::json!({"k": "v"})),
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let m = u.get_by_id(&id2).unwrap().unwrap();
+    assert_eq!(m.metadata["k"], "v");
+    assert_eq!(m.metadata["redacted"], true);
+}

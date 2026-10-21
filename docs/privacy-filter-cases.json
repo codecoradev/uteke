@@ -1868,6 +1868,97 @@
         ]
       ],
       "expected": "Stripe webhook secret whsec_[REDACTED:webhook-secret]"
+    },
+    {
+      "name": "private key with escaped CRLF in JSON",
+      "input": [
+        "{\"k\":\"",
+        "-----BEGIN ",
+        "RSA PRIVATE",
+        " KEY-----\\r\\nMIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0t\\r\\n-----END ",
+        "RSA PRIVATE",
+        " KEY-----\"}"
+      ],
+      "expected": "{\"k\":\"[REDACTED:private-key]\"}",
+      "kinds": [
+        [
+          "private-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "private key with line breaks collapsed to spaces",
+      "input": [
+        "-----BEGIN ",
+        "RSA PRIVATE",
+        " KEY----- MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0t MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0t -----END ",
+        "RSA PRIVATE",
+        " KEY-----"
+      ],
+      "expected": "[REDACTED:private-key]",
+      "kinds": [
+        [
+          "private-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "private key in a quoted block",
+      "input": [
+        "> -----BEGIN ",
+        "RSA PRIVATE",
+        " KEY-----\n> MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0t\n> -----END ",
+        "RSA PRIVATE",
+        " KEY-----"
+      ],
+      "expected": "> [REDACTED:private-key]",
+      "kinds": [
+        [
+          "private-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "password value with a comma",
+      "input": [
+        "password=",
+        "Qm7x,T2pLw9"
+      ],
+      "expected": "password=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "password value with a backslash",
+      "input": [
+        "password=",
+        "Qm7x\\T2pLw9Rz"
+      ],
+      "expected": "password=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "left alone: a sentence naming both PEM markers",
+      "input": [
+        "it starts with -----BEGIN ",
+        "RSA PRIVATE",
+        " KEY----- and ends with -----END ",
+        "RSA PRIVATE",
+        " KEY----- markers"
+      ],
+      "kinds": []
     }
   ]
 }
