@@ -1,6 +1,6 @@
 {
-  "format": "Shared test vectors of the OSS privacy filter (uteke_core::privacy::redact, #1464) so uteke-cloud can pin parity in CI. For each case: join the strings of `input` (no separator) to get the text, run the filter with an empty allowlist, and expect exactly `expected` and the list `kinds` of [kind, count] pairs ordered by kind (empty when nothing is masked). Inputs are split into fragments so no complete token appears; none of the values is a real credential, and secret scanners may still flag the assignment-shaped lines.",
-  "version": 1,
+  "format": "Shared test vectors of the OSS privacy filter (uteke_core::privacy::redact, #1464) so uteke-cloud can pin parity in CI. For each case: join the strings of `input` (no separator) to get the text, run the filter with an empty allowlist, and expect exactly `expected` and the list `kinds` of [kind, count] pairs ordered by kind (empty when nothing is masked). A case without `expected` must come back unchanged (its `kinds` is empty). Version 3 (precision and recall fixes found by two adversarial reviews of the first versions: generic words such as key, pass and token are not names unless compound; quoted values, URL query strings and glued pairs are read whole). Inputs are split into fragments and unchanged texts are not repeated, so no complete token or key header appears in this file; none of the values is a real credential, and secret scanners may still flag the assignment-shaped lines.",
+  "version": 3,
   "cases": [
     {
       "name": "github token keeps its prefix",
@@ -214,7 +214,6 @@
       "input": [
         "TOKEN_LIMIT=10000"
       ],
-      "expected": "TOKEN_LIMIT=10000",
       "kinds": []
     },
     {
@@ -222,7 +221,6 @@
       "input": [
         "PASSWORD_MIN_LENGTH=12"
       ],
-      "expected": "PASSWORD_MIN_LENGTH=12",
       "kinds": []
     },
     {
@@ -230,7 +228,6 @@
       "input": [
         "API_KEY=short"
       ],
-      "expected": "API_KEY=short",
       "kinds": []
     },
     {
@@ -238,7 +235,6 @@
       "input": [
         "KEY_FILE=/etc/ssl/private/server.key"
       ],
-      "expected": "KEY_FILE=/etc/ssl/private/server.key",
       "kinds": []
     },
     {
@@ -246,7 +242,6 @@
       "input": [
         "SECRET_PATH=./config/secret.yaml"
       ],
-      "expected": "SECRET_PATH=./config/secret.yaml",
       "kinds": []
     },
     {
@@ -254,7 +249,6 @@
       "input": [
         "SSH_KEY=~/.ssh/id_ed25519_work_laptop"
       ],
-      "expected": "SSH_KEY=~/.ssh/id_ed25519_work_laptop",
       "kinds": []
     },
     {
@@ -262,7 +256,6 @@
       "input": [
         "API_KEY=${VAULT_API_KEY_PRODUCTION_ENV}"
       ],
-      "expected": "API_KEY=${VAULT_API_KEY_PRODUCTION_ENV}",
       "kinds": []
     },
     {
@@ -270,7 +263,6 @@
       "input": [
         "api_key=<your-api-key-goes-here-ok>"
       ],
-      "expected": "api_key=<your-api-key-goes-here-ok>",
       "kinds": []
     },
     {
@@ -278,7 +270,6 @@
       "input": [
         "API_KEY=your_api_key_goes_here_please"
       ],
-      "expected": "API_KEY=your_api_key_goes_here_please",
       "kinds": []
     },
     {
@@ -286,7 +277,6 @@
       "input": [
         "TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa"
       ],
-      "expected": "TOKEN=aaaaaaaaaaaaaaaaaaaaaaaa",
       "kinds": []
     },
     {
@@ -294,7 +284,6 @@
       "input": [
         "COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b"
       ],
-      "expected": "COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b",
       "kinds": []
     },
     {
@@ -302,7 +291,6 @@
       "input": [
         "CACHE_KEY=2f9c1d3e-8a4b-4c6d-9e1f-0a1b2c3d4e5f"
       ],
-      "expected": "CACHE_KEY=2f9c1d3e-8a4b-4c6d-9e1f-0a1b2c3d4e5f",
       "kinds": []
     },
     {
@@ -310,7 +298,6 @@
       "input": [
         "TOKEN_URL=https://auth.example.com/oauth/token/endpoint"
       ],
-      "expected": "TOKEN_URL=https://auth.example.com/oauth/token/endpoint",
       "kinds": []
     },
     {
@@ -318,7 +305,6 @@
       "input": [
         "keyboard shortcuts: press the key combination again to toggle"
       ],
-      "expected": "keyboard shortcuts: press the key combination again to toggle",
       "kinds": []
     },
     {
@@ -326,7 +312,6 @@
       "input": [
         "Bearer token handling is documented"
       ],
-      "expected": "Bearer token handling is documented",
       "kinds": []
     },
     {
@@ -334,15 +319,13 @@
       "input": [
         "sk-short"
       ],
-      "expected": "sk-short",
       "kinds": []
     },
     {
-      "name": "left alone: task-description-for-the-weekly-sync-meeting",
+      "name": "left alone: ta<token>",
       "input": [
         "task-description-for-the-weekly-sync-meeting"
       ],
-      "expected": "task-description-for-the-weekly-sync-meeting",
       "kinds": []
     },
     {
@@ -350,15 +333,14 @@
       "input": [
         "AKIAshort"
       ],
-      "expected": "AKIAshort",
       "kinds": []
     },
     {
-      "name": "left alone: -----BEGIN CERTIFICATE-----",
+      "name": "left alone: a certificate block",
       "input": [
-        "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
+        "-----BEGIN ",
+        "CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
       ],
-      "expected": "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
       "kinds": []
     },
     {
@@ -366,7 +348,6 @@
       "input": [
         "api_key: self.api_key.clone(),"
       ],
-      "expected": "api_key: self.api_key.clone(),",
       "kinds": []
     },
     {
@@ -374,7 +355,6 @@
       "input": [
         "let key = self.make_key(query, namespace, limit);"
       ],
-      "expected": "let key = self.make_key(query, namespace, limit);",
       "kinds": []
     },
     {
@@ -382,7 +362,6 @@
       "input": [
         "api_key: config.embedding.api_key"
       ],
-      "expected": "api_key: config.embedding.api_key",
       "kinds": []
     },
     {
@@ -390,8 +369,1505 @@
       "input": [
         "SECRET_KEY_BASE_NAME_FOR_PRODUCTION"
       ],
-      "expected": "SECRET_KEY_BASE_NAME_FOR_PRODUCTION",
       "kinds": []
+    },
+    {
+      "name": "64-hex value of a key-named field is a secret",
+      "input": [
+        "ETH_PRIVATE_KEY=",
+        "4c0883a69102937d6231471b5dbb6204",
+        "fe5129617082792ae468d01a3f362318"
+      ],
+      "expected": "ETH_PRIVATE_KEY=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "40-hex value of a token-named field is a secret",
+      "input": [
+        "GITHUB_TOKEN=",
+        "3f786850e387550fdab8",
+        "36ed7e6dc881de23001b"
+      ],
+      "expected": "GITHUB_TOKEN=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "short mixed password",
+      "input": [
+        "DB_PASSWORD=Tr0ub4dor&3x"
+      ],
+      "expected": "DB_PASSWORD=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "hyphenated passphrase",
+      "input": [
+        "PASSWORD=correct-horse-battery-staple"
+      ],
+      "expected": "PASSWORD=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "DB_PASS name",
+      "input": [
+        "DB_PASS=",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6"
+      ],
+      "expected": "DB_PASS=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "value followed by a closing parenthesis",
+      "input": [
+        "connect(password=",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6",
+        ")"
+      ],
+      "expected": "connect(password=[REDACTED:env-secret])",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "semicolon inside the value",
+      "input": [
+        "DB_PASSWORD=Xk9#mQ2$vL7pR4tW;Z8nB3qq"
+      ],
+      "expected": "DB_PASSWORD=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "php array syntax",
+      "input": [
+        "'api_key' => '",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6",
+        "'"
+      ],
+      "expected": "'api_key' => '[REDACTED:env-secret]'",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "go short declaration",
+      "input": [
+        "apiKey := \"",
+        "Zq8vN2xL5mP9",
+        "aR4tW7yB3cD6",
+        "\""
+      ],
+      "expected": "apiKey := \"[REDACTED:env-secret]\"",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "aws secret access key that starts with a slash",
+      "input": [
+        "AWS_SECRET_ACCESS_KEY=",
+        "/K7MDENG/bPxRfiCY",
+        "q4TzW8nB3vL9mXk2R5tYa1Z"
+      ],
+      "expected": "AWS_SECRET_ACCESS_KEY=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "password inside a url",
+      "input": [
+        "postgres://admin:",
+        "S3cr3t",
+        "@host/db"
+      ],
+      "expected": "postgres://admin:[REDACTED:url-password]@host/db",
+      "kinds": [
+        [
+          "url-password",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "basic authorization header",
+      "input": [
+        "Authorization: Basic ",
+        "YWRtaW46aHVudGVyMmh1bnRlcjI="
+      ],
+      "expected": "Authorization: Basic [REDACTED:basic-auth]",
+      "kinds": [
+        [
+          "basic-auth",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "stripe secret key",
+      "input": [
+        "sk_live_",
+        "51HxYz0AbCdEfGhIjKlMnOpQ"
+      ],
+      "expected": "sk_live_[REDACTED:api-key]",
+      "kinds": [
+        [
+          "api-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "slack token",
+      "input": [
+        "xoxb-",
+        "123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"
+      ],
+      "expected": "xoxb-[REDACTED:slack-token]",
+      "kinds": [
+        [
+          "slack-token",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "google api key",
+      "input": [
+        "AIza",
+        "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q"
+      ],
+      "expected": "AIza[REDACTED:google-api-key]",
+      "kinds": [
+        [
+          "google-api-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "left alone: monkey: Curious-George-Season3",
+      "input": [
+        "monkey: Curious-George-Season3"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: turkey: Thanksgiving2025-Recipe",
+      "input": [
+        "turkey: Thanksgiving2025-Recipe"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Keynote: Rust2024-Conference-Berlin",
+      "input": [
+        "Keynote: Rust2024-Conference-Berlin"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Secretary: Jean-Baptiste-Lemaire",
+      "input": [
+        "Secretary: Jean-Baptiste-Lemaire"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Tokenizer: sentencepiece-unigram-v2",
+      "input": [
+        "Tokenizer: sentencepiece-unigram-v2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: keyword: TypeScript/JavaScript",
+      "input": [
+        "keyword: TypeScript/JavaScript"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: token_expires_at: 2026-10-16T12:34:56Z",
+      "input": [
+        "token_expires_at: 2026-10-16T12:34:56Z"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: api_key_rotated_at=2026-10-16T12:34:56+07:00",
+      "input": [
+        "api_key_rotated_at=2026-10-16T12:34:56+07:00"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: key_contact: john.doe@acme-corp.io",
+      "input": [
+        "key_contact: john.doe@acme-corp.io"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: cache_key: v2-linux-x64-node20-abc123",
+      "input": [
+        "cache_key: v2-linux-x64-node20-abc123"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: public_key: AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoq",
+      "input": [
+        "public_key: AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: <token>",
+      "input": [
+        "sk-learn-preprocessing-pipeline-v2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Use Bearer tokens/credentials for the API",
+      "input": [
+        "Use Bearer tokens/credentials for the API"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Bearer YOUR_ACCESS_TOKEN_HERE",
+      "input": [
+        "Bearer YOUR_ACCESS_TOKEN_HERE"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: a sentence that mentions a begin line and a different end label",
+      "input": [
+        "see -----BEGIN ",
+        "RSA PRIVATE",
+        " KEY----- in the docs. footer: -----END EC PRIVATE KEY-----"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: a begin line with no end line",
+      "input": [
+        "an unterminated -----BEGIN ",
+        "RSA PRIVATE",
+        " KEY----- header is only a mention"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b",
+      "input": [
+        "COMMIT_KEY=3f786850e387550fdab836ed7e6dc881de23001b"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: postgres://admin:your_password@host/db",
+      "input": [
+        "postgres://admin:your_password@host/db"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: https://example.com/path:8080/x",
+      "input": [
+        "https://example.com/path:8080/x"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: shell default with a variable",
+      "input": [
+        "KEY=\"${UTEKE_MINISIGN_KEY:-$HOME/.minisign/uteke-release.key}\""
+      ],
+      "kinds": []
+    },
+    {
+      "name": "masked: API_KEY=\\\"Zq8vN2xL5mP9aR4tW7yB3cD6\\\"",
+      "input": [
+        "API_KEY=\\\"Zq8vN2xL5mP9aR4tW7yB3cD6\\\""
+      ],
+      "expected": "API_KEY=\\\"[REDACTED:env-secret]\\\"",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: {\\\"password\\\":\\\"Zq8vN2xL5mP9aR4tW7yB3cD6\\\"}",
+      "input": [
+        "{\\\"password\\\":\\\"Zq8vN2xL5mP9aR4tW7yB3cD6\\\"}"
+      ],
+      "expected": "{\\\"password\\\":\\\"[REDACTED:env-secret]\\\"}",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: https://api.acme.io/v1/report?api_key=Zq8vN2xL5mP9aR4tW7yB3c",
+      "input": [
+        "https://api.acme.io/v1/report?api_key=Zq8vN2xL5mP9aR4tW7yB3cD6&format=csv"
+      ],
+      "expected": "https://api.acme.io/v1/report?api_key=[REDACTED:env-secret]&format=csv",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: https://hooks.acme.io/ingest?token=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "https://hooks.acme.io/ingest?token=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "https://hooks.acme.io/ingest?token=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: curl 'https://api.acme.io/v1?access_token=Zq8vN2xL5mP9aR4tW7",
+      "input": [
+        "curl 'https://api.acme.io/v1?access_token=Zq8vN2xL5mP9aR4tW7yB3cD6'"
+      ],
+      "expected": "curl 'https://api.acme.io/v1?access_token=[REDACTED:env-secret]'",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: jdbc:postgresql://db:5432/app?user=admin&password=Zq8vN2xL5m",
+      "input": [
+        "jdbc:postgresql://db:5432/app?user=admin&password=Zq8vN2xL5mP9"
+      ],
+      "expected": "jdbc:postgresql://db:5432/app?user=admin&password=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: MODE=prod;API_KEY=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "MODE=prod;API_KEY=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "MODE=prod;API_KEY=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: see:API_KEY=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "see:API_KEY=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "see:API_KEY=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: curl -d 'username=admin&password=Zq8vN2xL5mP9' https://acme.",
+      "input": [
+        "curl -d 'username=admin&password=Zq8vN2xL5mP9' https://acme.io/login"
+      ],
+      "expected": "curl -d 'username=admin&password=[REDACTED:env-secret]' https://acme.io/login",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: DefaultEndpointsProtocol=https;AccountName=acmeprod;AccountK",
+      "input": [
+        "DefaultEndpointsProtocol=https;AccountName=acmeprod;AccountKey=Zq8vN2xL5mP9aR4tW7yB3cD6Kx9/Lm2+Pq==;EndpointSuffix=core.windows.net"
+      ],
+      "expected": "DefaultEndpointsProtocol=https;AccountName=acmeprod;AccountKey=[REDACTED:env-secret];EndpointSuffix=core.windows.net",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: Server=tcp:db.acme.io,1433;Database=app;User ID=admin;Passwo",
+      "input": [
+        "Server=tcp:db.acme.io,1433;Database=app;User ID=admin;Password=Zq8vN2xL5mP9;Encrypt=True"
+      ],
+      "expected": "Server=tcp:db.acme.io,1433;Database=app;User ID=admin;Password=[REDACTED:env-secret];Encrypt=True",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: headers = {\"Authorization\": \"Basic YWRtaW46aHVudGVyMmh1bnRlc",
+      "input": [
+        "headers = {\"Authorization\": \"Basic YWRtaW46aHVudGVyMmh1bnRlcjI=\"}"
+      ],
+      "expected": "headers = {\"Authorization\": \"Basic [REDACTED:basic-auth]\"}",
+      "kinds": [
+        [
+          "basic-auth",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: authorization => 'Basic YWRtaW46aHVudGVyMmh1bnRlcjI='",
+      "input": [
+        "authorization => 'Basic YWRtaW46aHVudGVyMmh1bnRlcjI='"
+      ],
+      "expected": "authorization => 'Basic [REDACTED:basic-auth]'",
+      "kinds": [
+        [
+          "basic-auth",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: PGPASSWORD=Zq8vN2xL5mP9aR4tW7yB3cD6 psql -h db -U app",
+      "input": [
+        "PGPASSWORD=Zq8vN2xL5mP9aR4tW7yB3cD6 psql -h db -U app"
+      ],
+      "expected": "PGPASSWORD=[REDACTED:env-secret] psql -h db -U app",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: SECRET_KEY_BASE=a3f9c2e1b7d84f60a1b2c3d4e5f60718293a4b5c6d7e",
+      "input": [
+        "SECRET_KEY_BASE=a3f9c2e1b7d84f60a1b2c3d4e5f60718293a4b5c6d7e8f90"
+      ],
+      "expected": "SECRET_KEY_BASE=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: DB_PASSWORD_PROD=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "DB_PASSWORD_PROD=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "DB_PASSWORD_PROD=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: API_KEY_V2: Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "API_KEY_V2: Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "API_KEY_V2: [REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: OPENAI_API_KEY_2=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "OPENAI_API_KEY_2=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "OPENAI_API_KEY_2=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: REDIS_AUTH=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "REDIS_AUTH=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "REDIS_AUTH=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: GIT_TOKEN=3f786850e387550fdab836ed7e6dc881de23001b",
+      "input": [
+        "GIT_TOKEN=3f786850e387550fdab836ed7e6dc881de23001b"
+      ],
+      "expected": "GIT_TOKEN=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: HASH_SECRET=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "HASH_SECRET=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "HASH_SECRET=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: DB_PASSWORD=$ecretP4ss!2026",
+      "input": [
+        "DB_PASSWORD=$ecretP4ss!2026"
+      ],
+      "expected": "DB_PASSWORD=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: PASSWORD=Pa$Word2026!x",
+      "input": [
+        "PASSWORD=Pa$Word2026!x"
+      ],
+      "expected": "PASSWORD=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: password: P@ssw0rd.2026",
+      "input": [
+        "password: P@ssw0rd.2026"
+      ],
+      "expected": "password: [REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: admin_password: Admin@acme.co1",
+      "input": [
+        "admin_password: Admin@acme.co1"
+      ],
+      "expected": "admin_password: [REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: JWT_SECRET=/8fK2+Zq8vN2xL5mP9aR4tW7yB3cD6eF1gH2iJ3k=",
+      "input": [
+        "JWT_SECRET=/8fK2+Zq8vN2xL5mP9aR4tW7yB3cD6eF1gH2iJ3k="
+      ],
+      "expected": "JWT_SECRET=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: redis://:S3cretRedisPass@redis.internal:6379/0",
+      "input": [
+        "redis://:S3cretRedisPass@redis.internal:6379/0"
+      ],
+      "expected": "redis://:[REDACTED:url-password]@redis.internal:6379/0",
+      "kinds": [
+        [
+          "url-password",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: mysql://root:p@ss2026word@127.0.0.1:3306/db",
+      "input": [
+        "mysql://root:p@ss2026word@127.0.0.1:3306/db"
+      ],
+      "expected": "mysql://root:[REDACTED:url-password]@127.0.0.1:3306/db",
+      "kinds": [
+        [
+          "url-password",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: password: dragon2024",
+      "input": [
+        "password: dragon2024"
+      ],
+      "expected": "password: [REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: DB_PASSWORD=\"Zq8vN2xL 5mP9aR4tW7yB3c\"",
+      "input": [
+        "DB_PASSWORD=\"Zq8vN2xL 5mP9aR4tW7yB3c\""
+      ],
+      "expected": "DB_PASSWORD=\"[REDACTED:env-secret]\"",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: docker login -u deploy -p Zq8vN2xL5mP9 registry.acme.io",
+      "input": [
+        "docker login -u deploy -p Zq8vN2xL5mP9 registry.acme.io"
+      ],
+      "expected": "docker login -u deploy -p [REDACTED:cli-secret] registry.acme.io",
+      "kinds": [
+        [
+          "cli-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: mysql -uroot -pZq8vN2xL5mP9 app",
+      "input": [
+        "mysql -uroot -pZq8vN2xL5mP9 app"
+      ],
+      "expected": "mysql -uroot -p[REDACTED:cli-secret] app",
+      "kinds": [
+        [
+          "cli-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: vault login --token Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "vault login --token Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "vault login --token [REDACTED:cli-secret]",
+      "kinds": [
+        [
+          "cli-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: curl -u admin:Hunter2Secret! https://api.acme.io",
+      "input": [
+        "curl -u admin:Hunter2Secret! https://api.acme.io"
+      ],
+      "expected": "curl -u admin:[REDACTED:basic-auth] https://api.acme.io",
+      "kinds": [
+        [
+          "basic-auth",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: | DB_PASSWORD | Zq8vN2xL5mP9 |",
+      "input": [
+        "| DB_PASSWORD | Zq8vN2xL5mP9 |"
+      ],
+      "expected": "| DB_PASSWORD | [REDACTED:env-secret] |",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: | aws_secret_access_key | wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8v",
+      "input": [
+        "| aws_secret_access_key | wJalrXUtnFEMI/K7MDENG/bPxRfiCYzq8vN2xL5mP9 |"
+      ],
+      "expected": "| aws_secret_access_key | [REDACTED:env-secret] |",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: Authorization: Token 9f8e7d6c5b4a3210_fedcba9876543210ZZQ",
+      "input": [
+        "Authorization: Token 9f8e7d6c5b4a3210_fedcba9876543210ZZQ"
+      ],
+      "expected": "Authorization: Token [REDACTED:auth-token]",
+      "kinds": [
+        [
+          "auth-token",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: token=Zq8vN2xL5mP9aR4tW7yB3cD6",
+      "input": [
+        "token=Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "expected": "token=[REDACTED:env-secret]",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: secret = \"Zq8vN2xL5mP9aR4tW7yB3cD6\"",
+      "input": [
+        "secret = \"Zq8vN2xL5mP9aR4tW7yB3cD6\""
+      ],
+      "expected": "secret = \"[REDACTED:env-secret]\"",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: {\"type\":\"service_account\",\"private_key\":\"<pem marker> PRIVAT",
+      "input": [
+        "{\"type\":\"service_account\",\"private_key\":\"",
+        "-----BEGIN ",
+        "PRIVATE KEY-----\\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\\nabcdefghZq8vN2xL5mP9\\n",
+        "-----END ",
+        "PRIVATE KEY-----\\n\"}"
+      ],
+      "expected": "{\"type\":\"service_account\",\"private_key\":\"[REDACTED:private-key]\\n\"}",
+      "kinds": [
+        [
+          "private-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: <pem marker> RSA PRIVATE KEY----- MIIEvQIBADANBgkqhkiG9w0BAQ",
+      "input": [
+        "-----BEGIN ",
+        "RSA PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nabcdefgh\n(cut off here, no end line)"
+      ],
+      "expected": "[REDACTED:private-key]\n(cut off here, no end line)",
+      "kinds": [
+        [
+          "private-key",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: API_KEY=`Zq8vN2xL5mP9aR4tW7yB3cD6`",
+      "input": [
+        "API_KEY=`Zq8vN2xL5mP9aR4tW7yB3cD6`"
+      ],
+      "expected": "API_KEY=`[REDACTED:env-secret]`",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: API_KEY=Zq8vN2xL5mP9aR4tW7yB3cD6.",
+      "input": [
+        "API_KEY=Zq8vN2xL5mP9aR4tW7yB3cD6."
+      ],
+      "expected": "API_KEY=[REDACTED:env-secret].",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: API_KEY=“Zq8vN2xL5mP9aR4tW7yB3cD6”",
+      "input": [
+        "API_KEY=“Zq8vN2xL5mP9aR4tW7yB3cD6”"
+      ],
+      "expected": "API_KEY=“[REDACTED:env-secret]”",
+      "kinds": [
+        [
+          "env-secret",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "masked: unsigned <token>",
+      "input": [
+        "unsigned ",
+        "eyJ",
+        "hbGciOiJub25lIn0.",
+        "eyJ",
+        "zdWIiOiIxMjM0NTY3ODkwIiwiYWRtaW4iOnRydWV9."
+      ],
+      "expected": "unsigned [REDACTED:jwt]",
+      "kinds": [
+        [
+          "jwt",
+          1
+        ]
+      ]
+    },
+    {
+      "name": "left alone: fn verify(token: &str, key: &DecodingKey) -> Result<Claims>",
+      "input": [
+        "fn verify(token: &str, key: &DecodingKey) -> Result<Claims>"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: pub fn sign(&self, key: &SigningKey) -> Signature",
+      "input": [
+        "pub fn sign(&self, key: &SigningKey) -> Signature"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: struct Session { session_token: SessionTokenWrapper, user: U",
+      "input": [
+        "struct Session { session_token: SessionTokenWrapper, user: User }"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: interface AuthState { accessToken: AccessTokenResponse; load",
+      "input": [
+        "interface AuthState { accessToken: AccessTokenResponse; loading: boolean }"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: def load(private_key: rsa.RSAPrivateKey, password: bytes | N",
+      "input": [
+        "def load(private_key: rsa.RSAPrivateKey, password: bytes | None = None):"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: const token = ctx.accessToken",
+      "input": [
+        "const token = ctx.accessToken"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: const secret = config.jwtSecret;",
+      "input": [
+        "const secret = config.jwtSecret;"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: jwt.sign(payload, { secret: process.env.JWT_SECRET!, expires",
+      "input": [
+        "jwt.sign(payload, { secret: process.env.JWT_SECRET!, expiresIn: '1h' })"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: client = OpenAI(api_key=self._settings.openai_api_key)",
+      "input": [
+        "client = OpenAI(api_key=self._settings.openai_api_key)"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Postman header: {\"key\": \"Content-Type\", \"value\": \"applicatio",
+      "input": [
+        "Postman header: {\"key\": \"Content-Type\", \"value\": \"application/json\"}"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: VS Code keybinding: { \"key\": \"Ctrl+Shift+P\", \"command\": \"wor",
+      "input": [
+        "VS Code keybinding: { \"key\": \"Ctrl+Shift+P\", \"command\": \"workbench.action.showCommands\" }"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Terraform backend: key = \"global/s3/terraform.tfstate\"",
+      "input": [
+        "Terraform backend: key = \"global/s3/terraform.tfstate\""
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: s3.put_object(Bucket=\"acme-reports\", Key=\"reports/2026/q3.cs",
+      "input": [
+        "s3.put_object(Bucket=\"acme-reports\", Key=\"reports/2026/q3.csv\", Body=data)"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: cache.set(key=\"user:42:profile:v2\", value=profile, ttl=300)",
+      "input": [
+        "cache.set(key=\"user:42:profile:v2\", value=profile, ttl=300)"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: level=info msg=\"cache miss\" key=tenant/42/settings.v3 dur=3m",
+      "input": [
+        "level=info msg=\"cache miss\" key=tenant/42/settings.v3 dur=3ms"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: GitHub Actions cache: key: cargo-registry-v2-2026",
+      "input": [
+        "GitHub Actions cache: key: cargo-registry-v2-2026"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: key: node-20.11.1-linux-x64",
+      "input": [
+        "key: node-20.11.1-linux-x64"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: key: ENG-2026-Q4-roadmap",
+      "input": [
+        "key: ENG-2026-Q4-roadmap"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: key: 1.2.3-rc.4",
+      "input": [
+        "key: 1.2.3-rc.4"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Public key: AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsa",
+      "input": [
+        "Public key: AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Cache key: v2-linux-x64-node20-abc123",
+      "input": [
+        "Cache key: v2-linux-x64-node20-abc123"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Primary key: tenant_id#2026-10",
+      "input": [
+        "Primary key: tenant_id#2026-10"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Redis key: session:user:12345",
+      "input": [
+        "Redis key: session:user:12345"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Jira: Key: PROJ-1234, Summary: Login button misaligned",
+      "input": [
+        "Jira: Key: PROJ-1234, Summary: Login button misaligned"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Signing key: 3AA5C34371567BD2",
+      "input": [
+        "Signing key: 3AA5C34371567BD2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: GPG key: 0x3AA5C34371567BD2",
+      "input": [
+        "GPG key: 0x3AA5C34371567BD2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Deploy key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0",
+      "input": [
+        "Deploy key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoq ci@runner"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Song notes: Key: C#-minor/E-major, tempo 92",
+      "input": [
+        "Song notes: Key: C#-minor/E-major, tempo 92"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Vault secret: kv/data/prod/payments-api",
+      "input": [
+        "Vault secret: kv/data/prod/payments-api"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Stelvio Pass: Bormio-Prato on day 3 of the trip",
+      "input": [
+        "Stelvio Pass: Bormio-Prato on day 3 of the trip"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Boarding pass: PNR-X7K9QZ, seat 14A",
+      "input": [
+        "Boarding pass: PNR-X7K9QZ, seat 14A"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Go test output: --- PASS: TestRedactFalsePositives (0.00s)",
+      "input": [
+        "Go test output: --- PASS: TestRedactFalsePositives (0.00s)"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: PASS: Mutation-Testing-Gate-v0.21",
+      "input": [
+        "PASS: Mutation-Testing-Gate-v0.21"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: secret: secret/data/myapp/config",
+      "input": [
+        "secret: secret/data/myapp/config"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: existingSecret: db-credentials-v2",
+      "input": [
+        "existingSecret: db-credentials-v2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: ssl_key: certs/server-2026.key",
+      "input": [
+        "ssl_key: certs/server-2026.key"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: private_key: keys/dev-2026.pem",
+      "input": [
+        "private_key: keys/dev-2026.pem"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: KMS key: arn:aws:kms:ap-southeast-1:123456789012:key/1234abc",
+      "input": [
+        "KMS key: arn:aws:kms:ap-southeast-1:123456789012:key/1234abcd-12ab-34cd-56ef-1234567890ab"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: cat /etc/passwd: root:x:0:0:root:/root:/bin/bash",
+      "input": [
+        "cat /etc/passwd: root:x:0:0:root:/root:/bin/bash"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: host_key: SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8",
+      "input": [
+        "host_key: SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: \"NextToken\": \"AAQA-EFRSURBSGg1ZjZ0YmxXNnpTN2dRUnZ3NmJhQlBXcX",
+      "input": [
+        "\"NextToken\": \"AAQA-EFRSURBSGg1ZjZ0YmxXNnpTN2dRUnZ3NmJhQlBXcXJOV1BkSEs\""
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: page_token=CgwI8NyEqQYQgICAgICAgAI",
+      "input": [
+        "page_token=CgwI8NyEqQYQgICAgICAgAI"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: idempotency_key: 01HF8X5J3K9M2N4P6Q8R0S2T4V",
+      "input": [
+        "idempotency_key: 01HF8X5J3K9M2N4P6Q8R0S2T4V"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: token: 0x6B175474E89094C44Da98b954EedeAC495271d0F (DAI contr",
+      "input": [
+        "token: 0x6B175474E89094C44Da98b954EedeAC495271d0F (DAI contract)"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: SECRET_KEY=replace-me-with-64-random-chars",
+      "input": [
+        "SECRET_KEY=replace-me-with-64-random-chars"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: JWT_SECRET=generate-with-openssl-rand-hex-32",
+      "input": [
+        "JWT_SECRET=generate-with-openssl-rand-hex-32"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: API_KEY=insert-key-here-v2",
+      "input": [
+        "API_KEY=insert-key-here-v2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: API_KEY=abcdef1234567890",
+      "input": [
+        "API_KEY=abcdef1234567890"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: mailhog: http://localhost:8025?to=alice@corp.io",
+      "input": [
+        "mailhog: http://localhost:8025?to=alice@corp.io"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: DATABASE_URL=postgres://postgres:postgres@localhost:5432/dev",
+      "input": [
+        "DATABASE_URL=postgres://postgres:postgres@localhost:5432/dev"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: http://localhost:5173/@vite/client",
+      "input": [
+        "http://localhost:5173/@vite/client"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Authorization: Basic authentication is disabled on the admin",
+      "input": [
+        "Authorization: Basic authentication is disabled on the admin panel"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Token type: Bearer 12345678901234567890 rows scanned",
+      "input": [
+        "Token type: Bearer\n12345678901234567890 rows scanned"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: token: ▁Indonesia (id 12345)",
+      "input": [
+        "token: ▁Indonesia (id 12345)"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: key: Müller-Lüdenscheidt",
+      "input": [
+        "key: Müller-Lüdenscheidt"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: Google TTS voice: <token>",
+      "input": [
+        "Google TTS voice: ",
+        "sk-",
+        "SK-Wavenet-A-Neural2-Female"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: model: <token>",
+      "input": [
+        "model: ",
+        "sk-",
+        "Llama3-8B-Instruct-Finetune-v2"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: SSH_KEY=/Users/ajianaz/.ssh/id_ed25519_work2026a",
+      "input": [
+        "SSH_KEY=/Users/ajianaz/.ssh/id_ed25519_work2026a"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: password: min-length=12,complexity=high",
+      "input": [
+        "password: min-length=12,complexity=high"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: the documented AWS example key",
+      "input": [
+        "AWS docs example: ",
+        "AKIA",
+        "IOSFODNN7EXAMPLE"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: max_tokens: 4096",
+      "input": [
+        "max_tokens: 4096"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: token_type: Bearer",
+      "input": [
+        "token_type: Bearer"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: secret_name: prod-db",
+      "input": [
+        "secret_name: prod-db"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: password_policy: strict",
+      "input": [
+        "password_policy: strict"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.1234",
+      "input": [
+        "SSH_AUTH_SOCK=/tmp/ssh-XXXX/agent.1234"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "left alone: api_key_header: X-Api-Key",
+      "input": [
+        "api_key_header: X-Api-Key"
+      ],
+      "kinds": []
+    },
+    {
+      "name": "masked: sk- key with a hex body",
+      "input": [
+        "deepseek key ",
+        "sk-",
+        "3f8a9b2c1d4e5f60718293a4b5c6d7e8"
+      ],
+      "kinds": [
+        [
+          "api-key",
+          1
+        ]
+      ],
+      "expected": "deepseek key sk-[REDACTED:api-key]"
+    },
+    {
+      "name": "masked: slack refresh token",
+      "input": [
+        "refresh token ",
+        "xoxe-",
+        "1-My0xLTEyMzQ1Njc4OTAtYWJjZGVmZ2hpams"
+      ],
+      "kinds": [
+        [
+          "slack-token",
+          1
+        ]
+      ],
+      "expected": "refresh token xoxe-[REDACTED:slack-token]"
+    },
+    {
+      "name": "masked: slack app token",
+      "input": [
+        "xapp-",
+        "1-A0123456789-1234567890123-abcdef0123456789abcdef0123456789"
+      ],
+      "kinds": [
+        [
+          "slack-token",
+          1
+        ]
+      ],
+      "expected": "xapp-[REDACTED:slack-token]"
+    },
+    {
+      "name": "masked: npm token",
+      "input": [
+        ".npmrc //registry.npmjs.org/:_authToken=",
+        "npm_",
+        "Zq8vN2xL5mP9aR4tW7yB3cD6eF1gH2iJ3kL4"
+      ],
+      "kinds": [
+        [
+          "npm-token",
+          1
+        ]
+      ],
+      "expected": ".npmrc //registry.npmjs.org/:_authToken=npm_[REDACTED:npm-token]"
+    },
+    {
+      "name": "masked: stripe webhook secret",
+      "input": [
+        "Stripe webhook secret ",
+        "whsec_",
+        "Zq8vN2xL5mP9aR4tW7yB3cD6"
+      ],
+      "kinds": [
+        [
+          "webhook-secret",
+          1
+        ]
+      ],
+      "expected": "Stripe webhook secret whsec_[REDACTED:webhook-secret]"
     }
   ]
 }

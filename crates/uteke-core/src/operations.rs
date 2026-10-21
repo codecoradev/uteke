@@ -85,6 +85,17 @@ pub struct RememberOutcome {
     pub embedding_written: bool,
     /// Failure reason when the embedding could not be persisted.
     pub warning: Option<String>,
+    /// Secrets the privacy filter masked in the content (#1464): a kind and a
+    /// count each, never a value. Empty when nothing was masked.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub redactions: Vec<crate::privacy::RedactionCount>,
+}
+
+impl RememberOutcome {
+    /// Whether the privacy filter masked anything in the stored content.
+    pub fn redacted(&self) -> bool {
+        !self.redactions.is_empty()
+    }
 }
 
 impl crate::Uteke {
@@ -233,6 +244,20 @@ impl crate::Uteke {
         self.remember_embed_detailed(content, tags, metadata, namespace, &effective_type)
     }
 
+    /// Audit entry for a write whose content the privacy filter changed
+    /// (#1464): kinds and counts, never a value. Best-effort like every
+    /// timeline event.
+    pub(crate) fn record_redaction(&self, id: &str, redactions: &[crate::privacy::RedactionCount]) {
+        if redactions.is_empty() {
+            return;
+        }
+        self.try_timeline_event(
+            id,
+            crate::timeline::TimelineEventType::Redacted,
+            Some(&serde_json::json!({ "redactions": redactions })),
+        );
+    }
+
     /// Embed-then-store with honest embedding reporting (#1273).
     fn remember_embed_detailed(
         &self,
@@ -249,6 +274,11 @@ impl crate::Uteke {
                 "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
             ))
         })?;
+        // Privacy filter (#1464): before the content is embedded, indexed or
+        // stored, so a secret never reaches the vector, FTS5 or the row.
+        let prepared = self.privacy_config.prepare(content, metadata)?;
+        let content = prepared.content.as_str();
+        let metadata = prepared.metadata.clone();
         // Detect JSON content and use flattened text for embedding
         let content_type = crate::memory::crud::detect_content_type(content);
         let embed_text = if content_type == "json" {
@@ -300,11 +330,12 @@ impl crate::Uteke {
                     id: existing_id,
                     embedding_written: true,
                     warning: None,
+                    redactions: prepared.redactions.clone(),
                 });
             }
         }
 
-        self.remember_precomputed_detailed(
+        let mut outcome = self.remember_precomputed_detailed(
             content,
             tags,
             metadata,
@@ -313,7 +344,10 @@ impl crate::Uteke {
             content_type,
             &embedding,
             generation_error,
-        )
+        )?;
+        self.record_redaction(&outcome.id, &prepared.redactions);
+        outcome.redactions = prepared.redactions;
+        Ok(outcome)
     }
 
     /// Store a new memory with a pre-computed embedding.
@@ -551,6 +585,7 @@ impl crate::Uteke {
             embedding_written,
             warning: vector_error,
             id,
+            redactions: Vec::new(),
         })
     }
 
@@ -1869,6 +1904,45 @@ impl crate::Uteke {
             }
         }
 
+        // Privacy filter (#1464) on the new content, before it is embedded or
+        // stored. A masked update also records `redacted` in the metadata:
+        // the caller's metadata when given, else the memory's current one.
+        let prepared = match content {
+            Some(c) => Some(self.privacy_config.prepare(c, None)?),
+            None => None,
+        };
+        let redactions = prepared
+            .as_ref()
+            .map(|p| p.redactions.clone())
+            .unwrap_or_default();
+        let masked_content: Option<String> = prepared.map(|p| p.content);
+        let content: Option<&str> = masked_content.as_deref();
+        let flagged_metadata: Option<serde_json::Value> = if redactions.is_empty() {
+            match (content, metadata) {
+                // Clean new content and no metadata from the caller: the flags
+                // a previous version left no longer describe the content,
+                // unless the edit kept a mask marker (a read-edit-write round
+                // trip of masked text).
+                (Some(c), None) if !c.contains("[REDACTED:") => {
+                    crate::privacy::without_redaction_flags(&existing.metadata)
+                }
+                // A metadata-only update keeps the masked content, so it keeps
+                // the flags that describe it.
+                (None, Some(m)) => crate::privacy::carry_redaction_flags(m, &existing.metadata),
+                _ => None,
+            }
+        } else {
+            crate::privacy::with_redaction_flags(
+                Some(
+                    metadata
+                        .cloned()
+                        .unwrap_or_else(|| existing.metadata.clone()),
+                ),
+                &redactions,
+            )
+        };
+        let metadata: Option<&serde_json::Value> = flagged_metadata.as_ref().or(metadata);
+
         let now = chrono::Utc::now();
 
         // Re-embed if content changed
@@ -1931,6 +2005,8 @@ impl crate::Uteke {
                 return Ok(false);
             }
         }
+
+        self.record_redaction(id, &redactions);
 
         // Invalidate recall cache for the memory's namespace
         self.recall_cache.invalidate_namespace(&existing.namespace);
