@@ -97,6 +97,89 @@ pub struct PrivacyConfig {
     pub allowlist: Vec<Regex>,
 }
 
+/// `[privacy]` in `uteke.toml`.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct PrivacySettings {
+    /// `redact` (default), `strict` or `off`.
+    pub mode: Option<String>,
+    /// Regexes; a value matching any of them is kept as it is.
+    pub allowlist: Vec<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(default)]
+struct PrivacyFile {
+    privacy: PrivacySettings,
+}
+
+impl PrivacyConfig {
+    /// Build the config from `[privacy]` settings. An unknown mode or an
+    /// invalid regex is an error; callers that must keep running use
+    /// [`load_config`], which falls back to the safe default.
+    pub fn from_settings(settings: &PrivacySettings) -> Result<Self, Error> {
+        Ok(Self {
+            mode: match settings.mode.as_deref() {
+                Some(m) => PrivacyMode::parse(m)?,
+                None => PrivacyMode::default(),
+            },
+            allowlist: compile_allowlist(&settings.allowlist)?,
+        })
+    }
+}
+
+/// The privacy config of this installation: `[privacy]` from the global
+/// `uteke.toml` (the project-local file is never trusted for it, so a cloned
+/// repository cannot switch the filter off), then `UTEKE_PRIVACY_MODE`.
+/// A bad value is logged and replaced by the default (`redact`): the filter
+/// never turns itself off because of a typo.
+pub fn load_config() -> PrivacyConfig {
+    let global = crate::uteke_home().ok().map(|h| h.join("uteke.toml"));
+    let project = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
+    let mut settings =
+        crate::config_layers::resolve::<PrivacyFile>(&crate::config_layers::Layers {
+            global: global.as_deref(),
+            project: project.as_deref(),
+            trust_project: matches!(
+                std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
+                Ok("1") | Ok("true")
+            ),
+        })
+        .value
+        .privacy;
+    if let Ok(mode) = std::env::var("UTEKE_PRIVACY_MODE") {
+        settings.mode = Some(mode);
+    }
+    config_or_default(&settings)
+}
+
+fn config_or_default(settings: &PrivacySettings) -> PrivacyConfig {
+    // Each setting falls back on its own: a bad allowlist entry must not
+    // lose a `strict` mode, and a bad mode must not drop the allowlist.
+    let mode = match settings.mode.as_deref().map(PrivacyMode::parse) {
+        Some(Ok(m)) => m,
+        Some(Err(e)) => {
+            tracing::warn!("Invalid [privacy] mode, using redact: {e}");
+            PrivacyMode::default()
+        }
+        None => PrivacyMode::default(),
+    };
+    let allowlist = settings
+        .allowlist
+        .iter()
+        .filter_map(|p| match compile_allowlist(std::slice::from_ref(p)) {
+            Ok(mut v) => v.pop(),
+            Err(e) => {
+                tracing::warn!("Ignoring [privacy] allowlist entry: {e}");
+                None
+            }
+        })
+        .collect();
+    PrivacyConfig { mode, allowlist }
+}
+
 /// Content and metadata ready to store, plus what the filter did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prepared {
@@ -1544,5 +1627,60 @@ mod tests {
         );
         let comment = format!("# {b}\n# {run}\n# {e}");
         assert_eq!(redact(&comment, &[]).text, "# [REDACTED:private-key]");
+    }
+
+    #[test]
+    fn settings_become_a_config_and_bad_values_fall_back_one_by_one() {
+        let ok = PrivacyConfig::from_settings(&PrivacySettings {
+            mode: Some("Strict".into()),
+            allowlist: vec!["^dev-".into()],
+        })
+        .unwrap();
+        assert_eq!(ok.mode, PrivacyMode::Strict);
+        assert_eq!(ok.allowlist.len(), 1);
+        assert!(
+            PrivacyConfig::from_settings(&PrivacySettings {
+                mode: Some("maybe".into()),
+                allowlist: vec![],
+            })
+            .is_err()
+        );
+
+        // A bad mode keeps the allowlist and never turns the filter off; a bad
+        // regex keeps the mode.
+        let c = config_or_default(&PrivacySettings {
+            mode: Some("none".into()),
+            allowlist: vec!["^dev-".into()],
+        });
+        assert_eq!((c.mode, c.allowlist.len()), (PrivacyMode::Redact, 1));
+        let c = config_or_default(&PrivacySettings {
+            mode: Some("strict".into()),
+            allowlist: vec!["(".into(), "^dev-".into()],
+        });
+        assert_eq!((c.mode, c.allowlist.len()), (PrivacyMode::Strict, 1));
+    }
+
+    #[test]
+    fn privacy_is_read_from_the_global_file_only() {
+        use crate::config_layers::{Layers, resolve};
+        let dir = std::env::temp_dir().join(format!("uteke-privacy-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let global = dir.join("global.toml");
+        let project = dir.join("project.toml");
+        std::fs::write(&global, "[privacy]\nmode = \"strict\"\n").unwrap();
+        std::fs::write(
+            &project,
+            "[privacy]\nmode = \"off\"\nallowlist = [\".*\"]\n",
+        )
+        .unwrap();
+        let r = resolve::<PrivacyFile>(&Layers {
+            global: Some(&global),
+            project: Some(&project),
+            trust_project: false,
+        });
+        assert_eq!(r.value.privacy.mode.as_deref(), Some("strict"));
+        assert!(r.value.privacy.allowlist.is_empty());
+        assert!(r.ignored_untrusted.contains(&"privacy".to_string()));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -285,6 +285,10 @@ fn main() {
         Ok(mut u) => {
             // [recall] jaccard_weight (#719, #1355 step B); the core clamps to 0..=1.
             u.set_jaccard_weight(recall_tuning.jaccard_weight);
+            // [privacy] (#1464): secret filter on the write path.
+            let privacy = uteke_core::privacy::load_config();
+            info!("Privacy filter: {:?}", privacy.mode);
+            u.set_privacy_config(privacy);
             // [embed_fallback] + UTEKE_EMBED_FALLBACK_* (#1355): only when complete.
             if let Some(fallback) = resolve_embed_fallback(&config, |k| std::env::var(k).ok()) {
                 info!("Embedding fallback: enabled ({})", fallback.base_url);

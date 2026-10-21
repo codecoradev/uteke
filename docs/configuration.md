@@ -309,6 +309,7 @@ Resolution order (highest priority first):
 | Env Var | Config Equivalent | Default | Description |
 |---------|-------------------|---------|-------------|
 | `UTEKE_HOME` | — | `~/.codecora/uteke` | Data directory |
+| `UTEKE_PRIVACY_MODE` | `[privacy] mode` | `redact` | Secret filter mode: `redact`, `strict`, `off` |
 | `UTEKE_NAMESPACE` | `[store] namespace` | `default` | Default namespace (applied in CLI) |
 | `UTEKE_AUTH_TOKEN` | — | — | Server auth token (applied in server) |
 | `UTEKE_LOG_LEVEL` | `[logging] level` | `warn` | Log level (trace/debug/info/warn/error) |
@@ -400,9 +401,26 @@ A project directory can be an untrusted clone, so `.uteke/uteke.toml` is **not**
 
 - `[embedding]`: `backend`, `api_key`, `base_url`, `endpoint_path`
 - `[embed_fallback]` and `[extraction]`: `api_key`, `base_url`, `endpoint_path`
+- the whole `[privacy]` section (a cloned repository must not switch the secret filter off)
 - the whole `[server]` section (`enabled`, `host`, `port`, `auth_token`, `read_only_token`, `cors_origins`, `allowed_hosts`)
 
 Everything else (store path, namespace, logging, recall tuning, lifecycle, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
+
+## Privacy Filter (#1464)
+
+Secrets in the content of a memory are masked before it is embedded or stored (`ghp_[REDACTED:github-token]`, `API_KEY=[REDACTED:env-secret]`). The memory is flagged with `metadata.redacted` and `metadata.redactions` (kinds and counts, never values) and gets a `redacted` timeline event. The original text is not kept anywhere.
+
+```toml
+[privacy]
+mode = "redact"            # redact (default) | strict | off
+allowlist = ["^dev-"]      # regexes; a value matching any of them is kept as it is
+```
+
+- `redact`: mask and store.
+- `strict`: refuse the write (`secret_detected`; import skips the row).
+- `off`: store as given.
+
+`UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content of `remember`, room remember, `update` and `import`; metadata, tags and `source` are not filtered yet.
 
 ## CLI Flag Override
 

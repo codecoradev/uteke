@@ -42,6 +42,9 @@ pub const UNTRUSTED_PROJECT_KEYS: &[&str] = &[
     "extraction.api_key",
     "extraction.base_url",
     "extraction.endpoint_path",
+    // A cloned repository must not switch the secret filter off or allowlist
+    // everything.
+    "privacy",
     "server",
 ];
 

@@ -247,6 +247,8 @@ fn main() {
             });
             // #928: apply lifecycle configuration from config
             u.set_lifecycle_config(config.lifecycle.to_core());
+            // #1464: secret filter on the write path ([privacy] in uteke.toml)
+            u.set_privacy_config(uteke_core::privacy::load_config());
             u
         }
         Err(e) => {

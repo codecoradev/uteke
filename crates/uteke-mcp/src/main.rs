@@ -37,7 +37,11 @@ fn main() {
     });
 
     let uteke = match Uteke::open(&store_path) {
-        Ok(u) => u,
+        Ok(mut u) => {
+            // #1464: secret filter on the write path ([privacy] in uteke.toml)
+            u.set_privacy_config(uteke_core::privacy::load_config());
+            u
+        }
         Err(e) => {
             eprintln!("Failed to open uteke store: {e}");
             std::process::exit(1);

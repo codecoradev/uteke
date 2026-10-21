@@ -8,6 +8,7 @@
 
 ### Added
 
+- **`[privacy]` in `uteke.toml` (#1464, part 2b-2a)** - `mode` (`redact`, the default, `strict` or `off`) and `allowlist` (regexes) now configure the secret filter in the CLI, `uteke-serve` and `uteke-mcp`; `UTEKE_PRIVACY_MODE` overrides the mode. The section is read from the global file only (a project file could otherwise switch the filter off), and a bad value falls back to the default instead of disabling it.
 - **`author` on every write path (#1427, phase 2)** - a memory records who wrote it (the agent, user or tool name), with or without a room. `POST /remember`, MCP `uteke_remember` and `uteke remember --author` accept it (free text, trimmed, 1 to 128 characters; an invalid value is a 400, a tool error or a CLI error before anything is stored). A room write stamps the named writer on the memory as well as on the room link; the `anonymous` / `user` fallback of the room link is not an author. `author` is returned on the memory object by recall, search, list and get (omitted when unset), echoed by `POST /remember`, and kept by export and import. Stores migrate to schema v22 on first open (see Internal below): back up a production store first. Filtering by author is not part of this phase. Contract: uteke-cloud#219 (cloud already has the field).
 
 ### Fixed
