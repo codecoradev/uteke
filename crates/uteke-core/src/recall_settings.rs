@@ -77,6 +77,21 @@ impl RecallSettings {
         }
     }
 
+    /// These settings with an unknown `default_strategy` replaced by `hybrid`
+    /// (and a warning): a typo in `uteke.toml` must not make every recall
+    /// request fail with a message that blames the request (#1034).
+    pub fn sanitized(mut self) -> Self {
+        if crate::RecallStrategy::from_str_opt(&self.default_strategy).is_none() {
+            tracing::warn!(
+                "Invalid [recall] default_strategy='{}' in config - falling back to 'hybrid'. \
+                 Expected: vector | fts5 | hybrid | graph | fusion.",
+                self.default_strategy
+            );
+            self.default_strategy = "hybrid".to_string();
+        }
+        self
+    }
+
     /// Apply the `UTEKE_RECALL_*` and `UTEKE_GRAPH_*` overrides from `lookup`.
     /// A value that is out of range or does not parse is logged and ignored.
     pub fn with_overrides_from(mut self, lookup: impl Fn(&str) -> Option<String>) -> Self {

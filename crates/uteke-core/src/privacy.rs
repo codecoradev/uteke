@@ -134,19 +134,7 @@ impl PrivacyConfig {
 /// A bad value is logged and replaced by the default (`redact`): the filter
 /// never turns itself off because of a typo.
 pub fn load_config() -> PrivacyConfig {
-    let global = crate::uteke_home().ok().map(|h| h.join("uteke.toml"));
-    let project = std::env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
-    let mut settings =
-        crate::config_layers::resolve::<PrivacyFile>(&crate::config_layers::Layers {
-            global: global.as_deref(),
-            project: project.as_deref(),
-            trust_project: matches!(
-                std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
-                Ok("1") | Ok("true")
-            ),
-        })
+    let mut settings = crate::config_layers::resolve_standard::<PrivacyFile>()
         .value
         .privacy;
     if let Ok(mode) = std::env::var("UTEKE_PRIVACY_MODE") {

@@ -269,32 +269,34 @@ fn main() {
         }
     };
     info!("Embedding backend: {}", embedding.backend);
-    let recall_tuning = resolve_recall_tuning(&config);
+    // The engine sections: the file, then the UTEKE_RECALL_* / UTEKE_GRAPH_*
+    // overrides (as in the CLI), an unknown default strategy replaced by
+    // hybrid (#1034: a typo must not 400 every recall request), and the
+    // embedding fallback only when it is complete.
+    let mut engine = config.engine.clone();
+    engine.recall = engine.recall.with_env_overrides().sanitized();
+    let fallback = resolve_embed_fallback(&config, |k| std::env::var(k).ok());
+    if let Some(f) = &fallback {
+        info!("Embedding fallback: enabled ({})", f.base_url);
+    }
+    engine.embed_fallback = fallback.unwrap_or_default();
     let uteke = match Uteke::open_with_embedding_and_graph(
         &db_path,
         &embedding.backend,
         embedding.settings,
-        resolve_tier(&config),
+        engine.tier,
         uteke_core::RecallConfig::default(),
-        recall_tuning.graph_rerank(),
+        engine.recall.graph_rerank(),
         embedding.vector_backend.as_deref(),
     ) {
         Ok(mut u) => {
-            // [recall] jaccard_weight (#719, #1355 step B); the core clamps to 0..=1.
-            u.set_jaccard_weight(recall_tuning.jaccard_weight);
             // [privacy] (#1464): secret filter on the write path.
             let privacy = uteke_core::privacy::load_config();
             info!("Privacy filter: {:?}", privacy.mode);
             u.set_privacy_config(privacy);
-            // Jaccard weight, dream thresholds, lifecycle and the embedding
-            // fallback, applied the same way as in the CLI. The fallback also
-            // honours UTEKE_EMBED_FALLBACK_* (#1355); it only applies when complete.
-            let mut engine = config.engine.clone();
-            let fallback = resolve_embed_fallback(&config, |k| std::env::var(k).ok());
-            if let Some(f) = &fallback {
-                info!("Embedding fallback: enabled ({})", f.base_url);
-            }
-            engine.embed_fallback = fallback.unwrap_or_default();
+            // Tier, graph rerank, Jaccard weight, recall defaults, dream
+            // thresholds, lifecycle and the embedding fallback, applied the same
+            // way as in the CLI and MCP.
             u.apply_settings(&engine);
             info!(
                 "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
@@ -338,27 +340,7 @@ fn main() {
         auth_token_hash,
         read_only_token_hash,
         cors_origins: cors_origins.clone(),
-        recall_config: {
-            // Sanitize [recall] default_strategy at startup (#1034): the
-            // server only recently started honoring this key. An invalid
-            // value (typo in uteke.toml) must not 400 every recall request
-            // with a message blaming the request — warn loudly and fall
-            // back to hybrid instead. Explicit request-level `strategy`
-            // values remain strictly validated (HTTP 400).
-            let mut recall = Some(config.engine.recall.clone());
-            if let Some(r) = recall.as_mut() {
-                if uteke_core::RecallStrategy::from_str_opt(&r.default_strategy).is_none() {
-                    warn!(
-                        "Invalid [recall] default_strategy='{}' in config — \
-                         falling back to 'hybrid'. \
-                         Expected: vector | fts5 | hybrid | graph.",
-                        r.default_strategy
-                    );
-                    r.default_strategy = "hybrid".to_string();
-                }
-            }
-            recall
-        },
+        recall_config: Some(engine.recall.clone()),
         extraction_config: config.extraction.clone(),
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
         store_id: uteke_core::store_identity(&home),
@@ -391,7 +373,7 @@ fn main() {
     // Auto-lifecycle background thread (#934 — replaces auto-aging #442).
     // Runs lifecycle_cycle periodically: soft-deprecate aged memories (cap-limited)
     // + auto-prune expired deprecated memories.
-    let lifecycle_config = config.engine.lifecycle;
+    let lifecycle_config = engine.lifecycle;
     let lifecycle_enabled = lifecycle_config.auto_aging_enabled;
     // Minimum 1 hour to prevent a busy loop.
     let lifecycle_hours = lifecycle_config.auto_aging_interval_hours.max(1);
@@ -681,16 +663,6 @@ fn resolve_embed_fallback(
         .clone()
         .with_overrides_from(lookup);
     settings.is_configured().then_some(settings)
-}
-
-/// `[recall]` over the core defaults (the same settings the CLI reads).
-fn resolve_recall_tuning(config: &ServerFileConfig) -> uteke_core::RecallSettings {
-    config.engine.recall.clone()
-}
-
-/// Tier settings: `[tier]` over the core defaults (7 / 30 days, boost 0.1).
-fn resolve_tier(config: &ServerFileConfig) -> uteke_core::TierConfig {
-    config.engine.tier
 }
 
 /// Backends `Uteke` can initialize lazily (same list as the CLI validates).
@@ -1069,16 +1041,20 @@ mod recall_tuning_tests {
         toml::from_str(t).expect("valid toml")
     }
 
+    fn recall_of(c: ServerFileConfig) -> uteke_core::RecallSettings {
+        c.engine.recall
+    }
+
     #[test]
     fn defaults_match_the_core_and_the_cli() {
-        let t = resolve_recall_tuning(&ServerFileConfig::default());
+        let t = recall_of(ServerFileConfig::default());
         let d = uteke_core::GraphRerankConfig::default();
         assert_eq!(t.graph_rerank().density_weight, d.density_weight);
         assert_eq!(t.graph_rerank().authority_weight, d.authority_weight);
         assert_eq!(t.graph_rerank().enabled, d.enabled);
         assert_eq!(t.jaccard_weight, 0.0, "jaccard is opt-in");
         // a [recall] section without these keys changes nothing either
-        let t = resolve_recall_tuning(&parse("[recall]\nmin_score = 0.2\n"));
+        let t = recall_of(parse("[recall]\nmin_score = 0.2\n"));
         assert_eq!(
             (t.graph_rerank().density_weight, t.jaccard_weight),
             (0.1, 0.0)
@@ -1087,7 +1063,7 @@ mod recall_tuning_tests {
 
     #[test]
     fn file_values_are_applied() {
-        let t = resolve_recall_tuning(&parse(
+        let t = recall_of(parse(
             "[recall]\ngraph_density_weight = 0.3\ngraph_authority_weight = 0.2\n\
              graph_rerank_enabled = false\njaccard_weight = 0.12\n",
         ));
@@ -1099,7 +1075,7 @@ mod recall_tuning_tests {
 
     #[test]
     fn a_partial_section_keeps_the_other_defaults() {
-        let t = resolve_recall_tuning(&parse("[recall]\ngraph_density_weight = 0.0\n"));
+        let t = recall_of(parse("[recall]\ngraph_density_weight = 0.0\n"));
         assert_eq!(t.graph_rerank().density_weight, 0.0);
         assert_eq!(t.graph_rerank().authority_weight, 0.1);
         assert!(t.graph_rerank().enabled);
@@ -1126,9 +1102,13 @@ mod tier_config_tests {
         toml::from_str(t).expect("valid toml")
     }
 
+    fn tier_of(c: ServerFileConfig) -> uteke_core::TierConfig {
+        c.engine.tier
+    }
+
     #[test]
     fn defaults_equal_the_core_defaults() {
-        let t = resolve_tier(&ServerFileConfig::default());
+        let t = tier_of(ServerFileConfig::default());
         let d = uteke_core::TierConfig::default();
         assert_eq!(
             (t.hot_days, t.warm_days, t.hot_boost),
@@ -1139,11 +1119,11 @@ mod tier_config_tests {
 
     #[test]
     fn file_values_are_applied_and_a_partial_section_keeps_the_rest() {
-        let t = resolve_tier(&parse(
+        let t = tier_of(parse(
             "[tier]\nhot_days = 2\nwarm_days = 10\nhot_boost = 0.5\n",
         ));
         assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (2, 10, 0.5));
-        let t = resolve_tier(&parse("[tier]\nhot_boost = 0.0\n"));
+        let t = tier_of(parse("[tier]\nhot_boost = 0.0\n"));
         assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (7, 30, 0.0));
     }
 }

@@ -681,6 +681,9 @@ pub struct Uteke {
     /// Jaccard token reranking weight (#719). Additive boost applied
     /// post-RRF based on query-content token overlap. Default 0.0 (off).
     jaccard_weight: f32,
+    /// The `[recall]` settings in force: the defaults a transport falls back to
+    /// when a request does not give a floor or a strategy (set by `apply_settings`).
+    recall_settings: RecallSettings,
     /// Dream pipeline thresholds (#731). Used by contradiction scan,
     /// dedup/consolidate, and orphan detection phases.
     dream_config: DreamConfig,
@@ -1109,6 +1112,7 @@ impl Uteke {
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
             jaccard_weight: 0.0,
+            recall_settings: RecallSettings::default(),
             dream_config: DreamConfig::default(),
             privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),

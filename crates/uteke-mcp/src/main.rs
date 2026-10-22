@@ -36,8 +36,13 @@ fn main() {
         std::process::exit(1);
     });
 
+    // The engine sections of uteke.toml, read and applied like the CLI and the
+    // server do (#1515): recall defaults, tier, graph rerank, dream, lifecycle,
+    // embedding fallback.
+    let engine = uteke_core::EngineSettings::load();
     let uteke = match Uteke::open(&store_path) {
         Ok(mut u) => {
+            u.apply_settings(&engine);
             // #1464: secret filter on the write path ([privacy] in uteke.toml)
             u.set_privacy_config(uteke_core::privacy::load_config());
             u

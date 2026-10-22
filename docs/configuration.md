@@ -227,6 +227,8 @@ var > `[extraction]` config > built-in default.
 
 ## Recall Threshold
 
+The `[recall]`, `[tier]`, `[dream]`, `[lifecycle]` and `[embed_fallback]` sections are read the same way by the CLI, `uteke-serve` and `uteke-mcp` (the global `uteke.toml`, then the project file with its untrusted keys stripped, then the `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` variables). `uteke_recall` over MCP, and MCP over HTTP, use `[recall] min_score` / `min_score_strict` as the floor and `default_strategy` as the strategy when a call gives none, exactly like `POST /recall`. With no `[recall]` section the defaults equal the built-ins, so nothing changes.
+
 Control minimum similarity score for recall results:
 
 ```toml

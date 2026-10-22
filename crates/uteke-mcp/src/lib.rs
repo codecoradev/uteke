@@ -1337,7 +1337,10 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let tag_vec = req.tag_filter();
     let tags_ref = tag_vec.as_deref();
-    let min_score = req.resolve_min_score(None, None);
+    // The similarity floor and the strategy fall back to `[recall]` of
+    // uteke.toml (defaults equal the built-ins), as `POST /recall` does.
+    let recall = uteke.recall_settings();
+    let min_score = req.resolve_min_score(Some(recall.min_score), Some(recall.min_score_strict));
 
     // Parse optional search type (#531)
     let search_type = req.search_type().map_err(|e| e.to_string())?;
@@ -1345,7 +1348,9 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // Parse optional recall strategy (#1035): default fusion since 0.16.0
     // (#1123), matching the CLI and HTTP defaults. Unknown values are a loud
     // error (JSON-RPC -32603), never a silent fallback.
-    let strategy = req.strategy(None).map_err(|e| e.to_string())?;
+    let strategy = req
+        .strategy(Some(recall.default_strategy.as_str()))
+        .map_err(|e| e.to_string())?;
 
     // Explain mode (#1160): memory-only, bypasses unified results and
     // returns full ranking signals per result. An omitted `type` (the
@@ -4331,5 +4336,68 @@ mod privacy_mcp_tests {
         .err()
         .expect("strict rejects the update");
         assert!(err.starts_with("secret_detected:"), "{err}");
+    }
+}
+
+/// `uteke_recall` falls back to the `[recall]` settings of `uteke.toml` (#1515):
+/// the similarity floor and the strategy, as `POST /recall` does.
+#[cfg(test)]
+mod recall_settings_mcp_tests {
+    use super::*;
+    use uteke_core::test_support::open_keyword;
+    use uteke_core::{EngineSettings, Uteke};
+
+    fn store(configure: impl FnOnce(&mut EngineSettings)) -> Uteke {
+        let mut u = open_keyword();
+        for text in ["rust ownership and borrowing", "python garbage collector"] {
+            u.remember_detailed(text, &[], None, None).unwrap();
+        }
+        let mut e = EngineSettings::default();
+        configure(&mut e);
+        u.apply_settings(&e);
+        u
+    }
+
+    fn recall(u: &Uteke, args: Value) -> String {
+        match &exec_recall(u, &args).unwrap().content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    #[test]
+    fn without_a_recall_section_nothing_changes() {
+        let u = store(|_| {});
+        let t = recall(&u, serde_json::json!({"query": "rust borrowing"}));
+        assert!(t.contains("rust ownership"), "{t}");
+    }
+
+    #[test]
+    fn the_configured_floor_filters_and_a_call_floor_wins_over_it() {
+        let u = store(|e| e.recall.min_score = 0.99);
+        let t = recall(&u, serde_json::json!({"query": "rust borrowing"}));
+        assert!(!t.contains("rust ownership"), "the floor is 0.99: {t}");
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "rust borrowing", "min_score": 0.0}),
+        );
+        assert!(
+            t.contains("rust ownership"),
+            "the call's own floor wins: {t}"
+        );
+    }
+
+    #[test]
+    fn the_configured_default_strategy_is_used_and_a_call_strategy_wins() {
+        let u = store(|e| e.recall.default_strategy = "vector".into());
+        // Both strategies answer; what matters is that neither is rejected and
+        // an explicit strategy still overrides the configured one.
+        assert!(recall(&u, serde_json::json!({"query": "rust"})).contains("rust ownership"));
+        assert!(
+            recall(&u, serde_json::json!({"query": "rust", "strategy": "fts5"}))
+                .contains("rust ownership")
+        );
+        // An unknown configured strategy was sanitized to hybrid at apply time.
+        let u = store(|e| e.recall.default_strategy = "nonsense".into());
+        assert!(recall(&u, serde_json::json!({"query": "rust"})).contains("rust ownership"));
     }
 }

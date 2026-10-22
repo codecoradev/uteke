@@ -126,6 +126,25 @@ fn read_layer(path: &Path) -> Option<Table> {
     }
 }
 
+/// [`resolve`] over the standard places: `{uteke_home}/uteke.toml`, then
+/// `$CWD/.uteke/uteke.toml`, with the project file untrusted unless
+/// `UTEKE_TRUST_PROJECT_CONFIG` is `1` or `true`. For callers that read only
+/// their own sections (the privacy filter, the engine settings of MCP).
+pub fn resolve_standard<T: DeserializeOwned + Default>() -> Resolved<T> {
+    let global = crate::uteke_home().ok().map(|h| h.join("uteke.toml"));
+    let project = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
+    resolve::<T>(&Layers {
+        global: global.as_deref(),
+        project: project.as_deref(),
+        trust_project: matches!(
+            std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
+            Ok("1") | Ok("true")
+        ),
+    })
+}
+
 /// Resolve the layers into a `T`.
 pub fn resolve<T: DeserializeOwned + Default>(layers: &Layers<'_>) -> Resolved<T> {
     let mut merged = Table::new();

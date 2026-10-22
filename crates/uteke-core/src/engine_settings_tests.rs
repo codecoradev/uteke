@@ -121,6 +121,20 @@ mod recall {
     }
 
     #[test]
+    fn an_unknown_default_strategy_becomes_hybrid_and_a_known_one_is_kept() {
+        assert_eq!(
+            parse("default_strategy = \"nonsense\"")
+                .sanitized()
+                .default_strategy,
+            "hybrid"
+        );
+        for known in ["vector", "fts5", "hybrid", "graph", "fusion"] {
+            let r = parse(&format!("default_strategy = \"{known}\"")).sanitized();
+            assert_eq!(r.default_strategy, known);
+        }
+    }
+
+    #[test]
     fn conversions_to_the_engine_types() {
         let r = parse(
             "min_score = 0.25\ngraph_density_weight = 0.3\ngraph_authority_weight = 0.2\ngraph_rerank_enabled = false",
@@ -230,6 +244,69 @@ mod engine {
         assert_eq!(u.dream_config.contradict_max_memories, 7);
         assert_eq!(u.lifecycle_config().deprecated_ttl_days, 11);
         assert_eq!(u.fallback_settings.base_url, "https://example.test");
+    }
+
+    #[test]
+    fn apply_settings_also_sets_tier_graph_rerank_and_the_recall_defaults() {
+        let mut u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        let mut e = EngineSettings::default();
+        e.tier.hot_days = 2;
+        e.recall.graph_density_weight = 0.4;
+        e.recall.graph_rerank_enabled = false;
+        e.recall.min_score = 0.3;
+        e.recall.default_strategy = "nonsense".into();
+        u.apply_settings(&e);
+        assert_eq!(u.tier_config.hot_days, 2);
+        assert_eq!(u.graph_rerank_config.density_weight, 0.4);
+        assert!(!u.graph_rerank_config.enabled);
+        assert_eq!(u.recall_settings().min_score, 0.3);
+        assert_eq!(
+            u.recall_settings().default_strategy,
+            "hybrid",
+            "the copy a transport reads is sanitized"
+        );
+    }
+
+    #[test]
+    fn a_fresh_uteke_reports_the_default_recall_settings() {
+        let u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        let r = u.recall_settings();
+        assert_eq!((r.min_score, r.min_score_strict), (0.0, 0.5));
+        assert_eq!(r.default_strategy, "fusion");
+    }
+
+    #[test]
+    fn engine_settings_come_from_layers_then_the_environment() {
+        use crate::config_layers::{Layers, resolve};
+        let dir = std::env::temp_dir().join(format!("uteke-engine-load-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let global = dir.join("uteke.toml");
+        std::fs::write(
+            &global,
+            "[recall]\nmin_score = 0.2\n[embed_fallback]\napi_key = \"file\"\nbase_url = \"https://file.test\"\nmodel = \"m\"\n",
+        )
+        .unwrap();
+        let mut e = resolve::<EngineSettings>(&Layers {
+            global: Some(&global),
+            project: None,
+            trust_project: false,
+        })
+        .value;
+        assert_eq!(e.recall.min_score, 0.2);
+        let env = |k: &str| match k {
+            "UTEKE_RECALL_MIN_SCORE" => Some("0.6".to_string()),
+            "UTEKE_EMBED_FALLBACK_API_KEY" => Some("from-env".to_string()),
+            _ => None,
+        };
+        e.recall = e.recall.with_overrides_from(env);
+        e.embed_fallback = e.embed_fallback.with_overrides_from(env);
+        assert_eq!(
+            e.recall.min_score, 0.6,
+            "the environment wins over the file"
+        );
+        assert_eq!(e.embed_fallback.api_key, "from-env");
+        assert_eq!(e.embed_fallback.base_url, "https://file.test");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
