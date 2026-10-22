@@ -2006,41 +2006,8 @@ impl crate::Uteke {
             .collect();
         let masked_content: Option<String> = prepared.map(|p| p.content);
         let content: Option<&str> = masked_content.as_deref();
-        let flagged_metadata: Option<serde_json::Value> = if redactions.is_empty() {
-            match (content, metadata) {
-                // Clean new content and no metadata from the caller: the flags
-                // a previous version left no longer describe the content,
-                // unless the edit kept a mask marker (a read-edit-write round
-                // trip of masked text).
-                (Some(c), None) if !c.contains("[REDACTED:") => {
-                    crate::privacy::without_redaction_flags(&existing.metadata)
-                }
-                // A metadata-only update keeps the masked content, so it keeps
-                // the flags that describe it.
-                (None, Some(m)) => crate::privacy::carry_redaction_flags(m, &existing.metadata),
-                // New content and new metadata: the flags follow the content,
-                // never what the caller's metadata says about itself.
-                (Some(c), Some(m)) if c.contains("[REDACTED:") => {
-                    let own = crate::privacy::without_redaction_flags(m);
-                    crate::privacy::carry_redaction_flags(
-                        own.as_ref().unwrap_or(m),
-                        &existing.metadata,
-                    )
-                    .or(own)
-                }
-                (Some(_), Some(m)) => crate::privacy::without_redaction_flags(m),
-                _ => None,
-            }
-        } else {
-            crate::privacy::with_redaction_flags(
-                Some(
-                    metadata
-                        .cloned()
-                        .unwrap_or_else(|| existing.metadata.clone()),
-                ),
-                &redactions,
-            )
-        };
+        let flagged_metadata =
+            crate::redaction_flags::resolve(content, metadata, &existing.metadata, &redactions);
         let metadata: Option<&serde_json::Value> = flagged_metadata.as_ref().or(metadata);
 
         let now = chrono::Utc::now();

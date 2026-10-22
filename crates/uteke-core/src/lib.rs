@@ -42,6 +42,7 @@ pub mod privacy;
 mod privacy_field_tests;
 #[cfg(test)]
 mod privacy_write_tests;
+mod redaction_flags;
 
 pub use forget_request::{
     ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,

@@ -324,73 +324,9 @@ fn merge_counts(into: &mut BTreeMap<&'static str, usize>, from: &[RedactionCount
     }
 }
 
-/// Merge `redacted: true` and `redactions` into `metadata`. `None` becomes a new
-/// object; a metadata value that is not an object is left alone (there is
-/// nowhere to merge), and the caller still learns of the redaction from the
-/// returned counts.
-pub fn with_redaction_flags(
-    metadata: Option<serde_json::Value>,
-    redactions: &[RedactionCount],
-) -> Option<serde_json::Value> {
-    if redactions.is_empty() {
-        return metadata;
-    }
-    // A JSON `null` (an import row with `"metadata": null`) is no metadata.
-    let mut value = match metadata {
-        None | Some(serde_json::Value::Null) => serde_json::json!({}),
-        Some(v) => v,
-    };
-    if let serde_json::Value::Object(map) = &mut value {
-        map.insert("redacted".into(), serde_json::json!(true));
-        map.insert(
-            "redactions".into(),
-            serde_json::to_value(redactions).unwrap_or_default(),
-        );
-    }
-    Some(value)
-}
-
-/// `metadata` without the `redacted` and `redactions` keys, or `None` when it
-/// has neither (nothing to change). The flags describe the CURRENT content, so
-/// an update to clean content drops the ones an earlier version left; the
-/// `redacted` timeline event keeps the history.
-pub fn without_redaction_flags(metadata: &serde_json::Value) -> Option<serde_json::Value> {
-    let serde_json::Value::Object(map) = metadata else {
-        return None;
-    };
-    if !map.contains_key("redacted") && !map.contains_key("redactions") {
-        return None;
-    }
-    let mut map = map.clone();
-    map.remove("redacted");
-    map.remove("redactions");
-    Some(serde_json::Value::Object(map))
-}
-
-/// `new` with the redaction flags of `old` carried over, for an update that
-/// replaces the metadata but leaves the (still masked) content alone. `None`
-/// when `old` has no flags, `new` is not an object, or `new` sets its own.
-pub fn carry_redaction_flags(
-    new: &serde_json::Value,
-    old: &serde_json::Value,
-) -> Option<serde_json::Value> {
-    let (serde_json::Value::Object(new_map), serde_json::Value::Object(old_map)) = (new, old)
-    else {
-        return None;
-    };
-    if new_map.contains_key("redacted") || new_map.contains_key("redactions") {
-        return None;
-    }
-    let mut merged = new_map.clone();
-    let mut carried = false;
-    for key in ["redacted", "redactions"] {
-        if let Some(v) = old_map.get(key) {
-            merged.insert(key.to_string(), v.clone());
-            carried = true;
-        }
-    }
-    carried.then_some(serde_json::Value::Object(merged))
-}
+pub use crate::redaction_flags::{
+    carry_redaction_flags, with_redaction_flags, without_redaction_flags,
+};
 
 /// A whole-secret rule: `mask` builds the replacement from the match, or
 /// returns `None` to leave this match alone (a placeholder, prose).
