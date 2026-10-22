@@ -105,6 +105,15 @@ impl Embedder for OllamaEmbedder {
     fn name(&self) -> &str {
         "ollama"
     }
+
+    fn identity(&self) -> String {
+        format!(
+            "ollama:{}:{}:{}",
+            self.model,
+            self.dims,
+            crate::embed::fingerprint(&[&self.base_url])
+        )
+    }
 }
 
 #[derive(serde::Deserialize)]

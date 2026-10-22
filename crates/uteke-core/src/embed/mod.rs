@@ -23,6 +23,24 @@ pub use openai::OpenAiEmbedder;
 #[allow(dead_code)]
 pub type EmbeddingEngine = OnnxEmbedder;
 
+/// A short, stable fingerprint of the parts that identify an endpoint (for an
+/// embedder identity). Hashed so a URL with credentials in it never lands in
+/// the cache database in the clear.
+pub(crate) fn fingerprint(parts: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for p in parts {
+        hasher.update(p.as_bytes());
+        hasher.update(b"\0");
+    }
+    hasher
+        .finalize()
+        .iter()
+        .take(4)
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Validate a user-supplied base_url: must be http(s):// and absolute.
 ///
 /// Rejects empty / schemeless / malformed URLs early so callers get a

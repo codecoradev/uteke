@@ -101,6 +101,13 @@ impl Embedder for FallbackEmbedder {
             None => self.primary.name(),
         }
     }
+
+    fn identity(&self) -> String {
+        match &self.fallback {
+            Some(cloud) => format!("fallback({}|{})", self.primary.identity(), cloud.identity()),
+            None => self.primary.identity(),
+        }
+    }
 }
 
 #[cfg(test)]

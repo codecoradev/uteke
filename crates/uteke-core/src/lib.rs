@@ -1349,6 +1349,38 @@ impl Uteke {
 
             *guard = Some(embedder);
 
+            // Wrap the PRIMARY embedder with the persistent embedding cache (#896).
+            // It goes inside the fallback wrapper below, so vectors the cloud
+            // fallback produced are never cached under the primary's identity (#1536).
+            // CachingEmbedder intercepts embed() calls and serves from SQLite
+            // cache on hit, avoiding the ~2s ONNX model load on repeated queries.
+            // Skipped for in-memory stores (tests) where no cache path exists.
+            if let Some(ref cache_path) = self.embed_cache_path {
+                // Init cache DB first (without moving `inner`), so on failure
+                // we can fall back to the uncached embedder cleanly.
+                match crate::embed::EmbeddingCache::open(cache_path) {
+                    Ok(cache) => {
+                        tracing::debug!(
+                            cache_path = %cache_path.display(),
+                            "Persistent embedding cache enabled"
+                        );
+                        let inner = guard.take().ok_or_else(|| {
+                            Error::embed_msg("embedder missing while adding the cache")
+                        })?;
+                        *guard = Some(Box::new(crate::embed::CachingEmbedder::with_cache(
+                            inner, cache,
+                        )));
+                    }
+                    Err(e) => {
+                        // Cache init failure is non-fatal — use uncached embedder
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to init embedding cache, using uncached embedder"
+                        );
+                    }
+                }
+            }
+
             // Wrap with fallback if configured.
             // Must happen after dim mismatch check so primary dims are validated
             // against the index before we potentially add a fallback.
@@ -1368,40 +1400,15 @@ impl Uteke {
                     &endpoint_path,
                     dims,
                 )?;
+                let primary = guard.take().ok_or_else(|| {
+                    Error::embed_msg("embedder missing while adding the fallback")
+                })?;
                 let fallback_embedder = crate::embed::FallbackEmbedder::new(
-                    // Take the primary out, wrap it, put back
-                    guard.take().unwrap(),
+                    // Wrap the primary (cached when a cache is configured)
+                    primary,
                     Some(Box::new(cloud_embedder)),
                 )?;
                 *guard = Some(Box::new(fallback_embedder));
-            }
-
-            // Wrap with persistent embedding cache (#896).
-            // CachingEmbedder intercepts embed() calls and serves from SQLite
-            // cache on hit, avoiding the ~2s ONNX model load on repeated queries.
-            // Skipped for in-memory stores (tests) where no cache path exists.
-            if let Some(ref cache_path) = self.embed_cache_path {
-                // Init cache DB first (without moving `inner`), so on failure
-                // we can fall back to the uncached embedder cleanly.
-                match crate::embed::EmbeddingCache::open(cache_path) {
-                    Ok(cache) => {
-                        tracing::debug!(
-                            cache_path = %cache_path.display(),
-                            "Persistent embedding cache enabled"
-                        );
-                        let inner = guard.take().unwrap();
-                        *guard = Some(Box::new(crate::embed::CachingEmbedder::with_cache(
-                            inner, cache,
-                        )));
-                    }
-                    Err(e) => {
-                        // Cache init failure is non-fatal — use uncached embedder
-                        tracing::warn!(
-                            error = %e,
-                            "Failed to init embedding cache, using uncached embedder"
-                        );
-                    }
-                }
             }
         }
         Ok(())
