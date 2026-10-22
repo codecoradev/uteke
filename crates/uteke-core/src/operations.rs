@@ -295,34 +295,25 @@ impl crate::Uteke {
         );
     }
 
-    /// Embed-then-store with honest embedding reporting (#1273).
-    fn remember_embed_detailed(
-        &self,
-        content: &str,
-        tags: &[&str],
-        metadata: Option<serde_json::Value>,
-        namespace: Option<&str>,
-        memory_type: &str,
-    ) -> Result<RememberOutcome, Error> {
-        crate::validate_input(content, tags)?;
-        // Validate memory_type against known variants.
+    /// Reject a memory type this version does not know.
+    pub(crate) fn validate_memory_type(memory_type: &str) -> Result<(), Error> {
         crate::memory::types::MemoryType::from_str_opt(memory_type).ok_or_else(|| {
             Error::Validation(format!(
                 "Unknown memory type '{memory_type}'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
             ))
         })?;
-        // Privacy filter (#1464): before the content is embedded, indexed or
-        // stored, so a secret never reaches the vector, FTS5 or the row.
-        let prepared = self
-            .privacy_config
-            .prepare_with_tags(content, tags, metadata)?;
-        let content = prepared.content.as_str();
-        let metadata = prepared.metadata.clone();
-        let tag_owned = prepared.tags.clone();
-        let tags: Vec<&str> = tag_owned.iter().map(String::as_str).collect();
-        let tags = tags.as_slice();
-        // Detect JSON content and use flattened text for embedding
-        let content_type = crate::memory::crud::detect_content_type(content);
+        Ok(())
+    }
+
+    /// Embed the text of a memory about to be written: JSON content is
+    /// flattened first, the embedding is retried (#621), and a backend that
+    /// is not configured or keeps failing gives an EMPTY embedding (the row is
+    /// stored FTS5-only, #1166) with the reason in the second field (#1273).
+    pub(crate) fn embed_for_write(
+        &self,
+        content: &str,
+        content_type: &str,
+    ) -> Result<(Vec<f32>, Option<String>), Error> {
         let embed_text = if content_type == "json" {
             crate::memory::crud::flatten_json_for_embedding(content)
         } else {
@@ -336,10 +327,7 @@ impl crate::Uteke {
         // supplied via the injected-embedding path or `uteke repair`.
         // #1273: embedding GENERATION failure is also a store-and-warn case —
         // the row is kept (SQLite + FTS5) and the outcome carries the reason.
-        let (embedding, generation_error): (Vec<f32>, Option<String>) = if self
-            .embedder_backend
-            .is_empty()
-        {
+        Ok(if self.embedder_backend.is_empty() {
             tracing::debug!("No embedding backend configured; storing memory FTS5-only (#1166)");
             (Vec::new(), None)
         } else {
@@ -359,7 +347,32 @@ impl crate::Uteke {
                     )
                 }
             }
-        };
+        })
+    }
+
+    /// Embed-then-store with honest embedding reporting (#1273).
+    fn remember_embed_detailed(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+    ) -> Result<RememberOutcome, Error> {
+        crate::validate_input(content, tags)?;
+        Self::validate_memory_type(memory_type)?;
+        // Privacy filter (#1464): before the content is embedded, indexed or
+        // stored, so a secret never reaches the vector, FTS5 or the row.
+        let prepared = self
+            .privacy_config
+            .prepare_with_tags(content, tags, metadata)?;
+        let content = prepared.content.as_str();
+        let metadata = prepared.metadata.clone();
+        let tag_owned = prepared.tags.clone();
+        let tags: Vec<&str> = tag_owned.iter().map(String::as_str).collect();
+        let tags = tags.as_slice();
+        let content_type = crate::memory::crud::detect_content_type(content);
+        let (embedding, generation_error) = self.embed_for_write(content, content_type)?;
 
         // Dedup check: if an existing memory has cosine >= 0.95, return it
         // instead of creating a duplicate (#442 enhancement).
@@ -545,13 +558,31 @@ impl crate::Uteke {
             author: None,
         };
 
+        self.commit_memory(&memory, embedding_error)
+    }
+
+    /// Everything that happens once a memory has been built and embedded:
+    /// the SQLite row, the source hash, the `Created` event, edge wiring,
+    /// recall-cache invalidation, the vector, cosine links. The memory
+    /// carries its own embedding (empty: stored FTS5-only).
+    pub(crate) fn commit_memory(
+        &self,
+        memory: &Memory,
+        embedding_error: Option<String>,
+    ) -> Result<RememberOutcome, Error> {
+        let id = memory.id.clone();
+        let content = memory.content.as_str();
+        let embedding = memory.embedding.as_slice();
+        let tag_refs: Vec<&str> = memory.tags.iter().map(String::as_str).collect();
+        let tags = tag_refs.as_slice();
+
         // SQLite is the source of truth and is written first, WITHOUT holding the
         // index write lock: the timeline / provenance / edge wiring below issue
         // many queries and would otherwise block every concurrent recall for
         // their whole duration. The vector is mirrored afterwards under a short
         // write lock; if that fails the row stays FTS5-only and the outcome says
         // so (#1273), `uteke repair` can backfill.
-        self.store.insert(&memory)?;
+        self.store.insert(memory)?;
 
         // Provenance: record the content hash at write time (#1172 Fase 1).
         // Best-effort — audits recompute this to detect post-write tampering.
