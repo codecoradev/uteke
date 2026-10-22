@@ -124,8 +124,7 @@ impl crate::Uteke {
             let redactions = prepared.redactions;
 
             // Re-embed the content with retry (consistent with remember path, #1005).
-            self.ensure_embedder()?;
-            let embedding = crate::operations::retry_embed(&self.embedder, &entry.content)?;
+            let embedding = self.embed(&entry.content)?;
 
             // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
             if let Some(_existing_id) = self.check_duplicate(&embedding, namespace)? {

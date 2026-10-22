@@ -113,15 +113,7 @@ impl Uteke {
         let query_embedding: Option<Vec<f32>> = if strategy == RecallStrategy::Fts5 {
             None
         } else {
-            self.ensure_embedder()?;
-            Some(
-                self.embedder
-                    .lock()
-                    .map_err(|_| Error::lock("embedder lock during recall_explained"))?
-                    .as_ref()
-                    .ok_or_else(|| Error::embed_msg("no embedder configured"))?
-                    .embed(query)?,
-            )
+            Some(self.embed(query)?)
         };
 
         let boost_window = limit.saturating_mul(4).saturating_add(16);

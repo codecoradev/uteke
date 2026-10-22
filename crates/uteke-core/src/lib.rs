@@ -20,6 +20,7 @@ pub mod consolidation_plan;
 pub mod dream;
 mod edges;
 mod embed;
+mod embedding;
 #[cfg(test)]
 mod engine_settings_tests;
 mod error;
@@ -752,13 +753,7 @@ impl Uteke {
     /// Used by the consolidation executor to embed consolidated records
     /// before writing them so they stay vector-searchable.
     pub fn embed_text(&self, text: &str) -> Result<Vec<f32>, Error> {
-        self.ensure_embedder()?;
-        self.embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during embed_text"))?
-            .as_ref()
-            .expect("embedder ensured above")
-            .embed(text)
+        self.embed(text)
     }
 
     /// Add an already-persisted memory's embedding to the vector index.
@@ -1848,37 +1843,16 @@ impl Uteke {
         content: &str,
         tags: &[String],
     ) -> Result<Vec<(DocumentChunk, Vec<f32>)>, Error> {
-        self.ensure_embedder()?;
-        // The embedder mutex is shared with recall/remember (query embedding),
-        // so take it per call, never across the whole loop: a long document
-        // must not make every other embed wait for all of its chunks (#1323).
-        let max_chars = {
-            let guard = self
-                .embedder
-                .lock()
-                .map_err(|_| Error::lock("embedder lock during document chunking"))?;
-            guard
-                .as_ref()
-                .expect("embedder ensured above")
-                .max_seq_len()
-                .saturating_mul(4)
-                .max(1024)
-        };
+        // The embedder lock is taken per call, never across the whole loop: a
+        // long document must not make every other embed wait for all of its
+        // chunks (#1323).
+        let max_chars = self.embedder_max_seq_len()?.saturating_mul(4).max(1024);
         let chunks = crate::chunker::chunk_markdown(content, max_chars);
         chunks
             .iter()
             .enumerate()
             .map(|(i, chunk)| {
-                let embedding = {
-                    let guard = self
-                        .embedder
-                        .lock()
-                        .map_err(|_| Error::lock("embedder lock during chunk embedding"))?;
-                    guard
-                        .as_ref()
-                        .expect("embedder ensured above")
-                        .embed(&chunk.content)?
-                };
+                let embedding = self.embed(&chunk.content)?;
                 Ok((
                     DocumentChunk {
                         id: uuid::Uuid::now_v7().to_string(),
@@ -2198,14 +2172,7 @@ impl Uteke {
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
-        self.ensure_embedder()?;
-        let query_embedding = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during doc search"))?
-            .as_ref()
-            .expect("embedder ensured above")
-            .embed(query)?;
+        let query_embedding = self.embed(query)?;
 
         let index = self
             .index

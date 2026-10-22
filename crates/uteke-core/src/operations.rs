@@ -32,7 +32,7 @@ pub(crate) fn retry_embed(
             .map_err(|_| Error::lock("embedder lock during remember"))?;
         let Some(embedder) = lock.as_ref() else {
             return Err(Error::embed_msg(
-                "No embedder configured; the memory was not embedded",
+                "No embedder configured",
             ));
         };
         match embedder.embed(text) {
@@ -331,10 +331,11 @@ impl crate::Uteke {
             tracing::debug!("No embedding backend configured; storing memory FTS5-only (#1166)");
             (Vec::new(), None)
         } else {
+            // Failing to initialise the embedder is an error; failing to generate
+            // a vector, after the retry in `embed`, is FTS5-only with a warning
+            // (embedding failures silently drop vector entries, #621).
             self.ensure_embedder()?;
-            // Retry embedding generation up to 3 times with exponential backoff.
-            // Embedding failures silently drop vector entries, causing desync (#621).
-            match self::retry_embed(&self.embedder, &embed_text) {
+            match self.embed(&embed_text) {
                 Ok(e) => (e, None),
                 Err(e) => {
                     tracing::warn!(
@@ -720,17 +721,7 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         // Embed query outside any lock — CPU-intensive (~50ms), no shared state needed.
         // Only the embedder Mutex is held here, allowing concurrent index reads.
-        // Lazy-load embedder on first use.
-        self.ensure_embedder()?;
-        let query_embedding = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during recall"))?
-            .as_ref()
-            .ok_or_else(|| {
-                Error::embed_msg("No embedder configured; semantic recall is unavailable")
-            })?
-            .embed(query)?;
+        let query_embedding = self.embed(query)?;
         // Embedder lock dropped here — other threads can embed or recall concurrently.
 
         // Search usearch index with retry: if post-filtering removes too many
@@ -2051,8 +2042,7 @@ impl crate::Uteke {
             } else {
                 c.to_string()
             };
-            self.ensure_embedder()?;
-            let new_embedding = retry_embed(&self.embedder, &embed_text)?;
+            let new_embedding = self.embed(&embed_text)?;
 
             // Update SQLite first, then vector index
             let updated = self.store.update_fields(

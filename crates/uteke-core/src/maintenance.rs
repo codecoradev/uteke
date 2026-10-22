@@ -294,25 +294,18 @@ impl crate::Uteke {
             "Re-embedding memories with missing vectors"
         );
 
-        // Ensure embedder is initialized.
+        // An embedder that cannot start is an error, not one failed row each.
         self.ensure_embedder()?;
 
         let mut reembedded = 0usize;
         let mut failed = 0usize;
         let mut new_items: Vec<(String, Vec<f32>)> = Vec::new();
 
-        // Acquire embedder lock ONCE before the loop to avoid
-        // per-iteration mutex overhead (codecoradev/uteke#919 review).
-        let embedder_guard = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during reembed"))?;
-        let embedder = embedder_guard
-            .as_ref()
-            .ok_or_else(|| Error::embed("reembed", "embedder not initialized"))?;
-
+        // One attempt per row, and the embedder lock is taken per row: a repair
+        // over a dead backend reports each failed row instead of waiting on a
+        // retry for every one, and does not block recall for the whole loop.
         for mem in &missing {
-            match embedder.embed(&mem.content) {
+            match self.embed_once(&mem.content) {
                 Ok(vec) => {
                     // Update memory in database.
                     let mut updated = (*mem).clone();

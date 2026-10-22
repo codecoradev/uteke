@@ -188,14 +188,7 @@ impl crate::Uteke {
 
             if !missing_memories.is_empty() {
                 // Embed query and score each missing memory by cosine similarity.
-                self.ensure_embedder()?;
-                let query_emb = self
-                    .embedder
-                    .lock()
-                    .map_err(|_| Error::lock("embedder in room fallback"))?
-                    .as_ref()
-                    .expect("embedder ensured above")
-                    .embed(query)?;
+                let query_emb = self.embed(query)?;
 
                 for mem in missing_memories {
                     let score = crate::consolidate::cosine_similarity(&query_emb, &mem.embedding);
