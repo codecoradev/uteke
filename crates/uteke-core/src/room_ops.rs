@@ -371,7 +371,7 @@ mod tests {
     /// The embedder is lazy-loaded on first use, so tests that only
     /// exercise CRUD methods (no embedding) don't need the ONNX model.
     fn open_in_memory() -> crate::Uteke {
-        crate::Uteke::open(":memory:").unwrap()
+        crate::test_support::open_keyword()
     }
 
     // ── Room CRUD ──────────────────────────────────────────────────
@@ -437,7 +437,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn room_summary_with_memories() {
         let uteke = open_in_memory();
         uteke
@@ -471,7 +470,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn room_document_with_memories() {
         let uteke = open_in_memory();
         uteke
@@ -495,7 +493,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn count_all_memories_with_data() {
         let uteke = open_in_memory();
         uteke
@@ -511,7 +508,6 @@ mod tests {
     /// even when the room has few memories in a large database.
     /// The old fixed cap of 200 caused small rooms to return zero.
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn recall_room_semantic_small_room_large_db() {
         let uteke = open_in_memory();
 
@@ -959,7 +955,6 @@ mod tests {
     // ── remember_in_room (requires embedder) ───────────────────────
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn remember_in_room_stores_and_links() {
         let uteke = open_in_memory();
         let mem_id = uteke
@@ -986,7 +981,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn recall_room_with_author_filter() {
         let uteke = open_in_memory();
         uteke

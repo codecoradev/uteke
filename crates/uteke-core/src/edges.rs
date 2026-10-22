@@ -1664,11 +1664,10 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
     fn wire_edges_generates_backlinks() {
         // End-to-end: Uteke::wire_edges should produce backlinks because it
         // goes through add_memory_edges_batch (now backlink-aware).
-        let uteke = crate::Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Create target memory first so the ^<uuid> reference resolves.
         let target = uteke
@@ -1710,10 +1709,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
     fn auto_link_cosine_creates_similar_edges() {
         // Two very similar memories should get a similar_to edge (#401).
-        let uteke = crate::Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         let _id1 = uteke
             .remember(
@@ -1726,7 +1724,7 @@ mod tests {
 
         let id2 = uteke
             .remember(
-                "The project deadline is next Friday",
+                "The project deadline is next Friday afternoon",
                 &[],
                 None,
                 Some("default"),
@@ -1746,10 +1744,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "uses Uteke::open which requires the ONNX embedder (network/model)"]
     fn auto_link_cosine_no_false_positives() {
         // Very different memories should NOT get similar_to edges.
-        let uteke = crate::Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         let _id1 = uteke
             .remember("The weather is sunny today", &[], None, Some("default"))

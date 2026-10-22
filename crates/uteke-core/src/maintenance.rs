@@ -760,7 +760,6 @@ mod tests {
         assert_eq!(restored.deprecated, 3);
     }
 
-    #[ignore = "requires ONNX embedder — validates reembed repairs NULL-embedding rows (#1146)"]
     #[test]
     fn test_reembed_repairs_null_embedding_rows() {
         // Regression test for #1146: `repair --reembed` used to scan through
@@ -769,7 +768,7 @@ mod tests {
         // crash artifacts) were permanently invisible to reembed and doctor
         // reported an unresolvable MISMATCH.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = crate::Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
 
         // Create one healthy memory (gets a real embedding).
         let id = uteke
@@ -854,7 +853,6 @@ mod tests {
         assert_eq!(restored.deleted, 5);
     }
 
-    #[ignore = "requires ONNX embedder — verify/doctor count chunk vectors alongside memories"]
     #[test]
     fn test_verify_counts_doc_chunks() {
         // Regression test for #1111: verify()/doctor() must count document
@@ -862,7 +860,7 @@ mod tests {
         // reports a memory-only count vs index (which holds memories AND
         // chunk vectors) and flags a false MISMATCH.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = crate::Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
         uteke
             .doc_upsert(
                 "verify-chunks-doc",
@@ -887,14 +885,13 @@ mod tests {
         );
     }
 
-    #[ignore = "requires ONNX embedder — validates repair() keeps doc chunk vectors indexed"]
     #[test]
     fn test_repair_preserves_doc_chunk_vectors() {
         // Regression test for #1110: repair() rebuilt the index from
         // load_all() (memories only), silently evicting every "chunk:<id>"
         // vector. After repair, semantic doc search must still find chunks.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = crate::Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
         let doc_id = uteke
             .doc_upsert(
                 "repair-chunks-doc",

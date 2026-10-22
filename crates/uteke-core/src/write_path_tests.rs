@@ -2,59 +2,13 @@
 //! `remember_with_contradiction` embed the same text, retry the same way,
 //! validate the type, and leave the same side effects.
 
-use std::sync::{Arc, Mutex};
-
-use crate::embed::Embedder;
-use crate::test_support::open_keyword;
+use crate::test_support::{RecordingEmbedder, Seen, open_keyword, open_with_embedder};
 use crate::{Error, Uteke};
 
-/// Records every text it is asked to embed and can fail the first `fail` calls.
-struct Recording {
-    seen: Arc<Mutex<Vec<String>>>,
-    fail: Mutex<usize>,
-}
-
-impl Embedder for Recording {
-    fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
-        self.seen.lock().unwrap().push(text.to_string());
-        let mut fail = self.fail.lock().unwrap();
-        if *fail > 0 {
-            *fail -= 1;
-            return Err(Error::embed_msg("transient embedding failure"));
-        }
-        let mut v = vec![0.0_f32; 8];
-        v[text.len() % 8] = 1.0;
-        Ok(v)
-    }
-    fn dims(&self) -> usize {
-        8
-    }
-    fn max_seq_len(&self) -> usize {
-        128
-    }
-    fn name(&self) -> &str {
-        "recording-test-embedder"
-    }
-}
-
-fn store_with(fail: usize) -> (Uteke, Arc<Mutex<Vec<String>>>) {
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let (_db, store) = Uteke::open_store(":memory:").expect("open_store");
-    let u = Uteke::finish_open_full(
-        store,
-        Some(Box::new(Recording {
-            seen: seen.clone(),
-            fail: Mutex::new(fail),
-        })),
-        "test-recording".to_string(),
-        crate::TierConfig::default(),
-        crate::RecallConfig::default(),
-        crate::EmbeddingSettings::default(),
-        crate::graph_rerank::GraphRerankConfig::default(),
-        None,
-    )
-    .expect("finish_open_full");
-    (u, seen)
+/// A store whose embedder fails its first `fail` calls, and what it was asked.
+fn store_with(fail: usize) -> (Uteke, Seen) {
+    let (embedder, seen) = RecordingEmbedder::failing_first(fail);
+    (open_with_embedder(Box::new(embedder)), seen)
 }
 
 const JSON_CONTENT: &str = r#"{"user_name":"Bob","tags":["x","y"],"n":{"deep":1}}"#;

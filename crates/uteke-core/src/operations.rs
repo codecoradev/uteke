@@ -2271,7 +2271,7 @@ mod forget_tests {
         // Hard forget → forgot tombstone, and history survives the delete.
         let dir = std::env::temp_dir().join(format!("uteke-tl-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut uteke2 = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let mut uteke2 = crate::test_support::open_keyword_at(dir.join("t.db"));
         uteke2.set_lifecycle_config(crate::LifecycleConfig {
             soft_delete_only: false,
             ..crate::LifecycleConfig::default()
@@ -2371,7 +2371,7 @@ mod forget_tests {
         // index to a file in the CWD, which cross-contaminates parallel runs.
         let dir = std::env::temp_dir().join(format!("ghost-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let uteke = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.join("t.db"));
         let embedding = vec![0.7_f32; 768];
         let id = uteke
             .remember_precomputed(
@@ -2422,7 +2422,6 @@ mod forget_tests {
 #[cfg(test)]
 mod recall_cache_parity_tests {
     use crate::RecallStrategy;
-    use crate::Uteke;
 
     /// #1037: cold (cache miss) and warm (cache hit) recall_hybrid calls must
     /// return identical scores. The cache-hit path used to skip salience/
@@ -2431,7 +2430,7 @@ mod recall_cache_parity_tests {
     fn test_recall_hybrid_cold_warm_score_parity() {
         let dir = std::env::temp_dir().join(format!("parity-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut uteke = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let mut uteke = crate::test_support::open_keyword_at(dir.join("t.db"));
 
         // Non-noop boosts (default config is 0.1/0.1 — already non-noop, but be explicit)
         uteke.set_salience_recency_config(crate::salience_recency::SalienceRecencyConfig {
@@ -2507,7 +2506,7 @@ mod recall_cache_parity_tests {
     fn test_recall_hybrid_noop_respects_limit_on_warm() {
         let dir = std::env::temp_dir().join(format!("parity-n-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut uteke = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let mut uteke = crate::test_support::open_keyword_at(dir.join("t.db"));
         uteke.set_salience_recency_config(crate::salience_recency::SalienceRecencyConfig {
             salience_weight: 0.0,
             recency_weight: 0.0,
@@ -2551,7 +2550,7 @@ mod recall_cache_parity_tests {
     fn test_recall_hybrid_boost_reorder_across_limit() {
         let dir = std::env::temp_dir().join(format!("parity-r-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut uteke = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let mut uteke = crate::test_support::open_keyword_at(dir.join("t.db"));
         uteke.set_salience_recency_config(crate::salience_recency::SalienceRecencyConfig {
             salience_weight: 0.4,
             recency_weight: 0.4,
@@ -2744,18 +2743,16 @@ mod rrf_fuse_weighted_tests {
 
 #[cfg(test)]
 mod fusion_strategy_tests {
-    use crate::Uteke;
     use crate::memory::types::RecallStrategy;
 
     /// #1123: Fusion strategy end-to-end — seeds a store, runs recall with
     /// the explicit Fusion strategy, and asserts the on-topic memory surfaces
     /// in the top results. Also asserts cold/warm parity through the cache.
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn fusion_recall_finds_on_topic_memory() {
         let dir = std::env::temp_dir().join(format!("fusion-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let uteke = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.join("t.db"));
 
         let base = vec![0.1_f32; 768];
         // On-topic memory: near-parallel to the probe direction.
@@ -2835,11 +2832,10 @@ mod fusion_strategy_tests {
     /// store returns empty results (both sub-rankings empty), NOT an error
     /// and NOT a fallback ranking.
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn fusion_recall_empty_store_returns_empty() {
         let dir = std::env::temp_dir().join(format!("fusion-e-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let uteke = Uteke::open(dir.join("t.db").to_str().unwrap()).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.join("t.db"));
         let res = uteke
             .recall_hybrid(
                 "anything",
@@ -2859,7 +2855,6 @@ mod fusion_strategy_tests {
 #[cfg(test)]
 mod dedup_tests {
     use super::memory_existed_at;
-    use crate::Uteke;
 
     fn probe_memory(created: chrono::DateTime<chrono::Utc>) -> crate::memory::types::Memory {
         crate::memory::types::Memory {
@@ -2891,9 +2886,8 @@ mod dedup_tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_dedup_blocks_exact_duplicate() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let id1 = uteke
             .remember("The sky is blue today", &[], None, Some("dedup"))
             .unwrap();
@@ -2905,9 +2899,8 @@ mod dedup_tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_dedup_allows_different_content() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let id1 = uteke
             .remember("The sky is blue", &[], None, Some("dedup2"))
             .unwrap();
@@ -2918,9 +2911,8 @@ mod dedup_tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_dedup_namespace_scoped() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let id1 = uteke
             .remember("Same content different namespace", &[], None, Some("ns1"))
             .unwrap();
@@ -2932,14 +2924,13 @@ mod dedup_tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_dedup_skips_deprecated_stale_index_entry() {
         // #1210: a stale vector index on a long-running server can still hold
         // the vector of a soft-deleted (deprecated) memory. Dedup must NOT
         // match it — the rewrite must produce a NEW live memory instead of
         // silently returning the deprecated ghost id (which also gets linked
         // into rooms by remember_in_room, invisible in recall).
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let ns = "dedup-depr";
         let content = "Ghost dedup regression content #1210";
         let id1 = uteke.remember(content, &[], None, Some(ns)).unwrap();
@@ -2966,11 +2957,10 @@ mod dedup_tests {
     }
 
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_contradiction_remembers_metadata() {
         // Regression: remember_with_contradiction must pass metadata through
         // to remember_precomputed (was dropping it as None).
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let meta = Some(serde_json::json!({
             "entity": "test-app",
             "category": "integration"

@@ -3109,7 +3109,6 @@ mod tests {
         assert!(validate_input_with_limits("c", &[&tag_huge], 100, 10, 0).is_ok());
     }
 
-    #[ignore = "requires ONNX embedder — index file extension follows active backend"]
     #[test]
     fn index_file_uses_backend_extension() {
         // #1112: the index filename must follow the active backend, so
@@ -3671,9 +3670,8 @@ mod tests {
 
     // These tests require ONNX embedding model (not available in CI)
     #[test]
-    #[ignore]
     fn test_recall_threshold_filters_low_scores() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Store a memory
         let _id = uteke
@@ -3706,9 +3704,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_recall_threshold_zero_returns_all() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let _id = uteke
             .remember("some content here", &[], None, None)
             .unwrap();
@@ -3721,9 +3718,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_recall_threshold_specific_score() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let _id = uteke
             .remember(
                 "Rust is a systems programming language focused on safety",
@@ -3761,12 +3757,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_unified_recall_reports_similarity_not_rrf_rank() {
         // A real directory, not ":memory:" — the usearch index is derived from the SQLite
         // path, so an in-memory store has no vector index and every recall returns empty.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
         uteke
             .remember(
                 "Rust is a systems programming language focused on memory safety",
@@ -3821,10 +3816,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_recall_config_stored_but_override_per_call() {
         // Open with default config; per-call min_score controls recall threshold
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         let _id = uteke
             .remember("test content about rust programming", &[], None, None)
@@ -3949,9 +3943,8 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — needs document + memory with [[doc-slug]] wikilink"]
     fn recall_unified_enrich_populates_doc_links() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Create a document (requires embedder via doc_upsert).
         // In CI with a model loaded, this would create a real document.
@@ -4000,9 +3993,8 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — needs document + memory with [[doc-slug]] wikilink"]
     fn recall_unified_enrich_populates_memory_links() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Similar setup: create document "ref-doc", remember memory with [[ref-doc]],
         // then search documents and check linked_memory_ids.
@@ -4040,9 +4032,8 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder"]
     fn recall_unified_no_enrich_keeps_fields_none() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         uteke
             .remember(
@@ -4087,7 +4078,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — full E2E: document creation + wikilink wiring + enrichment"]
     fn e2e_wikilink_creates_doc_edge_and_enriches() {
         // Full cross-entity flow:
         // 1. Open Uteke with ONNX embedder
@@ -4101,7 +4091,7 @@ mod tests {
         // the public API (doc_upsert). This test validates the entire chain
         // from wikilink parsing → edge creation → enrichment.
 
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Create a document (requires ONNX for embedding).
         // In CI with ONNX model loaded, this creates a real document.
@@ -4175,7 +4165,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — validates room+document+memory cross-entity enrichment"]
     fn e2e_room_doc_memory_cross_entity() {
         // Full flow:
         // 1. Open Uteke with ONNX embedder
@@ -4188,7 +4177,7 @@ mod tests {
         // NOTE: Room operations go through Store (accessible via Uteke's
         // public room_* methods). Document creation requires the embedder.
 
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // The test validates that the cross-entity integration works
         // when all three entity types (room, document, memory) are linked.
@@ -4302,37 +4291,36 @@ mod tests {
 
 #[cfg(test)]
 mod context_tests {
-    use crate::Uteke;
     use serial_test::serial;
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_build_context_empty_namespace() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let ctx = uteke.build_context(Some("empty-ns")).unwrap();
         assert!(ctx.contains("0 memories"));
     }
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_build_context_with_data() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         uteke
-            .remember(
+            .remember_typed(
                 "Use parameterized SQL queries",
                 &["tech"],
                 None,
                 Some("ctx-test"),
+                "procedure",
             )
             .unwrap();
         uteke
-            .remember(
+            .remember_typed(
                 "We chose Tauri 2 over Electron",
                 &["tech"],
                 None,
                 Some("ctx-test"),
+                "decision",
             )
             .unwrap();
 

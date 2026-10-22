@@ -490,7 +490,7 @@ mod explain_tests {
 
     fn scratch() -> (Uteke, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let uteke = Uteke::open(dir.path().join("t.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("t.db"));
         (uteke, dir)
     }
 
@@ -604,7 +604,6 @@ mod explain_tests {
     /// explanation for the default fusion strategy must carry vector ranks,
     /// fusion contributions, and reproduce the plain recall scores.
     #[test]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn explain_fusion_reproduces_plain_recall() {
         let (mut uteke, dir) = scratch();
         // Real embeddings (remember → model embed) so vector_similarity is a
