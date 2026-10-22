@@ -286,28 +286,26 @@ fn main() {
             let privacy = uteke_core::privacy::load_config();
             info!("Privacy filter: {:?}", privacy.mode);
             u.set_privacy_config(privacy);
-            // [embed_fallback] + UTEKE_EMBED_FALLBACK_* (#1355): only when complete.
-            if let Some(fallback) = resolve_embed_fallback(&config, |k| std::env::var(k).ok()) {
-                info!("Embedding fallback: enabled ({})", fallback.base_url);
-                u.set_fallback_settings(fallback);
+            // Jaccard weight, dream thresholds, lifecycle and the embedding
+            // fallback, applied the same way as in the CLI. The fallback also
+            // honours UTEKE_EMBED_FALLBACK_* (#1355); it only applies when complete.
+            let mut engine = config.engine.clone();
+            let fallback = resolve_embed_fallback(&config, |k| std::env::var(k).ok());
+            if let Some(f) = &fallback {
+                info!("Embedding fallback: enabled ({})", f.base_url);
             }
-            // Apply dream pipeline thresholds from config (#731)
-            if let Some(dc) = config.dream {
-                u.set_dream_config(dc);
-                info!(
-                    "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
-                    dc.dedup_threshold, dc.orphan_importance_threshold,
-                );
-            }
-
-            // Apply lifecycle config from uteke.toml [lifecycle] section (#928)
-            if let Some(lc) = config.lifecycle {
-                u.set_lifecycle_config(lc);
-                info!(
-                    "Lifecycle config loaded: soft_delete_only={}, ttl={}d, max_deprecate={:.1}%",
-                    lc.soft_delete_only, lc.deprecated_ttl_days, lc.max_deprecate_percent,
-                );
-            }
+            engine.embed_fallback = fallback.unwrap_or_default();
+            u.apply_settings(&engine);
+            info!(
+                "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
+                engine.dream.dedup_threshold, engine.dream.orphan_importance_threshold,
+            );
+            info!(
+                "Lifecycle config loaded: soft_delete_only={}, ttl={}d, max_deprecate={:.1}%",
+                engine.lifecycle.soft_delete_only,
+                engine.lifecycle.deprecated_ttl_days,
+                engine.lifecycle.max_deprecate_percent,
+            );
             Arc::new(Mutex::new(u))
         }
         Err(e) => {
@@ -347,7 +345,7 @@ fn main() {
             // with a message blaming the request — warn loudly and fall
             // back to hybrid instead. Explicit request-level `strategy`
             // values remain strictly validated (HTTP 400).
-            let mut recall = config.recall.clone();
+            let mut recall = Some(config.engine.recall.clone());
             if let Some(r) = recall.as_mut() {
                 if uteke_core::RecallStrategy::from_str_opt(&r.default_strategy).is_none() {
                     warn!(
@@ -393,7 +391,7 @@ fn main() {
     // Auto-lifecycle background thread (#934 — replaces auto-aging #442).
     // Runs lifecycle_cycle periodically: soft-deprecate aged memories (cap-limited)
     // + auto-prune expired deprecated memories.
-    let lifecycle_config = config.lifecycle.unwrap_or_default();
+    let lifecycle_config = config.engine.lifecycle;
     let lifecycle_enabled = lifecycle_config.auto_aging_enabled;
     // Minimum 1 hour to prevent a busy loop.
     let lifecycle_hours = lifecycle_config.auto_aging_interval_hours.max(1);
@@ -640,19 +638,16 @@ struct ServerFileConfig {
     embedding: Option<EmbeddingFileSection>,
     /// `[vector]`: which vector engine runs when both are compiled in (#1168).
     vector: Option<VectorFileSection>,
-    /// `[embed_fallback]`: second embedding endpoint used when the primary fails (#1355).
-    embed_fallback: Option<EmbedFallbackFileSection>,
-    /// `[tier]`: hot/warm/cold memory tiers (#1355).
-    tier: Option<uteke_core::TierConfig>,
+    /// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`: the
+    /// engine sections, one schema shared with the CLI (#1515).
+    #[serde(flatten)]
+    engine: uteke_core::EngineSettings,
     server: Option<ServerFileSection>,
-    recall: Option<uteke_core::RecallSettings>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
     maintenance: Option<MaintenanceFileSection>,
     /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
     #[allow(dead_code)]
     aging: Option<AgingFileSection>,
-    dream: Option<uteke_core::DreamConfig>,
-    lifecycle: Option<uteke_core::LifecycleConfig>,
 }
 
 /// `[embedding]` in uteke.toml, same keys as the CLI. Empty / missing values
@@ -674,41 +669,28 @@ struct VectorFileSection {
     backend: Option<String>,
 }
 
-/// `[embed_fallback]` in uteke.toml, same keys as the CLI. `UTEKE_EMBED_FALLBACK_*`
-/// env vars win over these (resolved in the core).
-#[derive(serde::Deserialize, Default, Clone)]
-struct EmbedFallbackFileSection {
-    api_key: Option<String>,
-    base_url: Option<String>,
-    endpoint_path: Option<String>,
-    model: Option<String>,
-}
-
 /// The fallback embedder to apply, or `None` when it is not fully configured
 /// (api_key, base_url AND model). Env overrides come from `lookup`.
 fn resolve_embed_fallback(
     config: &ServerFileConfig,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Option<uteke_core::FallbackSettings> {
-    let file = config.embed_fallback.clone().unwrap_or_default();
-    let settings = uteke_core::FallbackSettings {
-        api_key: file.api_key.unwrap_or_default(),
-        base_url: file.base_url.unwrap_or_default(),
-        endpoint_path: file.endpoint_path.unwrap_or_default(),
-        model: file.model.unwrap_or_default(),
-    }
-    .with_overrides_from(lookup);
+    let settings = config
+        .engine
+        .embed_fallback
+        .clone()
+        .with_overrides_from(lookup);
     settings.is_configured().then_some(settings)
 }
 
 /// `[recall]` over the core defaults (the same settings the CLI reads).
 fn resolve_recall_tuning(config: &ServerFileConfig) -> uteke_core::RecallSettings {
-    config.recall.clone().unwrap_or_default()
+    config.engine.recall.clone()
 }
 
 /// Tier settings: `[tier]` over the core defaults (7 / 30 days, boost 0.1).
 fn resolve_tier(config: &ServerFileConfig) -> uteke_core::TierConfig {
-    config.tier.unwrap_or_default()
+    config.engine.tier
 }
 
 /// Backends `Uteke` can initialize lazily (same list as the CLI validates).
@@ -884,7 +866,7 @@ mod config_overlay_tests {
             Some(&["https://app.example".to_string()][..])
         );
         assert!(
-            merged.recall.is_some(),
+            merged.engine.recall.min_score == 0.5,
             "project recall tuning still applies"
         );
     }
@@ -909,7 +891,7 @@ mod config_overlay_tests {
             "[recall]\nmin_score = 0.6\n",
             false,
         );
-        let recall = merged.recall.expect("recall section");
+        let recall = merged.engine.recall;
         assert_eq!(recall.min_score, 0.6);
         assert_eq!(recall.default_strategy, "vector");
     }
@@ -1128,7 +1110,7 @@ mod recall_tuning_tests {
         let cfg = parse(
             "[recall]\nmin_score = 0.4\ndefault_strategy = \"vector\"\njaccard_weight = 0.1\n",
         );
-        let r = cfg.recall.expect("recall");
+        let r = cfg.engine.recall;
         assert_eq!(r.min_score, 0.4);
         assert_eq!(r.default_strategy, "vector");
         assert_eq!(r.jaccard_weight, 0.1);

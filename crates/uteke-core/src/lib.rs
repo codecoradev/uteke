@@ -67,6 +67,7 @@ pub use recall_request::{
 pub use remember_request::{
     RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
+pub mod engine_settings;
 #[cfg(test)]
 mod isolation_tests;
 mod orphans;
@@ -121,6 +122,7 @@ pub use timeline::{TimelineEvent, TimelineEventType};
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]
 pub use embed::OnnxEmbedder;
+pub use engine_settings::EngineSettings;
 pub use error::{Error, ErrorClass, format_bytes};
 pub use recall_settings::RecallSettings;
 pub use types::{
@@ -548,7 +550,8 @@ pub struct EmbeddingSettings {
 /// When configured, the [`FallbackEmbedder`] wraps the primary backend (e.g.
 /// ONNX) and falls back to an OpenAI-compatible cloud API on failure.
 /// All fields default to empty — fallback is disabled until explicitly configured.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Deserialize)]
+#[serde(default)]
 pub struct FallbackSettings {
     pub api_key: String,
     pub base_url: String,

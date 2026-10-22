@@ -158,7 +158,7 @@ pub(crate) fn run(
             let effective_query = query.as_ref().or(query_flag.as_ref());
             if let Some(q) = effective_query {
                 // Semantic recall — rank by relevance
-                let min_score = min.unwrap_or(config.recall.min_score as f32);
+                let min_score = min.unwrap_or(config.engine.recall.min_score as f32);
                 let results = uteke
                     .recall_room_semantic(room_id, q, *limit, author.as_deref(), min_score)
                     .map_err(|e| format!("Failed to recall room: {e}"))?;

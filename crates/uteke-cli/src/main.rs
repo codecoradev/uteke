@@ -217,20 +217,17 @@ fn main() {
             model: config.embedding.model.clone(),
             dims: config.embedding.dims,
         },
-        config.tier,
-        config.recall.recall_config(),
-        config.recall.graph_rerank(),
+        config.engine.tier,
+        config.engine.recall.recall_config(),
+        config.engine.recall.graph_rerank(),
         // Runtime vector-engine preference from uteke.toml [vector] (#1168).
         // UTEKE_VECTOR_BACKEND env (higher precedence) is read inside core.
         Some(config.vector.backend.as_str()),
     ) {
         Ok(mut u) => {
-            // #719: apply Jaccard weight from config
-            u.set_jaccard_weight(config.recall.jaccard_weight);
-            // #731: apply dream pipeline thresholds from config
-            u.set_dream_config(config.dream);
-            // #928: apply lifecycle configuration from config
-            u.set_lifecycle_config(config.lifecycle);
+            // #719, #731, #928, #1355: Jaccard weight, dream thresholds, lifecycle
+            // and the embedding fallback, applied the same way as in the server.
+            u.apply_settings(&config.engine);
             // #1464: secret filter on the write path ([privacy] in uteke.toml)
             u.set_privacy_config(uteke_core::privacy::load_config());
             u
@@ -240,16 +237,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-
-    // Configure embed fallback if enabled (zero-config: only when fields are set)
-    if config.embed_fallback.is_configured() {
-        uteke.set_fallback_settings(uteke_core::FallbackSettings {
-            api_key: config.embed_fallback.api_key.clone(),
-            base_url: config.embed_fallback.base_url.clone(),
-            endpoint_path: config.embed_fallback.endpoint_path.clone(),
-            model: config.embed_fallback.model.clone(),
-        });
-    }
 
     ctrlc::set_handler(|| {
         SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);

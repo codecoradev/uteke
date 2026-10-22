@@ -171,3 +171,73 @@ mod recall {
         assert!(r.graph_rerank_enabled);
     }
 }
+
+mod engine {
+    use crate::{EngineSettings, Uteke};
+
+    /// A larger config file embedding the engine sections with `flatten`, the
+    /// way the CLI and the server do.
+    #[derive(Default, serde::Deserialize)]
+    #[serde(default)]
+    struct File {
+        #[serde(flatten)]
+        engine: EngineSettings,
+        store: toml::Table,
+    }
+
+    #[test]
+    fn the_five_sections_parse_next_to_other_sections() {
+        let f: File = toml::from_str(
+            "[store]\nnamespace = \"x\"\n\
+             [tier]\nhot_days = 2\n\
+             [recall]\nmin_score = 0.2\njaccard_weight = 0.1\n\
+             [dream]\ndedup_threshold = 0.8\n\
+             [lifecycle]\nsoft_delete_only = false\n\
+             [embed_fallback]\napi_key = \"k\"\nbase_url = \"https://example.test\"\nmodel = \"m\"\n\
+             [unknown_section]\nwhatever = 1\n",
+        )
+        .unwrap();
+        let e = f.engine;
+        assert_eq!(e.tier.hot_days, 2);
+        assert_eq!((e.recall.min_score, e.recall.jaccard_weight), (0.2, 0.1));
+        assert!((e.dream.dedup_threshold - 0.8).abs() < f32::EPSILON);
+        assert!(!e.lifecycle.soft_delete_only);
+        assert!(e.embed_fallback.is_configured());
+        assert!(f.store.contains_key("namespace"));
+    }
+
+    #[test]
+    fn an_empty_file_is_all_defaults() {
+        let f: File = toml::from_str("").unwrap();
+        assert_eq!(f.engine.tier.warm_days, 30);
+        assert_eq!(f.engine.recall.default_strategy, "fusion");
+        assert!(f.engine.lifecycle.soft_delete_only);
+        assert!(!f.engine.embed_fallback.is_configured());
+    }
+
+    #[test]
+    fn apply_settings_sets_what_can_change_after_open() {
+        let mut u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        let mut e = EngineSettings::default();
+        e.recall.jaccard_weight = 0.25;
+        e.dream.contradict_max_memories = 7;
+        e.lifecycle.deprecated_ttl_days = 11;
+        e.embed_fallback.api_key = "k".into();
+        e.embed_fallback.base_url = "https://example.test".into();
+        e.embed_fallback.model = "m".into();
+        u.apply_settings(&e);
+        assert_eq!(u.jaccard_weight, 0.25);
+        assert_eq!(u.dream_config.contradict_max_memories, 7);
+        assert_eq!(u.lifecycle_config().deprecated_ttl_days, 11);
+        assert_eq!(u.fallback_settings.base_url, "https://example.test");
+    }
+
+    #[test]
+    fn an_incomplete_fallback_is_not_applied() {
+        let mut u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        let mut e = EngineSettings::default();
+        e.embed_fallback.api_key = "only-a-key".into();
+        u.apply_settings(&e);
+        assert!(u.fallback_settings.api_key.is_empty());
+    }
+}

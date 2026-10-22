@@ -68,8 +68,8 @@ pub(crate) fn run_recall(
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
         Some(m) => m,
-        None if strict => config.recall.min_score_strict as f32,
-        None => config.recall.min_score as f32,
+        None if strict => config.engine.recall.min_score_strict as f32,
+        None => config.engine.recall.min_score as f32,
     };
 
     tracing::info!(
@@ -86,7 +86,7 @@ pub(crate) fn run_recall(
     // Resolve strategy: --strategy flag > config [recall].default_strategy
     // > built-in default ("hybrid"). Unknown values fall back to vector with
     // a warning so a typo never silently changes recall semantics.
-    let strategy_name = strategy.unwrap_or(&config.recall.default_strategy);
+    let strategy_name = strategy.unwrap_or(&config.engine.recall.default_strategy);
     let resolved_strategy = match RecallStrategy::from_str_opt(strategy_name) {
         Some(s) => s,
         None => {
@@ -101,13 +101,13 @@ pub(crate) fn run_recall(
     // Some(true) = use config weight (0.15), Some(false) / --no-* = 0.0.
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
         salience_weight: match salience {
-            Some(true) => config.recall.salience_weight, // explicit --salience
-            Some(false) => 0.0,                          // explicit --no-salience
+            Some(true) => config.engine.recall.salience_weight, // explicit --salience
+            Some(false) => 0.0,                                 // explicit --no-salience
             None => uteke_core::SalienceRecencyConfig::default().salience_weight, // default 0.1
         },
         recency_weight: match recency {
-            Some(true) => config.recall.recency_weight, // explicit --recency
-            Some(false) => 0.0,                         // explicit --no-recency
+            Some(true) => config.engine.recall.recency_weight, // explicit --recency
+            Some(false) => 0.0,                                // explicit --no-recency
             None => uteke_core::SalienceRecencyConfig::default().recency_weight, // default 0.1
         },
     });
