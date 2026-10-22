@@ -19,6 +19,8 @@ pub mod dream;
 mod edges;
 mod embed;
 mod error;
+#[cfg(test)]
+mod error_class_tests;
 pub mod extraction;
 mod forget_request;
 pub mod graph;
@@ -111,7 +113,7 @@ pub use timeline::{TimelineEvent, TimelineEventType};
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]
 pub use embed::OnnxEmbedder;
-pub use error::{Error, format_bytes};
+pub use error::{Error, ErrorClass, format_bytes};
 pub use types::{
     CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
     VerifyReport,
@@ -1988,7 +1990,7 @@ impl Uteke {
             None => self
                 .store
                 .get_document(id_or_slug)?
-                .ok_or_else(|| Error::validation("document not found for move"))?,
+                .ok_or_else(|| Error::not_found("document not found for move"))?,
         };
 
         let new_parent_id = match new_parent_slug {
@@ -1997,7 +1999,7 @@ impl Uteke {
                 let parent = match self.store.get_document_by_slug(ps)? {
                     Some(d) => d,
                     None => self.store.get_document(ps)?.ok_or_else(|| {
-                        Error::validation(format!("parent document '{ps}' not found"))
+                        Error::not_found(format!("parent document '{ps}' not found"))
                     })?,
                 };
                 Some(parent.id)

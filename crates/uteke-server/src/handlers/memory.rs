@@ -811,11 +811,7 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     // update — plain column change, no re-embed needed.
                     if let Some(ns) = req_data.namespace.as_deref() {
                         if let Err(e) = uteke.move_memory(&req_data.id, ns) {
-                            let status = match e {
-                                uteke_core::Error::Validation(_) => 400,
-                                _ => 500,
-                            };
-                            return ctx.error_response_for(req, status, e.to_string());
+                            return ctx.core_error(req, &e);
                         }
                     }
                     // #1464: true when the filter masked a secret in the new
@@ -834,18 +830,7 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(_) => {
                     ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
                 }
-                Err(uteke_core::Error::SecretDetected { kinds }) => {
-                    ctx.secret_detected_response(req, &kinds)
-                }
-                Err(e) => {
-                    error!("Update memory error: {e}");
-                    // Propagate validation errors with proper status codes
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),

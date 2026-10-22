@@ -946,7 +946,7 @@ impl super::Store {
             .execute("DELETE FROM rooms WHERE id = ?1", params![room_id])
             .map_err(|e| Error::db("delete room", e))?;
         if rows == 0 {
-            return Err(Error::db_msg(format!("Room not found: {room_id}")));
+            return Err(Error::not_found(format!("Room not found: {room_id}")));
         }
         Ok(memory_links)
     }

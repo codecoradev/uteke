@@ -321,13 +321,7 @@ pub(super) fn post_room_rename(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     "room": room,
                 }),
             ),
-            Err(e) => {
-                let status = match e {
-                    uteke_core::Error::Validation(_) => 400,
-                    _ => 500,
-                };
-                ctx.error_response_for(req, status, e.to_string())
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -359,13 +353,7 @@ pub(super) fn post_room_update(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     404,
                     format!("Room not found: {}", req_data.room_id),
                 ),
-                Err(e) => {
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -408,13 +396,7 @@ pub(super) fn post_room_memory_move(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     ),
                 ),
                 Ok(_) => unreachable!("move returns 0 or 1"),
-                Err(e) => {
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -467,17 +449,7 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         }),
                     )
                 }
-                Err(uteke_core::Error::SecretDetected { kinds }) => {
-                    ctx.secret_detected_response(req, &kinds)
-                }
-                Err(e) => {
-                    error!("room/remember error: {e}");
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -655,14 +627,12 @@ pub(super) fn delete_room_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 "note": "memories and documents are preserved in their namespaces, no longer linked to any room"
             }),
         ),
+        Err(e) if e.class() == uteke_core::ErrorClass::NotFound => {
+            ctx.error_response_for(req, 404, e.to_string())
+        }
         Err(e) => {
-            let msg = format!("{e}");
-            if msg.contains("not found") {
-                ctx.error_response_for(req, 404, &msg)
-            } else {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            error!("Internal error: {e}");
+            ctx.error_response_for(req, 500, "Internal server error")
         }
     }
 }

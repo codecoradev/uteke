@@ -437,14 +437,7 @@ pub(super) fn post_consolidate_pair(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 uteke.consolidate_pair(&req_data.id_keep, &req_data.id_remove, req_data.hard);
             match result {
                 Ok(r) => ctx.ok_response_for(req, &r),
-                Err(e) => {
-                    let status = if matches!(e, uteke_core::Error::Validation(_)) {
-                        400
-                    } else {
-                        500
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),

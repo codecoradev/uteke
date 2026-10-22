@@ -335,6 +335,27 @@ impl ReqCtx {
         )
     }
 
+    /// Answer a core error by its class: 400 for a bad request, 404 when the
+    /// named thing does not exist, `secret_detected` in strict privacy mode,
+    /// 500 otherwise. The message of the error is the body in every case
+    /// except the secret one: this is what the handlers it replaced already
+    /// sent, so a 500 reveals exactly what it did before (database and
+    /// embedding messages are sanitized in `error.rs`; an `Io` message is not).
+    pub fn core_error(&self, req: &Request, e: &uteke_core::Error) -> Response<Cursor<Vec<u8>>> {
+        use uteke_core::{Error, ErrorClass};
+        if let Error::SecretDetected { kinds } = e {
+            return self.secret_detected_response(req, kinds);
+        }
+        match e.class() {
+            ErrorClass::BadRequest => self.error_response_for(req, 400, e.to_string()),
+            ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
+            _ => {
+                tracing::error!("Internal error: {e}");
+                self.error_response_for(req, 500, e.to_string())
+            }
+        }
+    }
+
     /// The privacy filter rejected the write in strict mode (#1464): 400 with
     /// the kinds found, never the values.
     pub fn secret_detected_response(
