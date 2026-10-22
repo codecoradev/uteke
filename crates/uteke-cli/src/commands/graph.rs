@@ -2,12 +2,10 @@
 
 use crate::Cli;
 use crate::cli::GraphCommands;
-use uteke_core::GraphStore;
 
 /// Run graph command.
 pub fn run(cli: &Cli, uteke: &uteke_core::Uteke, command: &GraphCommands) -> Result<(), String> {
-    let store = uteke.graph_store();
-    let graph = GraphStore::new(store);
+    let graph = uteke.graph();
 
     match command {
         GraphCommands::Nodes { entity_type } => {

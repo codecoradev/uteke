@@ -39,8 +39,7 @@ pub(super) fn post_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 );
             }
 
-            let conn = uteke.graph_store();
-            let gs = uteke_core::graph::GraphStore::new(conn);
+            let gs = uteke.graph();
 
             // Resolve an input ID to its graph node without creating
             // anything: memory-linked nodes first, then explicit node IDs
@@ -127,8 +126,7 @@ pub(super) fn delete_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
 
     match (&source, &target) {
         (Some(src), Some(tgt)) => {
-            let conn = uteke.graph_store();
-            let gs = uteke_core::graph::GraphStore::new(conn);
+            let gs = uteke.graph();
             // Accept either memory IDs or graph node IDs (#1180) —
             // resolve both sides to node IDs before deleting.
             let resolve = |id: &str| -> Result<Option<String>, uteke_core::Error> {

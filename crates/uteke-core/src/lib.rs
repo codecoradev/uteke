@@ -9,6 +9,8 @@
 //! let results = uteke.recall("query", 5, None, None, 0.0, None, None)?;
 //! ```
 
+#[cfg(test)]
+mod accessor_tests;
 pub mod chunker;
 pub mod config_layers;
 mod consolidate;
@@ -71,7 +73,7 @@ mod recall_cache;
 pub mod recall_explain;
 mod recall_request;
 mod remember_request;
-mod rooms;
+mod room_ops;
 pub mod rooms_segments;
 pub mod salience_recency;
 pub mod structural_export;
@@ -685,9 +687,33 @@ fn default_embedder_backend() -> &'static str {
 }
 
 impl Uteke {
-    /// Borrow the underlying store (for CLI/advanced use).
-    pub fn store(&self) -> &Store {
+    /// Borrow the underlying store. Inside the crate only: the transports ask
+    /// `Uteke` for what they need instead of reaching into the store.
+    pub(crate) fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// The store, for fixtures of the transport test suites (they seed rows
+    /// with exact ids and timestamps).
+    #[cfg(feature = "test-support")]
+    pub fn store_for_tests(&self) -> &Store {
+        &self.store
+    }
+
+    /// How many active (not deprecated) memories there are, optionally in one
+    /// namespace.
+    pub fn count_active(&self, namespace: Option<&str>) -> Result<usize, Error> {
+        self.store.count_active(namespace)
+    }
+
+    /// Deprecated memories, most recently deprecated first, with what the
+    /// lifecycle TTL display needs.
+    pub fn list_deprecated(
+        &self,
+        namespace: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<DeprecatedMemoryInfo>, Error> {
+        self.store.list_deprecated(namespace, limit)
     }
 
     /// Borrow lifecycle configuration (read-only).
@@ -1502,8 +1528,14 @@ impl Uteke {
         Ok(updated)
     }
 
-    /// Get a reference to the raw connection for graph operations.
-    pub fn graph_store(&self) -> &rusqlite::Connection {
+    /// The knowledge graph of this store. The transports use this; the raw
+    /// connection stays inside the crate.
+    pub fn graph(&self) -> GraphStore<'_> {
+        GraphStore::new(self.graph_store())
+    }
+
+    /// The raw connection for graph operations (inside the crate only).
+    pub(crate) fn graph_store(&self) -> &rusqlite::Connection {
         &self.store.conn
     }
 

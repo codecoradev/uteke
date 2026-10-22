@@ -15,14 +15,14 @@ pub(super) fn get_lifecycle_status(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         })
         .collect();
     let ns_param = params.get("namespace").map(|s| s.as_str());
-    let active = match uteke.store().count_active(ns_param) {
+    let active = match uteke.count_active(ns_param) {
         Ok(v) => v,
         Err(e) => {
             error!("lifecycle status error: {e}");
             return ctx.error_response_for(req, 500, "Internal server error");
         }
     };
-    let deprecated = match uteke.store().count_deprecated(ns_param) {
+    let deprecated = match uteke.count_deprecated(ns_param) {
         Ok(v) => v,
         Err(e) => {
             error!("lifecycle status error: {e}");
@@ -55,7 +55,7 @@ pub(super) fn get_lifecycle_deprecated(c: &mut Call) -> Response<Cursor<Vec<u8>>
         .and_then(|s| s.parse().ok())
         .unwrap_or(100)
         .min(MAX_LIST_LIMIT as u32);
-    match uteke.store().list_deprecated(ns_param, limit) {
+    match uteke.list_deprecated(ns_param, limit) {
         Ok(items) => {
             #[derive(serde::Serialize)]
             struct DeprecatedListResponse {

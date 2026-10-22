@@ -66,12 +66,8 @@ pub(crate) fn run(
 
         LifecycleCommands::Status { namespace } => {
             let target_ns = namespace.as_deref().or(ns);
-            let active = uteke
-                .store()
-                .count_active(target_ns)
-                .map_err(|e| format!("{e}"))?;
+            let active = uteke.count_active(target_ns).map_err(|e| format!("{e}"))?;
             let deprecated = uteke
-                .store()
                 .count_deprecated(target_ns)
                 .map_err(|e| format!("{e}"))?;
             let cfg = uteke.get_lifecycle_config();

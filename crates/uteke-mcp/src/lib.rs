@@ -2146,8 +2146,7 @@ fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
         Err(e) => return Err(format!("Failed: {e}")),
     }
 
-    let conn = uteke.graph_store();
-    let gs = uteke_core::graph::GraphStore::new(conn);
+    let gs = uteke.graph();
     gs.add_edge_for_memories(&source, &target, edge_type, weight)
         .map_err(|e| format!("Failed: {e}"))?;
 
@@ -2166,8 +2165,7 @@ fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
     let target_arg = args["target"].as_str().ok_or("Missing 'target'")?;
     let target = resolve_id(uteke, target_arg)?;
 
-    let conn = uteke.graph_store();
-    let gs = uteke_core::graph::GraphStore::new(conn);
+    let gs = uteke.graph();
     let removed = gs
         .remove_edge_between(&source, &target)
         .map_err(|e| format!("Failed: {e}"))?;
@@ -3165,7 +3163,7 @@ mod id_resolution_tests {
             author_type: "agent".to_string(),
             author: None,
         };
-        uteke.store().insert(&m).unwrap();
+        uteke.store_for_tests().insert(&m).unwrap();
         id
     }
 
@@ -3407,7 +3405,7 @@ mod supersession_mcp_tests {
                 author_type: "agent".to_string(),
                 author: None,
             };
-            uteke.store().insert(&m).unwrap();
+            uteke.store_for_tests().insert(&m).unwrap();
             id
         };
         let old = mk("old auth decision");
@@ -3488,7 +3486,7 @@ mod contradiction_mcp_tests {
                 author_type: "agent".to_string(),
                 author: None,
             };
-            uteke.store().insert(&m).unwrap();
+            uteke.store_for_tests().insert(&m).unwrap();
             id
         };
         let old = mk("old decision");

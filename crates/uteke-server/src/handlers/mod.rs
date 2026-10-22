@@ -2770,9 +2770,18 @@ mod forget_route_tests {
     fn app() -> Mutex<Uteke> {
         let uteke = Uteke::open_with_backend(":memory:", None)
             .expect("open in-memory uteke without embedder");
-        uteke.store().insert(&memory(ID_A, "ns-a", "t1")).unwrap();
-        uteke.store().insert(&memory(ID_B, "ns-a", "t1")).unwrap();
-        uteke.store().insert(&memory(ID_C, "ns-b", "t2")).unwrap();
+        uteke
+            .store_for_tests()
+            .insert(&memory(ID_A, "ns-a", "t1"))
+            .unwrap();
+        uteke
+            .store_for_tests()
+            .insert(&memory(ID_B, "ns-a", "t1"))
+            .unwrap();
+        uteke
+            .store_for_tests()
+            .insert(&memory(ID_C, "ns-b", "t2"))
+            .unwrap();
         Mutex::new(uteke)
     }
 
