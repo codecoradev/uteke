@@ -18,8 +18,6 @@ use tiny_http::Server;
 use tracing::{error, info, warn};
 use uteke_core::Uteke;
 
-use types::RecallFileSection;
-
 // ── Main ────────────────────────────────────────────────────────────────────
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -278,7 +276,7 @@ fn main() {
         embedding.settings,
         resolve_tier(&config),
         uteke_core::RecallConfig::default(),
-        recall_tuning.graph.clone(),
+        recall_tuning.graph_rerank(),
         embedding.vector_backend.as_deref(),
     ) {
         Ok(mut u) => {
@@ -351,15 +349,14 @@ fn main() {
             // values remain strictly validated (HTTP 400).
             let mut recall = config.recall.clone();
             if let Some(r) = recall.as_mut() {
-                if let Some(s) = r.default_strategy.as_deref() {
-                    if uteke_core::RecallStrategy::from_str_opt(s).is_none() {
-                        warn!(
-                            "Invalid [recall] default_strategy='{s}' in config — \
-                             falling back to 'hybrid'. \
-                             Expected: vector | fts5 | hybrid | graph."
-                        );
-                        r.default_strategy = Some("hybrid".to_string());
-                    }
+                if uteke_core::RecallStrategy::from_str_opt(&r.default_strategy).is_none() {
+                    warn!(
+                        "Invalid [recall] default_strategy='{}' in config — \
+                         falling back to 'hybrid'. \
+                         Expected: vector | fts5 | hybrid | graph.",
+                        r.default_strategy
+                    );
+                    r.default_strategy = "hybrid".to_string();
                 }
             }
             recall
@@ -648,7 +645,7 @@ struct ServerFileConfig {
     /// `[tier]`: hot/warm/cold memory tiers (#1355).
     tier: Option<uteke_core::TierConfig>,
     server: Option<ServerFileSection>,
-    recall: Option<RecallFileSection>,
+    recall: Option<uteke_core::RecallSettings>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
     maintenance: Option<MaintenanceFileSection>,
     /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
@@ -704,26 +701,9 @@ fn resolve_embed_fallback(
     settings.is_configured().then_some(settings)
 }
 
-/// Recall tuning read from `[recall]` (#1355 step B): the graph-rerank weights
-/// and the Jaccard weight, with the same defaults as the CLI.
-struct RecallTuning {
-    graph: uteke_core::GraphRerankConfig,
-    jaccard_weight: f32,
-}
-
-fn resolve_recall_tuning(config: &ServerFileConfig) -> RecallTuning {
-    let default = uteke_core::GraphRerankConfig::default();
-    let file = config.recall.clone().unwrap_or_default();
-    RecallTuning {
-        graph: uteke_core::GraphRerankConfig {
-            density_weight: file.graph_density_weight.unwrap_or(default.density_weight),
-            authority_weight: file
-                .graph_authority_weight
-                .unwrap_or(default.authority_weight),
-            enabled: file.graph_rerank_enabled.unwrap_or(default.enabled),
-        },
-        jaccard_weight: file.jaccard_weight.unwrap_or(0.0),
-    }
+/// `[recall]` over the core defaults (the same settings the CLI reads).
+fn resolve_recall_tuning(config: &ServerFileConfig) -> uteke_core::RecallSettings {
+    config.recall.clone().unwrap_or_default()
 }
 
 /// Tier settings: `[tier]` over the core defaults (7 / 30 days, boost 0.1).
@@ -930,8 +910,8 @@ mod config_overlay_tests {
             false,
         );
         let recall = merged.recall.expect("recall section");
-        assert_eq!(recall.min_score, Some(0.6));
-        assert_eq!(recall.default_strategy.as_deref(), Some("vector"));
+        assert_eq!(recall.min_score, 0.6);
+        assert_eq!(recall.default_strategy, "vector");
     }
 }
 
@@ -1111,13 +1091,16 @@ mod recall_tuning_tests {
     fn defaults_match_the_core_and_the_cli() {
         let t = resolve_recall_tuning(&ServerFileConfig::default());
         let d = uteke_core::GraphRerankConfig::default();
-        assert_eq!(t.graph.density_weight, d.density_weight);
-        assert_eq!(t.graph.authority_weight, d.authority_weight);
-        assert_eq!(t.graph.enabled, d.enabled);
+        assert_eq!(t.graph_rerank().density_weight, d.density_weight);
+        assert_eq!(t.graph_rerank().authority_weight, d.authority_weight);
+        assert_eq!(t.graph_rerank().enabled, d.enabled);
         assert_eq!(t.jaccard_weight, 0.0, "jaccard is opt-in");
         // a [recall] section without these keys changes nothing either
         let t = resolve_recall_tuning(&parse("[recall]\nmin_score = 0.2\n"));
-        assert_eq!((t.graph.density_weight, t.jaccard_weight), (0.1, 0.0));
+        assert_eq!(
+            (t.graph_rerank().density_weight, t.jaccard_weight),
+            (0.1, 0.0)
+        );
     }
 
     #[test]
@@ -1126,18 +1109,18 @@ mod recall_tuning_tests {
             "[recall]\ngraph_density_weight = 0.3\ngraph_authority_weight = 0.2\n\
              graph_rerank_enabled = false\njaccard_weight = 0.12\n",
         ));
-        assert_eq!(t.graph.density_weight, 0.3);
-        assert_eq!(t.graph.authority_weight, 0.2);
-        assert!(!t.graph.enabled);
+        assert_eq!(t.graph_rerank().density_weight, 0.3);
+        assert_eq!(t.graph_rerank().authority_weight, 0.2);
+        assert!(!t.graph_rerank().enabled);
         assert_eq!(t.jaccard_weight, 0.12);
     }
 
     #[test]
     fn a_partial_section_keeps_the_other_defaults() {
         let t = resolve_recall_tuning(&parse("[recall]\ngraph_density_weight = 0.0\n"));
-        assert_eq!(t.graph.density_weight, 0.0);
-        assert_eq!(t.graph.authority_weight, 0.1);
-        assert!(t.graph.enabled);
+        assert_eq!(t.graph_rerank().density_weight, 0.0);
+        assert_eq!(t.graph_rerank().authority_weight, 0.1);
+        assert!(t.graph_rerank().enabled);
     }
 
     #[test]
@@ -1146,9 +1129,9 @@ mod recall_tuning_tests {
             "[recall]\nmin_score = 0.4\ndefault_strategy = \"vector\"\njaccard_weight = 0.1\n",
         );
         let r = cfg.recall.expect("recall");
-        assert_eq!(r.min_score, Some(0.4));
-        assert_eq!(r.default_strategy.as_deref(), Some("vector"));
-        assert_eq!(r.jaccard_weight, Some(0.1));
+        assert_eq!(r.min_score, 0.4);
+        assert_eq!(r.default_strategy, "vector");
+        assert_eq!(r.jaccard_weight, 0.1);
     }
 }
 

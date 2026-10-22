@@ -206,62 +206,9 @@ impl Default for AgingConfig {
     }
 }
 
-/// Recall / search threshold configuration.
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct RecallConfig {
-    /// Minimum similarity score for recall results. Results below are filtered out.
-    /// Default 0.0 (#1223): since fusion RRF became the default strategy (0.16.0),
-    /// returned scores are rank-based (~0.0-0.2), so a legacy cosine-era default of
-    /// 0.3 silently emptied default recalls. Threshold remains opt-in via config,
-    /// `--min`, or `--strict` (0.5).
-    pub min_score: f64,
-    /// Strict mode threshold (higher, for critical queries).
-    pub min_score_strict: f64,
-    /// Default recall strategy for the `recall` command when `--strategy` is
-    /// not given. One of: `vector`, `fts5`, `hybrid`, `graph`. Default
-    /// `hybrid` (RRF: vector + FTS5, R@5 98.0% vs vector-only 85.4% on
-    /// LongMemEval-S); `graph` enables graph-augmented reranking (#378).
-    pub default_strategy: String,
-    /// Weight for the edge-density boost applied by the `graph` strategy.
-    /// 0.0 disables; 0.1 is subtle (default).
-    pub graph_density_weight: f32,
-    /// Weight for the incoming-edge authority boost applied by the `graph`
-    /// strategy. 0.0 disables; 0.1 is subtle (default).
-    pub graph_authority_weight: f32,
-    /// Feature flag for graph-augmented reranking. When `false`, the `graph`
-    /// strategy behaves like `hybrid` (no boost applied).
-    pub graph_rerank_enabled: bool,
-    /// Weight for the salience boost applied when the `--salience` flag is
-    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
-    pub salience_weight: f32,
-    /// Weight for the recency boost applied when the `--recency` flag is
-    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
-    pub recency_weight: f32,
-    /// Weight for the Jaccard token reranking boost (#719).
-    /// Applied post-RRF as an additive signal based on query-content token
-    /// overlap. 0.0 disables (default); 0.10-0.15 recommended.
-    pub jaccard_weight: f32,
-}
-
-impl Default for RecallConfig {
-    fn default() -> Self {
-        Self {
-            min_score: 0.0,
-            min_score_strict: 0.5,
-            // Fusion (weighted RRF: vector×1.7 + hybrid×1) is the default
-            // strategy since 0.16.0 (#1123). Benchmark: fast50 R@5 0.98 vs
-            // 0.9267 hybrid. Explicit config still overrides.
-            default_strategy: "fusion".to_string(),
-            graph_density_weight: 0.1,
-            graph_authority_weight: 0.1,
-            graph_rerank_enabled: true,
-            salience_weight: 0.15,
-            recency_weight: 0.15,
-            jaccard_weight: 0.0,
-        }
-    }
-}
+/// Recall / search threshold configuration: the core type, so the keys,
+/// defaults and `UTEKE_RECALL_*` overrides live in one place (#1515).
+pub type RecallConfig = uteke_core::RecallSettings;
 
 // ── Top-level config ────────────────────────────────────────────────────────
 
@@ -477,74 +424,9 @@ impl Config {
             }
         }
 
-        // Recall thresholds (must be 0.0-1.0)
-        if let Ok(v) = std::env::var("UTEKE_RECALL_MIN_SCORE") {
-            match v.parse::<f64>() {
-                Ok(score) if (0.0..=1.0).contains(&score) => self.recall.min_score = score,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_RECALL_MIN_SCORE='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_RECALL_MIN_SCORE='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_RECALL_MIN_SCORE_STRICT") {
-            match v.parse::<f64>() {
-                Ok(score) if (0.0..=1.0).contains(&score) => self.recall.min_score_strict = score,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_RECALL_MIN_SCORE_STRICT='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_RECALL_MIN_SCORE_STRICT='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-
-        // Graph-augmented reranking overrides (#378)
-        if let Ok(v) = std::env::var("UTEKE_RECALL_STRATEGY") {
-            if matches!(
-                v.as_str(),
-                "vector" | "fts5" | "hybrid" | "graph" | "fusion"
-            ) {
-                self.recall.default_strategy = v;
-            } else {
-                tracing::warn!(
-                    "Invalid UTEKE_RECALL_STRATEGY='{v}', ignoring (expected vector|fts5|hybrid|graph|fusion)"
-                );
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_GRAPH_DENSITY_WEIGHT") {
-            match v.parse::<f32>() {
-                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_density_weight = w,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_GRAPH_DENSITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_GRAPH_DENSITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_GRAPH_AUTHORITY_WEIGHT") {
-            match v.parse::<f32>() {
-                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_authority_weight = w,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_GRAPH_RERANK_ENABLED") {
-            match v.to_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => self.recall.graph_rerank_enabled = true,
-                "0" | "false" | "no" | "off" => self.recall.graph_rerank_enabled = false,
-                _ => tracing::warn!(
-                    "Invalid UTEKE_GRAPH_RERANK_ENABLED='{v}', ignoring (expected true/false)"
-                ),
-            }
-        }
+        // Recall thresholds, strategy and graph-rerank weights (UTEKE_RECALL_*,
+        // UTEKE_GRAPH_*): validated in the core.
+        self.recall = self.recall.with_env_overrides();
 
         // Vector engine override (#1168). Ignored when the requested engine
         // is not compiled in (resolution falls back with a warning in core).

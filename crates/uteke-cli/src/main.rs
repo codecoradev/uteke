@@ -218,14 +218,8 @@ fn main() {
             dims: config.embedding.dims,
         },
         config.tier,
-        uteke_core::RecallConfig {
-            min_score: config.recall.min_score as f32,
-        },
-        uteke_core::GraphRerankConfig {
-            density_weight: config.recall.graph_density_weight,
-            authority_weight: config.recall.graph_authority_weight,
-            enabled: config.recall.graph_rerank_enabled,
-        },
+        config.recall.recall_config(),
+        config.recall.graph_rerank(),
         // Runtime vector-engine preference from uteke.toml [vector] (#1168).
         // UTEKE_VECTOR_BACKEND env (higher precedence) is read inside core.
         Some(config.vector.backend.as_str()),

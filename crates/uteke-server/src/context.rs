@@ -5,7 +5,7 @@ use std::io::Cursor;
 use sha2::{Digest, Sha256};
 use tiny_http::{Header, Request, Response, StatusCode};
 
-use crate::types::{ErrorResponse, RecallFileSection, json_header};
+use crate::types::{ErrorResponse, json_header};
 
 /// Build a 401 Unauthorized response with CORS and WWW-Authenticate headers.
 pub fn unauthorized_response(
@@ -131,7 +131,7 @@ pub struct ReqCtx {
     /// Allowed CORS origins from config. Empty = no CORS headers; `"*"` = wildcard.
     pub cors_origins: Vec<String>,
     /// Recall threshold config from [recall] section in uteke.toml.
-    pub recall_config: Option<RecallFileSection>,
+    pub recall_config: Option<uteke_core::RecallSettings>,
     /// Extraction config from [extraction] section in uteke.toml.
     pub extraction_config: Option<uteke_core::extraction::ExtractionConfig>,
     /// `Host` header allowlist against DNS rebinding (#1326).

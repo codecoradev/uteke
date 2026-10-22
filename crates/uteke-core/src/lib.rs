@@ -74,6 +74,7 @@ pub mod provenance;
 mod recall_cache;
 pub mod recall_explain;
 mod recall_request;
+pub mod recall_settings;
 mod remember_request;
 mod room_ops;
 pub mod rooms_segments;
@@ -121,6 +122,7 @@ pub use embed::Embedder;
 #[cfg(feature = "onnx")]
 pub use embed::OnnxEmbedder;
 pub use error::{Error, ErrorClass, format_bytes};
+pub use recall_settings::RecallSettings;
 pub use types::{
     CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
     VerifyReport,

@@ -141,8 +141,8 @@ pub(super) fn post_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             // Threshold: min_score > [recall] min_score(_strict) > built-in
             // (strict 0.5, otherwise 0.0).
             let min_score = typed.resolve_min_score(
-                ctx.recall_config.as_ref().and_then(|r| r.min_score),
-                ctx.recall_config.as_ref().and_then(|r| r.min_score_strict),
+                ctx.recall_config.as_ref().map(|r| r.min_score),
+                ctx.recall_config.as_ref().map(|r| r.min_score_strict),
             );
             // Entity/category filters are now pushed into the core recall
             // candidate loop (#663) — no 10x fetch amplification needed.
@@ -165,7 +165,7 @@ pub(super) fn post_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let strategy = match typed.strategy(
                 ctx.recall_config
                     .as_ref()
-                    .and_then(|r| r.default_strategy.as_deref()),
+                    .map(|r| r.default_strategy.as_str()),
             ) {
                 Ok(s) => s,
                 Err(e) => return ctx.error_response_for(req, 400, e.to_string()),

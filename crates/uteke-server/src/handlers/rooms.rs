@@ -226,7 +226,7 @@ pub(super) fn post_room_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 let min_score = req_data.min_score.unwrap_or(
                     ctx.recall_config
                         .as_ref()
-                        .and_then(|r| r.min_score)
+                        .map(|r| r.min_score)
                         .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
                 );
                 match uteke.recall_room_semantic(
