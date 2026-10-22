@@ -372,7 +372,7 @@ impl crate::Uteke {
             .store
             .get_by_id(id_keep)
             .map_err(|e| Error::db("consolidate_pair lookup keeper", e))?
-            .ok_or_else(|| Error::validation(format!("memory {id_keep} not found")))?;
+            .ok_or_else(|| Error::not_found(format!("memory {id_keep} not found")))?;
         if keeper.deprecated {
             return Err(Error::validation(format!(
                 "memory {id_keep} is deprecated and cannot be kept"
@@ -382,7 +382,7 @@ impl crate::Uteke {
             .store
             .get_by_id(id_remove)
             .map_err(|e| Error::db("consolidate_pair lookup loser", e))?
-            .ok_or_else(|| Error::validation(format!("memory {id_remove} not found")))?;
+            .ok_or_else(|| Error::not_found(format!("memory {id_remove} not found")))?;
 
         let namespace = loser.namespace.clone();
         let dream_soft = self.lifecycle_config.dream_dedup_soft_delete;

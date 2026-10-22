@@ -842,7 +842,7 @@ mod tests {
         uteke.create_room("b", None, "default").unwrap();
 
         let missing = uteke.rename_room("nope", "c");
-        assert!(matches!(missing, Err(crate::Error::Validation(_))));
+        assert!(matches!(missing, Err(crate::Error::NotFound(_))));
 
         let taken = uteke.rename_room("a", "b");
         assert!(matches!(taken, Err(crate::Error::Validation(_))));
@@ -931,7 +931,7 @@ mod tests {
 
         // Target room missing.
         let missing_target = uteke.move_memory_to_room(&mid, "s", "nope");
-        assert!(matches!(missing_target, Err(crate::Error::Validation(_))));
+        assert!(matches!(missing_target, Err(crate::Error::NotFound(_))));
 
         // Same room.
         let same = uteke.move_memory_to_room(&mid, "s", "s");

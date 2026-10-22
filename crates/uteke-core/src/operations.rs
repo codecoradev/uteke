@@ -1702,7 +1702,7 @@ impl crate::Uteke {
         }
         let (active, deprecated, total) = self.store.namespace_lifecycle_counts(from)?;
         if total == 0 {
-            return Err(Error::Validation(format!("Namespace not found: {from}")));
+            return Err(Error::not_found(format!("Namespace not found: {from}")));
         }
         let target_existed = self.store.namespace_lifecycle_counts(to)?.2 > 0;
         let moved = self
@@ -1955,7 +1955,7 @@ impl crate::Uteke {
         let existing = self
             .store
             .get_by_id(id)?
-            .ok_or_else(|| Error::Validation(format!("Memory not found: {id}")))?;
+            .ok_or_else(|| Error::not_found(format!("Memory not found: {id}")))?;
 
         // Validate new content if provided
         if let Some(c) = content {

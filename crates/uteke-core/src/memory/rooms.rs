@@ -261,7 +261,7 @@ impl super::Store {
             )
             .map_err(|e| Error::db("rename room: check source", e))?;
         if !exists {
-            return Err(Error::Validation(format!("Room not found: {old_id}")));
+            return Err(Error::not_found(format!("Room not found: {old_id}")));
         }
         let taken = self
             .conn
@@ -366,7 +366,7 @@ impl super::Store {
             )
             .map_err(|e| Error::db("move memory to room: check target", e))?;
         if !target_exists {
-            return Err(Error::Validation(format!("Room not found: {to_room}")));
+            return Err(Error::not_found(format!("Room not found: {to_room}")));
         }
 
         let tx = self

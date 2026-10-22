@@ -55,11 +55,9 @@ pub(super) fn post_namespaces_rename(c: &mut Call) -> Response<Cursor<Vec<u8>>> 
     match read_body::<NamespaceRenameRequest>(req.as_reader()) {
         Ok(req_data) => match uteke.rename_namespace(&req_data.from, &req_data.to) {
             Ok(result) => ctx.ok_response_for(req, &result),
+            // The other 400s of a rename keep their bare message.
             Err(uteke_core::Error::Validation(msg)) => ctx.error_response_for(req, 400, msg),
-            Err(e) => {
-                error!("Namespace rename error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
