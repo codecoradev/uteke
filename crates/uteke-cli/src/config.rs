@@ -155,27 +155,9 @@ impl EmbedFallbackConfig {
     }
 }
 
-/// Tier configuration for hot/warm/cold memory tiers.
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct TierConfig {
-    /// Days before memory moves from hot to warm.
-    pub hot_days: u32,
-    /// Days before memory moves from warm to cold.
-    pub warm_days: u32,
-    /// Score boost for hot memories.
-    pub hot_boost: f64,
-}
-
-impl Default for TierConfig {
-    fn default() -> Self {
-        Self {
-            hot_days: 7,
-            warm_days: 30,
-            hot_boost: 0.1,
-        }
-    }
-}
+/// Tier configuration for hot/warm/cold memory tiers: the core type, so the
+/// keys and defaults live in one place (#1515).
+pub type TierConfig = uteke_core::TierConfig;
 
 /// Logging configuration.
 #[derive(serde::Deserialize, Clone)]
@@ -331,115 +313,11 @@ impl Default for MaintenanceConfig {
     }
 }
 
-/// Dream pipeline thresholds (#731). All phases in the dream cycle
-/// (contradiction scan, dedup/consolidate, orphan detection) read from
-/// these values instead of hardcoded constants.
-#[derive(serde::Deserialize, Clone, Copy)]
-#[serde(default)]
-pub struct DreamConfig {
-    /// Cosine similarity threshold for contradiction scan. Memories with
-    /// similarity ABOVE this value are NOT contradictions. Default: 0.6.
-    pub contradict_similarity_threshold: f32,
-    /// Minimum Jaccard index for tag overlap to consider contradiction.
-    /// Default: 0.4 (up from original 0.3 to reduce false positives).
-    pub contradict_tag_jaccard_min: f32,
-    /// Maximum memories loaded for O(n²) contradiction scan. Default: 200.
-    pub contradict_max_memories: usize,
-    /// Cosine similarity threshold for dedup/consolidate. Memories with
-    /// similarity ABOVE this value are merge candidates. Default: 0.92.
-    pub dedup_threshold: f32,
-    /// Importance threshold for orphan detection. Memories below this AND
-    /// with no edges are flagged as orphans. Default: 0.15 (safer than 0.3).
-    pub orphan_importance_threshold: f64,
-}
+/// Dream pipeline thresholds (#731): the core type (#1515).
+pub type DreamConfig = uteke_core::DreamConfig;
 
-impl Default for DreamConfig {
-    fn default() -> Self {
-        Self {
-            contradict_similarity_threshold: 0.6,
-            contradict_tag_jaccard_min: 0.4,
-            contradict_max_memories: 200,
-            dedup_threshold: 0.92,
-            orphan_importance_threshold: 0.15,
-        }
-    }
-}
-
-/// Memory lifecycle configuration (#928).
-///
-/// Controls how memories transition through their lifecycle:
-/// `ACTIVE → DEPRECATED (hidden, restorable) → PRUNED (hard delete)`.
-///
-/// All destructive operations route through soft-delete when
-/// `soft_delete_only = true` (the default).
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct LifecycleConfig {
-    /// Route all destructive ops through `deprecate()` instead of `delete()`.
-    /// Default: true. Set to `false` to restore pre-v0.13 hard-delete behavior.
-    pub soft_delete_only: bool,
-    /// Whether auto lifecycle cycles are enabled. Default: true.
-    pub auto_aging_enabled: bool,
-    /// Hours between automatic lifecycle cycles (server mode). Default: 168 (weekly).
-    pub auto_aging_interval_hours: u64,
-    /// Minimum age in days before eligible for deprecation. Default: 90.
-    pub min_age_days: u32,
-    /// Maximum access count for "cold" eligibility. Default: 3.
-    pub max_access_count: u32,
-    /// Max percentage of total memories deprecable per cycle. Default: 1.0.
-    pub max_deprecate_percent: f64,
-    /// Minimum deprecations per cycle. Default: 1.
-    pub min_deprecate_per_cycle: usize,
-    /// Hard ceiling on deprecations per cycle. Default: 50.
-    pub max_deprecate_per_cycle: usize,
-    /// Days after deprecation before eligible for pruning (hard delete). Default: 30.
-    pub deprecated_ttl_days: u32,
-    /// Auto-prune expired deprecated memories during cycles. Default: true.
-    pub auto_prune_enabled: bool,
-    /// Dream dedup phase uses soft-delete. Default: true.
-    pub dream_dedup_soft_delete: bool,
-    /// Dream compact phase uses soft-delete. Default: true.
-    pub dream_compact_soft_delete: bool,
-}
-
-impl Default for LifecycleConfig {
-    fn default() -> Self {
-        Self {
-            soft_delete_only: true,
-            auto_aging_enabled: true,
-            auto_aging_interval_hours: 168,
-            min_age_days: 90,
-            max_access_count: 3,
-            max_deprecate_percent: 1.0,
-            min_deprecate_per_cycle: 1,
-            max_deprecate_per_cycle: 50,
-            deprecated_ttl_days: 30,
-            auto_prune_enabled: true,
-            dream_dedup_soft_delete: true,
-            dream_compact_soft_delete: true,
-        }
-    }
-}
-
-impl LifecycleConfig {
-    /// Convert CLI config to core config.
-    pub fn to_core(&self) -> uteke_core::LifecycleConfig {
-        uteke_core::LifecycleConfig {
-            soft_delete_only: self.soft_delete_only,
-            auto_aging_enabled: self.auto_aging_enabled,
-            auto_aging_interval_hours: self.auto_aging_interval_hours,
-            min_age_days: self.min_age_days,
-            max_access_count: self.max_access_count,
-            max_deprecate_percent: self.max_deprecate_percent,
-            min_deprecate_per_cycle: self.min_deprecate_per_cycle,
-            max_deprecate_per_cycle: self.max_deprecate_per_cycle,
-            deprecated_ttl_days: self.deprecated_ttl_days,
-            auto_prune_enabled: self.auto_prune_enabled,
-            dream_dedup_soft_delete: self.dream_dedup_soft_delete,
-            dream_compact_soft_delete: self.dream_compact_soft_delete,
-        }
-    }
-}
+/// Memory lifecycle configuration (#928): the core type (#1515).
+pub type LifecycleConfig = uteke_core::LifecycleConfig;
 
 /// Full uteke configuration, loaded from `uteke.toml`.
 #[derive(serde::Deserialize, Clone)]

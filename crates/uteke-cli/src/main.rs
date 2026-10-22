@@ -217,11 +217,7 @@ fn main() {
             model: config.embedding.model.clone(),
             dims: config.embedding.dims,
         },
-        uteke_core::TierConfig {
-            hot_days: config.tier.hot_days as i64,
-            warm_days: config.tier.warm_days as i64,
-            hot_boost: config.tier.hot_boost,
-        },
+        config.tier,
         uteke_core::RecallConfig {
             min_score: config.recall.min_score as f32,
         },
@@ -238,15 +234,9 @@ fn main() {
             // #719: apply Jaccard weight from config
             u.set_jaccard_weight(config.recall.jaccard_weight);
             // #731: apply dream pipeline thresholds from config
-            u.set_dream_config(uteke_core::DreamConfig {
-                contradict_similarity_threshold: config.dream.contradict_similarity_threshold,
-                contradict_tag_jaccard_min: config.dream.contradict_tag_jaccard_min,
-                contradict_max_memories: config.dream.contradict_max_memories,
-                dedup_threshold: config.dream.dedup_threshold,
-                orphan_importance_threshold: config.dream.orphan_importance_threshold,
-            });
+            u.set_dream_config(config.dream);
             // #928: apply lifecycle configuration from config
-            u.set_lifecycle_config(config.lifecycle.to_core());
+            u.set_lifecycle_config(config.lifecycle);
             // #1464: secret filter on the write path ([privacy] in uteke.toml)
             u.set_privacy_config(uteke_core::privacy::load_config());
             u

@@ -20,6 +20,8 @@ pub mod consolidation_plan;
 pub mod dream;
 mod edges;
 mod embed;
+#[cfg(test)]
+mod engine_settings_tests;
 mod error;
 #[cfg(test)]
 mod error_class_tests;
@@ -211,15 +213,33 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Configuration for memory tier thresholds.
 ///
+/// A number of days read from `uteke.toml`: zero or more, as the `u32` the
+/// config sections used before they shared this type.
+fn non_negative_days<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let days = <i64 as serde::Deserialize>::deserialize(deserializer)?;
+    if days < 0 {
+        return Err(serde::de::Error::custom(
+            "days must be zero or more (a negative value is not a number of days)",
+        ));
+    }
+    Ok(days)
+}
+
 /// Controls how memories are classified into hot/warm/cold tiers
 /// and how hot memories are boosted in recall scoring.
 ///
 /// Defaults match the hardcoded values used before config wiring (#127).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(default)]
 pub struct TierConfig {
     /// Days before memory moves from hot → warm.
+    #[serde(deserialize_with = "non_negative_days")]
     pub hot_days: i64,
     /// Days before memory moves from warm → cold.
+    #[serde(deserialize_with = "non_negative_days")]
     pub warm_days: i64,
     /// Score boost added to hot memories during recall.
     pub hot_boost: f64,
@@ -251,7 +271,8 @@ impl Default for RecallConfig {
 /// Dream pipeline thresholds (#731). All phases in the dream cycle
 /// (contradiction scan, dedup/consolidate, orphan detection) read from
 /// these values instead of hardcoded constants.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
 pub struct DreamConfig {
     /// Cosine similarity threshold for contradiction scan. Memories with
     /// similarity ABOVE this value are NOT contradictions. Default: 0.6.
@@ -307,7 +328,8 @@ impl Default for DreamConfig {
 /// dream_dedup_soft_delete = true    # dream dedup → deprecate, not delete
 /// dream_compact_soft_delete = true  # dream compact → deprecate, not delete
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
 pub struct LifecycleConfig {
     /// When `true`, all destructive operations route through `deprecate()`
     /// instead of `delete()`. Set to `false` to restore pre-v0.13 hard-delete

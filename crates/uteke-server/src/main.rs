@@ -257,7 +257,6 @@ fn main() {
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
-    let defaults = uteke_core::DreamConfig::default();
     // Embedding backend + vector engine from uteke.toml / env (#1399). Fail
     // fast on an unsupported backend instead of opening the store with a
     // different embedder than the operator asked for.
@@ -295,72 +294,20 @@ fn main() {
                 u.set_fallback_settings(fallback);
             }
             // Apply dream pipeline thresholds from config (#731)
-            if let Some(ref dc) = config.dream {
-                u.set_dream_config(uteke_core::DreamConfig {
-                    contradict_similarity_threshold: dc
-                        .contradict_similarity_threshold
-                        .unwrap_or(defaults.contradict_similarity_threshold),
-                    contradict_tag_jaccard_min: dc
-                        .contradict_tag_jaccard_min
-                        .unwrap_or(defaults.contradict_tag_jaccard_min),
-                    contradict_max_memories: dc
-                        .contradict_max_memories
-                        .unwrap_or(defaults.contradict_max_memories),
-                    dedup_threshold: dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
-                    orphan_importance_threshold: dc
-                        .orphan_importance_threshold
-                        .unwrap_or(defaults.orphan_importance_threshold),
-                });
+            if let Some(dc) = config.dream {
+                u.set_dream_config(dc);
                 info!(
                     "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
-                    dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
-                    dc.orphan_importance_threshold
-                        .unwrap_or(defaults.orphan_importance_threshold),
+                    dc.dedup_threshold, dc.orphan_importance_threshold,
                 );
             }
 
             // Apply lifecycle config from uteke.toml [lifecycle] section (#928)
-            if let Some(ref lc) = config.lifecycle {
-                let defaults = uteke_core::LifecycleConfig::default();
-                u.set_lifecycle_config(uteke_core::LifecycleConfig {
-                    soft_delete_only: lc.soft_delete_only.unwrap_or(defaults.soft_delete_only),
-                    auto_aging_enabled: lc
-                        .auto_aging_enabled
-                        .unwrap_or(defaults.auto_aging_enabled),
-                    auto_aging_interval_hours: lc
-                        .auto_aging_interval_hours
-                        .unwrap_or(defaults.auto_aging_interval_hours),
-                    min_age_days: lc.min_age_days.unwrap_or(defaults.min_age_days),
-                    max_access_count: lc.max_access_count.unwrap_or(defaults.max_access_count),
-                    max_deprecate_percent: lc
-                        .max_deprecate_percent
-                        .unwrap_or(defaults.max_deprecate_percent),
-                    min_deprecate_per_cycle: lc
-                        .min_deprecate_per_cycle
-                        .unwrap_or(defaults.min_deprecate_per_cycle),
-                    max_deprecate_per_cycle: lc
-                        .max_deprecate_per_cycle
-                        .unwrap_or(defaults.max_deprecate_per_cycle),
-                    deprecated_ttl_days: lc
-                        .deprecated_ttl_days
-                        .unwrap_or(defaults.deprecated_ttl_days),
-                    auto_prune_enabled: lc
-                        .auto_prune_enabled
-                        .unwrap_or(defaults.auto_prune_enabled),
-                    dream_dedup_soft_delete: lc
-                        .dream_dedup_soft_delete
-                        .unwrap_or(defaults.dream_dedup_soft_delete),
-                    dream_compact_soft_delete: lc
-                        .dream_compact_soft_delete
-                        .unwrap_or(defaults.dream_compact_soft_delete),
-                });
+            if let Some(lc) = config.lifecycle {
+                u.set_lifecycle_config(lc);
                 info!(
                     "Lifecycle config loaded: soft_delete_only={}, ttl={}d, max_deprecate={:.1}%",
-                    lc.soft_delete_only.unwrap_or(defaults.soft_delete_only),
-                    lc.deprecated_ttl_days
-                        .unwrap_or(defaults.deprecated_ttl_days),
-                    lc.max_deprecate_percent
-                        .unwrap_or(defaults.max_deprecate_percent),
+                    lc.soft_delete_only, lc.deprecated_ttl_days, lc.max_deprecate_percent,
                 );
             }
             Arc::new(Mutex::new(u))
@@ -449,17 +396,10 @@ fn main() {
     // Auto-lifecycle background thread (#934 — replaces auto-aging #442).
     // Runs lifecycle_cycle periodically: soft-deprecate aged memories (cap-limited)
     // + auto-prune expired deprecated memories.
-    let lifecycle_enabled = config
-        .lifecycle
-        .as_ref()
-        .and_then(|lc| lc.auto_aging_enabled)
-        .unwrap_or(true);
-    let lifecycle_hours = config
-        .lifecycle
-        .as_ref()
-        .and_then(|lc| lc.auto_aging_interval_hours)
-        .unwrap_or(168) // weekly by default
-        .max(1); // Minimum 1 hour to prevent busy loop
+    let lifecycle_config = config.lifecycle.unwrap_or_default();
+    let lifecycle_enabled = lifecycle_config.auto_aging_enabled;
+    // Minimum 1 hour to prevent a busy loop.
+    let lifecycle_hours = lifecycle_config.auto_aging_interval_hours.max(1);
     let lifecycle_uteke = Arc::clone(&uteke);
     if lifecycle_enabled {
         info!("Auto-lifecycle: enabled (every {lifecycle_hours}h)");
@@ -706,7 +646,7 @@ struct ServerFileConfig {
     /// `[embed_fallback]`: second embedding endpoint used when the primary fails (#1355).
     embed_fallback: Option<EmbedFallbackFileSection>,
     /// `[tier]`: hot/warm/cold memory tiers (#1355).
-    tier: Option<TierFileSection>,
+    tier: Option<uteke_core::TierConfig>,
     server: Option<ServerFileSection>,
     recall: Option<RecallFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
@@ -714,8 +654,8 @@ struct ServerFileConfig {
     /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
     #[allow(dead_code)]
     aging: Option<AgingFileSection>,
-    dream: Option<DreamFileSection>,
-    lifecycle: Option<LifecycleFileSection>,
+    dream: Option<uteke_core::DreamConfig>,
+    lifecycle: Option<uteke_core::LifecycleConfig>,
 }
 
 /// `[embedding]` in uteke.toml, same keys as the CLI. Empty / missing values
@@ -786,23 +726,9 @@ fn resolve_recall_tuning(config: &ServerFileConfig) -> RecallTuning {
     }
 }
 
-/// `[tier]` in uteke.toml, same keys and defaults as the CLI.
-#[derive(serde::Deserialize, Default, Clone)]
-struct TierFileSection {
-    hot_days: Option<u32>,
-    warm_days: Option<u32>,
-    hot_boost: Option<f64>,
-}
-
-/// Tier settings: file values over the core defaults (7 / 30 days, boost 0.1).
+/// Tier settings: `[tier]` over the core defaults (7 / 30 days, boost 0.1).
 fn resolve_tier(config: &ServerFileConfig) -> uteke_core::TierConfig {
-    let default = uteke_core::TierConfig::default();
-    let file = config.tier.clone().unwrap_or_default();
-    uteke_core::TierConfig {
-        hot_days: file.hot_days.map_or(default.hot_days, i64::from),
-        warm_days: file.warm_days.map_or(default.warm_days, i64::from),
-        hot_boost: file.hot_boost.unwrap_or(default.hot_boost),
-    }
+    config.tier.unwrap_or_default()
 }
 
 /// Backends `Uteke` can initialize lazily (same list as the CLI validates).
@@ -868,33 +794,6 @@ struct MaintenanceFileSection {
     auto_aging_interval_hours: Option<u64>,
     auto_dream_enabled: Option<bool>,
     auto_dream_interval_days: Option<u64>,
-}
-
-/// Dream pipeline thresholds from uteke.toml [dream] section (#731).
-#[derive(serde::Deserialize, Default, Clone)]
-struct DreamFileSection {
-    contradict_similarity_threshold: Option<f32>,
-    contradict_tag_jaccard_min: Option<f32>,
-    contradict_max_memories: Option<usize>,
-    dedup_threshold: Option<f32>,
-    orphan_importance_threshold: Option<f64>,
-}
-
-/// Memory lifecycle config from uteke.toml [lifecycle] section (#928).
-#[derive(serde::Deserialize, Default, Clone)]
-struct LifecycleFileSection {
-    soft_delete_only: Option<bool>,
-    auto_aging_enabled: Option<bool>,
-    auto_aging_interval_hours: Option<u64>,
-    min_age_days: Option<u32>,
-    max_access_count: Option<u32>,
-    max_deprecate_percent: Option<f64>,
-    min_deprecate_per_cycle: Option<usize>,
-    max_deprecate_per_cycle: Option<usize>,
-    deprecated_ttl_days: Option<u32>,
-    auto_prune_enabled: Option<bool>,
-    dream_dedup_soft_delete: Option<bool>,
-    dream_compact_soft_delete: Option<bool>,
 }
 
 #[derive(serde::Deserialize, Default)]
