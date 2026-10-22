@@ -337,10 +337,11 @@ impl ReqCtx {
 
     /// Answer a core error by its class: 400 for a bad request, 404 when the
     /// named thing does not exist, `secret_detected` in strict privacy mode,
-    /// 500 otherwise. The message of the error is the body in every case
-    /// except the secret one: this is what the handlers it replaced already
-    /// sent, so a 500 reveals exactly what it did before (database and
-    /// embedding messages are sanitized in `error.rs`; an `Io` message is not).
+    /// 500 otherwise. A 400 or 404 carries the error's own message. A 500
+    /// carries the generic `Internal server error` and the detail goes to the
+    /// log, except for an embedding failure, whose (sanitized) message tells
+    /// the user what to do, for example to run `uteke repair` (agreed with
+    /// uteke-cloud#244).
     pub fn core_error(&self, req: &Request, e: &uteke_core::Error) -> Response<Cursor<Vec<u8>>> {
         use uteke_core::{Error, ErrorClass};
         if let Error::SecretDetected { kinds } = e {
@@ -351,7 +352,11 @@ impl ReqCtx {
             ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
             _ => {
                 tracing::error!("Internal error: {e}");
-                self.error_response_for(req, 500, e.to_string())
+                let body = match e {
+                    Error::Embedding { .. } => e.to_string(),
+                    _ => "Internal server error".to_string(),
+                };
+                self.error_response_for(req, 500, body)
             }
         }
     }

@@ -83,19 +83,101 @@ fn a_validation_error_is_400_through_the_shared_mapping() {
         "{body}"
     );
 
-    // A missing memory on update stays a 400 until the contract moves it.
-    let (status, _) = app.call(
+    let absent = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+    // A missing memory on update is a 404 with the bare message (uteke-cloud#244).
+    let (status, body) = app.call(
         Method::Put,
         "/memory",
-        Some(json!({"id": "no-such-memory", "content": "x"})),
+        Some(json!({"id": absent, "content": "x"})),
     );
-    assert_eq!(status, 400);
+    assert_eq!(status, 404, "{body}");
+    assert_eq!(body["error"], format!("Memory not found: {absent}"));
+}
 
-    // Consolidate pair with unknown ids: Validation, 400.
-    let (status, _) = app.call(
+#[test]
+fn every_named_but_missing_target_is_404_with_the_bare_message() {
+    let app = App::new();
+    let cases = [
+        (
+            Method::Post,
+            "/consolidate/pair",
+            json!({"id_keep": "nope-a", "id_remove": "nope-b"}),
+            "memory nope-a not found",
+        ),
+        (
+            Method::Post,
+            "/room/rename",
+            json!({"from": "ghost", "to": "other"}),
+            "Room not found: ghost",
+        ),
+        (
+            Method::Post,
+            "/namespaces/rename",
+            json!({"from": "ghost-ns", "to": "other-ns"}),
+            "Namespace not found: ghost-ns",
+        ),
+    ];
+    for (method, url, body, message) in cases {
+        let (status, got) = app.call(method, url, Some(body));
+        assert_eq!(status, 404, "{url}: {got}");
+        assert_eq!(got["error"], message, "{url}");
+    }
+
+    // Moving into a room that does not exist: the target room is missing.
+    let (_, room) = app.call(Method::Post, "/room/create", Some(json!({"title": "src"})));
+    let src = room["id"]
+        .as_str()
+        .or(room["room_id"].as_str())
+        .unwrap_or("src");
+    let (status, got) = app.call(
         Method::Post,
-        "/consolidate/pair",
-        Some(json!({"id_keep": "nope-a", "id_remove": "nope-b"})),
+        "/room/memory/move",
+        Some(json!({"memory_id": "m", "from_room": src, "to_room": "ghost-room"})),
     );
-    assert_eq!(status, 400);
+    assert_eq!(status, 404, "{got}");
+    assert_eq!(got["error"], "Room not found: ghost-room");
+}
+
+#[test]
+fn a_malformed_id_is_still_a_400_not_a_404() {
+    let app = App::new();
+    let (status, body) = app.call(
+        Method::Put,
+        "/memory",
+        Some(json!({"id": "not-a-uuid", "content": "x"})),
+    );
+    assert_eq!(status, 400, "{body}");
+}
+
+fn answer(e: uteke_core::Error) -> (u16, String) {
+    let req: Request = TestRequest::new()
+        .with_method(Method::Get)
+        .with_path("/x")
+        .into();
+    let ctx = ReqCtx {
+        auth_token_hash: None,
+        read_only_token_hash: None,
+        cors_origins: Vec::new(),
+        recall_config: None,
+        extraction_config: None,
+        host_guard: Default::default(),
+        store_id: String::new(),
+    };
+    let resp = ctx.core_error(&req, &e);
+    let status = resp.status_code().0;
+    let body: Value =
+        serde_json::from_str(&String::from_utf8(resp.into_reader().into_inner()).unwrap()).unwrap();
+    (status, body["error"].as_str().unwrap().to_string())
+}
+
+#[test]
+fn a_500_hides_the_detail_except_for_an_embedding_failure() {
+    use uteke_core::Error;
+    let (status, msg) = answer(Error::generic("secret path /var/lib/x failed"));
+    assert_eq!((status, msg.as_str()), (500, "Internal server error"));
+    let (status, msg) = answer(Error::Io(std::io::Error::other("/home/u/store.db denied")));
+    assert_eq!((status, msg.as_str()), (500, "Internal server error"));
+    let (status, msg) = answer(Error::embed_msg("embedder unavailable; run `uteke repair`"));
+    assert_eq!(status, 500);
+    assert!(msg.contains("uteke repair"), "{msg}");
 }
