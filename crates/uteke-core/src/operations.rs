@@ -31,9 +31,7 @@ pub(crate) fn retry_embed(
             .lock()
             .map_err(|_| Error::lock("embedder lock during remember"))?;
         let Some(embedder) = lock.as_ref() else {
-            return Err(Error::embed_msg(
-                "No embedder configured",
-            ));
+            return Err(Error::embed_msg("No embedder configured"));
         };
         match embedder.embed(text) {
             Ok(embedding) => return Ok(embedding),
