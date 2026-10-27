@@ -13,6 +13,7 @@ permissions:
   contents: read
   pull-requests: write
   security-events: write
+  id-token: write # workload identity federation with Anthropic (no stored API key)
 
 jobs:
   cora-review:
@@ -21,7 +22,79 @@ jobs:
     # Review time grows with the diff (about a second per changed line, more
     # when the gateway is slow); 10 min cancelled reviews with no verdict.
     timeout-minutes: 30
+    env:
+      # Anthropic workload identity federation (organization or repository
+      # secrets or variables). When all four are set, the job exchanges its
+      # GitHub OIDC token for a short-lived Anthropic access token instead of
+      # using CORA_API_KEY. A PR from a fork gets no OIDC token and falls back.
+      FEDERATION_RULE_ID: ${{ secrets.ANTHROPIC_FEDERATION_RULE_ID || vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ORGANIZATION_ID: ${{ secrets.ANTHROPIC_ORGANIZATION_ID || vars.ANTHROPIC_ORGANIZATION_ID }}
+      SERVICE_ACCOUNT_ID: ${{ secrets.ANTHROPIC_SERVICE_ACCOUNT_ID || vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      WORKSPACE_ID: ${{ secrets.ANTHROPIC_WORKSPACE_ID || vars.ANTHROPIC_WORKSPACE_ID }}
     steps:
+      - name: Exchange the GitHub OIDC token for an Anthropic access token
+        id: wif
+        if: env.FEDERATION_RULE_ID != '' && env.ORGANIZATION_ID != '' && env.SERVICE_ACCOUNT_ID != '' && env.WORKSPACE_ID != ''
+        continue-on-error: true
+        run: |
+          # The OIDC token stays in this step's shell: it is never exported to the
+          # job environment, so later steps (checkout of the PR, the review action)
+          # cannot see it. Only the short-lived Anthropic access token is exported.
+          jwt=$(curl -sS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | jq -r '.value // empty')
+          if [ -z "$jwt" ]; then
+            echo "::warning::Could not get a GitHub OIDC token; falling back to the CORA_* secrets."
+            exit 1
+          fi
+          echo "::add-mask::$jwt"
+          body=$(jq -n \
+            --arg jwt "$jwt" \
+            --arg rule "$FEDERATION_RULE_ID" \
+            --arg org "$ORGANIZATION_ID" \
+            --arg sa "$SERVICE_ACCOUNT_ID" \
+            --arg ws "$WORKSPACE_ID" \
+            '{grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              assertion: $jwt, federation_rule_id: $rule, organization_id: $org,
+              service_account_id: $sa, workspace_id: $ws}')
+          code=$(curl -sS -o exchange.json -w '%{http_code}' \
+            https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" --data "$body")
+          if [ "$code" != "200" ]; then
+            echo "::warning::Anthropic token exchange failed (HTTP $code: $(jq -r '.error.type // "unknown"' exchange.json 2>/dev/null)); falling back to the CORA_* secrets."
+            rm -f exchange.json
+            exit 1
+          fi
+          token=$(jq -r '.access_token' exchange.json)
+          rm -f exchange.json
+          echo "::add-mask::$token"
+          echo "ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "Using a short-lived Anthropic access token (workload identity federation)."
+
+      # SECURITY: this job checks out PR code while holding a credential. A
+      # PR-supplied .cora.yaml could set provider.base_url and exfiltrate it.
+      # CORA_BASE_URL (env) always takes precedence over project config, so the
+      # base URL is pinned below, and the Anthropic token is only ever paired
+      # with api.anthropic.com (never with CORA_BASE_URL).
+      - name: Require the review credentials
+        env:
+          CORA_API_KEY: ${{ secrets.CORA_API_KEY }}
+          CORA_BASE_URL: ${{ secrets.CORA_BASE_URL }}
+          CORA_MODEL: ${{ secrets.CORA_MODEL }}
+        run: |
+          # No federation token: the stored secrets are required. An empty secret
+          # must fail the job: a skipped or fallback review is not a pass.
+          if [ -n "${ACCESS_TOKEN:-}" ]; then
+            exit 0
+          fi
+          missing=0
+          for name in CORA_API_KEY CORA_BASE_URL CORA_MODEL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Secret $name is empty or missing, and workload identity federation is not available. Cora Review cannot run, and that must not pass silently."
+              missing=1
+            fi
+          done
+          exit $missing
+
       - name: Checkout PR head
         uses: actions/checkout@v7
         with:
@@ -32,9 +105,11 @@ jobs:
         uses: codecoradev/cora-review-action@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cora-api-key: ${{ secrets.CORA_API_KEY }}
-          cora-base-url: ${{ secrets.CORA_BASE_URL }}
-          cora-model: ${{ secrets.CORA_MODEL }}
+          # With a federation token, key, base URL and model switch together so the
+          # token is only ever sent to api.anthropic.com.
+          cora-api-key: ${{ env.ACCESS_TOKEN || secrets.CORA_API_KEY }}
+          cora-base-url: ${{ env.ACCESS_TOKEN && 'https://api.anthropic.com/v1' || secrets.CORA_BASE_URL }}
+          cora-model: ${{ env.ACCESS_TOKEN && (secrets.ANTHROPIC_MODEL || vars.ANTHROPIC_MODEL || 'claude-opus-5-5') || secrets.CORA_MODEL }}
           # The action defaults to origin/develop. For a PR into main that makes
           # `git diff origin/develop...HEAD` empty (release PRs carry develop's
           # tree), so Cora reported "empty result" and never reviewed the diff.
