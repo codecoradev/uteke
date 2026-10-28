@@ -69,6 +69,16 @@ impl Embedder for FallbackEmbedder {
                             "Primary embed failed: {primary_err}. Falling back to cloud embed."
                         );
                         match cloud.embed(text) {
+                            // A fallback model of another width must never feed
+                            // the index (#1540).
+                            Ok(vec) if vec.len() != self.primary.dims() => {
+                                tracing::error!(
+                                    "Fallback produced {}d vectors but the index needs {}d; ignoring it. Check [embed_fallback] model.",
+                                    vec.len(),
+                                    self.primary.dims()
+                                );
+                                Err(primary_err)
+                            }
                             Ok(vec) => Ok(vec),
                             Err(cloud_err) => {
                                 tracing::error!(
@@ -221,5 +231,41 @@ mod tests {
         let fb = FallbackEmbedder::new(primary, Some(fallback)).unwrap();
         assert_eq!(fb.dims(), 768);
         assert_eq!(fb.max_seq_len(), 512);
+    }
+
+    /// Says it produces `claimed` dimensions but returns `actual` (a cloud
+    /// model that ignores the requested `dimensions`).
+    struct Liar {
+        claimed: usize,
+        actual: usize,
+    }
+
+    impl Embedder for Liar {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            Ok(vec![0.1; self.actual])
+        }
+        fn dims(&self) -> usize {
+            self.claimed
+        }
+        fn max_seq_len(&self) -> usize {
+            512
+        }
+        fn name(&self) -> &str {
+            "liar"
+        }
+    }
+
+    #[test]
+    fn a_fallback_vector_of_the_wrong_width_never_reaches_the_index() {
+        let primary = Box::new(MockEmbedder::new("onnx", 768, 1));
+        let cloud = Box::new(Liar {
+            claimed: 768,
+            actual: 512,
+        });
+        let fb = FallbackEmbedder::new(primary, Some(cloud)).unwrap();
+        // The primary fails, the cloud answers with 512 numbers: an error (the
+        // primary's), not a 512-wide vector for a 768-wide index.
+        let err = fb.embed("hello").unwrap_err();
+        assert!(err.to_string().contains("onnx embed failed"), "{err}");
     }
 }

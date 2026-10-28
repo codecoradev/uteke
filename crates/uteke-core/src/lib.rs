@@ -17,6 +17,7 @@ mod consolidate;
 pub mod consolidation_api;
 pub mod consolidation_exec;
 pub mod consolidation_plan;
+mod dimension_check;
 pub mod dream;
 mod edges;
 mod embed;
@@ -1013,6 +1014,21 @@ impl Uteke {
             dims
         };
 
+        // The dimension is decided here, once (#1540): what the backend produces
+        // against what the store already holds. Checked before the index is
+        // loaded, so a refused open touches nothing (a corrupt-index discard or a
+        // rebuild from SQLite would otherwise run at the wrong width).
+        let allow_dim_mismatch = dimension_check::mismatch_allowed();
+        dimension_check::verify(
+            dims,
+            &dimension_check::Held {
+                stored: store.infer_embedding_dims(),
+                index: None,
+            },
+            &embedder_backend,
+            allow_dim_mismatch,
+        )?;
+
         let mut index = match &index_path {
             Some(path) => match VectorIndex::load_or_create_for(path, dims, vector_backend) {
                 Ok(idx) => idx,
@@ -1048,6 +1064,18 @@ impl Uteke {
             },
             None => VectorIndex::new(dims)?,
         };
+
+        // The index file may carry another width than the one asked for (the
+        // loaded file's width wins); refuse that too.
+        dimension_check::verify(
+            dims,
+            &dimension_check::Held {
+                stored: None,
+                index: (!index.is_empty()).then(|| index.dims()),
+            },
+            &embedder_backend,
+            allow_dim_mismatch,
+        )?;
 
         // If index is empty but SQLite has memories, build from SQLite (migration)
         if index.is_empty() {
