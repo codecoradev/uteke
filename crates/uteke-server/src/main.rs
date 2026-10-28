@@ -258,10 +258,7 @@ fn main() {
     // Embedding backend + vector engine from uteke.toml / env (#1399). Fail
     // fast on an unsupported backend instead of opening the store with a
     // different embedder than the operator asked for.
-    let embedding = match resolve_embedding(
-        &config,
-        std::env::var("UTEKE_EMBEDDING_BACKEND").ok().as_deref(),
-    ) {
+    let embedding = match resolve_embedding(&config, |name| std::env::var(name).ok()) {
         Ok(e) => e,
         Err(msg) => {
             error!("{msg}");
@@ -617,7 +614,8 @@ fn main() {
 #[derive(serde::Deserialize, Default)]
 struct ServerFileConfig {
     /// `[embedding]`: which embedder the server uses (#1399).
-    embedding: Option<EmbeddingFileSection>,
+    #[serde(default)]
+    embedding: uteke_core::embedding_config::EmbeddingSection,
     /// `[vector]`: which vector engine runs when both are compiled in (#1168).
     vector: Option<VectorFileSection>,
     /// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`: the
@@ -630,19 +628,6 @@ struct ServerFileConfig {
     /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
     #[allow(dead_code)]
     aging: Option<AgingFileSection>,
-}
-
-/// `[embedding]` in uteke.toml, same keys as the CLI. Empty / missing values
-/// fall back to the backend defaults; `UTEKE_EMBEDDING_*` env vars win over
-/// these at resolve time inside the core.
-#[derive(serde::Deserialize, Default, Clone)]
-struct EmbeddingFileSection {
-    backend: Option<String>,
-    model: Option<String>,
-    api_key: Option<String>,
-    base_url: Option<String>,
-    endpoint_path: Option<String>,
-    dims: Option<usize>,
 }
 
 /// `[vector]` in uteke.toml.
@@ -665,9 +650,6 @@ fn resolve_embed_fallback(
     settings.is_configured().then_some(settings)
 }
 
-/// Backends `Uteke` can initialize lazily (same list as the CLI validates).
-const SUPPORTED_EMBEDDING_BACKENDS: &[&str] = &["onnx", "openai", "ollama"];
-
 /// What the server opens the store with.
 struct EmbeddingResolution {
     backend: String,
@@ -675,36 +657,17 @@ struct EmbeddingResolution {
     vector_backend: Option<String>,
 }
 
-/// Resolve the embedder: `UTEKE_EMBEDDING_BACKEND` (non-empty) wins over
-/// `[embedding] backend`, which wins over the `onnx` default. An unsupported
-/// backend is an error with an actionable message (#1399).
+/// Resolve the embedder with the core's one resolution (backend list,
+/// validation, `UTEKE_EMBEDDING_*` precedence; #1399, #1537) and add the
+/// `[vector]` preference.
 fn resolve_embedding(
     config: &ServerFileConfig,
-    env_backend: Option<&str>,
+    get: impl Fn(&str) -> Option<String>,
 ) -> Result<EmbeddingResolution, String> {
-    let file = config.embedding.clone().unwrap_or_default();
-    let backend = env_backend
-        .map(str::trim)
-        .filter(|b| !b.is_empty())
-        .map(str::to_string)
-        .or_else(|| file.backend.clone().filter(|b| !b.trim().is_empty()))
-        .unwrap_or_else(|| "onnx".to_string());
-    if !SUPPORTED_EMBEDDING_BACKENDS.contains(&backend.as_str()) {
-        return Err(format!(
-            "Unsupported embedding backend '{backend}'. Supported: {}. \
-             Set UTEKE_EMBEDDING_BACKEND or [embedding] backend in uteke.toml.",
-            SUPPORTED_EMBEDDING_BACKENDS.join(", ")
-        ));
-    }
+    let resolved = config.embedding.resolve_from(get)?;
     Ok(EmbeddingResolution {
-        backend,
-        settings: uteke_core::EmbeddingSettings {
-            api_key: file.api_key.unwrap_or_default(),
-            base_url: file.base_url.unwrap_or_default(),
-            endpoint_path: file.endpoint_path.unwrap_or_default(),
-            model: file.model.unwrap_or_default(),
-            dims: file.dims.unwrap_or(0),
-        },
+        backend: resolved.backend,
+        settings: resolved.settings,
         // UTEKE_VECTOR_BACKEND (higher precedence) is read inside the core.
         vector_backend: config.vector.as_ref().and_then(|v| v.backend.clone()),
     })
@@ -878,9 +841,13 @@ mod embedding_config_tests {
         toml::from_str(toml_text).expect("valid toml")
     }
 
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
     #[test]
     fn default_is_onnx_with_empty_settings() {
-        let r = resolve_embedding(&ServerFileConfig::default(), None).unwrap();
+        let r = resolve_embedding(&ServerFileConfig::default(), no_env).unwrap();
         assert_eq!(r.backend, "onnx");
         assert!(r.settings.base_url.is_empty() && r.settings.model.is_empty());
         assert_eq!(r.settings.dims, 0);
@@ -894,7 +861,7 @@ mod embedding_config_tests {
              model = \"embeddinggemma-q4\"\ndims = 768\nendpoint_path = \"/embed\"\n\
              [vector]\nbackend = \"vecq\"\n",
         );
-        let r = resolve_embedding(&cfg, None).unwrap();
+        let r = resolve_embedding(&cfg, no_env).unwrap();
         assert_eq!(r.backend, "openai");
         assert_eq!(r.settings.base_url, "http://embor:8355/v1");
         assert_eq!(r.settings.model, "embeddinggemma-q4");
@@ -904,32 +871,26 @@ mod embedding_config_tests {
     }
 
     #[test]
-    fn env_backend_wins_over_toml_and_empty_env_is_ignored() {
+    fn the_env_backend_is_resolved_by_the_core_rules() {
         let cfg = parse("[embedding]\nbackend = \"ollama\"\n");
+        let env = |v: &'static str| {
+            move |n: &str| (n == "UTEKE_EMBEDDING_BACKEND").then(|| v.to_string())
+        };
         assert_eq!(
-            resolve_embedding(&cfg, Some("openai")).unwrap().backend,
+            resolve_embedding(&cfg, env("openai")).unwrap().backend,
             "openai"
         );
-        assert_eq!(resolve_embedding(&cfg, Some("")).unwrap().backend, "ollama");
         assert_eq!(
-            resolve_embedding(&cfg, Some("  ")).unwrap().backend,
+            resolve_embedding(&cfg, env("  ")).unwrap().backend,
             "ollama"
         );
-        // env alone, no [embedding] section (the labs setup)
-        let r = resolve_embedding(&ServerFileConfig::default(), Some("openai")).unwrap();
-        assert_eq!(r.backend, "openai");
-    }
-
-    #[test]
-    fn unsupported_backend_is_an_actionable_error() {
-        let err = resolve_embedding(&ServerFileConfig::default(), Some("cohere"))
+        let err = resolve_embedding(&ServerFileConfig::default(), env("cohere"))
             .err()
             .expect("must fail");
         assert!(
-            err.contains("cohere") && err.contains("onnx, openai, ollama"),
+            err.contains("cohere") && err.contains("UTEKE_EMBEDDING_BACKEND"),
             "{err}"
         );
-        assert!(err.contains("UTEKE_EMBEDDING_BACKEND"), "{err}");
     }
 
     #[test]
@@ -951,7 +912,7 @@ mod embedding_config_tests {
             project: Some(&project),
             trust_project: false,
         });
-        let r = resolve_embedding(&cfg, None).unwrap();
+        let r = resolve_embedding(&cfg, no_env).unwrap();
         assert_eq!(r.backend, "onnx");
         assert!(r.settings.base_url.is_empty());
         let _ = std::fs::remove_dir_all(&dir);

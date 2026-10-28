@@ -21,6 +21,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod embedding;
+pub mod embedding_config;
 #[cfg(test)]
 mod engine_settings_tests;
 mod error;
@@ -612,35 +613,37 @@ impl FallbackSettings {
 }
 
 impl EmbeddingSettings {
-    /// Merge caller-provided settings with env-var overrides. Env vars
-    /// (UTEKE_EMBEDDING_*) win over the caller-supplied values; the caller
-    /// is responsible for having already merged uteke.toml into the input.
-    fn resolve_with_defaults(input: &EmbeddingSettings) -> Self {
-        // Env vars win over caller-supplied values, but an explicitly empty
-        // env var is treated as "unset" so it cannot clobber a non-empty
-        // config-provided value (CodeCora finding: empty
-        // UTEKE_EMBEDDING_API_KEY previously overwrote a populated
-        // [embedding].api_key).
-        let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-        let api_key = env_or("UTEKE_EMBEDDING_API_KEY")
-            .or_else(|| env_or("OPENAI_API_KEY"))
-            .unwrap_or_else(|| input.api_key.clone());
-        let base_url = env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|| input.base_url.clone());
-        let endpoint_path =
-            env_or("UTEKE_EMBEDDING_ENDPOINT_PATH").unwrap_or_else(|| input.endpoint_path.clone());
-        let model = env_or("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|| input.model.clone());
-        let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(input.dims);
+    /// Apply the `UTEKE_EMBEDDING_{API_KEY,BASE_URL,ENDPOINT_PATH,MODEL,DIMS}`
+    /// environment overrides (`OPENAI_API_KEY` backs up the key): the variable
+    /// wins over the value already present, and an empty one counts as unset
+    /// (an empty `UTEKE_EMBEDDING_API_KEY` must not clobber a configured key).
+    /// A non-numeric `DIMS` is ignored with a warning. The one implementation
+    /// of this precedence (#1537).
+    pub fn with_overrides_from(self, get: impl Fn(&str) -> Option<String>) -> Self {
+        let env_or = |name: &str| get(name).filter(|v| !v.is_empty());
+        let dims = match env_or("UTEKE_EMBEDDING_DIMS") {
+            Some(v) => v.parse::<usize>().unwrap_or_else(|_| {
+                tracing::warn!("Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)");
+                self.dims
+            }),
+            None => self.dims,
+        };
         Self {
-            api_key,
-            base_url,
-            endpoint_path,
-            model,
+            api_key: env_or("UTEKE_EMBEDDING_API_KEY")
+                .or_else(|| env_or("OPENAI_API_KEY"))
+                .unwrap_or(self.api_key),
+            base_url: env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or(self.base_url),
+            endpoint_path: env_or("UTEKE_EMBEDDING_ENDPOINT_PATH").unwrap_or(self.endpoint_path),
+            model: env_or("UTEKE_EMBEDDING_MODEL").unwrap_or(self.model),
             dims,
         }
+    }
+
+    /// The caller's settings with the process environment applied.
+    fn resolve_with_defaults(input: &EmbeddingSettings) -> Self {
+        input
+            .clone()
+            .with_overrides_from(|name| std::env::var(name).ok())
     }
 }
 

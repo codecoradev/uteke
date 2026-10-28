@@ -151,11 +151,15 @@ fn main() {
     Config::write_default_config();
     let config = Config::load();
 
-    // Validate embedding backend early (fail-fast before store open)
-    if let Err(e) = config.embedding.validate_backend() {
-        eprintln!("Config error: {e}");
-        std::process::exit(1);
-    }
+    // Resolve the embedder early (fail-fast before store open): the backend, its
+    // settings and the UTEKE_EMBEDDING_* environment, in one place in the core.
+    let embedding = match config.embedding.resolve() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Config error: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // Namespace deprecation signal (#1427): one line on stderr for writes to a
     // non-default namespace; stdout and --json output are untouched.
@@ -209,14 +213,8 @@ fn main() {
 
     let mut uteke = match Uteke::open_with_embedding_and_graph(
         &store_path,
-        &config.embedding.backend,
-        uteke_core::EmbeddingSettings {
-            api_key: config.embedding.api_key.clone(),
-            base_url: config.embedding.base_url.clone(),
-            endpoint_path: config.embedding.endpoint_path.clone(),
-            model: config.embedding.model.clone(),
-            dims: config.embedding.dims,
-        },
+        &embedding.backend,
+        embedding.settings,
         config.engine.tier,
         config.engine.recall.recall_config(),
         config.engine.recall.graph_rerank(),

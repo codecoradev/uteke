@@ -122,8 +122,7 @@ Configure the embedding backend. Three backends are supported:
 ```toml
 [embedding]
 backend = "onnx"              # onnx | openai | ollama
-model = "embeddinggemma-q4"   # backend-specific
-max_seq_length = 2048
+model = ""                    # empty = the backend's default model
 api_key = ""                  # OpenAI only (or use UTEKE_EMBEDDING_API_KEY)
 base_url = ""                 # custom endpoint (Azure OpenAI, Ollama URL, proxy)
 endpoint_path = ""            # custom API path (default: /embeddings for OpenAI)
@@ -133,8 +132,7 @@ dims = 0                     # 0 = use model default (override only if you know)
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `backend` | `onnx` | `onnx`, `openai`, or `ollama` |
-| `model` | `embeddinggemma-q4` | Backend-specific model name |
-| `max_seq_length` | `2048` | Max tokens per input |
+| `model` | `""` | Backend-specific model name. Empty = the backend's default (`text-embedding-3-small` for `openai`, `nomic-embed-text` for `ollama`; `onnx` uses EmbeddingGemma Q4) |
 | `api_key` | `""` | OpenAI API key (ONNX/Ollama ignore) |
 | `base_url` | `""` | Custom endpoint. Empty = backend default |
 | `endpoint_path` | `""` | Custom API path appended to base_url. Empty = `/embeddings` (OpenAI) |
@@ -330,7 +328,6 @@ Resolution order (highest priority first):
 | `UTEKE_EMBEDDING_BASE_URL` | `[embedding] base_url` | backend-specific | Custom endpoint URL |
 | `UTEKE_EMBEDDING_ENDPOINT_PATH` | `[embedding] endpoint_path` | — | Custom API path (default: `/embeddings`) |
 | `UTEKE_EMBEDDING_DIMS` | `[embedding] dims` | `0` (auto) | Force embedding dimensionality |
-| `UTEKE_MAX_SEQ_LENGTH` | `[embedding] max_seq_length` | `2048` | Max tokens per embedding input |
 | `UTEKE_EXTRACTION_MODEL` | `[extraction] model` | — | Chat model for `import --extract` |
 | `UTEKE_EXTRACTION_API_KEY` | `[extraction] api_key` | — | API key. Fallback: embedding key / `OPENAI_API_KEY` |
 | `UTEKE_EXTRACTION_BASE_URL` | `[extraction] base_url` | OpenAI default | OpenAI-compatible endpoint base URL |

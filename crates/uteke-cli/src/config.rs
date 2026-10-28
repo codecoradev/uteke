@@ -37,66 +37,8 @@ pub struct VectorConfig {
     pub backend: String,
 }
 
-/// Embedding model configuration.
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct EmbeddingConfig {
-    /// Embedding backend: "onnx" (default), "openai", "ollama".
-    pub backend: String,
-    /// Embedding model name.
-    pub model: String,
-    /// Maximum sequence length for the embedding model.
-    pub max_seq_length: usize,
-    /// API key for backends that require one (OpenAI). Leave empty for ONNX/Ollama.
-    /// Can also be supplied via UTEKE_EMBEDDING_API_KEY / OPENAI_API_KEY.
-    pub api_key: String,
-    /// Custom endpoint URL. Empty string = backend default.
-    /// - OpenAI: https://api.openai.com/v1
-    /// - Ollama: http://localhost:11434
-    /// - Azure OpenAI: your endpoint base
-    pub base_url: String,
-    /// Embedding endpoint path appended to base_url. Empty string = "/embeddings" (OpenAI standard).
-    /// Override for non-standard OpenAI-compatible APIs, e.g. CodeCora Embed uses "/embed" (#473).
-    /// Can also be supplied via UTEKE_EMBEDDING_ENDPOINT_PATH.
-    pub endpoint_path: String,
-    /// Embedding dimensions. 0 = use backend/model default.
-    /// Override only when you know your model's output dim.
-    pub dims: usize,
-}
-
-impl Default for EmbeddingConfig {
-    fn default() -> Self {
-        Self {
-            backend: "onnx".to_string(),
-            model: "embeddinggemma-q4".to_string(),
-            max_seq_length: 2048,
-            api_key: String::new(),
-            base_url: String::new(),
-            endpoint_path: String::new(),
-            dims: 0,
-        }
-    }
-}
-
-impl EmbeddingConfig {
-    /// Supported embedding backends.
-    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx", "openai", "ollama"];
-
-    /// Validate the backend field.
-    ///
-    /// Returns an error message if the backend is not recognized.
-    pub fn validate_backend(&self) -> Result<(), String> {
-        if Self::SUPPORTED_BACKENDS.contains(&self.backend.as_str()) {
-            Ok(())
-        } else {
-            Err(format!(
-                "Unsupported embedding backend: '{}'. Supported: {}",
-                self.backend,
-                Self::SUPPORTED_BACKENDS.join(", ")
-            ))
-        }
-    }
-}
+/// `[embedding]`: the core's section type, resolved in one place (#1537).
+pub type EmbeddingConfig = uteke_core::embedding_config::EmbeddingSection;
 
 /// LLM fact-extraction configuration for `import --extract` (opt-in).
 ///
@@ -365,55 +307,7 @@ impl Config {
             }
         }
 
-        // Embedding backend overrides (#337)
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BACKEND") {
-            if !v.is_empty() {
-                self.embedding.backend = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_MODEL") {
-            if !v.is_empty() {
-                self.embedding.model = v;
-            }
-        }
-        // API key: prefer UTEKE_EMBEDDING_API_KEY, then OPENAI_API_KEY fallback.
-        // An explicitly empty env var is treated as unset so it cannot clobber
-        // a non-empty [embedding].api_key from uteke.toml (CodeCora finding).
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_API_KEY") {
-            if !v.is_empty() {
-                self.embedding.api_key = v;
-            }
-        } else if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-            if !v.is_empty() {
-                self.embedding.api_key = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BASE_URL") {
-            if !v.is_empty() {
-                self.embedding.base_url = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_ENDPOINT_PATH") {
-            if !v.is_empty() {
-                self.embedding.endpoint_path = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
-            match v.parse::<usize>() {
-                Ok(d) => self.embedding.dims = d,
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_MAX_SEQ_LENGTH") {
-            match v.parse::<usize>() {
-                Ok(len) if len > 0 => self.embedding.max_seq_length = len,
-                Ok(_) | Err(_) => tracing::warn!(
-                    "Invalid UTEKE_MAX_SEQ_LENGTH='{v}', ignoring (expected positive integer)"
-                ),
-            }
-        }
+        // The `UTEKE_EMBEDDING_*` variables are applied by `EmbeddingSection::resolve`.
 
         // Extraction (import --extract). All optional; inert unless --extract.
         if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MODEL") {
@@ -474,9 +368,8 @@ impl Config {
 # namespace = "default"
 
 [embedding]
-# backend = "onnx"  # future: "openai", "ollama"
-# model = "embeddinggemma-q4"
-# max_seq_length = 2048
+# backend = "onnx"  # or "openai", "ollama"
+# model = ""        # empty = the backend's default model
 
 [tier]
 # hot_days = 7
@@ -781,9 +674,12 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.store.path, "~/.codecora/uteke");
         assert_eq!(cfg.store.namespace, "default");
-        assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
-        assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 2048);
+        assert_eq!(cfg.embedding.model, "");
+        assert_eq!(
+            cfg.embedding.backend, "",
+            "unset: resolved to onnx by the core"
+        );
+        assert_eq!(cfg.embedding.max_seq_length, None);
         assert_eq!(cfg.engine.tier.hot_days, 7);
         assert_eq!(cfg.engine.tier.warm_days, 30);
         assert!((cfg.engine.tier.hot_boost - 0.1).abs() < f64::EPSILON);
@@ -826,7 +722,7 @@ max_cold_count = 5000
         assert_eq!(cfg.store.namespace, "test-ns");
         assert_eq!(cfg.embedding.model, "custom-model");
         assert_eq!(cfg.embedding.backend, "openai");
-        assert_eq!(cfg.embedding.max_seq_length, 512);
+        assert_eq!(cfg.embedding.max_seq_length, Some(512));
         assert_eq!(cfg.engine.tier.hot_days, 3);
         assert_eq!(cfg.engine.tier.warm_days, 14);
         assert!((cfg.engine.tier.hot_boost - 0.2).abs() < f64::EPSILON);
@@ -852,9 +748,12 @@ level = "info"
         assert_eq!(cfg.logging.level, "info");
         // Everything else is default
         assert_eq!(cfg.store.path, "~/.codecora/uteke");
-        assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
-        assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 2048);
+        assert_eq!(cfg.embedding.model, "");
+        assert_eq!(
+            cfg.embedding.backend, "",
+            "unset: resolved to onnx by the core"
+        );
+        assert_eq!(cfg.embedding.max_seq_length, None);
         assert_eq!(cfg.engine.tier.hot_days, 7);
         assert!(!cfg.aging.enabled);
     }
@@ -875,7 +774,7 @@ model = "other-model"
         assert_eq!(merged.store.namespace, "prod");
         assert_eq!(merged.embedding.model, "other-model");
         // Unchanged defaults
-        assert_eq!(merged.embedding.max_seq_length, 2048);
+        assert_eq!(merged.embedding.max_seq_length, None);
         assert_eq!(merged.engine.tier.hot_days, 7);
     }
 
@@ -1079,7 +978,7 @@ min_score_strict = 0.8
         assert!((merged.engine.recall.min_score_strict - 0.8).abs() < f64::EPSILON);
         // Other config untouched
         assert_eq!(merged.store.path, "~/.codecora/uteke");
-        assert_eq!(merged.embedding.model, "embeddinggemma-q4");
+        assert_eq!(merged.embedding.model, "");
         assert_eq!(merged.engine.tier.hot_days, 7);
         assert_eq!(merged.logging.level, "warn");
         assert!(!merged.aging.enabled);
@@ -1127,7 +1026,7 @@ port = 9999
         assert_eq!(merged.store.namespace, "full-test");
         assert_eq!(merged.embedding.model, "custom-embed");
         assert_eq!(merged.embedding.backend, "onnx");
-        assert_eq!(merged.embedding.max_seq_length, 512);
+        assert_eq!(merged.embedding.max_seq_length, Some(512));
         assert_eq!(merged.engine.tier.hot_days, 5);
         assert_eq!(merged.engine.tier.warm_days, 21);
         assert!((merged.engine.tier.hot_boost - 0.3).abs() < f64::EPSILON);
@@ -1242,8 +1141,8 @@ backend = "ollama"
         let merged = from_toml(toml);
         assert_eq!(merged.embedding.backend, "ollama");
         // Other embedding fields stay default
-        assert_eq!(merged.embedding.model, "embeddinggemma-q4");
-        assert_eq!(merged.embedding.max_seq_length, 2048);
+        assert_eq!(merged.embedding.model, "");
+        assert_eq!(merged.embedding.max_seq_length, None);
     }
 
     #[test]
@@ -1263,89 +1162,7 @@ max_seq_length = 8191
         assert_eq!(merged.embedding.api_key, "sk-test-123");
         assert_eq!(merged.embedding.base_url, "https://my-proxy.example.com/v1");
         assert_eq!(merged.embedding.dims, 3072);
-        assert_eq!(merged.embedding.max_seq_length, 8191);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_overrides_embedding_backend() {
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_BACKEND", "openai");
-        }
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-test");
-        }
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_MODEL", "text-embedding-3-small");
-        }
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_DIMS", "1536");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_BACKEND");
-        }
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        }
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
-        }
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
-        }
-        assert_eq!(cfg.embedding.backend, "openai");
-        assert_eq!(cfg.embedding.api_key, "sk-env-test");
-        assert_eq!(cfg.embedding.model, "text-embedding-3-small");
-        assert_eq!(cfg.embedding.dims, 1536);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_openai_api_key_fallback() {
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        }
-        unsafe {
-            std::env::set_var("OPENAI_API_KEY", "sk-fallback");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("OPENAI_API_KEY");
-        }
-        assert_eq!(cfg.embedding.api_key, "sk-fallback");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_uteke_api_key_wins_over_openai() {
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-uteke");
-        }
-        unsafe {
-            std::env::set_var("OPENAI_API_KEY", "sk-openai");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        }
-        unsafe {
-            std::env::remove_var("OPENAI_API_KEY");
-        }
-        assert_eq!(cfg.embedding.api_key, "sk-uteke");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_invalid_dims_ignored() {
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_DIMS", "not-a-number");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
-        }
-        assert_eq!(cfg.embedding.dims, 0, "invalid dims should keep default 0");
+        assert_eq!(merged.embedding.max_seq_length, Some(8191));
     }
 
     #[test]
