@@ -206,7 +206,7 @@ impl crate::Uteke {
         // min_score is NOT in the cache key: cached results store the full set
         // and the caller re-applies threshold, ensuring correctness regardless
         // of what threshold a previous caller used.
-        let cache_ns = namespace.unwrap_or("all");
+        let cache_ns = namespace;
         // Boost window: salience/recency boosts can reorder results across the
         // limit boundary, so we cache a larger candidate set and re-apply
         // boosts + truncate on every read (#1037). Without the window, a
