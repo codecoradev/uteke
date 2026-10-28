@@ -636,7 +636,7 @@ impl super::Store {
     pub(super) fn column_exists(&self, column: &str) -> bool {
         self.conn
             .prepare("SELECT * FROM memories LIMIT 0")
-            .map(|stmt| stmt.column_names().iter().any(|n| n == &column))
+            .map(|stmt| stmt.column_names().any(|n| n == column))
             .unwrap_or(false)
     }
 
@@ -668,7 +668,7 @@ impl super::Store {
         }
         self.conn
             .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
-            .map(|stmt| stmt.column_names().iter().any(|n| n == &column))
+            .map(|stmt| stmt.column_names().any(|n| n == column))
             .unwrap_or(false)
     }
 

@@ -32,7 +32,7 @@ vecq = ["dep:vecq-core"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 usearch = { version = "2", optional = true }
 vecq-core = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
@@ -47,7 +47,7 @@ fs2 = "0.4"
 # ONNX-only dependencies (gated behind `onnx` feature)
 # NOTE: load-dynamic requires api-18+ to avoid pykeio/ort#547 (vitis EP compile error).
 # download-binaries is intentionally removed — ORT lib is shipped as a sidecar instead.
-ort = { version = "2.0.0-rc.14", default-features = false, features = ["load-dynamic", "ndarray", "api-18"], optional = true }
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dynamic", "ndarray", "api-18"], optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.23", optional = true }
 # Non-optional: the embedding cache (all backends, incl. OpenAI/Ollama)
