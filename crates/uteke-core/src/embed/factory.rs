@@ -187,13 +187,22 @@ pub(crate) fn with_fallback(
         return Ok(primary);
     }
     tracing::info!("Embedding fallback configured — wrapping primary with cloud backup");
-    let cloud = super::OpenAiEmbedder::new(
+    // The fallback is a backup: one that cannot be built is a warning and the
+    // primary runs alone, like a cache that cannot be opened. Failing here
+    // would drop the primary and rebuild it (a model load) on every call.
+    let cloud = match super::OpenAiEmbedder::new(
         &fb.api_key,
         &fb.model,
         &fb.base_url,
         &fb.endpoint_path,
         primary_dims,
-    )?;
+    ) {
+        Ok(cloud) => cloud,
+        Err(e) => {
+            tracing::warn!(error = %e, "Embedding fallback could not be built, using the primary alone");
+            return Ok(primary);
+        }
+    };
     Ok(Box::new(super::FallbackEmbedder::new(
         primary,
         Some(Box::new(cloud)),
@@ -309,6 +318,13 @@ mod tests {
         let wrapped = with_fallback(Box::new(Fixed(4)), &fb, 4).unwrap();
         assert_eq!(wrapped.dims(), 4);
         assert_ne!(wrapped.name(), "fixed");
+        // A fallback that cannot be built leaves the primary in place.
+        let bad = FallbackSettings {
+            base_url: "not a url".into(),
+            ..fb
+        };
+        let alone = with_fallback(Box::new(Fixed(4)), &bad, 4).unwrap();
+        assert_eq!(alone.name(), "fixed");
     }
 
     #[test]
