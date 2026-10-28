@@ -4,6 +4,7 @@ pub mod cache;
 pub mod embed_trait;
 #[cfg(feature = "onnx")]
 pub mod engine;
+pub(crate) mod factory;
 pub mod fallback;
 pub mod ollama;
 pub mod openai;

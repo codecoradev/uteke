@@ -665,6 +665,8 @@ pub struct Uteke {
     /// they auto-retry after the outage passes. Stored as String because Error
     /// is not Clone (contains io::Error).
     embedder_init_error: Mutex<Option<(String, std::time::Instant, bool)>>,
+    /// Serializes building the embedder so a model load never runs twice.
+    embedder_build: Mutex<()>,
     /// Embedding backend name ("onnx", "openai", "ollama", "custom"). Used by lazy init.
     embedder_backend: String,
     /// Caller-supplied embedding settings (from uteke.toml). Env vars still
@@ -1083,6 +1085,7 @@ impl Uteke {
             index: RwLock::new(index),
             embedder: Mutex::new(embedder),
             embedder_init_error: Mutex::new(None),
+            embedder_build: Mutex::new(()),
             embedder_backend,
             embedding_settings,
             fallback_settings: FallbackSettings::default(),
@@ -1182,9 +1185,22 @@ impl Uteke {
     /// immediately instead of retrying the expensive ORT/model init on every
     /// request (which causes log spam and CPU waste in Docker environments).
     fn ensure_embedder(&self) -> Result<(), Error> {
-        // #822: Short-circuit — return cached init error if we already failed.
-        // Permanent failures (ORT lib missing) are cached forever.
-        // Transient network failures use a 60s TTL.
+        if self.embedder_ready()? {
+            return Ok(());
+        }
+        // One thread builds, the others wait here: a model load must not run
+        // twice. The embedder lock itself is only taken to look and to swap.
+        let _building = self
+            .embedder_build
+            .lock()
+            .map_err(|_| Error::lock("embedder build lock"))?;
+        if self.embedder_ready()? {
+            return Ok(());
+        }
+
+        // #822: Short-circuit — return the cached init error if we already
+        // failed. Permanent failures (ORT lib missing) are cached forever;
+        // transient network failures use a 60s TTL.
         if let Ok(mut cached) = self.embedder_init_error.lock() {
             if let Some((ref msg, cached_at, is_permanent)) = *cached {
                 if is_permanent || cached_at.elapsed() < std::time::Duration::from_secs(60) {
@@ -1192,205 +1208,54 @@ impl Uteke {
                         "Embedder initialization previously failed (cached): {msg}"
                     )));
                 }
-                // TTL expired — clear and retry
                 tracing::info!("Embedder init error cache expired (60s TTL), retrying...");
                 *cached = None;
             }
         }
 
-        // #822: Helper to cache an init error message.
-        // is_permanent: true for local failures (missing lib), false for network (transient).
-        fn cache_init_err(
-            slot: &Mutex<Option<(String, std::time::Instant, bool)>>,
-            e: &Error,
-            is_permanent: bool,
-        ) {
-            let _ = slot
-                .lock()
-                .map(|mut g| *g = Some((e.to_string(), std::time::Instant::now(), is_permanent)));
+        tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
+        let settings = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
+        let index_dims = self.index.read().map(|i| i.dims()).ok();
+        let plan = embed::factory::Plan {
+            backend: &self.embedder_backend,
+            settings: &settings,
+            cache_path: self.embed_cache_path.as_deref(),
+            fallback: &self.fallback_settings,
+            // Without a readable index there is nothing to disagree with.
+            index_dims: index_dims.unwrap_or(0),
+            allow_dim_mismatch: index_dims.is_none()
+                || std::env::var("UTEKE_ALLOW_DIM_MISMATCH").as_deref() == Ok("1"),
+        };
+        match embed::factory::build(&plan) {
+            Ok(embedder) => {
+                *self
+                    .embedder
+                    .lock()
+                    .map_err(|_| Error::lock("embedder lock during lazy init"))? = Some(embedder);
+                Ok(())
+            }
+            Err(failure) => {
+                if let Some(permanent) = failure.cache {
+                    let _ = self.embedder_init_error.lock().map(|mut g| {
+                        *g = Some((
+                            failure.error.to_string(),
+                            std::time::Instant::now(),
+                            permanent,
+                        ))
+                    });
+                }
+                Err(failure.error)
+            }
         }
+    }
 
-        let mut guard = self
+    /// Whether the embedder slot is filled (the lock is held for the look only).
+    fn embedder_ready(&self) -> Result<bool, Error> {
+        Ok(self
             .embedder
             .lock()
-            .map_err(|_| Error::lock("embedder lock during lazy init"))?;
-        if guard.is_none() {
-            tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
-            let backend = self.embedder_backend.as_str();
-            let embedder: Box<dyn crate::embed::Embedder> = match backend {
-                #[cfg(feature = "onnx")]
-                "onnx" | "" => {
-                    let r = crate::embed::OnnxEmbedder::new();
-                    match r {
-                        Ok(e) => Box::new(e),
-                        Err(err) => {
-                            cache_init_err(&self.embedder_init_error, &err, true);
-                            return Err(err);
-                        }
-                    }
-                }
-                #[cfg(not(feature = "onnx"))]
-                "onnx" | "" => {
-                    return Err(Error::embed_msg(
-                        "ONNX embedding backend requested but 'onnx' feature is disabled at compile time. \
-                         Rebuild with --features onnx or use openai/ollama backend.",
-                    ));
-                }
-                "custom" => {
-                    return Err(Error::generic(
-                        "Custom embedder backend set but no embedder was provided",
-                    ));
-                }
-                "openai" => {
-                    let cfg = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
-                    let model = if cfg.model.is_empty() {
-                        crate::embed::openai::DEFAULT_MODEL.to_string()
-                    } else {
-                        cfg.model
-                    };
-                    let base_url = if cfg.base_url.is_empty() {
-                        crate::embed::openai::DEFAULT_BASE_URL.to_string()
-                    } else {
-                        cfg.base_url
-                    };
-                    let dims = if cfg.dims == 0 {
-                        crate::embed::openai::DEFAULT_DIMS
-                    } else {
-                        cfg.dims
-                    };
-                    let r = crate::embed::OpenAiEmbedder::new(
-                        &cfg.api_key,
-                        &model,
-                        &base_url,
-                        &cfg.endpoint_path,
-                        dims,
-                    );
-                    match r {
-                        Ok(e) => Box::new(e),
-                        Err(err) => {
-                            cache_init_err(&self.embedder_init_error, &err, false);
-                            return Err(err);
-                        }
-                    }
-                }
-                "ollama" => {
-                    let cfg = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
-                    let model = if cfg.model.is_empty() {
-                        crate::embed::ollama::DEFAULT_MODEL.to_string()
-                    } else {
-                        cfg.model
-                    };
-                    let base_url = if cfg.base_url.is_empty() {
-                        crate::embed::ollama::DEFAULT_BASE_URL.to_string()
-                    } else {
-                        cfg.base_url
-                    };
-                    let dims = if cfg.dims == 0 {
-                        crate::embed::ollama::DEFAULT_DIMS
-                    } else {
-                        cfg.dims
-                    };
-                    let r = crate::embed::OllamaEmbedder::new(&base_url, &model, dims);
-                    match r {
-                        Ok(e) => Box::new(e),
-                        Err(err) => {
-                            cache_init_err(&self.embedder_init_error, &err, false);
-                            return Err(err);
-                        }
-                    }
-                }
-                other => {
-                    return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
-                    )));
-                }
-            };
-
-            // Dim mismatch detection (#337): refuse to silently mix vectors
-            // from different backends in one index. Catch it at first use
-            // so the user gets a clear error instead of garbage recall.
-            //
-            // Escape hatch: UTEKE_ALLOW_DIM_MISMATCH=1 skips the check so the
-            // user can open the store with a different backend to run
-            // `uteke repair` (which rebuilds vectors with the new backend).
-            // Without this, a user who flips backend on an existing store
-            // can never recover (CodeCora finding #154).
-            let backend_dims = embedder.dims();
-            let index_dims = self.index.read().map(|i| i.dims()).unwrap_or(backend_dims);
-            if index_dims != backend_dims
-                && std::env::var("UTEKE_ALLOW_DIM_MISMATCH").as_deref() != Ok("1")
-            {
-                return Err(Error::Validation(format!(
-                    "Embedding dimension mismatch: index has {index_dims}d vectors but backend '{backend}' produces {backend_dims}d. \
-                     Rebuild the index (`UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair`) or switch backend."
-                )));
-            }
-
-            *guard = Some(embedder);
-
-            // Wrap the PRIMARY embedder with the persistent embedding cache (#896).
-            // It goes inside the fallback wrapper below, so vectors the cloud
-            // fallback produced are never cached under the primary's identity (#1536).
-            // CachingEmbedder intercepts embed() calls and serves from SQLite
-            // cache on hit, avoiding the ~2s ONNX model load on repeated queries.
-            // Skipped for in-memory stores (tests) where no cache path exists.
-            if let Some(ref cache_path) = self.embed_cache_path {
-                // Init cache DB first (without moving `inner`), so on failure
-                // we can fall back to the uncached embedder cleanly.
-                match crate::embed::EmbeddingCache::open(cache_path) {
-                    Ok(cache) => {
-                        tracing::debug!(
-                            cache_path = %cache_path.display(),
-                            "Persistent embedding cache enabled"
-                        );
-                        let inner = guard.take().ok_or_else(|| {
-                            Error::embed_msg("embedder missing while adding the cache")
-                        })?;
-                        *guard = Some(Box::new(crate::embed::CachingEmbedder::with_cache(
-                            inner, cache,
-                        )));
-                    }
-                    Err(e) => {
-                        // Cache init failure is non-fatal — use uncached embedder
-                        tracing::warn!(
-                            error = %e,
-                            "Failed to init embedding cache, using uncached embedder"
-                        );
-                    }
-                }
-            }
-
-            // Wrap with fallback if configured.
-            // Must happen after dim mismatch check so primary dims are validated
-            // against the index before we potentially add a fallback.
-            if self.fallback_settings.is_configured() {
-                let fb = &self.fallback_settings;
-                tracing::info!(
-                    "Embedding fallback configured — wrapping primary with cloud backup"
-                );
-                let model = fb.model.clone();
-                let base_url = fb.base_url.clone();
-                let endpoint_path = fb.endpoint_path.clone();
-                let dims = backend_dims; // use validated primary dims
-                let cloud_embedder = crate::embed::OpenAiEmbedder::new(
-                    &fb.api_key,
-                    &model,
-                    &base_url,
-                    &endpoint_path,
-                    dims,
-                )?;
-                let primary = guard.take().ok_or_else(|| {
-                    Error::embed_msg("embedder missing while adding the fallback")
-                })?;
-                let fallback_embedder = crate::embed::FallbackEmbedder::new(
-                    // Wrap the primary (cached when a cache is configured)
-                    primary,
-                    Some(Box::new(cloud_embedder)),
-                )?;
-                *guard = Some(Box::new(fallback_embedder));
-            }
-        }
-        Ok(())
+            .map_err(|_| Error::lock("embedder lock"))?
+            .is_some())
     }
 
     /// Pin a memory so it never decays.
