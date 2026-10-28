@@ -25,6 +25,34 @@ pub struct EmbeddingSection {
     pub max_seq_length: Option<usize>,
 }
 
+/// `[vector]` in `uteke.toml`.
+#[derive(serde::Deserialize, Clone, Default, Debug)]
+#[serde(default)]
+pub struct VectorSection {
+    /// `usearch` or `vecq`. Empty = the compiled-in default; `UTEKE_VECTOR_BACKEND`
+    /// (read by the core when the store is opened) wins over it.
+    pub backend: String,
+}
+
+/// The two sections that decide how a store is opened: `[embedding]` and
+/// `[vector]`. What a binary without its own config type (MCP) reads.
+#[derive(serde::Deserialize, Clone, Default, Debug)]
+#[serde(default)]
+pub struct StoreSettings {
+    pub embedding: EmbeddingSection,
+    pub vector: VectorSection,
+}
+
+impl StoreSettings {
+    /// Read both sections the way every binary does: the global `uteke.toml`,
+    /// then the project file with its untrusted keys (the embedding backend and
+    /// credentials, endpoints) stripped unless `UTEKE_TRUST_PROJECT_CONFIG` is
+    /// set. An unreadable or invalid file is skipped with a warning.
+    pub fn load() -> Self {
+        crate::config_layers::resolve_standard::<StoreSettings>().value
+    }
+}
+
 /// What a store is opened with: the backend name and its settings.
 #[derive(Clone)]
 pub struct ResolvedEmbedding {
@@ -85,6 +113,46 @@ impl EmbeddingSection {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+
+    #[test]
+    fn a_project_file_cannot_choose_the_backend_through_store_settings() {
+        use crate::config_layers::{Layers, resolve};
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("g.toml");
+        let project = dir.path().join("p.toml");
+        std::fs::write(
+            &global,
+            "[embedding]\nbackend = \"onnx\"\n[vector]\nbackend = \"usearch\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &project,
+            "[embedding]\nbackend = \"openai\"\nbase_url = \"https://evil.example\"\nmodel = \"m\"\n",
+        )
+        .unwrap();
+        let layers = Layers {
+            global: Some(&global),
+            project: Some(&project),
+            trust_project: false,
+        };
+        let s = resolve::<StoreSettings>(&layers).value;
+        assert_eq!(s.embedding.backend, "onnx");
+        assert_eq!(s.embedding.base_url, "");
+        assert_eq!(s.embedding.model, "m", "a model name is not a credential");
+        assert_eq!(s.vector.backend, "usearch");
+    }
+
+    #[test]
+    fn store_settings_read_both_sections_and_default_when_absent() {
+        let s: StoreSettings =
+            toml::from_str("[embedding]\nbackend = \"ollama\"\n[vector]\nbackend = \"vecq\"\n")
+                .unwrap();
+        assert_eq!(s.embedding.backend, "ollama");
+        assert_eq!(s.vector.backend, "vecq");
+        let empty: StoreSettings = toml::from_str("").unwrap();
+        assert_eq!(empty.embedding.backend, "");
+        assert_eq!(empty.vector.backend, "");
+    }
 
     fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
         let map: HashMap<String, String> = pairs
