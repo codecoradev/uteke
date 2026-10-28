@@ -2025,7 +2025,9 @@ impl crate::Uteke {
             .map(|(kind, count)| crate::privacy::RedactionCount { kind, count })
             .collect();
         let masked_content: Option<String> = prepared.map(|p| p.content);
-        let content: Option<&str> = masked_content.as_deref();
+        // The same text as what is stored is not a content change: no new vector
+        // and no embedding call, only the other fields are updated.
+        let content: Option<&str> = masked_content.as_deref().filter(|c| *c != existing.content);
         let flagged_metadata =
             crate::redaction_flags::resolve(content, metadata, &existing.metadata, &redactions);
         let metadata: Option<&serde_json::Value> = flagged_metadata.as_ref().or(metadata);

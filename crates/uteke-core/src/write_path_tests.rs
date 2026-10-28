@@ -183,3 +183,58 @@ fn a_recall_cached_before_an_import_is_not_stale_after_it() {
         "the import invalidated the cached recall"
     );
 }
+
+#[test]
+fn an_update_keeps_the_id_and_creation_time_and_is_not_a_remember() {
+    let (u, seen) = store_with(0);
+    let id = u
+        .remember_detailed("header: status open", &[], None, Some("up"))
+        .unwrap()
+        .id;
+    let other = u
+        .remember_detailed("header: status closed", &[], None, Some("up"))
+        .unwrap()
+        .id;
+    let before = u.get_by_id(&id).unwrap().unwrap();
+
+    // Update to exactly the text of another memory: it is stored, the dedup
+    // check of `remember` is not applied to an update.
+    assert!(
+        u.update_memory(
+            &id,
+            Some("header: status closed"),
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .unwrap()
+    );
+    let after = u.get_by_id(&id).unwrap().unwrap();
+    assert_eq!(after.id, before.id);
+    assert_eq!(after.created_at, before.created_at);
+    assert_eq!(after.content, "header: status closed");
+    assert_eq!(u.get_by_id(&other).unwrap().unwrap().content, after.content);
+
+    // The same text again is not a content change: no embedding call.
+    let calls = seen.lock().unwrap().len();
+    assert!(
+        u.update_memory(
+            &id,
+            Some("header: status closed"),
+            None,
+            None,
+            Some(0.9),
+            None,
+            None
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        calls,
+        "no re-embed for the same text"
+    );
+    assert!((u.get_by_id(&id).unwrap().unwrap().importance - 0.9).abs() < 1e-9);
+}
