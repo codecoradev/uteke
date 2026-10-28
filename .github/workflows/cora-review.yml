@@ -60,7 +60,11 @@ jobs:
             https://api.anthropic.com/v1/oauth/token \
             -H "content-type: application/json" --data "$body")
           if [ "$code" != "200" ]; then
-            echo "::warning::Anthropic token exchange failed (HTTP $code: $(jq -r '.error.type // "unknown"' exchange.json 2>/dev/null)); falling back to the CORA_* secrets."
+            # The subject and audience claims are identities, not secrets: print
+            # them (never the token) so the federation rule can be matched.
+            claims=$(printf '%s' "$jwt" | python3 -c 'import sys,base64,json; p=sys.stdin.read().split(".")[1]; p+="="*(-len(p)%4); d=json.loads(base64.urlsafe_b64decode(p)); print(json.dumps({k: d.get(k) for k in ("sub","aud","iss")}))' 2>/dev/null)
+            echo "::warning::OIDC claims sent to Anthropic: ${claims:-unavailable}"
+            echo "::warning::Anthropic token exchange failed (HTTP $code: $(jq -r '[.error.type, .error.message] | map(select(. != null)) | join(": ")' exchange.json 2>/dev/null)); falling back to the CORA_* secrets."
             rm -f exchange.json
             exit 1
           fi
