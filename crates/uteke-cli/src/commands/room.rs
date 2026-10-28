@@ -235,7 +235,7 @@ pub(crate) fn run(
                 );
             } else {
                 println!(
-                    "Room {room_id} deleted. {unlinked} memory link(s) removed; memories are preserved in their namespaces."
+                    "Room {room_id} unregistered. {unlinked} memory link(s) removed; the memories are retained. Delete a memory with `uteke forget <id>`."
                 );
             }
             Ok(())

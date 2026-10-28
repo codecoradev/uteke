@@ -106,7 +106,7 @@ uteke(action="room_list")
 uteke(action="room_stats", room_id="sprint-planning")
 uteke(action="room_summary", room_id="sprint-planning")
 
-# Delete a room (memories preserved)
+# Unregister a room (memories are retained)
 uteke(action="room_delete", room_id="sprint-planning")
 ```
 
@@ -220,7 +220,7 @@ hermes mcp add uteke --command uteke-mcp
 | `room_list` | List all rooms (cross-namespace) |
 | `room_summary` | Room topic summary with clusters and highlights |
 | `room_stats` | Room statistics (memory count, participants) |
-| `room_delete` | Delete a room (memories preserved) |
+| `room_delete` | Unregister a room (memories are retained; delete them with `forget`) |
 | `namespace_list` | List all namespaces |
 | `namespace_stats` | Statistics for a specific namespace |
 | `tags_list` | List all tags |

@@ -624,7 +624,7 @@ pub(super) fn delete_room_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             &serde_json::json!({
                 "deleted": room_id,
                 "unlinked_memories": unlinked,
-                "note": "memories and documents are preserved in their namespaces, no longer linked to any room"
+                "note": "room unregistered; memories and documents are retained, no longer linked to any room. Delete a memory with POST /forget"
             }),
         ),
         Err(e) if e.class() == uteke_core::ErrorClass::NotFound => {

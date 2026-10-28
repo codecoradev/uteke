@@ -892,7 +892,7 @@ fn tool_room_list() -> Value {
 fn tool_room_delete() -> Value {
     serde_json::json!({
         "name": "uteke_room_delete",
-        "description": "Delete a room. Removes room links from memories but preserves the memories themselves.",
+        "description": "Unregister a room: its links are removed and the memories are retained (they are not deleted). To delete a memory, use uteke_forget with its id.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2591,7 +2591,7 @@ fn exec_room_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .map_err(|e| format!("Failed to delete room: {e}"))?;
 
     let text = format!(
-        "Room '{room_id}' deleted. {unlinked} memory link(s) removed; the memories themselves are preserved in their namespaces (no longer linked to any room)."
+        "Room '{room_id}' unregistered. {unlinked} memory link(s) removed; the memories are retained, no longer linked to any room. To delete a memory, use uteke_forget with its id."
     );
 
     Ok(ToolResult {
@@ -3796,6 +3796,17 @@ mod namespace_deprecation_tests {
             assert!(!t.contains("deprecated"), "{t}");
             assert!(!t.contains('\n'), "{t}");
         }
+    }
+
+    #[test]
+    fn room_delete_says_the_memories_are_retained_and_how_to_delete_them() {
+        let u = store();
+        u.create_room("gone", None, "default").unwrap();
+        let t = text(exec_room_delete(&u, &serde_json::json!({"room_id": "gone"})).unwrap());
+        assert!(t.contains("unregistered"), "{t}");
+        assert!(t.contains("retained"), "{t}");
+        assert!(t.contains("uteke_forget"), "{t}");
+        assert!(!t.contains("deleted"), "{t}");
     }
 
     #[test]
