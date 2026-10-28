@@ -111,3 +111,75 @@ fn without_an_embedder_a_requested_contradiction_check_says_it_was_skipped() {
         .unwrap();
     assert_eq!(o.warning, None);
 }
+
+const IMPORT_LINE: &str = r#"{"content":"alpha beta gamma delta epsilon zeta eta theta iota","tags":["t"],"namespace":"imp"}"#;
+
+#[test]
+fn an_import_leaves_the_same_side_effects_as_remember() {
+    let u = open_keyword();
+    let remembered = u
+        .remember_detailed(
+            "alpha beta gamma delta epsilon zeta eta theta",
+            &[],
+            None,
+            Some("imp"),
+        )
+        .unwrap()
+        .id;
+    let result = u.import(IMPORT_LINE, None).unwrap();
+    assert_eq!(result.imported, 1);
+    let imported = u
+        .list(None, 10, 0, Some("imp"))
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .find(|id| *id != remembered)
+        .expect("the imported row");
+
+    for id in [&remembered, &imported] {
+        let events = u.timeline(id, 20).unwrap();
+        assert!(
+            events.iter().any(|e| e.event_type == "created"),
+            "{id}: {events:?}"
+        );
+        let report = u.provenance(id).unwrap().expect("provenance");
+        assert!(report.source_hash.is_some(), "{id}: source hash recorded");
+        assert!(
+            !u.get_by_id(id).unwrap().unwrap().embedding.is_empty(),
+            "{id}: vector stored"
+        );
+    }
+    // The two rows are close but not duplicates: the cosine link connects them.
+    let edges = u.edges_for(&imported).unwrap();
+    assert!(
+        edges.outgoing.iter().any(|e| e.target_id == remembered)
+            || edges.incoming.iter().any(|e| e.source_id == remembered),
+        "{edges:?}"
+    );
+}
+
+#[test]
+fn a_recall_cached_before_an_import_is_not_stale_after_it() {
+    let u = open_keyword();
+    u.remember("alpha first note", &[], None, Some("imp"))
+        .unwrap();
+    let recall = || {
+        u.recall_hybrid(
+            "alpha",
+            10,
+            None,
+            Some("imp"),
+            crate::RecallStrategy::Hybrid,
+            0.0,
+        )
+        .unwrap()
+    };
+    assert_eq!(recall().len(), 1);
+
+    u.import(IMPORT_LINE, None).unwrap();
+    assert_eq!(
+        recall().len(),
+        2,
+        "the import invalidated the cached recall"
+    );
+}

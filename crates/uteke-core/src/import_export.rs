@@ -148,7 +148,7 @@ impl crate::Uteke {
             let memory = Memory {
                 id: id.clone(),
                 content: entry.content,
-                embedding: embedding.clone(),
+                embedding,
                 tags: entry.tags,
                 metadata: entry.metadata,
                 created_at: entry.created_at,
@@ -177,38 +177,28 @@ impl crate::Uteke {
                     .map(str::to_string),
             };
 
-            // Write-ahead: vector index first (can be rolled back), then SQLite.
-            {
-                let mut index = self
-                    .index
-                    .write()
-                    .map_err(|_| Error::lock("index write lock during import"))?;
-                index_sync::insert_unsaved(&mut *index, &id, &embedding, &SyncPolicy::STANDARD)?;
-                // Don't save per-item — we'll persist once after the full import.
-            }
-
-            if let Err(e) = self.store.insert(&memory) {
-                // Rollback: remove from vector index
-                let mut index = self
-                    .index
-                    .write()
-                    .map_err(|_| Error::lock("index write lock during import rollback"))?;
-                index_sync::remove_unsaved(&mut *index, &id);
-                // Note: don't save per-entry — save once at end of import.
-                // If process crashes, orphan entry is harmless and cleaned by repair.
-                tracing::warn!("Skipping import entry (id={id}): {e}");
-                skipped += 1;
-                continue;
+            // The same tail as `remember` (#1514): the row, the source hash, the
+            // `Created` event, edge wiring, recall-cache invalidation, the vector
+            // (its save is batched, the whole import is persisted once below)
+            // and the cosine links. A vector that could not be written leaves the
+            // row FTS5-only, as it does for `remember`; `uteke repair` backfills it.
+            match self.commit_memory(&memory, None) {
+                Ok(outcome) => {
+                    if let Some(w) = outcome.warning {
+                        tracing::warn!("Imported entry (id={id}) is FTS5-only: {w}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Skipping import entry (id={id}): {e}");
+                    skipped += 1;
+                    continue;
+                }
             }
 
             self.record_redaction(&id, &redactions);
             if !redactions.is_empty() {
                 redacted += 1;
             }
-
-            // Auto-link cosine edges (consistent with remember path, #1005).
-            // Must run AFTER index.insert() so the new memory is searchable.
-            self.auto_link_cosine(&id, &embedding, Some(memory.namespace.as_str()));
 
             imported += 1;
         }
