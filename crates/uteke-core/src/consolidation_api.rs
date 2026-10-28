@@ -48,20 +48,15 @@ impl ConsolidationStore for Uteke {
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
-        // Persist (transactional insert, mirrors crud flow).
-        self.store().insert(memory)?;
-        self.record_redaction(&memory.id, &redactions);
-
-        // Insert into the vector index so recall finds it; roll back the row
-        // if indexing fails so we never leave an un-searchable memory behind.
-        if !memory.embedding.is_empty() {
-            let key = memory.id.clone();
-            let embedding = memory.embedding.clone();
-            if let Err(e) = self.add_to_index(&key, &embedding) {
-                let _ = self.store().delete(&memory.id);
-                return Err(e);
-            }
+        // The same tail as `remember` (#1514): the row, the source hash, the
+        // `Created` event, edge wiring, recall-cache invalidation, the vector and
+        // the cosine links. A vector that cannot be written leaves the row
+        // FTS5-only with a warning, as for `remember` (`uteke repair` backfills it).
+        let outcome = self.commit_memory(memory, None)?;
+        if let Some(w) = outcome.warning {
+            tracing::warn!("Consolidated record {} is FTS5-only: {w}", memory.id);
         }
+        self.record_redaction(&memory.id, &redactions);
 
         // Keep the record linked to its room so recall_room returns it;
         // roll back the row + index entry on failure (no room links to a
@@ -248,5 +243,57 @@ mod tests {
         let mut m = mem("m2", &format!("the LLM wrote {token}"));
         assert!(ConsolidationStore::insert_memory(&strict, &mut m).is_err());
         assert!(strict.store.get_by_id("m2").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_consolidated_record_leaves_the_same_side_effects_as_remember() {
+        use crate::embed::Embedder;
+        let uteke = crate::test_support::open_keyword();
+        uteke.store.create_room("r1", None, "default").unwrap();
+        let recall = || {
+            uteke
+                .recall_hybrid(
+                    "caching",
+                    10,
+                    None,
+                    Some("default"),
+                    crate::RecallStrategy::Hybrid,
+                    0.0,
+                )
+                .unwrap()
+        };
+        assert!(recall().is_empty());
+
+        let text = "caching keeps hot data close to the reader";
+        let mut m = mem("c1", text);
+        m.embedding = crate::test_support::KeywordEmbedder.embed(text).unwrap();
+        m.metadata = serde_json::json!({"room_id": "r1"});
+        ConsolidationStore::insert_memory(&uteke, &mut m).unwrap();
+
+        let events = uteke.timeline("c1", 20).unwrap();
+        assert!(
+            events.iter().any(|e| e.event_type == "created"),
+            "{events:?}"
+        );
+        assert!(
+            uteke
+                .provenance("c1")
+                .unwrap()
+                .unwrap()
+                .source_hash
+                .is_some()
+        );
+        assert_eq!(
+            recall().len(),
+            1,
+            "the insert invalidated the cached recall"
+        );
+        assert_eq!(
+            ConsolidationStore::room_memories(&uteke, "r1")
+                .unwrap()
+                .len(),
+            1,
+            "linked to its room"
+        );
     }
 }

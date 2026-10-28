@@ -759,29 +759,6 @@ impl Uteke {
         self.embed(text)
     }
 
-    /// Add an already-persisted memory's embedding to the vector index.
-    /// Used by the consolidation write path so new records are searchable.
-    pub(crate) fn add_to_index(&self, id: &str, embedding: &[f32]) -> Result<(), Error> {
-        let mut index = self
-            .index
-            .write()
-            .map_err(|_| Error::lock("index write lock during consolidation insert"))?;
-        let sync = index_sync::upsert(
-            &mut *index,
-            id,
-            embedding,
-            &index_sync::SyncPolicy::STANDARD,
-        );
-        match sync.insert_error {
-            Some(e) => Err(Error::embed_msg(format!(
-                "vector insert failed for id={id}: {e}"
-            ))),
-            // A failed persist is already logged by index_sync; the entry is
-            // in the in-memory index and `uteke repair` can resync the file.
-            None => Ok(()),
-        }
-    }
-
     /// Remove an entry from the vector index (compensating action for a
     /// failed consolidation insert). Persistence failure is logged, not
     /// fatal — the caller is already unwinding an error.
