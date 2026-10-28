@@ -64,8 +64,12 @@ jobs:
             rm -f exchange.json
             exit 1
           fi
-          token=$(jq -r '.access_token' exchange.json)
+          token=$(jq -r '.access_token // empty' exchange.json)
           rm -f exchange.json
+          if [ -z "$token" ]; then
+            echo "::warning::Anthropic token exchange returned no access_token; falling back to the CORA_* secrets."
+            exit 1
+          fi
           echo "::add-mask::$token"
           echo "ACCESS_TOKEN=$token" >> "$GITHUB_ENV"
           echo "Using a short-lived Anthropic access token (workload identity federation)."
