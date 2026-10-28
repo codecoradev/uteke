@@ -2892,6 +2892,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn ensure_embedder_openai_missing_key_error_is_cached() {
         // No UTEKE_EMBEDDING_API_KEY / OPENAI_API_KEY in env → deterministic
         // init failure at OpenAiEmbedder::new, cached as transient (#822).
