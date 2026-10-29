@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 use std::fmt;
 
 /// Result count when the caller gives no `limit`.
-pub const RECALL_DEFAULT_LIMIT: usize = 5;
+pub const RECALL_DEFAULT_LIMIT: usize = 10;
 /// Cap the HTTP surface puts on `limit` (#903, DoS guard).
 pub const RECALL_HTTP_MAX_LIMIT: usize = 100;
 /// Character budget of a `pack` recall when the caller gives none.
@@ -329,9 +329,9 @@ mod tests {
     }
 
     #[test]
-    fn default_limit_is_5_on_every_policy() {
+    fn default_limit_is_10_on_every_policy() {
         for p in [RecallPolicy::HTTP, RecallPolicy::MCP] {
-            assert_eq!(RecallRequest::decode(input("q"), p).unwrap().limit, 5);
+            assert_eq!(RecallRequest::decode(input("q"), p).unwrap().limit, 10);
         }
     }
 

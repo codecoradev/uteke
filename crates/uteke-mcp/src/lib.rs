@@ -371,7 +371,7 @@ fn tool_recall() -> Value {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "The search query" },
-                "limit": { "type": "integer", "description": "Max results (default 5, at most 100; a larger value is capped at 100, a non-integer is an error)", "default": 5 },
+                "limit": { "type": "integer", "description": "Max results (default 10, at most 100; a larger value is capped at 100, a non-integer is an error)", "default": 10, "maximum": 100 },
                 "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to search (default: 'default')" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
@@ -403,7 +403,7 @@ fn tool_list() -> Value {
             "type": "object",
             "properties": {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
-                "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
+                "limit": { "type": "integer", "description": "Max results (default 10, at most 1000; a larger value is capped at 1000, a non-integer is an error)", "default": 10, "maximum": 1000 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
                 "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
                 "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
@@ -3813,7 +3813,7 @@ mod namespace_deprecation_tests {
             decode_recall_args(&serde_json::json!({"query": "q"}))
                 .unwrap()
                 .limit,
-            5
+            10
         );
         // `tags: []` is no filter.
         let r = decode_recall_args(&serde_json::json!({"query": "q", "tags": []})).unwrap();

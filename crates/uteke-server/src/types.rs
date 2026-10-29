@@ -1003,7 +1003,7 @@ mod recall_request_cross_surface_tests {
         let h = http(json!({"query": "q"})).unwrap();
         let m = mcp(json!({"query": "q"})).unwrap();
         assert_eq!(h, m);
-        assert_eq!(h.limit, 5);
+        assert_eq!(h.limit, 10);
         // Omitted namespace is "every namespace" on both, not "default".
         assert_eq!(h.namespace, None);
         assert_eq!(h.tags, None);
@@ -1312,15 +1312,15 @@ mod list_request_cross_surface_tests {
     // -- Disagreements pinned as they are today (owner decision pending) --
 
     #[test]
-    fn disagreement_default_limit() {
-        assert_eq!(http(json!({})).unwrap().limit, 5);
-        assert_eq!(mcp(json!({})).unwrap().limit, 20);
+    fn the_default_limit_is_10_on_both() {
+        assert_eq!(http(json!({})).unwrap().limit, 10);
+        assert_eq!(mcp(json!({})).unwrap().limit, 10);
     }
 
     #[test]
-    fn disagreement_limit_cap() {
+    fn the_limit_cap_is_1000_on_both() {
         assert_eq!(http(json!({"limit": 5000})).unwrap().limit, 1000);
-        assert_eq!(mcp(json!({"limit": 5000})).unwrap().limit, 5000);
+        assert_eq!(mcp(json!({"limit": 5000})).unwrap().limit, 1000);
         assert_eq!(http(json!({"limit": 0})).unwrap().limit, 0);
         assert_eq!(mcp(json!({"limit": 0})).unwrap().limit, 0);
     }
@@ -1330,8 +1330,8 @@ mod list_request_cross_surface_tests {
         // HTTP rejects at the serde layer; MCP silently falls back.
         assert!(serde_json::from_value::<ListParams>(json!({"limit": "x"})).is_err());
         assert!(serde_json::from_value::<ListParams>(json!({"limit": -1})).is_err());
-        assert_eq!(mcp(json!({"limit": "x"})).unwrap().limit, 20);
-        assert_eq!(mcp(json!({"limit": -1})).unwrap().limit, 20);
+        assert_eq!(mcp(json!({"limit": "x"})).unwrap().limit, 10);
+        assert_eq!(mcp(json!({"limit": -1})).unwrap().limit, 10);
     }
 
     #[test]
