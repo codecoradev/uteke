@@ -15,6 +15,12 @@ struct RoomLinks {
 impl RoomLinks {
     /// Link `memory_id` to each of `rooms` that exists. A failure to link is
     /// logged and never fails the import: the memory is already stored.
+    ///
+    /// Rooms are cross-namespace collaboration spaces (#392): a room is not
+    /// owned by a namespace, and `remember_in_room`, `POST /room/remember` and
+    /// `POST /room/memory` accept any existing room for any memory. Import is a
+    /// write like those (a read-only token cannot call it), so it follows the
+    /// same rule rather than checking the room's namespace against the file's.
     fn apply(&mut self, uteke: &crate::Uteke, memory_id: &str, rooms: &[String], author: &str) {
         for room in rooms {
             let known = *self
