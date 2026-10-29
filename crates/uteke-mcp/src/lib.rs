@@ -378,6 +378,13 @@ fn tool_recall() -> Value {
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
                 "strategy": { "type": "string", "enum": ["fusion", "hybrid", "vector", "fts5", "graph"], "description": "Recall strategy: 'fusion' (default since 0.16.0, weighted RRF of vector×1.7 + hybrid×1, #1123), 'hybrid' (vector+FTS5 via RRF), 'vector' (similarity only), 'fts5' (keyword only), or 'graph' (hybrid + graph-signal reranking)", "default": "fusion" },
                 "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only: do not pass type with explain." },
+                "entity": { "type": "string", "description": "Only memories whose metadata entity equals this value" },
+                "category": { "type": "string", "description": "Only memories whose metadata category equals this value" },
+                "strict": { "type": "boolean", "description": "Use the strict similarity floor ([recall] min_score_strict, default 0.5) when min_score is not given" },
+                "enrich": { "type": "boolean", "description": "Attach linked documents and memories to each result" },
+                "at": { "type": "string", "description": "Point in time (RFC3339): recall the memories that existed then. Not combinable with explain or pack." },
+                "after": { "type": "string", "description": "Only memories created at or after this time (RFC3339). Not combinable with explain or pack." },
+                "before": { "type": "string", "description": "Only memories created at or before this time (RFC3339). Not combinable with explain or pack." },
                 "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
                 "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
                 "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
@@ -1318,6 +1325,13 @@ pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, Str
         namespace: args["namespace"].as_str().map(str::to_string),
         min_score: args["min_score"].as_f64().map(|m| m as f32),
         search_type: args["type"].as_str().map(str::to_string),
+        entity: args["entity"].as_str().map(str::to_string),
+        category: args["category"].as_str().map(str::to_string),
+        strict: args["strict"].as_bool().unwrap_or(false),
+        enrich: args["enrich"].as_bool().unwrap_or(false),
+        at: args["at"].as_str().map(str::to_string),
+        after: args["after"].as_str().map(str::to_string),
+        before: args["before"].as_str().map(str::to_string),
         pack: args["pack"].as_bool().unwrap_or(false),
         budget_chars: args["budget_chars"].as_u64().map(|b| b as usize),
         exclude_ids: args["exclude_ids"]
@@ -1330,188 +1344,159 @@ pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, Str
             .unwrap_or_default(),
         strategy: args["strategy"].as_str().map(str::to_string),
         explain: args["explain"].as_bool().unwrap_or(false),
-        ..uteke_core::RecallInput::default()
     };
     uteke_core::RecallRequest::decode(input, uteke_core::RecallPolicy::MCP)
         .map_err(|e| e.to_string())
 }
 
 fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    let req = decode_recall_args(args)?;
-    let query = req.query.as_str();
-    let limit = req.limit;
-    let namespace = req.namespace.as_deref();
+    reject_unknown_args(&tool_recall(), args, &["full_ids"])?;
+    let mut req = decode_recall_args(args)?;
+    // The documented MCP default is memories and documents; the shared
+    // execution treats an absent type as memory-only, so name it here. Explain
+    // is memory-only and keeps its type absent.
+    if !req.explain {
+        req = req.with_default_search_type("all");
+    }
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
-    let tag_vec = req.tag_filter();
-    let tags_ref = tag_vec.as_deref();
     // The similarity floor and the strategy fall back to `[recall]` of
     // uteke.toml (defaults equal the built-ins), as `POST /recall` does.
     let recall = uteke.recall_settings();
-    let min_score = req.resolve_min_score(Some(recall.min_score), Some(recall.min_score_strict));
+    let defaults = uteke_core::recall_exec::RecallDefaults {
+        min_score: Some(recall.min_score),
+        min_score_strict: Some(recall.min_score_strict),
+        default_strategy: Some(recall.default_strategy.as_str()),
+    };
+    // The same decision tree as `POST /recall` (#1439): a guard failure or an
+    // unknown strategy/type is the bare message; anything else is `Failed: ...`.
+    let output = uteke.run_recall(&req, defaults).map_err(|e| match e {
+        // The wire name of `search_type` is `type` on this tool.
+        uteke_core::Error::Validation(msg) => msg.replace("omit search_type", "omit type"),
+        other => format!("Failed: {other}"),
+    })?;
 
-    // Parse optional search type (#531)
-    let search_type = req.search_type().map_err(|e| e.to_string())?;
-
-    // Parse optional recall strategy (#1035): default fusion since 0.16.0
-    // (#1123), matching the CLI and HTTP defaults. Unknown values are a loud
-    // error (JSON-RPC -32603), never a silent fallback.
-    let strategy = req
-        .strategy(Some(recall.default_strategy.as_str()))
-        .map_err(|e| e.to_string())?;
-
-    // Explain mode (#1160): memory-only, bypasses unified results and
-    // returns full ranking signals per result. An omitted `type` (the
-    // documented default invocation) is accepted and treated as memory
-    // recall — only explicit all/doc are rejected (code-scanning fix:
-    // None maps to SearchType::All above, so the previous enum comparison
-    // wrongly rejected the default call).
-    if args["explain"].as_bool().unwrap_or(false) {
-        // The HTTP rule (#1439): explain is memory-only, so any `type` is refused.
-        if !args["type"].is_null() {
-            return Err("explain is memory-only: omit type".to_string());
-        }
-        let explained = uteke
-            .recall_explained(query, limit, tags_ref, namespace, strategy, min_score)
-            .map_err(|e| format!("Failed: {e}"))?;
-        if explained.is_empty() {
-            return Ok(ToolResult {
-                content: vec![McpContent::Text {
-                    r#type: "text".to_string(),
-                    text: "No results found.".to_string(),
-                }],
-                is_error: false,
-            });
-        }
-        let text = serde_json::to_string_pretty(&explained).unwrap_or_else(|_| "[]".to_string());
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text,
-            }],
-            is_error: false,
-        });
-    }
-
-    // Use unified search when type is specified or default (all).
-    // Fall back to legacy recall only for backward compat with existing MCP consumers.
-    // Budgeted context pack (#1281 Phase 1): `pack: true` returns a
-    // ContextPack envelope (selected/skipped/budget_used/budget_chars)
-    // instead of a bare ranked list. Deterministic, LLM-free, rank-order
-    // preserving; `exclude_ids` are memory IDs already injected this turn.
-    if req.pack {
-        let budget = req.budget_chars_or_default();
-        let exclude_ids = &req.exclude_ids;
-        let pack = uteke
-            .recall_unified_packed(
-                query,
-                limit,
-                tags_ref,
-                namespace,
-                min_score,
-                search_type,
-                None,
-                None,
-                false,
-                strategy,
-                budget,
-                exclude_ids,
-            )
-            .map_err(|e| format!("Failed: {e}"))?;
-        if pack.selected.is_empty() {
-            return Ok(ToolResult {
-                content: vec![McpContent::Text {
-                    r#type: "text".to_string(),
-                    text: "No results fit the budget.".to_string(),
-                }],
-                is_error: false,
-            });
-        }
-        let text = serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string());
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text,
-            }],
-            is_error: false,
-        });
-    }
-
-    let results = uteke
-        .recall_unified(
-            query,
-            limit,
-            tags_ref,
-            namespace,
-            min_score,
-            search_type,
-            None,
-            None,
-            false,
-            strategy,
-        )
-        .map_err(|e| format!("Failed: {e}"))?;
-
-    if results.is_empty() {
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text: "No results found.".to_string(),
-            }],
-            is_error: false,
-        });
-    }
-
-    let mut lines = Vec::new();
-    for (i, r) in results.iter().enumerate() {
-        let type_label = match r.result_type {
-            uteke_core::SearchResultType::Memory => "[mem]",
-            uteke_core::SearchResultType::Document => "[doc]",
-        };
-        let detail = match &r.result_type {
-            uteke_core::SearchResultType::Memory => r
-                .memory_id
-                .as_ref()
-                .map(|id| format!(" (id: {})", display_id(id, full_ids)))
-                .unwrap_or_default(),
-            uteke_core::SearchResultType::Document => r
-                .doc_slug
-                .as_ref()
-                .map(|slug| format!(" (slug: {})", slug))
-                .unwrap_or_default(),
-        };
-        lines.push(format!(
-            "{}{}. [{:.2}] {}",
-            i + 1,
-            type_label,
-            r.score,
-            r.content
-        ));
-        if !detail.is_empty() {
-            lines.push(format!("       {}", detail));
-        }
-        // #1053: flag memories superseded by a newer decision so agents
-        // don't act on stale info. Deprecated memories are already excluded
-        // from recall by default; this covers legacy/hard-restored rows.
-        if let uteke_core::SearchResultType::Memory = r.result_type {
-            if let Some(mid) = &r.memory_id {
-                if let Ok(Some(newer)) = uteke.supersession_of(mid) {
-                    let short: String = newer.chars().take(8).collect();
-                    lines.push(format!(
-                        "       ⚠ superseded by {short} — verify before acting"
-                    ));
-                }
-            }
-        }
-    }
-
-    Ok(ToolResult {
+    let text_result = |text: String| ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: lines.join("\n"),
+            text,
         }],
         is_error: false,
-    })
+    };
+    use uteke_core::recall_exec::RecallOutput;
+    match output {
+        RecallOutput::Explained(explained) => {
+            if explained.is_empty() {
+                return Ok(text_result("No results found.".to_string()));
+            }
+            Ok(text_result(
+                serde_json::to_string_pretty(&explained).unwrap_or_else(|_| "[]".to_string()),
+            ))
+        }
+        RecallOutput::Packed(pack) => {
+            if pack.selected.is_empty() {
+                return Ok(text_result("No results fit the budget.".to_string()));
+            }
+            Ok(text_result(
+                serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string()),
+            ))
+        }
+        RecallOutput::Unified(results) => {
+            if results.is_empty() {
+                return Ok(text_result("No results found.".to_string()));
+            }
+            let mut lines = Vec::new();
+            for (i, r) in results.iter().enumerate() {
+                let type_label = match r.result_type {
+                    uteke_core::SearchResultType::Memory => "[mem]",
+                    uteke_core::SearchResultType::Document => "[doc]",
+                };
+                let detail = match &r.result_type {
+                    uteke_core::SearchResultType::Memory => r
+                        .memory_id
+                        .as_ref()
+                        .map(|id| format!(" (id: {})", display_id(id, full_ids)))
+                        .unwrap_or_default(),
+                    uteke_core::SearchResultType::Document => r
+                        .doc_slug
+                        .as_ref()
+                        .map(|slug| format!(" (slug: {})", slug))
+                        .unwrap_or_default(),
+                };
+                lines.push(format!(
+                    "{}{}. [{:.2}] {}",
+                    i + 1,
+                    type_label,
+                    r.score,
+                    r.content
+                ));
+                if !detail.is_empty() {
+                    lines.push(format!("       {}", detail));
+                }
+                // #1053: flag memories superseded by a newer decision so agents
+                // don't act on stale info.
+                if let uteke_core::SearchResultType::Memory = r.result_type {
+                    if let Some(mid) = &r.memory_id {
+                        if let Ok(Some(newer)) = uteke.supersession_of(mid) {
+                            let short: String = newer.chars().take(8).collect();
+                            lines.push(format!(
+                                "       ⚠ superseded by {short} — verify before acting"
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(text_result(lines.join("\n")))
+        }
+        // Memory-only results (a point in time was given): the same shape as
+        // the unified lines, all memories.
+        RecallOutput::Memories { results, .. } => {
+            if results.is_empty() {
+                return Ok(text_result("No results found.".to_string()));
+            }
+            let mut lines = Vec::new();
+            for (i, r) in results.iter().enumerate() {
+                lines.push(format!(
+                    "{}[mem]. [{:.2}] {}",
+                    i + 1,
+                    r.score,
+                    r.memory.content
+                ));
+                lines.push(format!(
+                    "       (id: {})",
+                    display_id(&r.memory.id, full_ids)
+                ));
+            }
+            Ok(text_result(lines.join("\n")))
+        }
+    }
+}
+
+/// Refuse an argument the tool does not declare (#1439), with the list of the
+/// ones it does. The list comes from the tool's own `inputSchema`, so the two
+/// cannot drift; `extra` are accepted names the schema does not list.
+fn reject_unknown_args(tool: &Value, args: &Value, extra: &[&str]) -> Result<(), String> {
+    let (Some(given), Some(declared)) = (
+        args.as_object(),
+        tool["inputSchema"]["properties"].as_object(),
+    ) else {
+        return Ok(());
+    };
+    for key in given.keys() {
+        if !declared.contains_key(key) && !extra.contains(&key.as_str()) {
+            let mut supported: Vec<&str> = declared
+                .keys()
+                .map(String::as_str)
+                .chain(extra.iter().copied())
+                .collect();
+            supported.sort_unstable();
+            return Err(format!(
+                "Unknown argument '{key}'. Supported: {}",
+                supported.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Decode the arguments of `uteke_list` into the typed request shared with
@@ -3833,6 +3818,78 @@ mod namespace_deprecation_tests {
         // `tags: []` is no filter.
         let r = decode_recall_args(&serde_json::json!({"query": "q", "tags": []})).unwrap();
         assert_eq!(r.tag_filter(), None);
+    }
+
+    #[test]
+    fn recall_refuses_an_argument_the_tool_does_not_declare() {
+        let u = store();
+        let e = exec_recall(&u, &serde_json::json!({"query": "q", "limt": 5}))
+            .err()
+            .expect("must fail");
+        assert!(e.starts_with("Unknown argument 'limt'. Supported: "), "{e}");
+        for name in [
+            "limit", "entity", "category", "at", "after", "before", "strict", "enrich", "full_ids",
+        ] {
+            assert!(e.contains(name), "{name} missing from {e}");
+        }
+        // The declared names, including the new ones, are accepted.
+        let ok = decode_recall_args(&serde_json::json!({
+            "query": "q", "entity": "e", "category": "c", "strict": true, "enrich": true,
+            "at": "2026-01-01T00:00:00Z", "after": "2025-01-01T00:00:00Z", "before": "2027-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(ok.entity.as_deref(), Some("e"));
+        assert!(
+            ok.strict && ok.enrich && ok.at.is_some() && ok.after.is_some() && ok.before.is_some()
+        );
+    }
+
+    #[test]
+    fn recall_honours_entity_and_time_filters_over_mcp() {
+        let u = store();
+        u.remember(
+            "rust gives memory safety",
+            &[],
+            Some(serde_json::json!({"entity": "rust"})),
+            None,
+        )
+        .unwrap();
+        let find = |extra: serde_json::Value| {
+            let mut a =
+                serde_json::json!({"query": "memory safety", "type": "memory", "strategy": "fts5"});
+            for (k, v) in extra.as_object().unwrap() {
+                a[k] = v.clone();
+            }
+            text(exec_recall(&u, &a).unwrap())
+        };
+        assert!(find(serde_json::json!({})).contains("rust gives memory safety"));
+        assert!(find(serde_json::json!({"entity": "rust"})).contains("rust gives memory safety"));
+        assert_eq!(
+            find(serde_json::json!({"entity": "go"})),
+            "No results found."
+        );
+        assert_eq!(
+            find(serde_json::json!({"after": "2999-01-01T00:00:00Z"})),
+            "No results found."
+        );
+        // Combinations the HTTP rules refuse.
+        let e = exec_recall(
+            &u,
+            &serde_json::json!({"query": "q", "pack": true, "at": "2026-01-01T00:00:00Z"}),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            e.starts_with("pack is not supported with at/after/before"),
+            "{e}"
+        );
+        let e = exec_recall(
+            &u,
+            &serde_json::json!({"query": "q", "explain": true, "entity": "x"}),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(e, "explain cannot be combined with entity/category/enrich");
     }
 
     #[test]

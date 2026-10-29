@@ -78,6 +78,7 @@ mod isolation_tests;
 mod orphans;
 pub mod provenance;
 mod recall_cache;
+pub mod recall_exec;
 pub mod recall_explain;
 mod recall_request;
 pub mod recall_settings;
