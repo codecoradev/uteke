@@ -139,9 +139,10 @@ pub struct ReqCtx {
     /// Identity of the served store (`uteke_core::store_identity`), reported by
     /// `GET /store` so a client can tell which store this server serves (#1445).
     pub store_id: String,
-    /// Embeds a request's text before the store lock is taken (#1518). Filled
-    /// by the first request that finds the embedder built; shared by clones.
-    pub embed_warmer: std::sync::Arc<std::sync::OnceLock<uteke_core::EmbeddingWarmer>>,
+    /// Embeds a request's text before the store lock is taken (#1518). Every
+    /// request refreshes it from the store while it holds the lock, so a
+    /// changed privacy config or embedder is picked up; shared by clones.
+    pub embed_warmer: std::sync::Arc<std::sync::Mutex<Option<uteke_core::EmbeddingWarmer>>>,
 }
 
 /// `Host` header policy against DNS rebinding (#1326).

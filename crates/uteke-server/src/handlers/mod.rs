@@ -356,8 +356,13 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     // call under the lock finds it there instead of every request queueing
     // behind one embedding at a time.
     clear_preread_body();
+    let warmer = ctx
+        .embed_warmer
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     if method == Method::Post
-        && let Some(warmer) = ctx.embed_warmer.get()
+        && let Some(warmer) = warmer
         && matches!(route_path, "/recall" | "/remember")
         && let Some(body) = preread_body(req.as_reader())
     {
@@ -406,13 +411,10 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         }
     };
 
-    // The first request that leaves the embedder built hands the warm-up
-    // handle to the later ones (#1518).
-    if ctx.embed_warmer.get().is_none()
-        && let Some(warmer) = uteke.embedding_warmer()
-    {
-        let _ = ctx.embed_warmer.set(warmer);
-    }
+    // Hand the warm-up handle to the later requests (#1518). It is rebuilt on
+    // every request, while the store lock is held, so it never outlives a
+    // change of the privacy config or of the embedder.
+    *ctx.embed_warmer.lock().unwrap_or_else(|e| e.into_inner()) = uteke.embedding_warmer();
     response
 }
 

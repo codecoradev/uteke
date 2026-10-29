@@ -161,7 +161,10 @@ fn concurrent_requests_overlap_their_embedding() {
     // The first request builds the embedder and hands out the warm-up handle.
     let (st, first) = app.post("/remember", serde_json::json!({"content": "first memory"}));
     assert_eq!(st, 200, "{first}");
-    assert!(app.ctx.embed_warmer.get().is_some(), "no warm-up handle");
+    assert!(
+        app.ctx.embed_warmer.lock().unwrap().is_some(),
+        "no warm-up handle"
+    );
 
     let n = 6;
     let started = Instant::now();
