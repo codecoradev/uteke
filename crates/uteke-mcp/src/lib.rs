@@ -354,7 +354,7 @@ fn tool_remember() -> Value {
                 "content": { "type": "string", "description": "The text content to remember" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for categorization (optional)" },
                 "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for isolation (default: 'default'); a non-default value makes the result carry a deprecation warning." },
-                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" },
+                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: inferred from the content, else fact)" },
                 "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
                 "author": { "type": "string", "description": "Who wrote this memory: the agent, user or tool name (1 to 128 characters). Recorded on the memory with or without a room; in a room it is also the room author (default there: anonymous)." }
             },
@@ -1198,25 +1198,34 @@ fn tool_graph_remove_edge() -> Value {
 // ── Tool Executors ──────────────────────────────────────────────────────────
 
 /// Decode the arguments of `uteke_remember` into the typed request shared
-/// with the HTTP server and the CLI (#1343), under the MCP policy: content and
-/// tags validated by the core write, `type` defaulting to `fact` with no
-/// auto-inference, no metadata. Tags that are not strings are dropped. The
-/// tool exposes no entity/category/metadata/source/author_type fields, so
+/// with the HTTP server and the CLI (#1343), under the same rules as
+/// `POST /remember` (#1439): content and tags validated at decode, an omitted
+/// `type` inferred from the content, an unknown `type` refused, a `type` copied
+/// into the metadata, a wrong-shaped `tags` an error and an unknown argument
+/// refused. `room` is the one MCP-only argument (it routes the write to a room).
+/// The tool exposes no entity/category/metadata/source/author_type fields, so
 /// those stay unset.
 pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest, String> {
+    reject_unknown_args(&tool_remember(), args, &[])?;
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
+    let tags = match &args["tags"] {
+        Value::Null => Vec::new(),
+        Value::Array(a) => a
+            .iter()
+            .map(|v| v.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("Invalid 'tags': expected an array of strings")?,
+        _ => return Err("Invalid 'tags': expected an array of strings".into()),
+    };
     let input = uteke_core::RememberInput {
         content: content.to_string(),
-        tags: args["tags"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        tags,
         namespace: args["namespace"].as_str().map(str::to_string),
-        memory_type: args["type"].as_str().map(str::to_string),
+        memory_type: match &args["type"] {
+            Value::Null => None,
+            Value::String(t) => Some(t.clone()),
+            _ => return Err("Invalid 'type': expected a string".into()),
+        },
         room: args["room"].as_str().map(str::to_string),
         author: args["author"].as_str().map(str::to_string),
         ..uteke_core::RememberInput::default()
@@ -1249,26 +1258,34 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let content = req.content.as_str();
     let tags = req.tag_refs();
     let namespace = req.namespace.as_deref();
-    // The MCP policy always supplies a type (default `fact`).
-    let memory_type = req.memory_type.as_deref().unwrap_or("fact");
     let room = req.room.as_deref();
     let author = req.author.as_deref().unwrap_or("anonymous");
+    let metadata = req.metadata.clone();
 
     let outcome = if let Some(room_id) = room {
+        // A room write takes a concrete type: infer it as every write does.
+        let memory_type = req
+            .memory_type
+            .as_deref()
+            .unwrap_or_else(|| uteke_core::MemoryType::infer_stored_name(content));
         uteke
             .remember_in_room(
                 content,
                 &tags,
-                None,
+                metadata,
                 namespace,
                 memory_type,
                 room_id,
                 author,
             )
             .map_err(write_error)?
+    } else if let Some(t) = req.memory_type.as_deref() {
+        uteke
+            .remember_typed_detailed(content, &tags, metadata, namespace, t)
+            .map_err(write_error)?
     } else {
         uteke
-            .remember_typed_detailed(content, &tags, None, namespace, memory_type)
+            .remember_detailed(content, &tags, metadata, namespace)
             .map_err(write_error)?
     };
     // The named writer is the memory's own author, with or without a room
@@ -3763,18 +3780,39 @@ mod remember_decode_tests {
     use serde_json::json;
 
     #[test]
-    fn defaults_type_to_fact_and_author_stays_raw() {
+    fn an_omitted_type_is_left_to_inference_and_author_stays_raw() {
         let r = decode_remember_args(&json!({"content": "x"})).unwrap();
-        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+        assert_eq!(r.memory_type, None);
         assert_eq!(r.metadata, None);
         assert_eq!(r.author, None);
         assert_eq!(r.room, None);
     }
 
     #[test]
-    fn non_string_type_falls_back_to_fact_and_blank_content_is_accepted() {
-        let r = decode_remember_args(&json!({"content": "  ", "type": 5})).unwrap();
-        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+    fn blank_content_a_non_string_type_and_odd_tags_are_errors() {
+        assert_eq!(
+            decode_remember_args(&json!({"content": "  "})).unwrap_err(),
+            "Validation error: Content must not be empty"
+        );
+        assert_eq!(
+            decode_remember_args(&json!({"content": "x", "type": 5})).unwrap_err(),
+            "Invalid 'type': expected a string"
+        );
+        assert_eq!(
+            decode_remember_args(&json!({"content": "x", "tags": ["a", 1]})).unwrap_err(),
+            "Invalid 'tags': expected an array of strings"
+        );
+        assert!(
+            decode_remember_args(&json!({"content": "x", "bogus": true}))
+                .unwrap_err()
+                .starts_with("Unknown argument 'bogus'. Supported: author, content,")
+        );
+    }
+
+    #[test]
+    fn an_unknown_type_is_refused_before_any_write() {
+        let e = decode_remember_args(&json!({"content": "x", "type": "bogus"})).unwrap_err();
+        assert!(e.starts_with("Unknown memory type 'bogus'"), "{e}");
     }
 
     #[test]
@@ -4440,6 +4478,37 @@ mod author_tests {
         let (err, text) = remember(&u, json!({"content": "unnamed", "room": "r1"}));
         assert!(!err, "{text}");
         assert_eq!(author_of(&text), None);
+    }
+
+    #[test]
+    fn the_stored_type_is_inferred_explicit_or_fact_on_every_write_path() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let type_of = |text: &str| {
+            u.get_by_id(&stored_id(text))
+                .unwrap()
+                .unwrap()
+                .memory_type
+                .as_str()
+                .to_string()
+        };
+        let cases = [
+            (json!({"content": "We decided to use SQLite"}), "decision"),
+            (json!({"content": "plain words"}), "fact"),
+            (
+                json!({"content": "We decided to use SQLite", "type": "note"}),
+                "note",
+            ),
+            (
+                json!({"content": "We decided to use SQLite", "room": "r"}),
+                "decision",
+            ),
+            (json!({"content": "plain words", "room": "r"}), "fact"),
+        ];
+        for (args, want) in cases {
+            let (err, text) = remember(&u, args.clone());
+            assert!(!err, "{args}: {text}");
+            assert_eq!(type_of(&text), want, "{args}");
+        }
     }
 
     #[test]

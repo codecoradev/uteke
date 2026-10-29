@@ -242,7 +242,6 @@ impl RememberRequest {
             author_type: self.author_type.clone(),
             room: None,
             author: self.author.clone(),
-            timestamp: None,
         }
     }
 
@@ -1136,49 +1135,52 @@ mod remember_request_cross_surface_tests {
         assert_eq!(mcp(json!({"content": "x"})).unwrap().namespace, None);
     }
 
-    // ── Disagreements pinned as they are today (owner decision pending) ──
+    // ── One behaviour (#1439): MCP follows the HTTP rules ──
 
     #[test]
-    fn disagreement_omitted_type() {
-        // HTTP: auto-inference. MCP: stored as `fact`, no inference.
+    fn an_omitted_type_is_inferred_on_both() {
         assert_eq!(http(json!({"content": "x"})).unwrap().memory_type, None);
-        assert_eq!(
-            mcp(json!({"content": "x"})).unwrap().memory_type.as_deref(),
-            Some("fact")
-        );
+        assert_eq!(mcp(json!({"content": "x"})).unwrap().memory_type, None);
     }
 
     #[test]
-    fn disagreement_type_copied_to_metadata() {
+    fn the_type_is_copied_to_metadata_on_both() {
         let t = json!({"content": "x", "type": "note"});
-        assert_eq!(
-            http(t.clone()).unwrap().metadata,
-            Some(json!({"type": "note"}))
-        );
-        assert_eq!(mcp(t).unwrap().metadata, None);
+        let want = Some(json!({"type": "note"}));
+        assert_eq!(http(t.clone()).unwrap().metadata, want);
+        assert_eq!(mcp(t).unwrap().metadata, want);
     }
 
     #[test]
-    fn disagreement_validation_point() {
-        assert_eq!(
-            http(json!({"content": " "})).unwrap_err(),
-            "Validation error: Content must not be empty"
-        );
-        assert!(mcp(json!({"content": " "})).is_ok());
-        assert!(http(json!({"content": "x", "type": "bogus"})).is_err());
-        assert!(mcp(json!({"content": "x", "type": "bogus"})).is_ok());
+    fn content_and_type_are_validated_at_decode_on_both() {
+        for f in [http, mcp] {
+            assert_eq!(
+                f(json!({"content": " "})).unwrap_err(),
+                "Validation error: Content must not be empty"
+            );
+            assert!(
+                f(json!({"content": "x", "type": "bogus"}))
+                    .unwrap_err()
+                    .starts_with("Unknown memory type 'bogus'")
+            );
+        }
     }
 
     #[test]
-    fn disagreement_tags_wire_shape() {
-        // MCP drops non-string tags; HTTP rejects the body.
-        assert_eq!(
-            mcp(json!({"content": "x", "tags": ["a", 1, "b"]}))
-                .unwrap()
-                .tags,
-            vec!["a", "b"]
-        );
+    fn wrong_shaped_tags_are_an_error_on_both() {
         assert!(http(json!({"content": "x", "tags": ["a", 1]})).is_err());
+        assert_eq!(
+            mcp(json!({"content": "x", "tags": ["a", 1, "b"]})).unwrap_err(),
+            "Invalid 'tags': expected an array of strings"
+        );
+        assert!(mcp(json!({"content": "x", "tags": "a"})).is_err());
+    }
+
+    #[test]
+    fn an_unknown_argument_is_refused_on_both() {
+        assert!(http(json!({"content": "x", "bogus": 1})).is_err());
+        let e = mcp(json!({"content": "x", "bogus": 1})).unwrap_err();
+        assert!(e.starts_with("Unknown argument 'bogus'. Supported:"), "{e}");
     }
 
     #[test]
@@ -1186,13 +1188,10 @@ mod remember_request_cross_surface_tests {
         let h = http(json!({"content": "x", "entity": "e", "source": "s"})).unwrap();
         assert_eq!(h.metadata, Some(json!({"entity": "e"})));
         assert_eq!(h.source.as_deref(), Some("s"));
-        // MCP ignores them; `room` is MCP-only (HTTP: unknown key). `author` is
-        // accepted by both (#1427 phase 2).
-        let m =
-            mcp(json!({"content": "x", "entity": "e", "source": "s", "room": "r", "author": "a"}))
-                .unwrap();
+        // `room` is MCP-only (HTTP: unknown key); `author` is accepted by both
+        // (#1427 phase 2). The MCP tool does not take entity/source yet.
+        let m = mcp(json!({"content": "x", "room": "r", "author": "a"})).unwrap();
         assert_eq!(m.metadata, None);
-        assert_eq!(m.source, None);
         assert_eq!(m.room.as_deref(), Some("r"));
         assert_eq!(m.author.as_deref(), Some("a"));
         assert_eq!(
@@ -1236,19 +1235,17 @@ mod remember_request_cross_surface_tests {
     }
 
     #[test]
-    fn cli_room_and_timestamp_are_rejected_by_the_server_today() {
-        for field in ["room", "timestamp"] {
-            let mut input = uteke_core::RememberInput {
-                content: "x".into(),
-                ..uteke_core::RememberInput::default()
-            };
-            match field {
-                "room" => input.room = Some("r".into()),
-                _ => input.timestamp = Some("t".into()),
-            }
-            let err = http(input.to_http_body()).unwrap_err();
-            assert!(err.contains(field), "{field}: {err}");
+    fn the_cli_body_never_carries_a_room_the_server_would_reject() {
+        let body = uteke_core::RememberInput {
+            content: "x".into(),
+            room: Some("r".into()),
+            ..uteke_core::RememberInput::default()
         }
+        .to_http_body();
+        assert!(body.get("room").is_none() && body.get("timestamp").is_none());
+        assert!(http(body).is_ok());
+        // A raw `room` key is still an unknown key for the server.
+        assert!(http(json!({"content": "x", "room": "r"})).is_err());
     }
 
     /// #1427 phase 2: the CLI forwards `--author` and the server accepts it.
