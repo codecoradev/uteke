@@ -358,15 +358,23 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
     clear_preread_body();
     if method == Method::Post
         && let Some(warmer) = ctx.embed_warmer.get()
-        && let Some(field) = match route_path {
-            "/recall" => Some("query"),
-            "/remember" => Some("content"),
-            _ => None,
-        }
+        && matches!(route_path, "/recall" | "/remember")
         && let Some(body) = preread_body(req.as_reader())
-        && let Some(text) = body.get(field).and_then(|v| v.as_str())
     {
-        warmer.warm(text);
+        // Only text the real call would embed: a recall query as sent, a
+        // content after the same validation and privacy filter as a write.
+        match route_path {
+            "/recall" => {
+                if let Some(q) = body.get("query").and_then(|v| v.as_str()) {
+                    warmer.warm_query(q);
+                }
+            }
+            _ => {
+                if let Some(c) = body.get("content").and_then(|v| v.as_str()) {
+                    warmer.warm_content(c);
+                }
+            }
+        }
     }
 
     // Lock the Uteke instance for the duration of this request.

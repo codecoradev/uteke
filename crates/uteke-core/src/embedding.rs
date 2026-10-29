@@ -22,15 +22,46 @@ use crate::{Error, Uteke};
 /// outside the lock. The result lands in the embedder's cache, and the real
 /// call under the lock then finds it there. Only an embedder that caches
 /// ([`crate::embed::Embedder::caches_results`]) gets a handle.
+///
+/// Warming must never send the embedder more than the real call would: a
+/// content goes through the same validation and privacy filter as a write
+/// ([`Self::warm_content`]), so a secret is masked, and a strict-mode refusal
+/// sends nothing.
 #[derive(Clone)]
 pub struct EmbeddingWarmer {
     embedder: std::sync::Arc<dyn crate::embed::Embedder>,
+    privacy: crate::privacy::PrivacyConfig,
 }
 
 impl EmbeddingWarmer {
+    /// Warm the vector of a recall query. A blank query is a request error
+    /// and embeds nothing.
+    pub fn warm_query(&self, query: &str) {
+        if !query.trim().is_empty() {
+            self.warm(query);
+        }
+    }
+
+    /// Warm the vector of a memory about to be written: only the text the
+    /// write itself would embed. Content the write would refuse (validation,
+    /// strict privacy mode) is not embedded, a secret is masked first, and
+    /// JSON content (flattened before embedding) is left to the real call.
+    pub fn warm_content(&self, content: &str) {
+        if crate::validate_input(content, &[] as &[&str]).is_err() {
+            return;
+        }
+        let Ok(prepared) = self.privacy.prepare(content, None) else {
+            return;
+        };
+        if crate::memory::crud::detect_content_type(&prepared.content) == "json" {
+            return;
+        }
+        self.warm(&prepared.content);
+    }
+
     /// Embed `text` once so its vector is cached. A failure is ignored: the
     /// real call retries and reports it.
-    pub fn warm(&self, text: &str) {
+    fn warm(&self, text: &str) {
         if let Err(e) = self.embedder.embed(text) {
             tracing::debug!("embedding warm-up failed, the request will retry: {e}");
         }
@@ -42,9 +73,10 @@ impl Uteke {
     /// It never initialises the embedder, so it is cheap to ask for.
     pub fn embedding_warmer(&self) -> Option<EmbeddingWarmer> {
         let handle = self.embedder.lock().ok()?.clone()?;
-        handle
-            .caches_results()
-            .then_some(EmbeddingWarmer { embedder: handle })
+        handle.caches_results().then(|| EmbeddingWarmer {
+            embedder: handle,
+            privacy: self.privacy_config.clone(),
+        })
     }
 
     /// Embed `text`, initialising the embedder on first use and retrying a
@@ -111,7 +143,7 @@ mod tests {
         let warmer = u
             .embedding_warmer()
             .expect("a caching embedder is warmable");
-        warmer.warm("what is rust");
+        warmer.warm_query("what is rust");
         assert_eq!(seen.lock().unwrap().len(), 1, "the warm-up embedded once");
         u.embed_text("what is rust").unwrap();
         assert_eq!(

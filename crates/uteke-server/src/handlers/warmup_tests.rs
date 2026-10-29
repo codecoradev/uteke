@@ -5,7 +5,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tiny_http::{Method, TestRequest};
@@ -18,12 +18,13 @@ const DELAY: Duration = Duration::from_millis(150);
 const DIMS: usize = 64;
 
 /// A mock `/embeddings` endpoint: every request is answered after `DELAY`.
-fn mock_embedding_endpoint() -> String {
+fn mock_embedding_endpoint(seen: Arc<Mutex<Vec<String>>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
+            let seen = Arc::clone(&seen);
             std::thread::spawn(move || {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
@@ -46,6 +47,9 @@ fn mock_embedding_endpoint() -> String {
                         }
                     }
                 }
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buf).into_owned());
                 std::thread::sleep(DELAY);
                 // A vector that depends on the text: identical vectors would be
                 // stored as one memory by the duplicate check.
@@ -78,6 +82,8 @@ fn mock_embedding_endpoint() -> String {
 }
 
 struct App {
+    /// Every request body the embedding endpoint received.
+    seen: Arc<Mutex<Vec<String>>>,
     uteke: Mutex<Uteke>,
     ctx: ReqCtx,
     _dir: std::path::PathBuf,
@@ -85,17 +91,22 @@ struct App {
 
 impl App {
     fn new(name: &str) -> Self {
+        Self::with_privacy(name, Default::default())
+    }
+
+    fn with_privacy(name: &str, privacy: uteke_core::privacy::PrivacyConfig) -> Self {
         let dir = std::env::temp_dir().join(format!("warmup-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
         let settings = uteke_core::EmbeddingSettings {
             api_key: "k".into(),
-            base_url: mock_embedding_endpoint(),
+            base_url: mock_embedding_endpoint(Arc::clone(&seen)),
             model: "m".into(),
             dims: DIMS,
             ..Default::default()
         };
-        let uteke = Uteke::open_with_embedding_and_graph(
+        let mut uteke = Uteke::open_with_embedding_and_graph(
             &dir,
             "openai",
             settings,
@@ -105,6 +116,7 @@ impl App {
             None,
         )
         .expect("open with an openai backend");
+        uteke.set_privacy_config(privacy);
         let ctx = ReqCtx {
             auth_token_hash: None,
             read_only_token_hash: None,
@@ -116,6 +128,7 @@ impl App {
             embed_warmer: Default::default(),
         };
         Self {
+            seen,
             uteke: Mutex::new(uteke),
             ctx,
             _dir: dir,
@@ -215,4 +228,48 @@ fn a_poisoned_store_lock_does_not_fail_later_requests() {
         serde_json::json!({"content": "after the panic"}),
     );
     assert_eq!(st, 200, "{body}");
+}
+
+fn secret() -> String {
+    format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5")
+}
+
+#[test]
+fn a_secret_is_masked_before_the_warm_up_embeds_it() {
+    let app = App::new("mask");
+    app.post(
+        "/remember",
+        serde_json::json!({"content": "build the embedder"}),
+    );
+    let content = format!("the deploy token is {}", secret());
+    let (st, body) = app.post("/remember", serde_json::json!({ "content": content }));
+    assert_eq!(st, 200, "{body}");
+    let seen = app.seen.lock().unwrap().join("\n");
+    assert!(!seen.contains(&secret()), "the embedder received a secret");
+    assert!(
+        seen.contains("the deploy token is"),
+        "the warm-up did not run"
+    );
+}
+
+#[test]
+fn strict_mode_sends_nothing_to_the_embedder() {
+    let strict = uteke_core::privacy::PrivacyConfig {
+        mode: uteke_core::privacy::PrivacyMode::Strict,
+        ..Default::default()
+    };
+    let app = App::with_privacy("strict", strict);
+    app.post(
+        "/remember",
+        serde_json::json!({"content": "build the embedder"}),
+    );
+    let content = format!("the deploy token is {}", secret());
+    let (st, _) = app.post("/remember", serde_json::json!({ "content": content }));
+    assert_eq!(st, 400, "strict mode refuses the write");
+    let seen = app.seen.lock().unwrap().join("\n");
+    assert!(!seen.contains(&secret()), "the embedder received a secret");
+    assert!(
+        !seen.contains("deploy token"),
+        "a refused write was embedded"
+    );
 }
