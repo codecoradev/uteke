@@ -122,6 +122,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Benchmark headline has receipts (#1468)
+        run: python3 benchmarks/scripts/check_receipts.py --github
       - run: cargo run -p docgen
       - name: Verify docs are up-to-date
         run: |

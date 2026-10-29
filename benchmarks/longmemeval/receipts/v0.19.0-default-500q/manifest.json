@@ -1,0 +1,45 @@
+{
+  "schema": "uteke-benchmark-receipt/1",
+  "benchmark": "LongMemEval-S",
+  "release": "v0.19.0",
+  "run": {
+    "strategy": "default",
+    "questions": 500,
+    "date": "2026-09-29",
+    "where": "Modal, 10 shards, cpu=2 per shard, ubuntu:24.04 image, EmbeddingGemma 300M Q4 ONNX",
+    "modal_run": "ap-7VTM9mzqzyn4XOlLxn4TvJ",
+    "command": "UTEKE_GIT_REF=fbfed5f7258093558c179b89f08c5a53a6069666 modal run scripts/modal_fanout.py --strategy default --tag v019"
+  },
+  "commit": {
+    "measured_sha": "fbfed5f7258093558c179b89f08c5a53a6069666",
+    "dirty": false,
+    "dirty_note": "the image is built from this exact SHA, never from a working tree",
+    "workspace_version_at_sha": "0.18.2",
+    "release_tag_commit": "8adbb86a70a9be505811dcd46920cd78d419c928",
+    "release_tag_difference": "version bump, changelog and skill/contract metadata only (9 files); no Rust source differs from the measured SHA"
+  },
+  "dependencies": {
+    "cargo_lock_sha256_at_measured_sha": "d4e236811af3d650101882100be23f813674b01a6529f281bc61b45138f25f0e",
+    "ort": "2.0.0-rc.13",
+    "other": "not recorded at run time; the lock file above pins them"
+  },
+  "dataset": {
+    "file": "longmemeval_s_cleaned.json",
+    "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "source": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned (longmemeval_s_cleaned.json)",
+    "revision": "not pinned at run time; the sha256 above is the only identity of the file that was used"
+  },
+  "raw_scores": {
+    "file": "../../results/default-500q-v0.19.0.jsonl",
+    "format": "ndjson, one question per line: question_id, question_type, retrieved_session_ids (best first), per-question metrics",
+    "sha256": "118bb409de791fc30b0528fabd6aa1d45fb08751b95ca0230e1f356917c74374",
+    "questions": 500
+  },
+  "summary": "summary.json",
+  "recompute": "python3 benchmarks/scripts/score_longmemeval.py --data <longmemeval_s_cleaned.json> --results benchmarks/longmemeval/results/default-500q-v0.19.0.jsonl",
+  "scope": "SCOPE.md",
+  "headline_claims": [
+    {"id": "recall_any@5_full500", "value": 0.982, "path": "summary.json#/full500/recall_any@5"},
+    {"id": "recall_all@5_full500", "value": 0.88, "path": "summary.json#/full500/recall_all@5"}
+  ]
+}

@@ -42,6 +42,10 @@ python3 scripts/print_metrics.py results_local/retrieval_results.jsonl
 Full 500-question runs are executed on Modal (deterministic, fan-out over 10 shards,
 resume-safe volume) — see `longmemeval/scripts/modal_fanout.py`.
 
+## Receipts
+
+Every published headline number has a receipts directory (manifest with commit, dataset sha256 and raw scores; recomputed summary; scope of the metric). See [RECEIPTS.md](RECEIPTS.md). `python3 benchmarks/scripts/check_receipts.py` fails when the README headline has no receipt; CI runs it.
+
 ## Artifact policy
 
 - **Canonical raw artifacts are committed** under `longmemeval/results/` so every
