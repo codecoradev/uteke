@@ -50,13 +50,13 @@ impl Uteke {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ListInput;
     use crate::test_support::open_keyword;
-    use crate::{ListInput, ListPolicy};
 
     fn req(f: impl FnOnce(&mut ListInput)) -> ListRequest {
         let mut i = ListInput::default();
         f(&mut i);
-        ListRequest::decode(i, ListPolicy::HTTP).unwrap()
+        ListRequest::decode(i).unwrap()
     }
 
     fn store_with(n: usize) -> Uteke {

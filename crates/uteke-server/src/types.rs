@@ -248,7 +248,7 @@ impl RememberRequest {
     /// Decode under the HTTP policy: content/tags, `author_type`, `author` and `type`
     /// validated before any write, `type` mirrored into metadata.
     pub fn decode(&self) -> Result<uteke_core::RememberRequest, uteke_core::RememberRequestError> {
-        uteke_core::RememberRequest::decode(self.to_input(), uteke_core::RememberPolicy::HTTP)
+        uteke_core::RememberRequest::decode(self.to_input())
     }
 }
 
@@ -349,7 +349,7 @@ impl RecallRequest {
     /// Decode under the HTTP policy: limit cap, blank-query rejection, empty
     /// `tags` meaning "no filter", RFC3339 parsing of at/after/before.
     pub fn decode(&self) -> Result<uteke_core::RecallRequest, uteke_core::RecallRequestError> {
-        uteke_core::RecallRequest::decode(self.to_input(), uteke_core::RecallPolicy::HTTP)
+        uteke_core::RecallRequest::decode(self.to_input())
     }
 }
 
@@ -403,7 +403,7 @@ impl ListParams {
 
     /// Decode under the HTTP policy (cap [`MAX_LIST_LIMIT`]).
     pub fn decode(&self) -> Result<uteke_core::ListRequest, uteke_core::ListRequestError> {
-        uteke_core::ListRequest::decode(self.to_input(), uteke_core::ListPolicy::HTTP)
+        uteke_core::ListRequest::decode(self.to_input())
     }
 }
 
@@ -1011,10 +1011,6 @@ mod recall_request_cross_surface_tests {
 
     #[test]
     fn http_limit_cap_and_default_come_from_the_typed_module() {
-        assert_eq!(
-            uteke_core::RecallPolicy::HTTP.max_limit,
-            Some(uteke_core::RECALL_HTTP_MAX_LIMIT)
-        );
         assert_eq!(uteke_core::RECALL_DEFAULT_LIMIT, default_limit());
         assert_eq!(uteke_core::RECALL_HTTP_MAX_LIMIT, 100);
     }
@@ -1301,7 +1297,7 @@ mod list_request_cross_surface_tests {
 
     #[test]
     fn http_default_and_cap_come_from_the_typed_module() {
-        assert_eq!(uteke_core::ListPolicy::HTTP.max_limit, Some(MAX_LIST_LIMIT));
+        assert_eq!(uteke_core::LIST_HTTP_MAX_LIMIT, MAX_LIST_LIMIT);
         assert_eq!(uteke_core::LIST_HTTP_DEFAULT_LIMIT, default_limit());
         assert_eq!(MAX_LIST_LIMIT, 1000);
     }

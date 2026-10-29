@@ -207,8 +207,8 @@ impl Uteke {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RecallInput;
     use crate::test_support::open_keyword;
-    use crate::{RecallInput, RecallPolicy};
 
     fn req(f: impl FnOnce(&mut RecallInput)) -> RecallRequest {
         let mut i = RecallInput {
@@ -216,7 +216,7 @@ mod tests {
             ..RecallInput::default()
         };
         f(&mut i);
-        RecallRequest::decode(i, RecallPolicy::HTTP).unwrap()
+        RecallRequest::decode(i).unwrap()
     }
 
     fn run(u: &Uteke, r: &RecallRequest) -> Result<RecallOutput, Error> {
