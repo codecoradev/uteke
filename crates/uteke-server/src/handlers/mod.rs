@@ -41,6 +41,8 @@ mod namespaces;
 mod privacy_tests;
 mod rooms;
 mod tags;
+#[cfg(test)]
+mod warmup_tests;
 
 /// Per-request state handed to a route handler: the locked store plus what
 /// the preflight in [`route`] derived from the request.
@@ -348,6 +350,25 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         return ctx.error_response_for(req, 404, "Not found");
     }
 
+    // #1518: embed the text of a recall or a remember BEFORE the store lock.
+    // The embedding is the slow part (a network round trip for a remote
+    // backend) and needs no store; it lands in the embedder's cache, so the
+    // call under the lock finds it there instead of every request queueing
+    // behind one embedding at a time.
+    clear_preread_body();
+    if method == Method::Post
+        && let Some(warmer) = ctx.embed_warmer.get()
+        && let Some(field) = match route_path {
+            "/recall" => Some("query"),
+            "/remember" => Some("content"),
+            _ => None,
+        }
+        && let Some(body) = preread_body(req.as_reader())
+        && let Some(text) = body.get(field).and_then(|v| v.as_str())
+    {
+        warmer.warm(text);
+    }
+
     // Lock the Uteke instance for the duration of this request.
     // This serializes requests but prevents data races on the SQLite connection.
     // Future: use rwlock for read-heavy workloads.
@@ -366,7 +387,7 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         read_only,
     };
 
-    match handler_for(method.as_str(), route_path) {
+    let response = match handler_for(method.as_str(), route_path) {
         Some(handler) => handler(&mut call),
         // Unreachable while every registry row has a table row (enforced by the
         // `every_registry_row_has_a_handler` test); kept as a safe fallback.
@@ -375,7 +396,16 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             UNHANDLED_ROW.with(|c| c.set(true));
             ctx.error_response_for(req, 404, "Not found")
         }
+    };
+
+    // The first request that leaves the embedder built hands the warm-up
+    // handle to the later ones (#1518).
+    if ctx.embed_warmer.get().is_none()
+        && let Some(warmer) = uteke.embedding_warmer()
+    {
+        let _ = ctx.embed_warmer.set(warmer);
     }
+    response
 }
 
 // Test probe: set when a registry row reached the match fallback, i.e. it
@@ -529,6 +559,7 @@ mod room_memories_namespace_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -761,6 +792,7 @@ mod room_recall_at_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1001,6 +1033,7 @@ mod room_recall_at_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1286,6 +1319,7 @@ mod contradiction_api_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1425,6 +1459,7 @@ mod pack_recall_api_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1587,6 +1622,7 @@ mod explain_recall_api_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1713,6 +1749,7 @@ mod list_pagination_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1816,6 +1853,7 @@ mod payload_conformance_tests {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         };
 
         let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
@@ -1895,6 +1933,7 @@ mod payload_conformance_tests {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         };
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
@@ -1953,6 +1992,7 @@ mod payload_conformance_tests {
                     extraction_config: None,
                     host_guard: Default::default(),
                     store_id: String::new(),
+                    embed_warmer: Default::default(),
                 };
                 let resp = route(&self.uteke, &ctx, &mut req);
                 let status = resp.status_code().0;
@@ -2062,6 +2102,7 @@ mod routes_introspection_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: "0123456789abcdef".to_string(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2303,6 +2344,7 @@ mod plain_remember_type_tests {
                 extraction_config: None,
                 host_guard: Default::default(),
                 store_id: String::new(),
+                embed_warmer: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2429,6 +2471,7 @@ mod host_guard_route_tests {
             extraction_config: None,
             host_guard: guard,
             store_id: String::new(),
+            embed_warmer: Default::default(),
         };
         let mut t = TestRequest::new().with_method(Method::Get).with_path(path);
         if let Some(h) = host {
@@ -2481,6 +2524,7 @@ mod mcp_http_hardening_tests {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         }
     }
 
@@ -2537,6 +2581,7 @@ mod mcp_read_only_tests {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         }
     }
 
@@ -2625,6 +2670,7 @@ mod namespace_deprecation_tests {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -2808,6 +2854,7 @@ mod forget_route_tests {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;

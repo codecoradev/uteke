@@ -139,6 +139,9 @@ pub struct ReqCtx {
     /// Identity of the served store (`uteke_core::store_identity`), reported by
     /// `GET /store` so a client can tell which store this server serves (#1445).
     pub store_id: String,
+    /// Embeds a request's text before the store lock is taken (#1518). Filled
+    /// by the first request that finds the embedder built; shared by clones.
+    pub embed_warmer: std::sync::Arc<std::sync::OnceLock<uteke_core::EmbeddingWarmer>>,
 }
 
 /// `Host` header policy against DNS rebinding (#1326).
@@ -422,6 +425,7 @@ mod cors_tests {
             extraction_config: None,
             host_guard: HostGuard::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         }
     }
 

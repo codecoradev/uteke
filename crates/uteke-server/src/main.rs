@@ -341,6 +341,7 @@ fn main() {
         extraction_config: config.extraction.clone(),
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
         store_id: uteke_core::store_identity(&home),
+        embed_warmer: Default::default(),
     };
 
     // Start server
