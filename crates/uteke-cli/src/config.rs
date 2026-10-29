@@ -1507,4 +1507,35 @@ max_seq_length = 128
         assert!(out.contains("namespace = \"b\""));
         assert!(!out.contains("\"a\""), "old value gone: {out}");
     }
+
+    #[test]
+    fn a_project_file_cannot_set_lifecycle_or_dream_but_the_global_file_can() {
+        let toml = r#"
+[lifecycle]
+deprecated_ttl_days = 0
+soft_delete_only = false
+[dream]
+dedup_threshold = 0.1
+[recall]
+min_score = 0.3
+"#;
+        let defaults = Config::default();
+        let untrusted = from_project_toml(toml, false);
+        assert_eq!(
+            untrusted.engine.lifecycle.deprecated_ttl_days,
+            defaults.engine.lifecycle.deprecated_ttl_days
+        );
+        assert_eq!(
+            untrusted.engine.lifecycle.soft_delete_only,
+            defaults.engine.lifecycle.soft_delete_only
+        );
+        // A tuning key that is not a deletion threshold still applies.
+        assert!((untrusted.engine.recall.min_score - 0.3).abs() < 1e-6);
+        // The explicit opt-in restores the old behaviour.
+        let trusted = from_project_toml(toml, true);
+        assert_eq!(trusted.engine.lifecycle.deprecated_ttl_days, 0);
+        assert!(!trusted.engine.lifecycle.soft_delete_only);
+        // The global file (from_toml) is trusted.
+        assert_eq!(from_toml(toml).engine.lifecycle.deprecated_ttl_days, 0);
+    }
 }

@@ -45,6 +45,15 @@ pub const UNTRUSTED_PROJECT_KEYS: &[&str] = &[
     // A cloned repository must not switch the secret filter off or allowlist
     // everything.
     "privacy",
+    // The cycles that deprecate or delete memories: a cloned repository must
+    // not set their thresholds (`deprecated_ttl_days = 0`,
+    // `max_deprecate_percent = 100`, `soft_delete_only = false`, an `[aging]`
+    // age of 0 days) for the next cycle or `uteke aging` run on the user's store
+    // (#1534). `[maintenance]` holds the auto-dream switch and interval.
+    "lifecycle",
+    "dream",
+    "aging",
+    "maintenance",
     "server",
 ];
 
@@ -392,5 +401,38 @@ mod tests {
         let r = resolve::<Schema>(&layers(Some(&nope), Some(&nope), false));
         assert_eq!(r.value, Schema::default());
         assert!(r.skipped.is_empty() && r.ignored_untrusted.is_empty());
+    }
+
+    #[test]
+    fn a_project_file_cannot_set_the_cycles_that_delete_memories() {
+        // #1534: lifecycle, dream, aging and maintenance are global-only;
+        // recall and tier stay settable per project.
+        let mut table: Table = toml::from_str(
+            r#"
+[lifecycle]
+deprecated_ttl_days = 0
+soft_delete_only = false
+[dream]
+dedup_threshold = 0.1
+[aging]
+max_age_days = 0
+[maintenance]
+auto_dream_enabled = true
+[recall]
+min_score = 0.3
+[tier]
+hot_days = 1
+"#,
+        )
+        .unwrap();
+        let removed = strip_untrusted(&mut table);
+        for section in ["lifecycle", "dream", "aging", "maintenance"] {
+            assert!(
+                removed.contains(&section.to_string()),
+                "{section}: {removed:?}"
+            );
+            assert!(!table.contains_key(section), "{section} is gone");
+        }
+        assert!(table.contains_key("recall") && table.contains_key("tier"));
     }
 }
