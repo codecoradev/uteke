@@ -7,28 +7,13 @@
 //! into a [`ForgetInput`], picks a [`ForgetPolicy`], calls
 //! [`ForgetRequest::decode`] and, for an id target, [`ForgetRequest::resolve`].
 //!
-//! This is an extraction, not a unification. Where the surfaces disagree
-//! today the disagreement is a [`ForgetPolicy`] value, not a decision:
-//!
-//! | aspect                       | HTTP `DELETE /forget`                 | MCP `uteke_forget`                  | CLI via server               |
-//! |------------------------------|---------------------------------------|-------------------------------------|------------------------------|
-//! | id charset check             | none (`%`/`_` reach the LIKE scan)    | hex digits and `-` only (#1328)     | what the user typed is sent  |
-//! | full UUID                    | kept verbatim (case, form)            | normalised to hyphenated lowercase  | verbatim, server decides     |
-//! | unknown prefix               | 404 `Memory not found: {id}`          | error `No memory matches id prefix '{id}'` | server's 404          |
-//! | full UUID that is not stored | 404 (existence check, #762)           | core is called directly             | server's 404                 |
-//! | ambiguous prefix             | 400, core text                        | error, same core text               | server's 400                 |
-//! | tag target                   | `?tag=` (+ optional `namespace`)      | not offered                         | `--tag`, namespace `default` unless `--namespace` |
-//! | namespace for an id          | ignored                               | ignored                             | not sent                     |
-//! | tag without namespace        | default namespace only (core)         | n/a                                 | n/a (always sent)            |
-//! | both `id` and `tag`          | `id` wins                             | n/a                                 | `id` wins                    |
-//! | neither                      | 400 `Provide ?id= or ?tag= parameter` | error `Missing 'id'`                | local usage error            |
-//! | read-only token              | blocked (403, #409)                   | NOT gated                           | server decides               |
-//! | confirmation prompt          | none                                  | none                                | local forget prompts, via-server does not |
-//!
-//! The read-only token gate lives in the HTTP request pipeline (a method and
-//! path check before any handler runs), so it cannot be a decode-time rule;
-//! it is recorded as [`ForgetPolicy::read_only_token_may_forget`] so the
-//! disagreement is visible and pinned by tests.
+//! MCP follows the HTTP rules (#1439): [`ForgetPolicy::MCP`] is
+//! [`ForgetPolicy::HTTP`]. The ids are checked for hex digits and `-`, a full
+//! UUID is normalised to hyphenated lowercase, an unknown prefix and a full UUID that is not stored
+//! are both `Memory not found: {id}` (existence check, #762), an ambiguous
+//! prefix is the core's text, and an id wins over a tag. The MCP tool offers
+//! no tag target; the read-only token gate is an HTTP pipeline check that has
+//! no MCP counterpart (MCP has no token), so it is not part of the policy.
 
 use crate::Uteke;
 use std::fmt;
@@ -73,9 +58,6 @@ pub struct ForgetPolicy {
     pub require_existing: bool,
     /// Message when the request names neither an id nor a tag.
     pub missing_target_text: &'static str,
-    /// Whether a read-only token may forget. Documentation only: the gate is
-    /// applied by the HTTP pipeline, not by decode.
-    pub read_only_token_may_forget: bool,
 }
 
 impl ForgetPolicy {
@@ -85,21 +67,14 @@ impl ForgetPolicy {
         // to act as a LIKE wildcard and could resolve, then delete, a memory
         // the caller did not name.
         id_charset: IdCharset::HexAndDash,
-        full_id_form: FullIdForm::Verbatim,
+        full_id_form: FullIdForm::Hyphenated,
         unmatched_prefix_text: UnmatchedPrefixText::MemoryNotFound,
         require_existing: true,
         missing_target_text: "Provide ?id= or ?tag= parameter",
-        read_only_token_may_forget: false,
     };
-    /// MCP `uteke_forget`.
-    pub const MCP: Self = Self {
-        id_charset: IdCharset::HexAndDash,
-        full_id_form: FullIdForm::Hyphenated,
-        unmatched_prefix_text: UnmatchedPrefixText::NoPrefixMatch,
-        require_existing: false,
-        missing_target_text: "Missing 'id'",
-        read_only_token_may_forget: true,
-    };
+    /// MCP `uteke_forget`: the HTTP rules (#1439). The read-only token gate
+    /// is an HTTP pipeline feature; MCP has no token, which is not a policy.
+    pub const MCP: Self = Self::HTTP;
 }
 
 /// Raw, undecoded forget arguments as a surface read them.
@@ -392,7 +367,7 @@ mod tests {
         assert_eq!(e.message(), "Provide ?id= or ?tag= parameter");
         assert_eq!(e.kind(), ForgetErrorKind::MissingTarget);
         let e = ForgetRequest::decode(input(None, None, None), ForgetPolicy::MCP).unwrap_err();
-        assert_eq!(e.message(), "Missing 'id'");
+        assert_eq!(e.message(), "Provide ?id= or ?tag= parameter");
     }
 
     #[test]
@@ -410,64 +385,45 @@ mod tests {
     }
 
     #[test]
-    fn policies_encode_the_known_disagreements() {
-        let flags = |p: ForgetPolicy| (p.read_only_token_may_forget, p.require_existing);
-        assert_eq!(flags(ForgetPolicy::HTTP), (false, true));
-        assert_eq!(flags(ForgetPolicy::MCP), (true, false));
+    fn the_mcp_policy_is_the_http_policy() {
+        assert_eq!(ForgetPolicy::MCP, ForgetPolicy::HTTP);
+        assert_eq!(
+            ForgetPolicy::MCP.require_existing,
+            ForgetPolicy::HTTP.require_existing
+        );
         assert_eq!(ForgetPolicy::HTTP.id_charset, IdCharset::HexAndDash);
-        assert_eq!(ForgetPolicy::HTTP.full_id_form, FullIdForm::Verbatim);
-        assert_eq!(ForgetPolicy::MCP.id_charset, IdCharset::HexAndDash);
-        assert_eq!(ForgetPolicy::MCP.full_id_form, FullIdForm::Hyphenated);
+        assert_eq!(ForgetPolicy::HTTP.full_id_form, FullIdForm::Hyphenated);
     }
 
     #[test]
-    fn resolution_per_policy() {
+    fn resolution_is_the_same_on_every_policy() {
         let (uteke, dir) = scratch();
         let id = uuid::Uuid::new_v4().to_string();
         seed_with(&uteke, &id, "ns-a");
         let short: String = id.chars().take(8).collect();
-        let upper = id.to_uppercase();
         let simple = id.replace('-', "");
         let absent = uuid::Uuid::new_v4().to_string();
 
         for p in [ForgetPolicy::HTTP, ForgetPolicy::MCP] {
             assert_eq!(resolve_memory_id(&uteke, &id, p).unwrap(), id);
             assert_eq!(resolve_memory_id(&uteke, &short, p).unwrap(), id);
+            // A full UUID is normalised to hyphenated lowercase, whatever
+            // form was sent.
+            assert_eq!(resolve_memory_id(&uteke, &simple, p).unwrap(), id);
+            assert_eq!(
+                resolve_memory_id(&uteke, &id.to_uppercase(), p).unwrap(),
+                id
+            );
+            // A full UUID that is not stored is not found, never a silent no-op.
+            let e = resolve_memory_id(&uteke, &absent, p).unwrap_err();
+            assert_eq!(e.message(), format!("Memory not found: {absent}"));
+            // Unknown prefix.
+            let e = resolve_memory_id(&uteke, "ffffffff", p).unwrap_err();
+            assert_eq!(
+                (e.kind(), e.message()),
+                (ForgetErrorKind::NotFound, "Memory not found: ffffffff")
+            );
         }
-        // Full-UUID form: MCP normalises, HTTP keeps it verbatim and lets the
-        // existence check decide.
-        assert_eq!(
-            resolve_memory_id(&uteke, &simple, ForgetPolicy::MCP).unwrap(),
-            id
-        );
-        assert_eq!(
-            resolve_memory_id(&uteke, &upper, ForgetPolicy::MCP).unwrap(),
-            id
-        );
-        let e = resolve_memory_id(&uteke, &simple, ForgetPolicy::HTTP).unwrap_err();
-        assert_eq!(e.kind(), ForgetErrorKind::NotFound);
-        assert_eq!(e.message(), format!("Memory not found: {simple}"));
-        // Absent full UUID: HTTP 404, MCP passes it on to core.
-        let e = resolve_memory_id(&uteke, &absent, ForgetPolicy::HTTP).unwrap_err();
-        assert_eq!(e.message(), format!("Memory not found: {absent}"));
-        assert_eq!(
-            resolve_memory_id(&uteke, &absent, ForgetPolicy::MCP).unwrap(),
-            absent
-        );
-        // Unknown prefix wording.
-        let e = resolve_memory_id(&uteke, "ffffffff", ForgetPolicy::HTTP).unwrap_err();
-        assert_eq!(
-            (e.kind(), e.message()),
-            (ForgetErrorKind::NotFound, "Memory not found: ffffffff")
-        );
-        let e = resolve_memory_id(&uteke, "ffffffff", ForgetPolicy::MCP).unwrap_err();
-        assert_eq!(
-            (e.kind(), e.message()),
-            (
-                ForgetErrorKind::NotFound,
-                "No memory matches id prefix 'ffffffff'"
-            )
-        );
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
     }
