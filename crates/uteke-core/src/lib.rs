@@ -81,6 +81,7 @@ pub mod recall_exec;
 pub mod recall_explain;
 mod recall_request;
 pub mod recall_settings;
+pub mod remember_exec;
 mod remember_request;
 mod room_ops;
 pub mod rooms_segments;
