@@ -384,6 +384,17 @@ pub(crate) fn run_import(
                 result.rejected_secret
             );
         }
+        if result.room_links > 0 {
+            println!("  Linked memories to rooms: {} link(s)", result.room_links);
+        }
+        if !result.rooms_missing.is_empty() {
+            println!(
+                "  \u{26a0} {} room(s) named in the file do not exist, so their links were not made: {}",
+                result.rooms_missing.len(),
+                result.rooms_missing.join(", ")
+            );
+            println!("    Create them (`uteke room create <ID>`) and import the file again.");
+        }
     }
     Ok(())
 }

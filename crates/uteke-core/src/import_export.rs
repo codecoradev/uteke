@@ -4,6 +4,42 @@ use crate::error::Error;
 use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::{ExportEntry, ImportResult, Memory};
 
+/// The room links made by one import, and the rooms it could not link to (#1588).
+#[derive(Default)]
+struct RoomLinks {
+    linked: usize,
+    missing: std::collections::BTreeSet<String>,
+    exists: std::collections::HashMap<String, bool>,
+}
+
+impl RoomLinks {
+    /// Link `memory_id` to each of `rooms` that exists. A failure to link is
+    /// logged and never fails the import: the memory is already stored.
+    ///
+    /// Rooms are cross-namespace collaboration spaces (#392): a room is not
+    /// owned by a namespace, and `remember_in_room`, `POST /room/remember` and
+    /// `POST /room/memory` accept any existing room for any memory. Import is a
+    /// write like those (a read-only token cannot call it), so it follows the
+    /// same rule rather than checking the room's namespace against the file's.
+    fn apply(&mut self, uteke: &crate::Uteke, memory_id: &str, rooms: &[String], author: &str) {
+        for room in rooms {
+            let known = *self
+                .exists
+                .entry(room.clone())
+                .or_insert_with(|| matches!(uteke.store.get_room(room), Ok(Some(_))));
+            if !known {
+                self.missing.insert(room.clone());
+                continue;
+            }
+            match uteke.add_memory_to_room(memory_id, room, author) {
+                Ok(true) => self.linked += 1,
+                Ok(false) => {}
+                Err(e) => tracing::warn!("Could not link {memory_id} to room {room}: {e}"),
+            }
+        }
+    }
+}
+
 impl crate::Uteke {
     /// Export all memories to JSONL format (one JSON object per line).
     ///
@@ -16,9 +52,11 @@ impl crate::Uteke {
     /// lifecycle endpoints to audit deprecated rows separately.
     pub fn export(&self, namespace: Option<&str>) -> Result<String, Error> {
         let memories = self.store.load_all(namespace)?;
+        let mut rooms_of = self.store.room_ids_by_memory()?;
         let entries: Vec<ExportEntry> = memories
             .into_iter()
             .map(|m| ExportEntry {
+                rooms: rooms_of.remove(&m.id).unwrap_or_default(),
                 content: m.content,
                 tags: m.tags,
                 metadata: m.metadata,
@@ -81,12 +119,20 @@ impl crate::Uteke {
         let mut deduped = 0;
         let mut redacted = 0;
         let mut rejected_secret = 0;
+        let mut room_links = RoomLinks::default();
 
         for mut entry in entries {
             if entry.content.is_empty() {
                 skipped += 1;
                 continue;
             }
+            let rooms = std::mem::take(&mut entry.rooms);
+            let link_author = entry
+                .author
+                .as_deref()
+                .and_then(|a| crate::memory::types::validate_author(a).ok())
+                .unwrap_or("import")
+                .to_string();
 
             // Privacy filter (#1464), before the content is embedded or stored.
             // Strict mode skips the row (counted as skipped) instead of
@@ -127,8 +173,10 @@ impl crate::Uteke {
             let embedding = self.embed(&entry.content)?;
 
             // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
-            if let Some(_existing_id) = self.check_duplicate(&embedding, namespace)? {
+            if let Some(existing_id) = self.check_duplicate(&embedding, namespace)? {
                 deduped += 1;
+                // The stored memory is the one that belongs in the rooms (#1588).
+                room_links.apply(self, &existing_id, &rooms, &link_author);
                 continue;
             }
 
@@ -199,6 +247,7 @@ impl crate::Uteke {
             if !redactions.is_empty() {
                 redacted += 1;
             }
+            room_links.apply(self, &id, &rooms, &link_author);
 
             imported += 1;
         }
@@ -223,6 +272,8 @@ impl crate::Uteke {
             skipped,
             redacted,
             rejected_secret,
+            room_links: room_links.linked,
+            rooms_missing: room_links.missing.into_iter().collect(),
         })
     }
 
@@ -261,6 +312,7 @@ mod tests {
             source: None,
             namespace: "default".to_string(),
             author: None,
+            rooms: Vec::new(),
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(
@@ -419,5 +471,82 @@ mod tests {
             "Pretty-printed JSON should parse as single object"
         );
         assert_eq!(result.unwrap().content, "hello pretty");
+    }
+}
+
+#[cfg(test)]
+mod room_link_tests {
+    use crate::test_support::open_keyword;
+
+    const A: &str = "alpha beta gamma delta epsilon zeta eta theta iota";
+    const B: &str = "one two three four five six seven eight nine ten";
+
+    #[test]
+    fn export_carries_room_ids_and_import_restores_the_links() {
+        let src = open_keyword();
+        src.create_room("team", None, "default").unwrap();
+        src.create_room("ops", None, "default").unwrap();
+        let a = src.remember(A, &[], None, None).unwrap();
+        let b = src.remember(B, &[], None, None).unwrap();
+        src.add_memory_to_room(&a, "team", "alice").unwrap();
+        src.add_memory_to_room(&a, "ops", "alice").unwrap();
+        // A memory in no room carries no `rooms` key (the old file shape).
+        let file = src.export(None).unwrap();
+        let rows: Vec<serde_json::Value> = file
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let row = |text: &str| rows.iter().find(|r| r["content"] == text).unwrap();
+        assert_eq!(row(A)["rooms"], serde_json::json!(["ops", "team"]));
+        assert!(row(B).get("rooms").is_none());
+        let _ = b;
+
+        let dst = open_keyword();
+        dst.create_room("team", None, "default").unwrap();
+        dst.create_room("ops", None, "default").unwrap();
+        let r = dst.import(&file, None).unwrap();
+        assert_eq!((r.imported, r.room_links), (2, 2), "{r:?}");
+        assert!(r.rooms_missing.is_empty());
+        assert_eq!(dst.recall_room("team", None, 0).unwrap().len(), 1);
+        assert_eq!(dst.recall_room("ops", None, 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn missing_rooms_are_reported_and_a_second_import_completes_the_links() {
+        let src = open_keyword();
+        src.create_room("team", None, "default").unwrap();
+        src.create_room("later", None, "default").unwrap();
+        let a = src.remember(A, &[], None, None).unwrap();
+        src.add_memory_to_room(&a, "team", "alice").unwrap();
+        src.add_memory_to_room(&a, "later", "alice").unwrap();
+        let file = src.export(None).unwrap();
+
+        let dst = open_keyword();
+        dst.create_room("team", None, "default").unwrap();
+        let first = dst.import(&file, None).unwrap();
+        assert_eq!((first.imported, first.room_links), (1, 1), "{first:?}");
+        assert_eq!(first.rooms_missing, vec!["later".to_string()]);
+
+        // Create the missing room and import the same file again: the memory
+        // is a duplicate, and the duplicate is linked.
+        dst.create_room("later", None, "default").unwrap();
+        let second = dst.import(&file, None).unwrap();
+        assert_eq!(second.imported, 0, "{second:?}");
+        assert_eq!(second.room_links, 1, "{second:?}");
+        assert!(second.rooms_missing.is_empty());
+        assert_eq!(dst.recall_room("later", None, 0).unwrap().len(), 1);
+        assert_eq!(dst.count(None).unwrap(), 1, "no copy was made");
+    }
+
+    #[test]
+    fn a_file_without_rooms_imports_exactly_as_before() {
+        let dst = open_keyword();
+        let r = dst
+            .import(&format!("{{\"content\":\"{A}\"}}"), None)
+            .unwrap();
+        assert_eq!((r.imported, r.room_links), (1, 0));
+        assert!(r.rooms_missing.is_empty());
+        let json = serde_json::to_value(&r).unwrap();
+        assert!(json.get("room_links").is_none() && json.get("rooms_missing").is_none());
     }
 }

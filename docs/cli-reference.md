@@ -615,6 +615,12 @@ uteke import memories.jsonl
 uteke import notes.md --tags imported,notes
 ```
 
+A JSONL export carries each memory's room ids. Import links the memory to every room that
+exists in the target store, also for a duplicate of a stored memory, and reports the new
+links (`room_links`) and the rooms the target lacks (`rooms_missing`). Create the missing
+rooms (`uteke room create <ID>`) and import the file again to finish the links; nothing is
+copied.
+
 ### LLM fact extraction (`--extract`)
 
 Raw source material (chat transcripts, long notes, exported dumps) is noisy:
