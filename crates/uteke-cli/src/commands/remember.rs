@@ -4,49 +4,6 @@ use crate::cli::Cli;
 use crate::output;
 use uteke_core::Uteke;
 
-/// Parse --meta key:value pairs into a JSON object.
-/// Special handling for `rel:type:target` directives which are
-/// accumulated into a `relationships` array.
-fn parse_meta_pairs(pairs: &[String]) -> serde_json::Map<String, serde_json::Value> {
-    let mut map = serde_json::Map::new();
-    let mut relationships: Vec<serde_json::Value> = Vec::new();
-
-    for pair in pairs {
-        // Check for relationship directive: rel:type:target
-        if let Some((rel_type, target)) = uteke_core::is_relationship_meta(pair) {
-            relationships.push(serde_json::json!({
-                "type": rel_type,
-                "target": target
-            }));
-            continue;
-        }
-
-        if let Some((key, value)) = pair.split_once(':') {
-            let val = if let Ok(n) = value.parse::<f64>() {
-                serde_json::Value::from(n)
-            } else if value == "true" {
-                serde_json::Value::Bool(true)
-            } else if value == "false" {
-                serde_json::Value::Bool(false)
-            } else {
-                serde_json::Value::String(value.to_string())
-            };
-            map.insert(key.to_string(), val);
-        } else {
-            map.insert(pair.clone(), serde_json::Value::Bool(true));
-        }
-    }
-
-    if !relationships.is_empty() {
-        map.insert(
-            "relationships".to_string(),
-            serde_json::Value::Array(relationships),
-        );
-    }
-
-    map
-}
-
 /// Tell the user when the privacy filter changed what was stored (#1464).
 fn print_redaction(outcome: &uteke_core::RememberOutcome) {
     if let Some(summary) = outcome.redaction_summary() {
@@ -137,30 +94,7 @@ pub(crate) fn run(
     };
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
 
-    // Build metadata JSON from flags
-    let mut meta_map = serde_json::Map::new();
-    if let Some(entity_name) = entity {
-        meta_map.insert(
-            "entity".to_string(),
-            serde_json::Value::String(entity_name.to_string()),
-        );
-    }
-    if let Some(cat) = category {
-        meta_map.insert(
-            "category".to_string(),
-            serde_json::Value::String(cat.to_string()),
-        );
-    }
-    let extra = parse_meta_pairs(meta);
-    for (k, v) in extra {
-        meta_map.insert(k, v);
-    }
-
-    let metadata = if meta_map.is_empty() {
-        None
-    } else {
-        Some(serde_json::Value::Object(meta_map))
-    };
+    let metadata = uteke_core::metadata_from_cli_flags(entity, category, meta);
 
     let stored_id: String; // captured for set_source (#348)
 
@@ -278,27 +212,9 @@ pub(crate) fn run(
                 "redacted": outcome.redacted(),
                 "warning": outcome.warning,
             });
-            // Reconstruct metadata for JSON output (already consumed by remember)
-            if entity.is_some() || category.is_some() || !meta.is_empty() {
-                let mut m = serde_json::Map::new();
-                if let Some(e) = entity {
-                    m.insert(
-                        "entity".to_string(),
-                        serde_json::Value::String(e.to_string()),
-                    );
-                }
-                if let Some(c) = category {
-                    m.insert(
-                        "category".to_string(),
-                        serde_json::Value::String(c.to_string()),
-                    );
-                }
-                for (k, v) in parse_meta_pairs(meta) {
-                    m.insert(k, v);
-                }
-                if let Some(map) = obj.as_object_mut() {
-                    map.insert("metadata".to_string(), serde_json::Value::Object(m));
-                }
+            // Metadata for JSON output (the write consumed its copy).
+            if let Some(m) = uteke_core::metadata_from_cli_flags(entity, category, meta) {
+                obj["metadata"] = m;
             }
             if let Some(a) = author {
                 obj["author"] = serde_json::json!(a);

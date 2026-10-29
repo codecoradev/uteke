@@ -135,15 +135,7 @@ impl crate::Uteke {
                 })?;
                 t.to_string()
             }
-            None => {
-                let inferred = crate::memory::types::MemoryType::infer_from_content(content);
-                if inferred == crate::memory::types::MemoryType::Note {
-                    // Ambiguous content → keep Fact (backward compat).
-                    "fact".to_string()
-                } else {
-                    inferred.as_str().to_string()
-                }
-            }
+            None => crate::memory::types::MemoryType::infer_stored_name(content).to_string(),
         };
         self.remember_embed_detailed(content, tags, metadata, namespace, &effective_type)
     }

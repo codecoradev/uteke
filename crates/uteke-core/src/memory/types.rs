@@ -644,6 +644,16 @@ impl MemoryType {
         }
     }
 
+    /// The type name stored when a write gives none: the inferred type, or
+    /// `fact` when the content is ambiguous (`Note`), as every write path
+    /// has done since #349.
+    pub fn infer_stored_name(content: &str) -> &'static str {
+        match Self::infer_from_content(content) {
+            Self::Note => "fact",
+            other => other.as_str(),
+        }
+    }
+
     /// Pattern-based type inference from content (zero LLM, #349).
     ///
     /// Order matters: the first pattern to match wins. Patterns are

@@ -196,11 +196,27 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             source_type,
             timestamp,
         } => {
+            // `POST /remember` takes no `room` (a room write is a separate
+            // operation). Say so here instead of sending a key the server
+            // rejects as unknown, and do not fall back to a local store: that
+            // would split the data between two databases (#1439).
+            if room.is_some() {
+                return Err(
+                    "--room is not supported via the server; run without --server or use the room API"
+                        .to_string(),
+                );
+            }
+            // The timestamp anchor is a prefix of the content (#1232), so it is
+            // applied here, before the request, exactly as on a local store.
+            let content = match timestamp {
+                Some(ts) => super::anchor::apply_timestamp_anchor(content, ts)?,
+                None => content.clone(),
+            };
             // The typed remember request shared with HTTP and MCP (#1343)
             // builds the body; the server validates and applies its policy.
             // entity/category/--meta travel inside `metadata`.
             let body = uteke_core::RememberInput {
-                content: content.clone(),
+                content,
                 tags: tags.clone(),
                 namespace: Some(ns.to_string()),
                 memory_type: Some(r#type.clone()),
@@ -213,9 +229,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 source: source.clone(),
                 source_type: source_type.clone(),
                 author_type: author_type.clone(),
-                room: room.clone(),
                 author: author.clone(),
-                timestamp: timestamp.clone(),
                 ..uteke_core::RememberInput::default()
             }
             .to_http_body();
