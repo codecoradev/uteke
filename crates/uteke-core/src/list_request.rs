@@ -8,8 +8,8 @@
 //!
 //! | aspect                 | HTTP `/list`              | MCP `uteke_list`   | CLI via server         |
 //! |------------------------|---------------------------|--------------------|------------------------|
-//! | limit default          | 5 (`default_limit`)       | 20                 | 20 (clap), always sent |
-//! | limit cap              | 1000 (#1321)              | none               | none (server caps)     |
+//! | limit default          | 10 (#1439)                | 10 (#1439)         | 10 (clap), always sent |
+//! | limit cap              | 1000 (#1321)              | 1000 (#1439)       | none (server caps)     |
 //! | bad-typed fields       | 400 (serde error)         | silently defaulted | n/a (typed by clap)    |
 //! | `at` (time travel)     | honoured, RFC3339 checked | not accepted       | `--at` forwarded       |
 //! | `include_meta` (#1188) | honoured (not with `at`)  | not accepted       | not sent               |
@@ -22,10 +22,11 @@
 use chrono::{DateTime, Utc};
 use std::fmt;
 
-/// Result count the HTTP surface uses when the caller gives no `limit`.
-pub const LIST_HTTP_DEFAULT_LIMIT: usize = 5;
-/// Result count the MCP tool and the CLI use when the caller gives no `limit`.
-pub const LIST_DEFAULT_LIMIT: usize = 20;
+/// Result count every surface uses when the caller gives no `limit`: 10 is the
+/// CORE standard for every list-style read (#1439, uteke-cloud#173).
+pub const LIST_DEFAULT_LIMIT: usize = 10;
+/// Kept for callers that named the HTTP default separately; it is the same value.
+pub const LIST_HTTP_DEFAULT_LIMIT: usize = LIST_DEFAULT_LIMIT;
 /// Cap the HTTP surface puts on `limit` for list-style endpoints (#1321).
 pub const LIST_HTTP_MAX_LIMIT: usize = 1000;
 
@@ -45,10 +46,7 @@ impl ListPolicy {
         max_limit: Some(LIST_HTTP_MAX_LIMIT),
     };
     /// MCP `uteke_list`.
-    pub const MCP: Self = Self {
-        default_limit: LIST_DEFAULT_LIMIT,
-        max_limit: None,
-    };
+    pub const MCP: Self = Self::HTTP;
 }
 
 /// Raw, undecoded list arguments as a surface read them.
@@ -174,11 +172,11 @@ mod tests {
     }
 
     #[test]
-    fn defaults_differ_per_policy() {
+    fn the_default_is_10_on_every_policy() {
         let h = decode(ListInput::default(), ListPolicy::HTTP);
         let m = decode(ListInput::default(), ListPolicy::MCP);
-        assert_eq!((h.limit, h.offset), (5, 0));
-        assert_eq!((m.limit, m.offset), (20, 0));
+        assert_eq!((h.limit, h.offset), (10, 0));
+        assert_eq!((m.limit, m.offset), (10, 0));
         assert_eq!(
             (h.tag, h.namespace, h.at, h.include_meta),
             (None, None, None, false)
@@ -186,20 +184,21 @@ mod tests {
     }
 
     #[test]
-    fn cap_is_http_only_and_boundaries_hold() {
-        for (given, http) in [(0, 0), (1, 1), (999, 999), (1000, 1000), (1001, 1000)] {
+    fn the_cap_is_1000_on_every_policy_and_boundaries_hold() {
+        for (given, capped) in [(0, 0), (1, 1), (999, 999), (1000, 1000), (1001, 1000)] {
             let i = ListInput {
                 limit: Some(given),
                 ..Default::default()
             };
-            assert_eq!(decode(i, ListPolicy::HTTP).limit, http);
+            assert_eq!(decode(i.clone(), ListPolicy::HTTP).limit, capped);
+            assert_eq!(decode(i, ListPolicy::MCP).limit, capped);
         }
         let i = ListInput {
             limit: Some(usize::MAX),
             ..Default::default()
         };
         assert_eq!(decode(i.clone(), ListPolicy::HTTP).limit, 1000);
-        assert_eq!(decode(i, ListPolicy::MCP).limit, usize::MAX);
+        assert_eq!(decode(i, ListPolicy::MCP).limit, 1000);
     }
 
     #[test]
@@ -289,7 +288,7 @@ mod tests {
         let b = i.to_http_body();
         assert_eq!(
             b,
-            serde_json::json!({"tag": null, "limit": 20, "offset": 0, "namespace": null, "at": "2026-06-01T12:00:00Z"})
+            serde_json::json!({"tag": null, "limit": 10, "offset": 0, "namespace": null, "at": "2026-06-01T12:00:00Z"})
         );
     }
 

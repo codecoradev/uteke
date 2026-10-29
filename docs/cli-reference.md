@@ -130,7 +130,7 @@ uteke recall "database caching" --pack --exclude-ids abc123,def456
 | Flag | Description |
 |------|-------------|
 | `--type <type>` | Search scope: `all` (default — memories + documents, unified via RRF), `memory` (memories only), `doc` (documents only) |
-| `--limit <n>` | Max results (default: 5) |
+| `--limit <n>` | Max results (default: 10, at most 100) |
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
 | `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
@@ -175,7 +175,7 @@ uteke list --at 2026-06-01T12:00:00Z   # Time-travel: list at point in time
 | `--tag <tag>` | Filter by single tag |
 | `--entity <name>` | Filter by entity name |
 | `--category <cat>` | Filter by category |
-| `--limit <n>` | Max results (default: 20) |
+| `--limit <n>` | Max results (default: 10, at most 1000) |
 | `--offset <n>` | Skip first N results |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--json` | Output as JSON |

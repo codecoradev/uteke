@@ -100,7 +100,7 @@ pub enum Commands {
         /// The search query
         query: String,
         /// Maximum results to return
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "10")]
         limit: usize,
         /// Filter by tags (comma-separated)
         #[arg(long, value_delimiter = ',')]
@@ -201,7 +201,7 @@ pub enum Commands {
         #[arg(long)]
         tag: Option<String>,
         /// Maximum results to return
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
         /// Offset for pagination
         #[arg(long, default_value = "0")]
