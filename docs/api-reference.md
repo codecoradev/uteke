@@ -451,6 +451,14 @@ Update a room's title and/or description; omitted fields stay unchanged (#1202).
 
 *Related: `#1202`*
 
+#### 🟡 `POST` `/room/memory`
+
+Add an existing memory to a room without copying it (#1589). Accepts `{ memory_id, room, author? }` (`memory_id` is a full id or an unambiguous prefix; `author` defaults to `anonymous`). Idempotent: linking twice returns `already_linked: true` and keeps the first link. 404 when the room or the memory does not exist. Write op — blocked for read-only tokens.
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1589`*
+
 #### 🟡 `POST` `/room/memory/move`
 
 Move a memory from one room to another, preserving the link's author/role/joined_at provenance (#1202). Accepts `{ memory_id, from_room, to_room }`; 404 when the memory has no link in `from_room`. Write op — blocked for read-only tokens.

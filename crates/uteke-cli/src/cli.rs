@@ -851,6 +851,16 @@ pub enum RoomCommands {
         #[arg(long = "to")]
         to_room: String,
     },
+    /// Add an existing memory to a room without copying it (#1589)
+    Link {
+        /// Memory ID (full UUID or unambiguous prefix)
+        memory_id: String,
+        /// Room ID (must exist)
+        room: String,
+        /// Who adds it (default: anonymous)
+        #[arg(long)]
+        author: Option<String>,
+    },
     /// List all rooms
     List {
         /// Filter by namespace

@@ -39,6 +39,8 @@ mod memory;
 mod namespaces;
 #[cfg(test)]
 mod privacy_tests;
+#[cfg(test)]
+mod room_link_tests;
 mod rooms;
 mod tags;
 #[cfg(test)]
@@ -163,6 +165,7 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/room/create", rooms::post_room_create),
     ("POST", "/room/rename", rooms::post_room_rename),
     ("POST", "/room/update", rooms::post_room_update),
+    ("POST", "/room/memory", rooms::post_room_memory),
     ("POST", "/room/memory/move", rooms::post_room_memory_move),
     ("POST", "/room/remember", rooms::post_room_remember),
     ("GET", "/room/list", rooms::get_room_list),

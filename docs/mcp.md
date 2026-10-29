@@ -132,7 +132,7 @@ uteke init --agent hermes  # Installs pre_llm_call hook
 
 ## Available Tools
 
-Both transports expose the same 49 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 50 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -170,6 +170,7 @@ Both transports expose the same 49 tools (MCP protocol version `2025-06-18`):
 | `uteke_room_rename` | Rename a room; rewrites the registry row and every reference in one transaction (#1202) |
 | `uteke_room_update` | Update a room's title/description (#1202) |
 | `uteke_room_memory_move` | Move a memory to another room, preserving link provenance (#1202) |
+| `uteke_room_link_memory` | Add an existing memory to a room without copying it; idempotent (#1589) |
 | `uteke_room_list` | List all rooms |
 | `uteke_namespace_rename` | Rename a namespace (#1181); when the target exists this is a merge, returns `{from, to, moved, target_existed}` |
 | `uteke_namespace_delete` | Delete a namespace with an explicit strategy for its memories (#1181): `refuse` (default, 409 while referenced), `merge` into `target`, or `deprecate` (soft-delete, restorable) |
