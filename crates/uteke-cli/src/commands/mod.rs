@@ -85,7 +85,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             ns,
             content,
             tags,
-            r#type,
+            r#type.as_deref(),
             *detect_contradiction,
             entity.as_deref(),
             category.as_deref(),
