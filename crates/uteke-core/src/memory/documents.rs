@@ -1113,6 +1113,37 @@ impl super::Store {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    /// Chunks with no vector, as `(id, content)` (#1587): what a structural
+    /// import leaves behind, since the export carries no embeddings.
+    pub fn chunks_missing_embeddings(&self) -> Result<Vec<(String, String)>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, content FROM document_chunks \
+                 WHERE embedding IS NULL OR length(embedding) = 0 ORDER BY document_id, chunk_index",
+            )
+            .map_err(|e| Error::db("prepare chunks missing embeddings", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::db("chunks missing embeddings query", e))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| Error::db("read chunks missing embeddings", e))
+    }
+
+    /// Store the vector of one chunk (#1587).
+    pub fn set_chunk_embedding(&self, chunk_id: &str, embedding: &[f32]) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE document_chunks SET embedding = ?1 WHERE id = ?2",
+                params![super::store::serialize_embedding(embedding), chunk_id],
+            )
+            .map_err(|e| Error::db("set chunk embedding", e))?;
+        Ok(rows > 0)
+    }
+
     /// Load embeddings for ALL document chunks (id, embedding).
     ///
     /// Used by `repair()` to rebuild the vector index including document
