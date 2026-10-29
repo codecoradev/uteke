@@ -219,7 +219,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 content,
                 tags: tags.clone(),
                 namespace: Some(ns.to_string()),
-                memory_type: Some(r#type.clone()),
+                memory_type: r#type.clone(),
                 detect_contradiction: *detect_contradiction,
                 metadata: uteke_core::metadata_from_cli_flags(
                     entity.as_deref(),

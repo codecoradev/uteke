@@ -55,10 +55,10 @@ pub enum Commands {
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
         /// Memory type: fact, procedure, preference, decision, context,
-        /// note, insight, reference, event. Default 'fact' triggers pattern-based
-        /// auto-inference (#349) unless an explicit type is passed.
-        #[arg(long, default_value = "fact")]
-        r#type: String,
+        /// note, insight, reference, event. Without it the type is inferred
+        /// from the content (#349), falling back to fact.
+        #[arg(long)]
+        r#type: Option<String>,
         /// Enable contradiction detection (auto-deprecate conflicting memories)
         #[arg(long)]
         detect_contradiction: bool,

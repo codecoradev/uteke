@@ -18,7 +18,7 @@ pub(crate) fn run(
     ns: Option<&str>,
     content: &str,
     tags: &[String],
-    r#type: &str,
+    r#type: Option<&str>,
     detect_contradiction: bool,
     entity: Option<&str>,
     category: Option<&str>,
@@ -33,8 +33,9 @@ pub(crate) fn run(
     // The content is not logged: it may hold a secret the privacy filter has
     // not masked yet (#1464).
     tracing::debug!(
-        "Remembering {} bytes (type: {type}, contradiction: {detect_contradiction})",
-        content.len()
+        "Remembering {} bytes (type: {:?}, contradiction: {detect_contradiction})",
+        content.len(),
+        r#type
     );
 
     // #1106: validate BEFORE any write so an invalid value fails loudly
@@ -94,7 +95,25 @@ pub(crate) fn run(
     };
     let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
 
-    let metadata = uteke_core::metadata_from_cli_flags(entity, category, meta);
+    // The same decode as `POST /remember` and MCP (#1439): content, tags and
+    // type are validated, the type is copied into the metadata, and an omitted
+    // type stays `None`, which means "infer it from the content".
+    let request = uteke_core::RememberRequest::decode(uteke_core::RememberInput {
+        content: content.to_string(),
+        tags: tags.to_vec(),
+        namespace: ns.map(str::to_string),
+        memory_type: r#type.map(str::to_string),
+        detect_contradiction,
+        metadata: uteke_core::metadata_from_cli_flags(entity, category, meta),
+        source: source.map(str::to_string),
+        source_type: source_type.map(str::to_string),
+        author_type: author_type.map(str::to_string),
+        author: author.map(str::to_string),
+        ..uteke_core::RememberInput::default()
+    })
+    .map_err(|e| format!("Failed to store memory: {e}"))?;
+    let metadata = request.metadata.clone();
+    let memory_type = request.memory_type.as_deref();
 
     let stored_id: String; // captured for set_source (#348)
 
@@ -105,7 +124,7 @@ pub(crate) fn run(
                 &tag_refs,
                 metadata.clone(),
                 ns,
-                Some(r#type),
+                memory_type,
                 true,
                 0.65,
             )
@@ -180,11 +199,16 @@ pub(crate) fn run(
                     &tag_refs,
                     metadata.clone(),
                     ns,
-                    r#type,
+                    memory_type
+                        .unwrap_or_else(|| uteke_core::MemoryType::infer_stored_name(content)),
                     room_id,
                     author_name,
                 )
                 .map_err(|e| format!("Failed to store memory in room: {e}"))?
+        } else if let Some(t) = memory_type {
+            uteke
+                .remember_typed_detailed(content, &tag_refs, metadata, ns, t)
+                .map_err(|e| format!("Failed to store memory: {e}"))?
         } else {
             uteke
                 .remember_detailed(content, &tag_refs, metadata, ns)
