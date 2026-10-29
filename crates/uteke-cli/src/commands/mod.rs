@@ -254,6 +254,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             input,
             tags,
             format,
+            full,
             extract,
             extract_model,
             extract_api_key,
@@ -312,7 +313,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 ns,
                 input,
                 tags,
-                format,
+                if *full { "full" } else { format },
                 opts,
                 timestamp.as_deref(),
             )

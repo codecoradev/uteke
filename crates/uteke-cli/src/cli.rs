@@ -311,6 +311,12 @@ pub enum Commands {
         /// Import format: auto, jsonl, markdown, text (default: auto-detect)
         #[arg(long, default_value = "auto")]
         format: String,
+        /// The input must be a bundle from `uteke export --full`: restores the
+        /// documents (slug, title, hierarchy, content), rooms, graph and the
+        /// rest, and regenerates the vectors. A structural bundle is also
+        /// detected without this flag; with it, any other file is an error.
+        #[arg(long)]
+        full: bool,
         /// Distill the input into atomic facts before storing.
         ///
         /// Extraction mode depends on config:

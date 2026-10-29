@@ -615,6 +615,20 @@ uteke import memories.jsonl
 uteke import notes.md --tags imported,notes
 ```
 
+### Moving a whole store (`--full`)
+
+```bash
+uteke export --full bundle.ndjson          # on the source: memories, rooms, graph, documents, ...
+uteke import --full bundle.ndjson          # on the target
+```
+
+The bundle restores documents with their slug, title, parent (hierarchy) and content, plus
+rooms, edges and the graph, keeping the original ids. It carries no vectors: `import`
+regenerates them (memories are marked for `uteke repair --reembed`, document chunks are
+re-embedded right away). `--full` makes any other file an error instead of a plain import. The
+bundle is a file, so a large document does not pass through a tool response; `POST /import`
+stays JSONL-only and capped at 10 MB.
+
 A JSONL export carries each memory's room ids. Import links the memory to every room that
 exists in the target store, also for a duplicate of a stored memory, and reports the new
 links (`room_links`) and the rooms the target lacks (`rooms_missing`). Create the missing

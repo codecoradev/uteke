@@ -81,6 +81,20 @@ pub struct ReembedReport {
     pub reembedded: usize,
     /// Memories that failed re-embedding.
     pub failed: usize,
+    /// Document chunks without a vector (#1587). A bundle restored by
+    /// `uteke import` carries the chunk text but no vectors.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub chunks_missing: usize,
+    /// Document chunks whose vector was regenerated.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub chunks_reembedded: usize,
+    /// Document chunks whose vector could not be generated.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub chunks_failed: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 #[cfg(test)]

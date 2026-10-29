@@ -271,6 +271,64 @@ impl crate::Uteke {
     /// query (`load_missing_embeddings`), generates new embeddings, updates
     /// the database, and adds them to the index.
     pub fn reembed_missing(&self) -> Result<ReembedReport, Error> {
+        let mut report = self.reembed_missing_memories()?;
+        let (missing, reembedded, failed) = self.reembed_missing_chunks()?;
+        report.chunks_missing = missing;
+        report.chunks_reembedded = reembedded;
+        report.chunks_failed = failed;
+        Ok(report)
+    }
+
+    /// Re-embed document chunks that have no vector (#1587) and add them to the
+    /// index. Returns `(missing, reembedded, failed)`. One attempt per chunk, so
+    /// a dead backend is reported per chunk instead of waiting on retries.
+    pub fn reembed_missing_chunks(&self) -> Result<(usize, usize, usize), Error> {
+        let missing = self.store.chunks_missing_embeddings()?;
+        if missing.is_empty() {
+            return Ok((0, 0, 0));
+        }
+        // An embedder that cannot start is an error, not one failed chunk each.
+        self.ensure_embedder()?;
+        let (mut reembedded, mut failed) = (0usize, 0usize);
+        let mut new_items: Vec<(String, Vec<f32>)> = Vec::new();
+        for (id, content) in &missing {
+            match self.embed_once(content) {
+                Ok(vec) => match self.store.set_chunk_embedding(id, &vec) {
+                    Ok(_) => {
+                        new_items.push((format!("chunk:{id}"), vec));
+                        reembedded += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(chunk = %id, error = %e, "Failed to store chunk embedding");
+                        failed += 1;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(chunk = %id, error = %e, "Failed to embed chunk");
+                    failed += 1;
+                }
+            }
+        }
+        if !new_items.is_empty() {
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write during chunk reembed"))?;
+            for (key, vec) in &new_items {
+                if let Err(e) =
+                    index_sync::insert_unsaved(&mut *index, key, vec, &SyncPolicy::STANDARD)
+                {
+                    tracing::warn!(key = %key, error = %e, "Failed to add chunk to index");
+                }
+            }
+            if let Err(e) = index_sync::persist(&mut *index, &SyncPolicy::STANDARD) {
+                tracing::warn!(error = %e, "Failed to save index after chunk reembed");
+            }
+        }
+        Ok((missing.len(), reembedded, failed))
+    }
+
+    fn reembed_missing_memories(&self) -> Result<ReembedReport, Error> {
         // Scan directly for NULL/empty embeddings (#1146). This must NOT go
         // through load_all(): its `embedding IS NOT NULL` guard (kept for
         // index.build() safety, #992) filtered out exactly the rows this
@@ -285,6 +343,9 @@ impl crate::Uteke {
                 missing_count,
                 reembedded: 0,
                 failed: 0,
+                chunks_missing: 0,
+                chunks_reembedded: 0,
+                chunks_failed: 0,
             });
         }
 
@@ -351,6 +412,9 @@ impl crate::Uteke {
             missing_count,
             reembedded,
             failed,
+            chunks_missing: 0,
+            chunks_reembedded: 0,
+            chunks_failed: 0,
         })
     }
 

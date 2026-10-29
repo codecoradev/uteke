@@ -112,6 +112,14 @@ pub(crate) fn run_repair(
                     reembed_report.total_scanned
                 );
             }
+            if reembed_report.chunks_missing > 0 {
+                println!(
+                    "Re-embedded {}/{} document chunks ({} failed).",
+                    reembed_report.chunks_reembedded,
+                    reembed_report.chunks_missing,
+                    reembed_report.chunks_failed
+                );
+            }
         }
     }
 
@@ -302,9 +310,24 @@ pub(crate) fn run_import(
     if let Some(fl) = first_line {
         if fl.contains("\"uteke_export\"") {
             tracing::info!("Detected structural export manifest — full-store import");
-            let result = uteke
+            let mut result = uteke
                 .import_full(&content)
                 .map_err(|e| format!("Structural import failed: {e}"))?;
+            // The bundle carries chunk text but no vectors: regenerate them so
+            // the restored documents are found by semantic search (#1587). A
+            // backend that is down leaves the chunks for `repair --reembed`.
+            match uteke.reembed_missing_chunks() {
+                Ok((missing, reembedded, failed)) if missing > 0 => {
+                    result["chunks_reembedded"] = reembedded.into();
+                    if failed > 0 {
+                        result["chunks_failed"] = failed.into();
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    result["chunks_failed"] = serde_json::json!(e.to_string());
+                }
+            }
             if cli.json {
                 output::print_json(&result);
             } else {
@@ -313,6 +336,15 @@ pub(crate) fn run_import(
                     for (section, count) in imported {
                         println!("  {section}: {count}");
                     }
+                }
+                if let Some(n) = result["chunks_reembedded"].as_u64() {
+                    println!("  document chunks re-embedded: {n}");
+                }
+                if !result["chunks_failed"].is_null() {
+                    println!(
+                        "\u{26a0}\u{fe0f}  some document chunks have no vector ({}) — run `uteke repair --reembed`",
+                        result["chunks_failed"]
+                    );
                 }
                 if result["needs_reembed"].as_i64().unwrap_or(0) > 0 {
                     println!(
@@ -323,6 +355,12 @@ pub(crate) fn run_import(
             }
             return Ok(());
         }
+    }
+    if format == "full" {
+        return Err(
+            "--full needs a bundle written by `uteke export --full` (its first line is the manifest)"
+                .to_string(),
+        );
     }
 
     // LLM extraction path (opt-in). Distill the raw input into atomic facts,
