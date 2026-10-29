@@ -4,6 +4,7 @@
 
 ### Security
 
+- **A project-local `uteke.toml` can no longer set the cycles that delete memories (#1534)** - `.uteke/uteke.toml` in a cloned repository could set `[lifecycle]` (`deprecated_ttl_days = 0`, `max_deprecate_percent = 100`, `auto_prune_enabled = true`, `soft_delete_only = false`), `[dream]` thresholds, an `[aging]` age or the `[maintenance]` auto-dream switch, and the next lifecycle cycle or `uteke aging` run applied them to the user's store. These four sections are now read from the global `uteke.toml` only, like `[privacy]` and `[server]`; the project file's copy is ignored with a warning. `[recall]` and `[tier]` stay settable per project. Anyone who set lifecycle per project moves those keys to the global file, or sets `UTEKE_TRUST_PROJECT_CONFIG=1` to keep the old behaviour.
 - **rustls-webpki 0.103.16 and webpki-roots 1.0.10 (RUSTSEC-2026-0382, RUSTSEC-2026-0381)** - certificate verification could accept intermediates that were distrusted (emSign). Both sit in the TLS stack of the HTTP client (`uteke upgrade`, the OpenAI and Ollama embedding backends, the extraction client, the CLI-to-server client over HTTPS). Lockfile only; no code change.
 
 ### Added

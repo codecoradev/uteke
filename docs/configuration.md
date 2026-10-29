@@ -401,9 +401,10 @@ A project directory can be an untrusted clone, so `.uteke/uteke.toml` is **not**
 - `[embedding]`: `backend`, `api_key`, `base_url`, `endpoint_path`
 - `[embed_fallback]` and `[extraction]`: `api_key`, `base_url`, `endpoint_path`
 - the whole `[privacy]` section (a cloned repository must not switch the secret filter off)
+- the whole `[lifecycle]`, `[dream]`, `[aging]` and `[maintenance]` sections: they set the thresholds of the cycles that deprecate or delete memories (`deprecated_ttl_days`, `max_deprecate_percent`, `soft_delete_only`, the aging age, the auto-dream switch), and a cloned repository must not choose them for your store
 - the whole `[server]` section (`enabled`, `host`, `port`, `auth_token`, `read_only_token`, `cors_origins`, `allowed_hosts`)
 
-Everything else (store path, namespace, logging, recall tuning, lifecycle, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
+Everything else (store path, namespace, logging, `[recall]` and `[tier]` tuning, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
 
 ## Privacy Filter (#1464)
 
