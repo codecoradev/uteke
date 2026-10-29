@@ -1,0 +1,43 @@
+{
+  "schema": "uteke-benchmark-receipt/1",
+  "benchmark": "LongMemEval-S",
+  "release": "vX.Y.Z",
+  "run": {
+    "strategy": "default",
+    "questions": 500,
+    "date": "YYYY-MM-DD",
+    "where": "machine or Modal run, cpu, image, embedding model",
+    "command": "the exact command that produced the raw scores"
+  },
+  "commit": {
+    "measured_sha": "40-hex SHA the binary was built from",
+    "dirty": false,
+    "dirty_note": "say so if the tree was dirty and why",
+    "workspace_version_at_sha": "x.y.z",
+    "release_tag_commit": "SHA of the tag, when it differs from the measured SHA",
+    "release_tag_difference": "what differs between the two, or 'none'"
+  },
+  "dependencies": {
+    "cargo_lock_sha256_at_measured_sha": "sha256 of Cargo.lock at the measured SHA",
+    "ort": "onnxruntime crate version",
+    "other": "anything else that changes the numbers, or 'pinned by the lock file'"
+  },
+  "dataset": {
+    "file": "longmemeval_s_cleaned.json",
+    "sha256": "sha256 of the file that was used",
+    "source": "where it came from",
+    "revision": "pinned revision, or say it was not pinned"
+  },
+  "raw_scores": {
+    "file": "relative path to the committed per-question NDJSON",
+    "format": "what each line holds",
+    "sha256": "sha256 of that file",
+    "questions": 500
+  },
+  "summary": "summary.json",
+  "recompute": "the command that regenerates summary.json from the raw scores",
+  "scope": "SCOPE.md",
+  "headline_claims": [
+    {"id": "recall_any@5_full500", "value": 0.0, "path": "summary.json#/full500/recall_any@5"}
+  ]
+}

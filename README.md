@@ -113,6 +113,8 @@ The hard part isn't finding *a* needle; every question's evidence lands in the
 top-50 (**zero misses**). The residual gap is *ordering* when a question needs
 several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling.
 
+> **🧾 Receipts for the headline number:** [`v0.19.0-default-500q`](benchmarks/longmemeval/receipts/v0.19.0-default-500q/) holds the manifest (commit, dataset sha256, raw scores), the recomputed summary and the scope of the metric; the standard is in [benchmarks/RECEIPTS.md](benchmarks/RECEIPTS.md).
+
 > **🎯 Don't trust our benchmark. Run it yourself.** The full harness is in this
 > repo: public dataset, committed raw outputs for all three releases (v0.16/v0.17/v0.19),
 > deterministic scoring you can recompute in ~20 lines of Python. No embedder needed to
