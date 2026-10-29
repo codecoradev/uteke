@@ -33,7 +33,7 @@ The final step of a full run refreshes the cached snapshot; a run that skipped i
 
 - A `generation` integer on the derived SQLite tables and a `current_generation` row in a meta table. A reset creates generation N+1 empty, marks N read-only (kept for rollback), and new derivation writes into N+1.
 - **Reads pin one generation per request**: read `current_generation` once at the start of the request and filter every derived read by it. Inside one SQLite read transaction (WAL gives a stable snapshot) the pin cannot change mid-request, which is exactly the "no old nodes with new edges" guarantee, without a lock.
-- **The vector index** is derived from `memories`: a reset builds the new index into `uteke_index.<gen>.tmp` and swaps it in under the existing file lock, then flips `current_generation`. The old file stays until pruned.
+- **The vector index** is derived from `memories` and is keyed by generation: the file is `uteke_index.<gen>.<ext>`. A reset builds generation N+1's index file and derived tables completely **while generation N stays current**; nothing is swapped in place. The **single commit point** is one transaction that updates `current_generation` from N to N+1. A reader resolves the generation once (inside its pinned read), derives the index file name from that same value, and uses that pair for the whole request, so it can never combine the new index with generation-N tables or the reverse. A reader that pinned N keeps using file N, which is retained until pruned. A new process opens the file named by the current generation.
 
 ### 3.3 Retention and pruning
 
@@ -43,9 +43,9 @@ Keep the previous generation (one) until `uteke dream verify` passes on the new 
 
 | Question | Proposed answer | Needs |
 |---|---|---|
-| Locking vs the `fs2` index lock | keep it: the swap happens while holding it; readers in other processes see either the old or the new file, never a partial one | check on Windows (the repo has had lock-violation bugs there) |
+| Locking vs the `fs2` index lock | keep it, per file: each generation's file has its own lock; the build holds the lock of the new file only, and the flip is a SQLite transaction, so no reader waits on the build | check on Windows (the repo has had lock-violation bugs there) |
 | Disk overhead and pruning | one previous generation, pruned after verify plus N days | owner: N |
-| Interaction with usearch rebuild | rebuild goes to a temp file, then atomic rename; no in-place rebuild | benchmark the rebuild time on a large store |
+| Interaction with usearch rebuild | the rebuild writes the new generation's own file; no in-place rebuild and no rename over a live file | benchmark the rebuild time on a large store |
 | Do we need generations at all for the SQLite tables? | maybe not: a pass that rewrites edges inside one transaction is already atomic. Generations pay off only for multi-slice runs that must not be visible half-done | decide after the sliced runs exist |
 
 ## 5. Acceptance (from the issue) and the plan to meet it
