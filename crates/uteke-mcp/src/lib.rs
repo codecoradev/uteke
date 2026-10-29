@@ -406,6 +406,8 @@ fn tool_list() -> Value {
                 "limit": { "type": "integer", "description": "Max results (default 10, at most 1000; a larger value is capped at 1000, a non-integer is an error)", "default": 10, "maximum": 1000 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
                 "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
+                "at": { "type": "string", "description": "Point in time (RFC3339): list the memories that existed then" },
+                "include_meta": { "type": "boolean", "description": "Append the total, has_more and next_offset of the page (not with at)", "default": false },
                 "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             }
         }
@@ -1504,28 +1506,66 @@ fn reject_unknown_args(tool: &Value, args: &Value, extra: &[&str]) -> Result<(),
 /// 20, no cap. Fields of the wrong type fall back to their defaults. The tool
 /// exposes no `at`/`include_meta`, so those stay unset.
 pub fn decode_list_args(args: &Value) -> Result<uteke_core::ListRequest, String> {
+    // A field of the wrong type is an error, as on `POST /list`, not a silent
+    // default (#1439).
+    let uint = |key: &str| -> Result<Option<usize>, String> {
+        match &args[key] {
+            Value::Null => Ok(None),
+            v => v
+                .as_u64()
+                .map(|n| Some(n as usize))
+                .ok_or_else(|| format!("Invalid '{key}': expected a non-negative integer")),
+        }
+    };
+    let text = |key: &str| -> Result<Option<String>, String> {
+        match &args[key] {
+            Value::Null => Ok(None),
+            Value::String(s) => Ok(Some(s.clone())),
+            _ => Err(format!("Invalid '{key}': expected a string")),
+        }
+    };
+    let include_meta = match &args["include_meta"] {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        _ => return Err("Invalid 'include_meta': expected a boolean".to_string()),
+    };
     let input = uteke_core::ListInput {
-        tag: args["tag"].as_str().map(str::to_string),
-        limit: args["limit"].as_u64().map(|l| l as usize),
-        offset: args["offset"].as_u64().map(|o| o as usize),
-        namespace: args["namespace"].as_str().map(str::to_string),
-        ..uteke_core::ListInput::default()
+        tag: text("tag")?,
+        limit: uint("limit")?,
+        offset: uint("offset")?,
+        namespace: text("namespace")?,
+        at: text("at")?,
+        include_meta,
     };
     uteke_core::ListRequest::decode(input, uteke_core::ListPolicy::MCP).map_err(|e| e.to_string())
 }
 
 fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    reject_unknown_args(&tool_list(), args, &["full_ids"])?;
     let req = decode_list_args(args)?;
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
-    let memories = uteke
-        .list(
-            req.tag.as_deref(),
-            req.limit,
-            req.offset,
-            req.namespace.as_deref(),
-        )
-        .map_err(|e| format!("Failed: {e}"))?;
+    // The same page / point-in-time / envelope choice as `POST /list` (#1439).
+    use uteke_core::list_exec::ListOutput;
+    let (memories, footer) = match uteke.run_list(&req).map_err(|e| format!("Failed: {e}"))? {
+        ListOutput::Memories(m) => (m, None),
+        ListOutput::Page {
+            memories,
+            total,
+            meta,
+        } => {
+            let next = meta
+                .next_offset
+                .map_or("none".to_string(), |n| n.to_string());
+            (
+                memories,
+                Some(format!(
+                    "-- total {total}, has_more {}, next_offset {next}",
+                    meta.has_more
+                )),
+            )
+        }
+    };
 
     if memories.is_empty() {
         return Ok(ToolResult {
@@ -1537,13 +1577,14 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         });
     }
 
-    let lines: Vec<String> = memories
+    let mut lines: Vec<String> = memories
         .iter()
         .map(|m| {
             let id = display_id(&m.id, full_ids);
             format!("[{id}] {} ({})", m.content, m.tags.join(", "))
         })
         .collect();
+    lines.extend(footer);
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -3890,6 +3931,46 @@ mod namespace_deprecation_tests {
         .err()
         .unwrap();
         assert_eq!(e, "explain cannot be combined with entity/category/enrich");
+    }
+
+    #[test]
+    fn list_over_mcp_has_the_http_options_and_refuses_unknown_arguments() {
+        let u = store();
+        for i in 0..5 {
+            u.remember(&format!("note number {i}"), &["t"], None, None)
+                .unwrap();
+        }
+        // include_meta appends the pagination footer.
+        let t =
+            text(exec_list(&u, &serde_json::json!({"limit": 2, "include_meta": true})).unwrap());
+        assert!(
+            t.ends_with("-- total 5, has_more true, next_offset 2"),
+            "{t}"
+        );
+        let t = text(
+            exec_list(
+                &u,
+                &serde_json::json!({"limit": 2, "offset": 4, "include_meta": true}),
+            )
+            .unwrap(),
+        );
+        assert!(
+            t.ends_with("-- total 5, has_more false, next_offset none"),
+            "{t}"
+        );
+        // A point in time before everything lists nothing.
+        let t = text(exec_list(&u, &serde_json::json!({"at": "2000-01-01T00:00:00Z"})).unwrap());
+        assert_eq!(t, "No memories found.");
+        let e = exec_list(&u, &serde_json::json!({"at": "yesterday"}))
+            .err()
+            .unwrap();
+        assert!(e.starts_with("Invalid 'at' timestamp: yesterday"), "{e}");
+        // Wrong types and unknown arguments are errors.
+        assert!(exec_list(&u, &serde_json::json!({"limit": "x"})).is_err());
+        let e = exec_list(&u, &serde_json::json!({"limt": 3}))
+            .err()
+            .unwrap();
+        assert!(e.starts_with("Unknown argument 'limt'. Supported: "), "{e}");
     }
 
     #[test]

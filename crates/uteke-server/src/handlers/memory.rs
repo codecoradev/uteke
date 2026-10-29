@@ -232,46 +232,25 @@ pub(super) fn post_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(r) => r,
                 Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
             };
-            // Time-travel mode: use list_at_time
-            let list_result = match list_req.at {
-                Some(pit) => uteke.list_at_time(
-                    list_req.tag.as_deref(),
-                    list_req.limit,
-                    list_req.offset,
-                    ns(&list_req.namespace),
-                    pit,
-                ),
-                None => uteke.list(
-                    list_req.tag.as_deref(),
-                    list_req.limit,
-                    list_req.offset,
-                    ns(&list_req.namespace),
-                ),
-            };
-            match list_result {
-                Ok(memories) => {
-                    // #1188: opt-in pagination envelope. The default
-                    // response stays a bare array for existing clients.
-                    if list_req.wants_envelope() {
-                        // Total matching rows (same filters as the page).
-                        let total = match &list_req.tag {
-                            Some(tag) => uteke.count_by_tag(tag, ns(&list_req.namespace)),
-                            None => uteke.count(ns(&list_req.namespace)),
-                        }
-                        .unwrap_or(0);
-                        let meta = list_req.page_meta(total, memories.len());
-                        return ctx.ok_response_for(
-                            req,
-                            &serde_json::json!({
-                                "memories": memories,
-                                "total": total,
-                                "has_more": meta.has_more,
-                                "next_offset": meta.next_offset,
-                            }),
-                        );
-                    }
+            // The choice between a plain page, a point-in-time page and the
+            // pagination envelope (#1188) is shared with MCP (#1439).
+            match uteke.run_list(&list_req) {
+                Ok(uteke_core::list_exec::ListOutput::Memories(memories)) => {
                     ctx.ok_response_for(req, &memories)
                 }
+                Ok(uteke_core::list_exec::ListOutput::Page {
+                    memories,
+                    total,
+                    meta,
+                }) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "memories": memories,
+                        "total": total,
+                        "has_more": meta.has_more,
+                        "next_offset": meta.next_offset,
+                    }),
+                ),
                 Err(e) => {
                     error!("Internal error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")

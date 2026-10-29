@@ -75,6 +75,7 @@ pub use remember_request::{
 pub mod engine_settings;
 #[cfg(test)]
 mod isolation_tests;
+pub mod list_exec;
 mod orphans;
 pub mod provenance;
 mod recall_cache;
