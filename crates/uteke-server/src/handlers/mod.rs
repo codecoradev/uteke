@@ -2922,15 +2922,6 @@ mod forget_route_tests {
             true,
         );
         assert_eq!(s, 200);
-        // Recorded disagreement: the gate is HTTP-only.
-        let may = |p: uteke_core::ForgetPolicy| p.read_only_token_may_forget;
-        assert_eq!(
-            (
-                may(uteke_core::ForgetPolicy::HTTP),
-                may(uteke_core::ForgetPolicy::MCP)
-            ),
-            (false, true)
-        );
     }
 
     #[test]
@@ -2943,13 +2934,10 @@ mod forget_route_tests {
             let mcp = resolve(input, uteke_core::ForgetPolicy::MCP);
             assert_eq!(http.unwrap(), mcp.unwrap(), "{input}");
         }
-        // Where they disagree, each keeps its own text (pinned).
+        // An unknown prefix has one text (#1439).
         let http = resolve("ffff", uteke_core::ForgetPolicy::HTTP);
         let mcp = resolve("ffff", uteke_core::ForgetPolicy::MCP);
         assert_eq!(http.unwrap_err().message(), "Memory not found: ffff");
-        assert_eq!(
-            mcp.unwrap_err().message(),
-            "No memory matches id prefix 'ffff'"
-        );
+        assert_eq!(mcp.unwrap_err().message(), "Memory not found: ffff");
     }
 }

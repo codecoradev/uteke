@@ -1771,12 +1771,15 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 }
 
 fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    // Typed request shared with HTTP and the CLI (#1343). The tool offers no
-    // tag or namespace, and (unlike HTTP) is not behind the read-only gate.
+    // The tool takes an id only: a `tag` or `namespace` is refused rather than
+    // ignored, so an extra key can never widen the target. The id is resolved
+    // by the typed request shared with HTTP and the CLI (#1343, #1439).
+    reject_unknown_args(&tool_forget(), args, &[])?;
     let policy = uteke_core::ForgetPolicy::MCP;
+    let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
     let request = uteke_core::ForgetRequest::decode(
         uteke_core::ForgetInput {
-            id: args["id"].as_str().map(String::from),
+            id: Some(id_arg.to_string()),
             ..Default::default()
         },
         policy,
@@ -3274,7 +3277,7 @@ mod id_resolution_tests {
         assert!(
             resolve_id(&uteke, &almost)
                 .unwrap_err()
-                .contains("No memory matches")
+                .contains("Memory not found")
         );
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
@@ -3363,12 +3366,23 @@ mod id_resolution_tests {
         );
         assert_eq!(
             err(serde_json::json!({"id": "ffffffff"})),
-            "No memory matches id prefix 'ffffffff'"
+            "Memory not found: ffffffff"
         );
-        // The tool has no tag or namespace: extra keys never widen the target.
+        // A full UUID that is not stored is refused too (#762), not a silent no-op.
+        let absent = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            err(serde_json::json!({"id": absent})),
+            format!("Memory not found: {absent}")
+        );
+        // The tool has no tag or namespace: extra keys are refused and never
+        // widen the target.
         assert_eq!(
             err(serde_json::json!({"tag": "probe", "namespace": "mcp-id-ns"})),
-            "Missing 'id'"
+            "Unknown argument 'namespace'. Supported: id"
+        );
+        assert_eq!(
+            err(serde_json::json!({"id": "ffffffff", "tag": "probe"})),
+            "Unknown argument 'tag'. Supported: id"
         );
         assert!(uteke.get_by_id(&id).unwrap().is_some());
         drop(uteke);

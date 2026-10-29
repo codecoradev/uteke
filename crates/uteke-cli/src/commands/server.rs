@@ -427,10 +427,35 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
         Commands::Forget {
             id,
             tag,
-            cold: _,
-            all: _,
-            confirm: _,
+            cold,
+            all,
+            confirm,
         } => {
+            // `DELETE /forget` takes an id or a tag only. `--cold` and `--all`
+            // are local operations: say so instead of dropping them, and do
+            // not fall back to a local store, which would delete from the
+            // wrong database (#1439).
+            if id.is_none() && tag.is_none() && (*cold || *all) {
+                return Err(
+                    "--cold and --all are not supported via the server; run without --server"
+                        .to_string(),
+                );
+            }
+            // The confirmation a local forget asks for (#1439): a destructive
+            // call does not go out without `--confirm` or a "y" at the prompt.
+            if let Some(id) = id {
+                if !super::forget::confirm_single(id, *confirm) {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            } else if let Some(tag) = tag
+                && !*confirm
+            {
+                println!(
+                    "This will delete every memory with tag '{tag}' in namespace '{ns}'. Use --confirm to proceed."
+                );
+                return Ok(());
+            }
             // The DELETE /forget path comes from the typed request in
             // uteke-core (#1343); the id wins over the tag, as on the server.
             let input = uteke_core::ForgetInput {

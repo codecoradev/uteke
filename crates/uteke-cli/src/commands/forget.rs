@@ -13,6 +13,19 @@ pub(crate) struct Flags {
     pub confirm: bool,
 }
 
+/// The y/N prompt of a single delete, skipped with `--confirm`. `true` = go on.
+pub(crate) fn confirm_single(id: &str, confirmed: bool) -> bool {
+    if confirmed {
+        return true;
+    }
+    println!("About to delete memory: {id}");
+    print!("Are you sure? [y/N] ");
+    io::Write::flush(&mut io::stdout()).ok();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).ok();
+    input.trim().eq_ignore_ascii_case("y")
+}
+
 pub(crate) fn run(
     cli: &Cli,
     uteke: &Uteke,
@@ -22,17 +35,15 @@ pub(crate) fn run(
     flags: &Flags,
 ) -> Result<(), String> {
     if let Some(id) = id {
+        // The same resolution as `DELETE /forget` and MCP (#1439): a full id
+        // or an unambiguous prefix, and a memory that is not stored is an
+        // error rather than a silent "forgotten" (#762).
+        let id = &uteke_core::resolve_memory_id(uteke, id, uteke_core::ForgetPolicy::HTTP)
+            .map_err(|e| e.message().to_string())?;
         // Single delete — confirm if no --confirm flag
-        if !flags.confirm {
-            println!("About to delete memory: {id}");
-            print!("Are you sure? [y/N] ");
-            io::Write::flush(&mut io::stdout()).ok();
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).ok();
-            if !input.trim().eq_ignore_ascii_case("y") {
-                println!("Cancelled.");
-                return Ok(());
-            }
+        if !confirm_single(id, flags.confirm) {
+            println!("Cancelled.");
+            return Ok(());
         }
         tracing::info!("Forgetting memory: {id}");
         uteke
