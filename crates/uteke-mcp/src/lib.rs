@@ -356,6 +356,9 @@ fn tool_remember() -> Value {
                 "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for isolation (default: 'default'); a non-default value makes the result carry a deprecation warning." },
                 "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: inferred from the content, else fact)" },
                 "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
+                "source": { "type": "string", "description": "Where the memory comes from: URL, file path or identifier (optional)" },
+                "source_type": { "type": "string", "description": "Source type: user, url, file, import, derived, system, unknown (default: user when a source is given)" },
+                "author_type": { "type": "string", "enum": ["human", "agent"], "description": "Who wrote it: human or agent (default: agent)" },
                 "author": { "type": "string", "description": "Who wrote this memory: the agent, user or tool name (1 to 128 characters). Recorded on the memory with or without a room; in a room it is also the room author (default there: anonymous)." }
             },
             "required": ["content"]
@@ -1228,6 +1231,9 @@ pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest,
         },
         room: args["room"].as_str().map(str::to_string),
         author: args["author"].as_str().map(str::to_string),
+        source: args["source"].as_str().map(str::to_string),
+        source_type: args["source_type"].as_str().map(str::to_string),
+        author_type: args["author_type"].as_str().map(str::to_string),
         ..uteke_core::RememberInput::default()
     };
     uteke_core::RememberRequest::decode(input).map_err(|e| e.to_string())
@@ -1254,47 +1260,10 @@ fn write_error(e: uteke_core::Error) -> String {
 
 fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let req = decode_remember_args(args)?;
-    let content = req.content.as_str();
-    let tags = req.tag_refs();
     let namespace = req.namespace.as_deref();
-    let room = req.room.as_deref();
-    let author = req.author.as_deref().unwrap_or("anonymous");
-    let metadata = req.metadata.clone();
-
-    let outcome = if let Some(room_id) = room {
-        // A room write takes a concrete type: infer it as every write does.
-        let memory_type = req
-            .memory_type
-            .as_deref()
-            .unwrap_or_else(|| uteke_core::MemoryType::infer_stored_name(content));
-        uteke
-            .remember_in_room(
-                content,
-                &tags,
-                metadata,
-                namespace,
-                memory_type,
-                room_id,
-                author,
-            )
-            .map_err(write_error)?
-    } else if let Some(t) = req.memory_type.as_deref() {
-        uteke
-            .remember_typed_detailed(content, &tags, metadata, namespace, t)
-            .map_err(write_error)?
-    } else {
-        uteke
-            .remember_detailed(content, &tags, metadata, namespace)
-            .map_err(write_error)?
-    };
-    // The named writer is the memory's own author, with or without a room
-    // (#1427 phase 2); already validated and trimmed when the arguments were
-    // decoded. The "anonymous" fallback of the room link is not an author.
-    if let Some(a) = req.author.as_deref() {
-        uteke
-            .set_author(&outcome.id, Some(a))
-            .map_err(|e| format!("Failed to set author: {e}"))?;
-    }
+    // The write and its provenance follow-ups run in the core (#1516).
+    let run = uteke.run_remember(&req).map_err(write_error)?;
+    let outcome = run.outcome;
 
     let mut text = format!("✓ Stored memory with ID: {}", outcome.id);
     if let Some(ref warn) = outcome.warning {
@@ -1306,6 +1275,9 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         text.push_str(&format!(
             "\n⚠ Secrets masked in the stored text (#1464): {summary}"
         ));
+    }
+    for w in &run.provenance_warnings {
+        text.push_str(&format!("\n⚠ Stored, but could not record {w}"));
     }
     text.push_str(&namespace_deprecation_suffix(namespace));
 
@@ -3812,7 +3784,7 @@ mod remember_decode_tests {
         assert!(
             decode_remember_args(&json!({"content": "x", "bogus": true}))
                 .unwrap_err()
-                .starts_with("Unknown argument 'bogus'. Supported: author, content,")
+                .starts_with("Unknown argument 'bogus'. Supported: author, ")
         );
     }
 
@@ -4516,6 +4488,27 @@ mod author_tests {
             assert!(!err, "{args}: {text}");
             assert_eq!(type_of(&text), want, "{args}");
         }
+    }
+
+    #[test]
+    fn remember_records_source_and_author_type_and_refuses_bad_ones() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let (err, text) = remember(
+            &u,
+            json!({"content": "from the web", "source": "https://example.com",
+                   "source_type": "url", "author_type": "human"}),
+        );
+        assert!(!err, "{text}");
+        let m = u.get_by_id(&stored_id(&text)).unwrap().unwrap();
+        assert_eq!(m.source.as_deref(), Some("https://example.com"));
+        assert_eq!(
+            (m.source_type.as_str(), m.author_type.as_str()),
+            ("url", "human")
+        );
+
+        let (err, text) = remember(&u, json!({"content": "bad", "author_type": "robot"}));
+        assert!(err && text.contains("author_type"), "{text}");
+        assert_eq!(u.count(None).unwrap(), 1, "nothing stored for the bad one");
     }
 
     #[test]

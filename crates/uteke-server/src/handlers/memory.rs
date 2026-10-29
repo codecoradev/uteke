@@ -16,72 +16,14 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(t) => t,
                 Err(e) => return ctx.error_response_for(req, 400, e.message().to_string()),
             };
-            let tag_refs = req_data.tag_refs();
-            let metadata = req_data.metadata.clone();
-            // #1464: the source is set after the memory is stored, so strict
-            // mode has to refuse it before anything is written.
-            if let Some(src) = req_data.source.as_deref()
-                && let Err(uteke_core::Error::SecretDetected { kinds }) =
-                    uteke.privacy_config().mask_text(src)
-            {
-                return ctx.secret_detected_response(req, &kinds);
-            }
-
-            let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
-                if req_data.detect_contradiction {
-                    uteke
-                        .remember_with_contradiction(
-                            &req_data.content,
-                            &tag_refs,
-                            metadata,
-                            ns(&req_data.namespace),
-                            req_data.memory_type.as_deref(),
-                            true,
-                            0.65,
-                        )
-                        .map(|(outcome, _)| outcome)
-                } else if let Some(t) = req_data.memory_type.as_deref() {
-                    uteke.remember_typed_detailed(
-                        &req_data.content,
-                        &tag_refs,
-                        metadata,
-                        ns(&req_data.namespace),
-                        t,
-                    )
-                } else {
-                    uteke.remember_detailed(
-                        &req_data.content,
-                        &tag_refs,
-                        metadata,
-                        ns(&req_data.namespace),
-                    )
-                };
-
-            match result {
-                Ok(outcome) => {
+            // The write, the source pre-check for strict privacy mode (#1464)
+            // and the provenance follow-ups (source, author_type, author) run
+            // in the core, with one failure policy (#1516).
+            match uteke.run_remember(&req_data) {
+                Ok(run) => {
+                    let outcome = run.outcome;
                     let redacted = outcome.redacted();
                     let id = outcome.id;
-                    // Set source provenance after storage (#682) — matches CLI.
-                    if req_data.source.is_some() || req_data.source_type.is_some() {
-                        let st = req_data.source_type.as_deref().unwrap_or("user");
-                        if let Err(e) = uteke.set_source(&id, req_data.source.as_deref(), st) {
-                            error!("Failed to set source for {id}: {e}");
-                        }
-                    }
-                    // Set author type after storage (#1083). Validate before
-                    // writing so invalid values fail loudly (400, not silent).
-                    if let Some(at) = req_data.author_type.as_deref() {
-                        if let Err(e) = uteke.set_author_type(&id, at) {
-                            return ctx.error_response_for(req, 400, e.to_string());
-                        }
-                    }
-                    // Set the memory's own author after storage (#1427 phase 2).
-                    // Already validated and trimmed at decode.
-                    if let Some(a) = req_data.author.as_deref() {
-                        if let Err(e) = uteke.set_author(&id, Some(a)) {
-                            error!("Failed to set author for {id}: {e}");
-                        }
-                    }
                     // Echo author_type so clients can confirm what was
                     // recorded (#1106) — data was already stored correctly,
                     // the response just omitted the field. Default mirrors
