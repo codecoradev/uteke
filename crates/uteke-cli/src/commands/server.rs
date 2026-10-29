@@ -359,6 +359,16 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             }
         }
         Commands::List {
+            entity: Some(_), ..
+        }
+        | Commands::List {
+            category: Some(_), ..
+        } => {
+            // `/list` has no entity or category filter: serving this from the
+            // server would silently drop it, so the local store answers (#1439).
+            return Err("unsupported".to_string());
+        }
+        Commands::List {
             tag,
             limit,
             offset,

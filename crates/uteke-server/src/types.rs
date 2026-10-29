@@ -1326,22 +1326,31 @@ mod list_request_cross_surface_tests {
     }
 
     #[test]
-    fn disagreement_bad_types() {
-        // HTTP rejects at the serde layer; MCP silently falls back.
-        assert!(serde_json::from_value::<ListParams>(json!({"limit": "x"})).is_err());
-        assert!(serde_json::from_value::<ListParams>(json!({"limit": -1})).is_err());
-        assert_eq!(mcp(json!({"limit": "x"})).unwrap().limit, 10);
-        assert_eq!(mcp(json!({"limit": -1})).unwrap().limit, 10);
+    fn a_field_of_the_wrong_type_is_an_error_on_both() {
+        for bad in [
+            json!({"limit": "x"}),
+            json!({"limit": -1}),
+            json!({"offset": "x"}),
+        ] {
+            assert!(
+                serde_json::from_value::<ListParams>(bad.clone()).is_err(),
+                "HTTP: {bad}"
+            );
+            assert!(mcp(bad.clone()).is_err(), "MCP: {bad}");
+        }
+        assert!(mcp(json!({"tag": 5})).is_err());
+        assert!(mcp(json!({"include_meta": "yes"})).is_err());
     }
 
     #[test]
-    fn at_and_include_meta_are_http_only() {
+    fn at_and_include_meta_are_honoured_on_both() {
         let h = http(json!({"at": "2026-06-01T14:00:00+02:00", "include_meta": true})).unwrap();
         assert_eq!(h.at.unwrap().to_rfc3339(), "2026-06-01T12:00:00+00:00");
         assert!(h.include_meta);
         assert!(!h.wants_envelope());
         let m = mcp(json!({"at": "2026-06-01T12:00:00Z", "include_meta": true})).unwrap();
-        assert_eq!((m.at, m.include_meta), (None, false));
+        assert_eq!(m.at.unwrap().to_rfc3339(), "2026-06-01T12:00:00+00:00");
+        assert!(m.include_meta);
         assert_eq!(
             http(json!({"at": "bad"})).unwrap_err(),
             "Invalid 'at' timestamp: bad. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
