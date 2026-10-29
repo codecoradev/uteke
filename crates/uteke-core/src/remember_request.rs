@@ -2,9 +2,8 @@
 //! CLI-via-server client (#1343, `remember` slice).
 //!
 //! Same shape as [`crate::recall_request`]: a surface decodes its wire format
-//! into a [`RememberInput`] (raw), picks a [`RememberPolicy`], and calls
-//! [`RememberRequest::decode`]. This is an extraction, not a unification:
-//! where the surfaces disagree today the disagreement is a policy value.
+//! into a [`RememberInput`] (raw) and calls [`RememberRequest::decode`]. All
+//! surfaces follow the HTTP rules (#1439); `room` is the one MCP-only argument.
 //!
 //! | aspect                    | HTTP `/remember`            | MCP `uteke_remember`        | CLI via server            |
 //! |---------------------------|-----------------------------|-----------------------------|---------------------------|
@@ -27,33 +26,6 @@
 use crate::memory::types::{MemoryType, validate_author, validate_author_type};
 use serde_json::{Map, Value};
 use std::fmt;
-
-/// Where today's surfaces disagree, per surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RememberPolicy {
-    /// Validate content and tags when decoding (HTTP). Otherwise the core
-    /// write validates them and the error carries the caller's own prefix.
-    pub validate_content_and_tags: bool,
-    /// Validate an explicit `type` when decoding (HTTP).
-    pub validate_type: bool,
-    /// Type used when the request gives none. `None` leaves it to the core's
-    /// auto-inference.
-    pub default_type: Option<&'static str>,
-    /// Copy an explicit `type` into the metadata map (HTTP).
-    pub type_in_metadata: bool,
-}
-
-impl RememberPolicy {
-    /// `POST /remember`.
-    pub const HTTP: Self = Self {
-        validate_content_and_tags: true,
-        validate_type: true,
-        default_type: None,
-        type_in_metadata: true,
-    };
-    /// MCP `uteke_remember`: the HTTP rules (#1439).
-    pub const MCP: Self = Self::HTTP;
-}
 
 /// Raw, undecoded remember arguments as a surface read them.
 #[derive(Debug, Clone, Default)]
@@ -195,7 +167,7 @@ pub struct RememberRequest {
     pub tags: Vec<String>,
     /// `None` = the core's default namespace.
     pub namespace: Option<String>,
-    /// After the policy default; `None` = auto-infer.
+    /// `None` = auto-infer.
     pub memory_type: Option<String>,
     /// `None` when empty (the core write takes no empty map).
     pub metadata: Option<Value>,
@@ -208,25 +180,17 @@ pub struct RememberRequest {
 }
 
 impl RememberRequest {
-    /// Decode `input` under `policy`. Errors surface in the order the HTTP
+    /// Decode `input`. Errors surface in the order the HTTP
     /// handler always reported them: content/tags, `author_type`, `type`.
-    pub fn decode(
-        input: RememberInput,
-        policy: RememberPolicy,
-    ) -> Result<Self, RememberRequestError> {
-        if policy.validate_content_and_tags {
-            crate::validate_input(&input.content, &input.tags)
-                .map_err(|e| RememberRequestError(e.to_string()))?;
-        }
+    pub fn decode(input: RememberInput) -> Result<Self, RememberRequestError> {
+        crate::validate_input(&input.content, &input.tags)
+            .map_err(|e| RememberRequestError(e.to_string()))?;
 
         let mut meta = Map::new();
-        if policy.type_in_metadata
-            && let Some(t) = &input.memory_type
-        {
+        if let Some(t) = &input.memory_type {
             meta.insert("type".into(), Value::String(t.clone()));
         }
-        // HTTP only: these fields exist on its wire format; MCP leaves them
-        // unset, so the metadata stays empty there.
+        // Wire fields a surface may leave unset (the MCP tool has none of them).
         for (key, value) in [
             ("valid_from", &input.valid_from),
             ("valid_until", &input.valid_until),
@@ -262,8 +226,7 @@ impl RememberRequest {
             .map(|a| validate_author(a).map(str::to_string))
             .transpose()
             .map_err(|e| RememberRequestError(e.to_string()))?;
-        if policy.validate_type
-            && let Some(t) = input.memory_type.as_deref()
+        if let Some(t) = input.memory_type.as_deref()
             && MemoryType::from_str_opt(t).is_none()
         {
             return Err(RememberRequestError(format!(
@@ -271,15 +234,11 @@ impl RememberRequest {
             )));
         }
 
-        let memory_type = input
-            .memory_type
-            .or_else(|| policy.default_type.map(str::to_string));
-
         Ok(Self {
             content: input.content,
             tags: input.tags,
             namespace: input.namespace,
-            memory_type,
+            memory_type: input.memory_type,
             metadata,
             detect_contradiction: input.detect_contradiction,
             source: input.source,
@@ -309,18 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn blank_content_is_rejected_at_decode_on_every_policy() {
-        for p in [RememberPolicy::HTTP, RememberPolicy::MCP] {
-            let e = RememberRequest::decode(input("  "), p).unwrap_err();
-            assert_eq!(e.message(), "Validation error: Content must not be empty");
-        }
+    fn blank_content_is_rejected_at_decode() {
+        let e = RememberRequest::decode(input("  ")).unwrap_err();
+        assert_eq!(e.message(), "Validation error: Content must not be empty");
     }
 
     #[test]
     fn http_too_many_tags_rejected_with_core_text() {
         let mut i = input("x");
         i.tags = (0..1000).map(|n| format!("t{n}")).collect();
-        let e = RememberRequest::decode(i, RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i).unwrap_err();
         assert!(
             e.message().starts_with("Validation error: Too many tags"),
             "{e}"
@@ -328,36 +285,30 @@ mod tests {
     }
 
     #[test]
-    fn an_omitted_type_is_left_to_inference_on_every_policy() {
-        for p in [RememberPolicy::HTTP, RememberPolicy::MCP] {
-            let r = RememberRequest::decode(input("x"), p).unwrap();
-            assert_eq!(r.memory_type, None);
-            assert_eq!(r.metadata, None);
-        }
+    fn an_omitted_type_is_left_to_inference() {
+        let r = RememberRequest::decode(input("x")).unwrap();
+        assert_eq!(r.memory_type, None);
+        assert_eq!(r.metadata, None);
     }
 
     #[test]
-    fn an_explicit_type_wins_and_is_copied_to_metadata_on_every_policy() {
+    fn an_explicit_type_wins_and_is_copied_to_metadata() {
         let mut i = input("x");
         i.memory_type = Some("decision".into());
-        for p in [RememberPolicy::HTTP, RememberPolicy::MCP] {
-            let r = RememberRequest::decode(i.clone(), p).unwrap();
-            assert_eq!(r.memory_type.as_deref(), Some("decision"));
-            assert_eq!(r.metadata, Some(json!({"type": "decision"})));
-        }
+        let r = RememberRequest::decode(i).unwrap();
+        assert_eq!(r.memory_type.as_deref(), Some("decision"));
+        assert_eq!(r.metadata, Some(json!({"type": "decision"})));
     }
 
     #[test]
-    fn an_unknown_type_is_rejected_at_decode_on_every_policy() {
+    fn an_unknown_type_is_rejected_at_decode() {
         let mut i = input("x");
         i.memory_type = Some("bogus".into());
-        for p in [RememberPolicy::HTTP, RememberPolicy::MCP] {
-            let e = RememberRequest::decode(i.clone(), p).unwrap_err();
-            assert_eq!(
-                e.message(),
-                "Unknown memory type 'bogus'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
-            );
-        }
+        let e = RememberRequest::decode(i).unwrap_err();
+        assert_eq!(
+            e.message(),
+            "Unknown memory type 'bogus'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
+        );
     }
 
     #[test]
@@ -365,17 +316,17 @@ mod tests {
         let mut i = input("");
         i.author_type = Some("robot".into());
         i.memory_type = Some("bogus".into());
-        let e = RememberRequest::decode(i.clone(), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i.clone()).unwrap_err();
         assert_eq!(e.message(), "Validation error: Content must not be empty");
         i.content = "x".into();
-        let e = RememberRequest::decode(i.clone(), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i.clone()).unwrap_err();
         assert_eq!(
             e.message(),
             "Validation error: Invalid author_type 'robot'. Valid values: human, agent"
         );
         i.author_type = None;
         assert!(
-            RememberRequest::decode(i, RememberPolicy::HTTP)
+            RememberRequest::decode(i)
                 .unwrap_err()
                 .message()
                 .starts_with("Unknown memory type")
@@ -390,7 +341,7 @@ mod tests {
         i.valid_from = Some("2026-01-01".into());
         i.valid_until = Some("2027-01-01".into());
         i.metadata = Some(json!({"project": "uteke", "entity": "override"}));
-        let r = RememberRequest::decode(i, RememberPolicy::HTTP).unwrap();
+        let r = RememberRequest::decode(i).unwrap();
         assert_eq!(
             r.metadata,
             Some(json!({
@@ -404,19 +355,9 @@ mod tests {
     fn non_object_or_empty_metadata_is_none() {
         let mut i = input("x");
         i.metadata = Some(json!("str"));
-        assert_eq!(
-            RememberRequest::decode(i.clone(), RememberPolicy::HTTP)
-                .unwrap()
-                .metadata,
-            None
-        );
+        assert_eq!(RememberRequest::decode(i.clone()).unwrap().metadata, None);
         i.metadata = Some(json!({}));
-        assert_eq!(
-            RememberRequest::decode(i, RememberPolicy::HTTP)
-                .unwrap()
-                .metadata,
-            None
-        );
+        assert_eq!(RememberRequest::decode(i).unwrap().metadata, None);
     }
 
     #[test]
@@ -428,7 +369,7 @@ mod tests {
         i.source_type = Some("st".into());
         i.author_type = Some("human".into());
         i.detect_contradiction = true;
-        let r = RememberRequest::decode(i, RememberPolicy::HTTP).unwrap();
+        let r = RememberRequest::decode(i).unwrap();
         assert_eq!(r.tag_refs(), vec!["a", "b"]);
         assert_eq!(r.namespace.as_deref(), Some("ns"));
         assert_eq!(r.source.as_deref(), Some("s"));
@@ -437,40 +378,29 @@ mod tests {
         assert!(r.detect_contradiction);
     }
 
-    /// #1427 phase 2: `author` is validated before any write, under every
-    /// policy, and trimmed; the error order is content, author_type, author, type.
+    /// #1427 phase 2: `author` is validated before any write and trimmed; the error order is content, author_type, author, type.
     #[test]
     fn author_is_validated_and_trimmed() {
-        for policy in [RememberPolicy::HTTP, RememberPolicy::MCP] {
+        let mut i = input("x");
+        i.author = Some("  claude-code  ".into());
+        assert_eq!(
+            RememberRequest::decode(i).unwrap().author.as_deref(),
+            Some("claude-code")
+        );
+        for bad in ["", "   ", "tab\there", &"y".repeat(129)] {
             let mut i = input("x");
-            i.author = Some("  claude-code  ".into());
-            assert_eq!(
-                RememberRequest::decode(i, policy)
-                    .unwrap()
-                    .author
-                    .as_deref(),
-                Some("claude-code")
-            );
-            for bad in ["", "   ", "tab\there", &"y".repeat(129)] {
-                let mut i = input("x");
-                i.author = Some(bad.to_string());
-                let e = RememberRequest::decode(i, policy).unwrap_err().to_string();
-                assert!(e.starts_with("Validation error: author"), "{bad:?}: {e}");
-            }
-            let mut i = input("x");
-            i.author = Some("y".repeat(128));
-            assert!(
-                RememberRequest::decode(i, policy).is_ok(),
-                "128 is the bound"
-            );
+            i.author = Some(bad.to_string());
+            let e = RememberRequest::decode(i).unwrap_err().to_string();
+            assert!(e.starts_with("Validation error: author"), "{bad:?}: {e}");
         }
+        let mut i = input("x");
+        i.author = Some("y".repeat(128));
+        assert!(RememberRequest::decode(i).is_ok(), "128 is the bound");
         let mut i = input("x");
         i.author_type = Some("robot".into());
         i.author = Some("".into());
         i.memory_type = Some("nope".into());
-        let e = RememberRequest::decode(i, RememberPolicy::HTTP)
-            .unwrap_err()
-            .to_string();
+        let e = RememberRequest::decode(i).unwrap_err().to_string();
         assert!(
             e.contains("author_type"),
             "author_type is reported before author: {e}"
@@ -547,7 +477,7 @@ mod tests {
 
     #[test]
     fn display_writes_the_exact_message() {
-        let e = RememberRequest::decode(input("  "), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(input("  ")).unwrap_err();
         assert_eq!(e.to_string(), "Validation error: Content must not be empty");
     }
 }

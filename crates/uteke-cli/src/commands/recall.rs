@@ -14,16 +14,13 @@ fn decode_local(
     tags: &[String],
     at: Option<&str>,
 ) -> Result<(usize, Option<String>), String> {
-    let typed = uteke_core::RecallRequest::decode(
-        uteke_core::RecallInput {
-            query: query.to_string(),
-            limit: Some(limit),
-            tags: Some(tags.to_vec()),
-            at: at.map(str::to_string),
-            ..Default::default()
-        },
-        uteke_core::RecallPolicy::HTTP,
-    )
+    let typed = uteke_core::RecallRequest::decode(uteke_core::RecallInput {
+        query: query.to_string(),
+        limit: Some(limit),
+        tags: Some(tags.to_vec()),
+        at: at.map(str::to_string),
+        ..Default::default()
+    })
     .map_err(|e| e.to_string())?;
     let warning = (typed.limit < limit).then(|| {
         format!(

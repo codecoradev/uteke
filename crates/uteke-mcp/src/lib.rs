@@ -1230,8 +1230,7 @@ pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest,
         author: args["author"].as_str().map(str::to_string),
         ..uteke_core::RememberInput::default()
     };
-    uteke_core::RememberRequest::decode(input, uteke_core::RememberPolicy::MCP)
-        .map_err(|e| e.to_string())
+    uteke_core::RememberRequest::decode(input).map_err(|e| e.to_string())
 }
 
 /// Deprecation signal for a namespaced write (#1427, phase 1): a trailing
@@ -1364,8 +1363,7 @@ pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, Str
         strategy: args["strategy"].as_str().map(str::to_string),
         explain: args["explain"].as_bool().unwrap_or(false),
     };
-    uteke_core::RecallRequest::decode(input, uteke_core::RecallPolicy::MCP)
-        .map_err(|e| e.to_string())
+    uteke_core::RecallRequest::decode(input).map_err(|e| e.to_string())
 }
 
 fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
@@ -1554,7 +1552,7 @@ pub fn decode_list_args(args: &Value) -> Result<uteke_core::ListRequest, String>
         at: text("at")?,
         include_meta,
     };
-    uteke_core::ListRequest::decode(input, uteke_core::ListPolicy::MCP).map_err(|e| e.to_string())
+    uteke_core::ListRequest::decode(input).map_err(|e| e.to_string())
 }
 
 fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
@@ -1627,8 +1625,7 @@ fn display_id(id: &str, full: bool) -> &str {
 fn resolve_id<'a>(uteke: &'a Uteke, id: &'a str) -> Result<String, String> {
     // The shared resolver under the MCP policy (#1343): hex-and-dash ids
     // only (#1328), full UUIDs normalised, no existence check.
-    uteke_core::resolve_memory_id(uteke, id, uteke_core::ForgetPolicy::MCP)
-        .map_err(|e| e.message().to_string())
+    uteke_core::resolve_memory_id(uteke, id).map_err(|e| e.message().to_string())
 }
 
 /// #1053: mark old_id superseded by new_id — wires the edge pair
@@ -1775,18 +1772,14 @@ fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // ignored, so an extra key can never widen the target. The id is resolved
     // by the typed request shared with HTTP and the CLI (#1343, #1439).
     reject_unknown_args(&tool_forget(), args, &[])?;
-    let policy = uteke_core::ForgetPolicy::MCP;
     let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
-    let request = uteke_core::ForgetRequest::decode(
-        uteke_core::ForgetInput {
-            id: Some(id_arg.to_string()),
-            ..Default::default()
-        },
-        policy,
-    )
+    let request = uteke_core::ForgetRequest::decode(uteke_core::ForgetInput {
+        id: Some(id_arg.to_string()),
+        ..Default::default()
+    })
     .map_err(|e| e.message().to_string())?;
     let id = request
-        .resolve(uteke, policy)
+        .resolve(uteke)
         .map_err(|e| e.message().to_string())?
         .ok_or("Missing 'id'")?;
 

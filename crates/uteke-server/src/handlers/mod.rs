@@ -2925,19 +2925,18 @@ mod forget_route_tests {
     }
 
     #[test]
-    fn http_and_mcp_resolve_the_same_ids_to_the_same_memory() {
+    fn one_resolver_serves_every_surface() {
         let u = app();
         let guard = u.lock().unwrap();
-        let resolve = |input: &str, p| uteke_core::resolve_memory_id(&guard, input, p);
-        for input in [ID_A, "cafe", ID_B] {
-            let http = resolve(input, uteke_core::ForgetPolicy::HTTP);
-            let mcp = resolve(input, uteke_core::ForgetPolicy::MCP);
-            assert_eq!(http.unwrap(), mcp.unwrap(), "{input}");
+        let resolve = |input: &str| uteke_core::resolve_memory_id(&guard, input);
+        // A short id resolves to the full one, a full id to itself.
+        for (input, want) in [(ID_A, ID_A), ("cafe", ID_C), (ID_B, ID_B)] {
+            assert_eq!(resolve(input).unwrap(), want, "{input}");
         }
         // An unknown prefix has one text (#1439).
-        let http = resolve("ffff", uteke_core::ForgetPolicy::HTTP);
-        let mcp = resolve("ffff", uteke_core::ForgetPolicy::MCP);
-        assert_eq!(http.unwrap_err().message(), "Memory not found: ffff");
-        assert_eq!(mcp.unwrap_err().message(), "Memory not found: ffff");
+        assert_eq!(
+            resolve("ffff").unwrap_err().message(),
+            "Memory not found: ffff"
+        );
     }
 }

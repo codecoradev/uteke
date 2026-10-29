@@ -56,21 +56,19 @@ mod redaction_flags;
 mod write_path_tests;
 
 pub use forget_request::{
-    ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
-    IdCharset, UnmatchedPrefixText, resolve_memory_id,
+    ForgetErrorKind, ForgetInput, ForgetRequest, ForgetRequestError, resolve_memory_id,
 };
 pub use list_request::{
     LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
-    ListPolicy, ListRequest, ListRequestError,
+    ListRequest, ListRequestError,
 };
 pub use operations::{RememberOutcome, UpdateOutcome};
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
-    RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
-    RecallRequestError,
+    RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallRequest, RecallRequestError,
 };
 pub use remember_request::{
-    RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
+    RememberInput, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
 pub mod engine_settings;
 #[cfg(test)]

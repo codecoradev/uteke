@@ -38,8 +38,7 @@ pub(crate) fn run(
         // The same resolution as `DELETE /forget` and MCP (#1439): a full id
         // or an unambiguous prefix, and a memory that is not stored is an
         // error rather than a silent "forgotten" (#762).
-        let id = &uteke_core::resolve_memory_id(uteke, id, uteke_core::ForgetPolicy::HTTP)
-            .map_err(|e| e.message().to_string())?;
+        let id = &uteke_core::resolve_memory_id(uteke, id).map_err(|e| e.message().to_string())?;
         // Single delete — confirm if no --confirm flag
         if !confirm_single(id, flags.confirm) {
             println!("Cancelled.");

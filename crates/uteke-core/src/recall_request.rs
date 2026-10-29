@@ -3,12 +3,9 @@
 //!
 //! Each surface used to parse, default, clamp and validate its own recall
 //! arguments. This module owns that logic once: a surface decodes its wire
-//! format into a [`RecallInput`] (raw, every field optional), picks a
-//! [`RecallPolicy`], and calls [`RecallRequest::decode`].
-//!
-//! This is an extraction, not a unification. Where the surfaces disagree
-//! today the disagreement is encoded as a [`RecallPolicy`] value rather than
-//! resolved:
+//! format into a [`RecallInput`] (raw, every field optional) and calls
+//! [`RecallRequest::decode`]. All surfaces follow the HTTP rules (#1439); the
+//! table lists what each surface sends:
 //!
 //! | aspect                  | HTTP `/recall`      | MCP `uteke_recall`        | CLI via server        |
 //! |-------------------------|---------------------|---------------------------|-----------------------|
@@ -38,29 +35,6 @@ pub const RECALL_DEFAULT_BUDGET_CHARS: usize = 4000;
 pub const RECALL_DEFAULT_MIN_SCORE: f32 = 0.0;
 /// Similarity floor of `strict` when `[recall] min_score_strict` is unset.
 pub const RECALL_STRICT_MIN_SCORE: f32 = 0.5;
-
-/// Where today's surfaces disagree, per surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RecallPolicy {
-    /// Upper bound applied to `limit`; `None` leaves it unbounded.
-    pub max_limit: Option<usize>,
-    /// Reject an empty or whitespace-only query (#907).
-    pub reject_blank_query: bool,
-    /// `tags: []` means "no tag filter" (otherwise it is a filter that
-    /// matches nothing, because the core filter is any-of).
-    pub empty_tags_mean_no_filter: bool,
-}
-
-impl RecallPolicy {
-    /// `POST /recall`.
-    pub const HTTP: Self = Self {
-        max_limit: Some(RECALL_HTTP_MAX_LIMIT),
-        reject_blank_query: true,
-        empty_tags_mean_no_filter: true,
-    };
-    /// MCP `uteke_recall`: the same behaviour as HTTP (#1439, PR C).
-    pub const MCP: Self = Self::HTTP;
-}
 
 /// Raw, undecoded recall arguments as a surface read them.
 #[derive(Debug, Clone, Default)]
@@ -203,19 +177,19 @@ fn parse_ts(
 }
 
 impl RecallRequest {
-    /// Decode `input` under `policy`. Errors surface in the order the HTTP
-    /// handler always reported them: query, `at`, `after`, `before`.
-    pub fn decode(input: RecallInput, policy: RecallPolicy) -> Result<Self, RecallRequestError> {
-        if policy.reject_blank_query && input.query.trim().is_empty() {
+    /// Decode `input`. Errors surface in the order the HTTP handler always
+    /// reported them: query, `at`, `after`, `before`.
+    pub fn decode(input: RecallInput) -> Result<Self, RecallRequestError> {
+        if input.query.trim().is_empty() {
             return Err(RecallRequestError(
                 "Query must not be empty or whitespace-only".to_string(),
             ));
         }
         let limit = input.limit.unwrap_or(RECALL_DEFAULT_LIMIT);
-        let limit = policy.max_limit.map_or(limit, |max| limit.min(max));
+        let limit = limit.min(RECALL_HTTP_MAX_LIMIT);
 
         let tags = match input.tags {
-            Some(t) if t.is_empty() && policy.empty_tags_mean_no_filter => None,
+            Some(t) if t.is_empty() => None,
             other => other,
         };
         let at = parse_ts("at", input.at, "2026-06-01T12:00:00Z")?;
@@ -329,20 +303,15 @@ mod tests {
     }
 
     #[test]
-    fn default_limit_is_10_on_every_policy() {
-        for p in [RecallPolicy::HTTP, RecallPolicy::MCP] {
-            assert_eq!(RecallRequest::decode(input("q"), p).unwrap().limit, 10);
-        }
+    fn default_limit_is_10() {
+        assert_eq!(RecallRequest::decode(input("q")).unwrap().limit, 10);
     }
 
     #[test]
-    fn limit_cap_is_100_on_every_surface() {
+    fn limit_cap_is_100() {
         let mut i = input("q");
         i.limit = Some(100_000);
-        let http = RecallRequest::decode(i.clone(), RecallPolicy::HTTP).unwrap();
-        let mcp = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
-        assert_eq!(http.limit, 100);
-        assert_eq!(mcp.limit, 100);
+        assert_eq!(RecallRequest::decode(i).unwrap().limit, 100);
     }
 
     #[test]
@@ -350,57 +319,45 @@ mod tests {
         for l in [0, 1, 99, 100] {
             let mut i = input("q");
             i.limit = Some(l);
-            assert_eq!(
-                RecallRequest::decode(i, RecallPolicy::HTTP).unwrap().limit,
-                l
-            );
+            assert_eq!(RecallRequest::decode(i).unwrap().limit, l);
         }
         let mut i = input("q");
         i.limit = Some(101);
-        assert_eq!(
-            RecallRequest::decode(i, RecallPolicy::HTTP).unwrap().limit,
-            100
-        );
+        assert_eq!(RecallRequest::decode(i).unwrap().limit, 100);
     }
 
     #[test]
-    fn blank_query_is_rejected_on_every_surface() {
-        for p in [RecallPolicy::HTTP, RecallPolicy::MCP] {
-            for q in ["  \t", ""] {
-                let err = RecallRequest::decode(input(q), p).unwrap_err();
-                assert_eq!(err.message(), "Query must not be empty or whitespace-only");
-            }
+    fn a_blank_query_is_rejected() {
+        for q in ["  \t", ""] {
+            let err = RecallRequest::decode(input(q)).unwrap_err();
+            assert_eq!(err.message(), "Query must not be empty or whitespace-only");
         }
     }
 
     #[test]
-    fn empty_tags_policy() {
+    fn empty_tags_are_no_filter() {
         let mut i = input("q");
         i.tags = Some(vec![]);
-        let http = RecallRequest::decode(i.clone(), RecallPolicy::HTTP).unwrap();
-        let mcp = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
-        assert_eq!(http.tag_filter(), None);
-        assert_eq!(mcp.tag_filter(), None, "`tags: []` is no filter everywhere");
+        let r = RecallRequest::decode(i).unwrap();
+        assert_eq!(r.tag_filter(), None, "`tags: []` is no filter");
 
         let mut i = input("q");
         i.tags = Some(vec!["a".into(), "b".into()]);
-        let r = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(r.tag_filter(), Some(vec!["a", "b"]));
         assert_eq!(
-            RecallRequest::decode(input("q"), RecallPolicy::MCP)
-                .unwrap()
-                .tag_filter(),
+            RecallRequest::decode(input("q")).unwrap().tag_filter(),
             None
         );
     }
 
     #[test]
     fn namespace_is_passed_through_and_absent_means_all() {
-        let r = RecallRequest::decode(input("q"), RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(input("q")).unwrap();
         assert_eq!(r.namespace, None);
         let mut i = input("q");
         i.namespace = Some("work".into());
-        let r = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(r.namespace.as_deref(), Some("work"));
     }
 
@@ -409,7 +366,7 @@ mod tests {
         let mut i = input("q");
         i.at = Some("nope".into());
         i.after = Some("also-bad".into());
-        let err = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap_err();
+        let err = RecallRequest::decode(i).unwrap_err();
         assert_eq!(
             err.message(),
             "Invalid 'at' timestamp: nope. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
@@ -418,17 +375,13 @@ mod tests {
         let mut i = input("q");
         i.after = Some("x".into());
         assert_eq!(
-            RecallRequest::decode(i, RecallPolicy::HTTP)
-                .unwrap_err()
-                .message(),
+            RecallRequest::decode(i).unwrap_err().message(),
             "Invalid 'after' timestamp: x. Use RFC3339 format (e.g. 2026-01-01T00:00:00Z)"
         );
         let mut i = input("q");
         i.before = Some("y".into());
         assert_eq!(
-            RecallRequest::decode(i, RecallPolicy::HTTP)
-                .unwrap_err()
-                .message(),
+            RecallRequest::decode(i).unwrap_err().message(),
             "Invalid 'before' timestamp: y. Use RFC3339 format (e.g. 2026-01-01T00:00:00Z)"
         );
     }
@@ -437,7 +390,7 @@ mod tests {
     fn timestamps_are_normalised_to_utc() {
         let mut i = input("q");
         i.at = Some("2026-06-01T14:00:00+02:00".into());
-        let r = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(
             r.at.unwrap().to_rfc3339(),
             "2026-06-01T12:00:00+00:00".to_string()
@@ -448,7 +401,7 @@ mod tests {
     fn invalid_search_type_is_lazy() {
         let mut i = input("q");
         i.search_type = Some("bogus".into());
-        let r = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(
             r.search_type().unwrap_err().message(),
             "Invalid search_type: 'bogus'. Use 'all', 'memory', or 'doc'."
@@ -466,60 +419,60 @@ mod tests {
         ] {
             let mut i = input("q");
             i.search_type = raw.map(String::from);
-            let r = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
+            let r = RecallRequest::decode(i).unwrap();
             assert_eq!(r.search_type().unwrap(), want);
         }
     }
 
     #[test]
     fn strategy_precedence_request_then_config_then_fusion() {
-        let r = RecallRequest::decode(input("q"), RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(input("q")).unwrap();
         assert_eq!(r.strategy(None).unwrap(), RecallStrategy::Fusion);
         assert_eq!(r.strategy(Some("vector")).unwrap(), RecallStrategy::Vector);
 
         let mut i = input("q");
         i.strategy = Some("fts5".into());
-        let r = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(r.strategy(Some("vector")).unwrap(), RecallStrategy::Fts5);
 
         let mut i = input("q");
         i.strategy = Some("nope".into());
-        let r = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(
             r.strategy(None).unwrap_err().message(),
             "Invalid strategy: 'nope'. Use 'vector', 'fts5', 'hybrid', 'graph', or 'fusion'."
         );
         // A bad config default is reported the same way.
-        let r = RecallRequest::decode(input("q"), RecallPolicy::HTTP).unwrap();
+        let r = RecallRequest::decode(input("q")).unwrap();
         assert!(r.strategy(Some("zzz")).is_err());
     }
 
     #[test]
     fn min_score_resolution() {
-        let plain = RecallRequest::decode(input("q"), RecallPolicy::HTTP).unwrap();
+        let plain = RecallRequest::decode(input("q")).unwrap();
         assert_eq!(plain.resolve_min_score(None, None), 0.0);
         assert_eq!(plain.resolve_min_score(Some(0.25), Some(0.8)), 0.25);
 
         let mut i = input("q");
         i.strict = true;
-        let strict = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let strict = RecallRequest::decode(i).unwrap();
         assert_eq!(strict.resolve_min_score(None, None), 0.5);
         assert_eq!(strict.resolve_min_score(Some(0.25), Some(0.8)), 0.8);
 
         let mut i = input("q");
         i.strict = true;
         i.min_score = Some(0.3);
-        let explicit = RecallRequest::decode(i, RecallPolicy::HTTP).unwrap();
+        let explicit = RecallRequest::decode(i).unwrap();
         assert_eq!(explicit.resolve_min_score(Some(0.9), Some(0.9)), 0.3);
     }
 
     #[test]
     fn budget_default() {
-        let r = RecallRequest::decode(input("q"), RecallPolicy::MCP).unwrap();
+        let r = RecallRequest::decode(input("q")).unwrap();
         assert_eq!(r.budget_chars_or_default(), 4000);
         let mut i = input("q");
         i.budget_chars = Some(10);
-        let r = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
+        let r = RecallRequest::decode(i).unwrap();
         assert_eq!(r.budget_chars_or_default(), 10);
     }
 

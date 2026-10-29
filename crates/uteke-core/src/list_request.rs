@@ -1,10 +1,9 @@
 //! Typed `list` request shared by the HTTP server, the MCP server and the
 //! CLI-via-server client (#1343, `list` slice; `recall` is the template).
 //!
-//! A surface decodes its wire format into a [`ListInput`], picks a
-//! [`ListPolicy`] and calls [`ListRequest::decode`]. This is an extraction,
-//! not a unification: where the surfaces disagree today the disagreement is a
-//! [`ListPolicy`] value (or a documented capability difference).
+//! A surface decodes its wire format into a [`ListInput`] and calls
+//! [`ListRequest::decode`]. All surfaces follow the HTTP rules (#1439); where
+//! they still differ it is a capability, not a rule.
 //!
 //! | aspect                 | HTTP `/list`              | MCP `uteke_list`   | CLI via server         |
 //! |------------------------|---------------------------|--------------------|------------------------|
@@ -29,25 +28,6 @@ pub const LIST_DEFAULT_LIMIT: usize = 10;
 pub const LIST_HTTP_DEFAULT_LIMIT: usize = LIST_DEFAULT_LIMIT;
 /// Cap the HTTP surface puts on `limit` for list-style endpoints (#1321).
 pub const LIST_HTTP_MAX_LIMIT: usize = 1000;
-
-/// Where today's surfaces disagree, per surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ListPolicy {
-    /// `limit` when the caller gives none.
-    pub default_limit: usize,
-    /// Upper bound applied to `limit`; `None` leaves it unbounded.
-    pub max_limit: Option<usize>,
-}
-
-impl ListPolicy {
-    /// `POST /list`.
-    pub const HTTP: Self = Self {
-        default_limit: LIST_HTTP_DEFAULT_LIMIT,
-        max_limit: Some(LIST_HTTP_MAX_LIMIT),
-    };
-    /// MCP `uteke_list`.
-    pub const MCP: Self = Self::HTTP;
-}
 
 /// Raw, undecoded list arguments as a surface read them.
 #[derive(Debug, Clone, Default)]
@@ -110,7 +90,7 @@ pub struct ListPageMeta {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListRequest {
     pub tag: Option<String>,
-    /// Already defaulted and clamped by the policy.
+    /// Already defaulted and clamped.
     pub limit: usize,
     pub offset: usize,
     /// `None` = every namespace.
@@ -121,10 +101,10 @@ pub struct ListRequest {
 }
 
 impl ListRequest {
-    /// Decode `input` under `policy`. The only failure is an invalid `at`.
-    pub fn decode(input: ListInput, policy: ListPolicy) -> Result<Self, ListRequestError> {
-        let limit = input.limit.unwrap_or(policy.default_limit);
-        let limit = policy.max_limit.map_or(limit, |max| limit.min(max));
+    /// Decode `input`. The only failure is an invalid `at`.
+    pub fn decode(input: ListInput) -> Result<Self, ListRequestError> {
+        let limit = input.limit.unwrap_or(LIST_DEFAULT_LIMIT);
+        let limit = limit.min(LIST_HTTP_MAX_LIMIT);
         let at = match input.at {
             None => None,
             Some(ts) => Some(
@@ -167,16 +147,14 @@ impl ListRequest {
 mod tests {
     use super::*;
 
-    fn decode(i: ListInput, p: ListPolicy) -> ListRequest {
-        ListRequest::decode(i, p).unwrap()
+    fn decode(i: ListInput) -> ListRequest {
+        ListRequest::decode(i).unwrap()
     }
 
     #[test]
-    fn the_default_is_10_on_every_policy() {
-        let h = decode(ListInput::default(), ListPolicy::HTTP);
-        let m = decode(ListInput::default(), ListPolicy::MCP);
+    fn the_default_limit_is_10() {
+        let h = decode(ListInput::default());
         assert_eq!((h.limit, h.offset), (10, 0));
-        assert_eq!((m.limit, m.offset), (10, 0));
         assert_eq!(
             (h.tag, h.namespace, h.at, h.include_meta),
             (None, None, None, false)
@@ -184,21 +162,19 @@ mod tests {
     }
 
     #[test]
-    fn the_cap_is_1000_on_every_policy_and_boundaries_hold() {
+    fn the_cap_is_1000_and_boundaries_hold() {
         for (given, capped) in [(0, 0), (1, 1), (999, 999), (1000, 1000), (1001, 1000)] {
             let i = ListInput {
                 limit: Some(given),
                 ..Default::default()
             };
-            assert_eq!(decode(i.clone(), ListPolicy::HTTP).limit, capped);
-            assert_eq!(decode(i, ListPolicy::MCP).limit, capped);
+            assert_eq!(decode(i).limit, capped);
         }
         let i = ListInput {
             limit: Some(usize::MAX),
             ..Default::default()
         };
-        assert_eq!(decode(i.clone(), ListPolicy::HTTP).limit, 1000);
-        assert_eq!(decode(i, ListPolicy::MCP).limit, 1000);
+        assert_eq!(decode(i).limit, 1000);
     }
 
     #[test]
@@ -207,7 +183,7 @@ mod tests {
             at: Some("2026-06-01T14:00:00+02:00".into()),
             ..Default::default()
         };
-        let r = decode(i, ListPolicy::HTTP);
+        let r = decode(i);
         assert_eq!(r.at.unwrap().to_rfc3339(), "2026-06-01T12:00:00+00:00");
 
         let i = ListInput {
@@ -215,9 +191,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            ListRequest::decode(i, ListPolicy::HTTP)
-                .unwrap_err()
-                .message(),
+            ListRequest::decode(i).unwrap_err().message(),
             "Invalid 'at' timestamp: nope. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
         );
     }
@@ -228,21 +202,18 @@ mod tests {
             include_meta: true,
             ..Default::default()
         };
-        assert!(decode(i.clone(), ListPolicy::HTTP).wants_envelope());
+        assert!(decode(i.clone()).wants_envelope());
         i.at = Some("2026-06-01T12:00:00Z".into());
-        assert!(!decode(i, ListPolicy::HTTP).wants_envelope());
-        assert!(!decode(ListInput::default(), ListPolicy::HTTP).wants_envelope());
+        assert!(!decode(i).wants_envelope());
+        assert!(!decode(ListInput::default()).wants_envelope());
     }
 
     #[test]
     fn page_meta_matches_the_old_handler_arithmetic() {
-        let r = decode(
-            ListInput {
-                offset: Some(10),
-                ..Default::default()
-            },
-            ListPolicy::HTTP,
-        );
+        let r = decode(ListInput {
+            offset: Some(10),
+            ..Default::default()
+        });
         assert_eq!(
             r.page_meta(25, 5),
             ListPageMeta {
@@ -299,9 +270,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            ListRequest::decode(i, ListPolicy::HTTP)
-                .unwrap_err()
-                .to_string(),
+            ListRequest::decode(i).unwrap_err().to_string(),
             "Invalid 'at' timestamp: nope. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"
         );
     }

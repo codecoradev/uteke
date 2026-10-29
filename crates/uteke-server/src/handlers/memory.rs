@@ -268,19 +268,17 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let path = c.path;
     let query = path.split('?').nth(1).unwrap_or("");
     // Typed request shared with MCP and the CLI (#1343).
-    let request = match uteke_core::ForgetRequest::decode(
-        uteke_core::ForgetInput::from_http_query(query),
-        uteke_core::ForgetPolicy::HTTP,
-    ) {
-        Ok(r) => r,
-        Err(e) => return ctx.error_response_for(req, 400, e.message()),
-    };
+    let request =
+        match uteke_core::ForgetRequest::decode(uteke_core::ForgetInput::from_http_query(query)) {
+            Ok(r) => r,
+            Err(e) => return ctx.error_response_for(req, 400, e.message()),
+        };
     match request {
         uteke_core::ForgetRequest::Id(_) => {
             // Accept full UUID or short ID prefix (#794); the
             // existence check (#762) is part of the HTTP policy
             // because forget() silently returns Ok(()) for unknown ids.
-            let resolved_id = match request.resolve(uteke, uteke_core::ForgetPolicy::HTTP) {
+            let resolved_id = match request.resolve(uteke) {
                 Ok(Some(id)) => id,
                 Ok(None) => unreachable!("an id request resolves to an id"),
                 Err(e) => {
