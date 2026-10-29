@@ -13,9 +13,9 @@
 //! | aspect                  | HTTP `/recall`      | MCP `uteke_recall`        | CLI via server        |
 //! |-------------------------|---------------------|---------------------------|-----------------------|
 //! | limit default           | 5                   | 5                         | 5 (clap), always sent |
-//! | limit cap               | 100 (#903)          | none                      | none (server caps)    |
-//! | blank query             | rejected            | accepted                  | accepted (server 400) |
-//! | empty `tags: []`        | no filter           | filter matching nothing   | sent, so no filter    |
+//! | limit cap               | 100 (#903)          | 100 (#1439)               | none (server caps)    |
+//! | blank query             | rejected            | rejected (#1439)          | accepted (server 400) |
+//! | empty `tags: []`        | no filter           | no filter (#1439)         | sent, so no filter    |
 //! | namespace omitted       | all namespaces      | all namespaces            | `"default"` only      |
 //! | `strict`, config floor  | honoured            | not accepted              | `--strict` forwarded  |
 //! | entity/category/enrich  | honoured            | not accepted              | forwarded             |
@@ -58,12 +58,8 @@ impl RecallPolicy {
         reject_blank_query: true,
         empty_tags_mean_no_filter: true,
     };
-    /// MCP `uteke_recall`.
-    pub const MCP: Self = Self {
-        max_limit: None,
-        reject_blank_query: false,
-        empty_tags_mean_no_filter: false,
-    };
+    /// MCP `uteke_recall`: the same behaviour as HTTP (#1439, PR C).
+    pub const MCP: Self = Self::HTTP;
 }
 
 /// Raw, undecoded recall arguments as a surface read them.
@@ -329,13 +325,13 @@ mod tests {
     }
 
     #[test]
-    fn limit_cap_is_http_only() {
+    fn limit_cap_is_100_on_every_surface() {
         let mut i = input("q");
         i.limit = Some(100_000);
         let http = RecallRequest::decode(i.clone(), RecallPolicy::HTTP).unwrap();
         let mcp = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
         assert_eq!(http.limit, 100);
-        assert_eq!(mcp.limit, 100_000);
+        assert_eq!(mcp.limit, 100);
     }
 
     #[test]
@@ -357,11 +353,13 @@ mod tests {
     }
 
     #[test]
-    fn blank_query_is_rejected_by_http_only() {
-        let err = RecallRequest::decode(input("  \t"), RecallPolicy::HTTP).unwrap_err();
-        assert_eq!(err.message(), "Query must not be empty or whitespace-only");
-        assert!(RecallRequest::decode(input("  \t"), RecallPolicy::MCP).is_ok());
-        assert!(RecallRequest::decode(input(""), RecallPolicy::MCP).is_ok());
+    fn blank_query_is_rejected_on_every_surface() {
+        for p in [RecallPolicy::HTTP, RecallPolicy::MCP] {
+            for q in ["  \t", ""] {
+                let err = RecallRequest::decode(input(q), p).unwrap_err();
+                assert_eq!(err.message(), "Query must not be empty or whitespace-only");
+            }
+        }
     }
 
     #[test]
@@ -371,7 +369,7 @@ mod tests {
         let http = RecallRequest::decode(i.clone(), RecallPolicy::HTTP).unwrap();
         let mcp = RecallRequest::decode(i, RecallPolicy::MCP).unwrap();
         assert_eq!(http.tag_filter(), None);
-        assert_eq!(mcp.tag_filter(), Some(vec![]));
+        assert_eq!(mcp.tag_filter(), None, "`tags: []` is no filter everywhere");
 
         let mut i = input("q");
         i.tags = Some(vec!["a".into(), "b".into()]);

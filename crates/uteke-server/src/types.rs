@@ -1020,36 +1020,50 @@ mod recall_request_cross_surface_tests {
         assert_eq!(uteke_core::RECALL_HTTP_MAX_LIMIT, 100);
     }
 
-    // ── Disagreements pinned as they are today (owner decision pending) ──
+    // ── One behaviour on both surfaces (#1439, owner decisions of 2026-10-13) ──
 
     #[test]
-    fn disagreement_limit_cap() {
+    fn limit_cap_is_100_on_both() {
         assert_eq!(
             http(json!({"query": "q", "limit": 5000})).unwrap().limit,
             100
         );
         assert_eq!(
             mcp(json!({"query": "q", "limit": 5000})).unwrap().limit,
-            5000
+            100
         );
     }
 
     #[test]
-    fn disagreement_blank_query() {
-        assert_eq!(
-            http(json!({"query": "  "})).unwrap_err(),
-            "Query must not be empty or whitespace-only"
-        );
-        assert!(mcp(json!({"query": "  "})).is_ok());
+    fn blank_query_is_rejected_on_both() {
+        for q in ["", "  "] {
+            let msg = "Query must not be empty or whitespace-only";
+            assert_eq!(http(json!({"query": q})).unwrap_err(), msg);
+            assert_eq!(mcp(json!({"query": q})).unwrap_err(), msg);
+        }
     }
 
     #[test]
-    fn disagreement_empty_tags() {
+    fn empty_tags_mean_no_filter_on_both() {
         assert_eq!(http(json!({"query": "q", "tags": []})).unwrap().tags, None);
-        assert_eq!(
-            mcp(json!({"query": "q", "tags": []})).unwrap().tags,
-            Some(vec![])
-        );
+        assert_eq!(mcp(json!({"query": "q", "tags": []})).unwrap().tags, None);
+    }
+
+    #[test]
+    fn an_invalid_limit_is_an_error_on_both() {
+        for bad in [json!("ten"), json!(-1), json!(2.5)] {
+            assert!(
+                serde_json::from_value::<RecallRequest>(
+                    json!({"query": "q", "limit": bad.clone()})
+                )
+                .is_err(),
+                "HTTP: {bad}"
+            );
+            assert!(
+                mcp(json!({"query": "q", "limit": bad.clone()})).is_err(),
+                "MCP: {bad}"
+            );
+        }
     }
 
     #[test]

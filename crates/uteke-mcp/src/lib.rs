@@ -371,13 +371,13 @@ fn tool_recall() -> Value {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "The search query" },
-                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
+                "limit": { "type": "integer", "description": "Max results (default 5, at most 100; a larger value is capped at 100, a non-integer is an error)", "default": 5 },
                 "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to search (default: 'default')" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
                 "strategy": { "type": "string", "enum": ["fusion", "hybrid", "vector", "fts5", "graph"], "description": "Recall strategy: 'fusion' (default since 0.16.0, weighted RRF of vector×1.7 + hybrid×1, #1123), 'hybrid' (vector+FTS5 via RRF), 'vector' (similarity only), 'fts5' (keyword only), or 'graph' (hybrid + graph-signal reranking)", "default": "fusion" },
-                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." },
+                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only: do not pass type with explain." },
                 "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
                 "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
                 "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
@@ -1299,9 +1299,17 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 /// entity/category/enrich/at/after/before/strict, so those stay unset.
 pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
+    // An invalid `limit` is an error, as on `POST /recall`, not a silent default (#1439).
+    let limit = match &args["limit"] {
+        Value::Null => None,
+        v => Some(
+            v.as_u64()
+                .ok_or("Invalid 'limit': expected a non-negative integer")? as usize,
+        ),
+    };
     let input = uteke_core::RecallInput {
         query: query.to_string(),
-        limit: args["limit"].as_u64().map(|l| l as usize),
+        limit,
         tags: args["tags"].as_array().map(|a| {
             a.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -1359,10 +1367,9 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // None maps to SearchType::All above, so the previous enum comparison
     // wrongly rejected the default call).
     if args["explain"].as_bool().unwrap_or(false) {
-        if !matches!(args["type"].as_str(), None | Some("memory")) {
-            return Err(
-                "explain is memory-only: pass \"type\": \"memory\" (or drop type)".to_string(),
-            );
+        // The HTTP rule (#1439): explain is memory-only, so any `type` is refused.
+        if !args["type"].is_null() {
+            return Err("explain is memory-only: omit type".to_string());
         }
         let explained = uteke
             .recall_explained(query, limit, tags_ref, namespace, strategy, min_score)
@@ -3795,6 +3802,53 @@ mod namespace_deprecation_tests {
             let t = text(exec_remember(&u, &args).unwrap());
             assert!(!t.contains("deprecated"), "{t}");
             assert!(!t.contains('\n'), "{t}");
+        }
+    }
+
+    #[test]
+    fn recall_has_the_same_rules_as_http_for_limit_blank_query_and_empty_tags() {
+        // Blank query: rejected (#1439).
+        for q in ["", "   \t"] {
+            let e = decode_recall_args(&serde_json::json!({"query": q})).unwrap_err();
+            assert_eq!(e, "Query must not be empty or whitespace-only");
+        }
+        // Limit: capped at 100, an invalid value is an error, not a default.
+        let r = decode_recall_args(&serde_json::json!({"query": "q", "limit": 5000})).unwrap();
+        assert_eq!(r.limit, 100);
+        for bad in [
+            serde_json::json!("ten"),
+            serde_json::json!(-1),
+            serde_json::json!(2.5),
+        ] {
+            let e =
+                decode_recall_args(&serde_json::json!({"query": "q", "limit": bad})).unwrap_err();
+            assert!(e.starts_with("Invalid 'limit'"), "{e}");
+        }
+        assert_eq!(
+            decode_recall_args(&serde_json::json!({"query": "q"}))
+                .unwrap()
+                .limit,
+            5
+        );
+        // `tags: []` is no filter.
+        let r = decode_recall_args(&serde_json::json!({"query": "q", "tags": []})).unwrap();
+        assert_eq!(r.tag_filter(), None);
+    }
+
+    #[test]
+    fn explain_with_any_type_is_refused_like_http() {
+        let u = store();
+        let err = exec_recall(
+            &u,
+            &serde_json::json!({"query": "q", "explain": true, "type": "memory"}),
+        )
+        .err()
+        .expect("must fail");
+        assert_eq!(err, "explain is memory-only: omit type");
+        // Without `type` the explain guard does not fire (the store here has no
+        // embedder, so the call may still fail later, but not on that rule).
+        if let Err(e) = exec_recall(&u, &serde_json::json!({"query": "q", "explain": true})) {
+            assert!(!e.contains("memory-only"), "{e}");
         }
     }
 
