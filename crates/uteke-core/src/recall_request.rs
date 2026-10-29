@@ -244,6 +244,17 @@ impl RecallRequest {
         })
     }
 
+    /// Use `search_type` when the caller gave none. A surface whose documented
+    /// default is "memories and documents" (MCP) names it here instead of
+    /// leaving the choice to the memory-only path of [`crate::Uteke::run_recall`].
+    #[must_use]
+    pub fn with_default_search_type(mut self, search_type: &str) -> Self {
+        if self.search_type.is_none() {
+            self.search_type = Some(search_type.to_string());
+        }
+        self
+    }
+
     /// The raw `search_type` the caller gave, if any.
     pub fn search_type_raw(&self) -> Option<&str> {
         self.search_type.as_deref()
