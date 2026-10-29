@@ -303,6 +303,18 @@ impl crate::Uteke {
             .move_memory_to_room(memory_id, from_room, to_room)
     }
 
+    /// Add an existing memory (full id) to a room without copying it (#1589).
+    /// `NotFound` when the room or the memory does not exist; linking twice is
+    /// not an error and returns `Ok(false)`.
+    pub fn add_memory_to_room(
+        &self,
+        memory_id: &str,
+        room_id: &str,
+        author: &str,
+    ) -> Result<bool, Error> {
+        self.store.add_memory_to_room(memory_id, room_id, author)
+    }
+
     /// Generate a summary of room discussion (topic clustering, no LLM needed).
     /// Enriched with embedding-distance semantic segments (#1088) when
     /// embeddings exist — these are the batching units for future
@@ -879,6 +891,45 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn an_existing_memory_is_linked_without_a_copy_and_twice_is_fine() {
+        let uteke = open_no_embedder();
+        uteke.create_room("r", None, "default").unwrap();
+        let mid = uteke
+            .remember("one memory, two rooms", &[], None, Some("default"))
+            .unwrap();
+        let before = uteke.count(None).unwrap();
+
+        assert!(uteke.add_memory_to_room(&mid, "r", "alice").unwrap());
+        // Idempotent: the second call links nothing and keeps the first author.
+        assert!(!uteke.add_memory_to_room(&mid, "r", "bob").unwrap());
+        assert_eq!(uteke.count(None).unwrap(), before, "no copy was made");
+        let members = uteke.recall_room("r", None, 0).unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, mid);
+        let stats = uteke.room_stats("r").unwrap().unwrap();
+        assert_eq!(stats.participants, vec!["alice".to_string()]);
+    }
+
+    #[test]
+    fn linking_needs_an_existing_room_and_memory() {
+        let uteke = open_no_embedder();
+        uteke.create_room("r", None, "default").unwrap();
+        let mid = uteke.remember("exists", &[], None, None).unwrap();
+        let e = uteke.add_memory_to_room(&mid, "nope", "a").unwrap_err();
+        assert!(matches!(e, crate::Error::NotFound(_)), "{e:?}");
+        assert!(e.to_string().contains("Room not found: nope"), "{e}");
+        let e = uteke
+            .add_memory_to_room("missing-id", "r", "a")
+            .unwrap_err();
+        assert!(matches!(e, crate::Error::NotFound(_)), "{e:?}");
+        assert!(
+            e.to_string().contains("Memory not found: missing-id"),
+            "{e}"
+        );
+        assert!(uteke.recall_room("r", None, 0).unwrap().is_empty());
     }
 
     #[test]

@@ -228,6 +228,7 @@ fn handle_request(
                 tool_room_rename(),
                 tool_room_update(),
                 tool_room_memory_move(),
+                tool_room_link_memory(),
                 tool_room_recall(),
                 tool_room_memories(),
                 tool_room_stats(),
@@ -312,6 +313,7 @@ fn handle_request(
                 "uteke_room_rename" => exec_room_rename(uteke, &arguments)?,
                 "uteke_room_update" => exec_room_update(uteke, &arguments)?,
                 "uteke_room_memory_move" => exec_room_memory_move(uteke, &arguments)?,
+                "uteke_room_link_memory" => exec_room_link_memory(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
                 "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
@@ -958,6 +960,22 @@ fn tool_room_memory_move() -> Value {
                 "to_room": { "type": "string", "description": "Target room (must exist)" }
             },
             "required": ["memory_id", "from_room", "to_room"]
+        }
+    })
+}
+
+fn tool_room_link_memory() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_link_memory",
+        "description": "Add an EXISTING memory to a room without copying it (#1589). Idempotent: linking twice is not an error and keeps the first link.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": { "type": "string", "description": "Full UUID or unambiguous prefix" },
+                "room_id": { "type": "string", "description": "Room to add the memory to (must exist)" },
+                "author": { "type": "string", "description": "Who adds it (default: anonymous)" }
+            },
+            "required": ["memory_id", "room_id"]
         }
     })
 }
@@ -2684,6 +2702,29 @@ fn exec_room_memory_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
     })
 }
 
+fn exec_room_link_memory(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    reject_unknown_args(&tool_room_link_memory(), args, &[])?;
+    let memory_arg = args["memory_id"].as_str().ok_or("Missing 'memory_id'")?;
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+    let author = args["author"].as_str().unwrap_or("anonymous");
+    let memory_id = resolve_id(uteke, memory_arg)?;
+    let linked = uteke
+        .add_memory_to_room(&memory_id, room_id, author)
+        .map_err(|e| format!("Failed to link memory: {e}"))?;
+    let text = if linked {
+        format!("✓ Memory '{memory_id}' added to room '{room_id}'")
+    } else {
+        format!("✓ Memory '{memory_id}' was already in room '{room_id}'")
+    };
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
 fn exec_room_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
@@ -4054,7 +4095,7 @@ mod namespace_deprecation_tests {
         assert_eq!(read_only, expected);
         let full = names(Access::Full);
         assert!(read_only.is_subset(&full));
-        assert_eq!(full.len(), 49, "full catalog must not change");
+        assert_eq!(full.len(), 50, "full catalog must not change");
         for write in ["uteke_remember", "uteke_forget", "uteke_doc_create"] {
             assert!(
                 full.contains(write) && !read_only.contains(write),
@@ -4509,6 +4550,39 @@ mod author_tests {
         let (err, text) = remember(&u, json!({"content": "bad", "author_type": "robot"}));
         assert!(err && text.contains("author_type"), "{text}");
         assert_eq!(u.count(None).unwrap(), 1, "nothing stored for the bad one");
+    }
+
+    #[test]
+    fn room_link_memory_adds_an_existing_memory_once() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        u.create_room("team", None, "default").unwrap();
+        let (_, text) = remember(&u, json!({"content": "link me"}));
+        let id = stored_id(&text);
+        let call = |args: Value| {
+            let raw = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "uteke_room_link_memory", "arguments": args}
+            })
+            .to_string();
+            let resp: Value = serde_json::from_str(&handle_jsonrpc(&u, &raw).unwrap()).unwrap();
+            let is_error =
+                resp["result"]["isError"].as_bool().unwrap_or(false) || resp.get("error").is_some();
+            let text = resp["result"]["content"][0]["text"]
+                .as_str()
+                .or_else(|| resp["error"]["message"].as_str())
+                .unwrap_or_default()
+                .to_string();
+            (is_error, text)
+        };
+        let (err, text) = call(json!({"memory_id": &id[..8], "room_id": "team"}));
+        assert!(!err && text.contains("added to room 'team'"), "{text}");
+        let (err, text) = call(json!({"memory_id": id, "room_id": "team"}));
+        assert!(!err && text.contains("already in room"), "{text}");
+        assert_eq!(u.recall_room("team", None, 0).unwrap().len(), 1);
+        let (err, text) = call(json!({"memory_id": id, "room_id": "nope"}));
+        assert!(err && text.contains("Room not found: nope"), "{text}");
+        let (err, text) = call(json!({"memory_id": id, "room_id": "team", "bogus": 1}));
+        assert!(err && text.contains("Unknown argument 'bogus'"), "{text}");
     }
 
     #[test]

@@ -403,6 +403,49 @@ pub(super) fn post_room_memory_move(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     }
 }
 
+// POST /room/memory — add an existing memory to a room without copying it
+// (#1589). Idempotent; `memory_id` is a full id or an unambiguous prefix.
+pub(super) fn post_room_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
+    let uteke = c.uteke;
+    let ctx = c.ctx;
+    let req = &mut *c.req;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RoomMemoryRequest {
+        memory_id: String,
+        room: String,
+        author: Option<String>,
+    }
+    match read_body::<RoomMemoryRequest>(req.as_reader()) {
+        Ok(req_data) => {
+            let id = match uteke_core::resolve_memory_id(uteke, &req_data.memory_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    let status = match e.kind() {
+                        uteke_core::ForgetErrorKind::NotFound => 404,
+                        _ => 400,
+                    };
+                    return ctx.error_response_for(req, status, e.message());
+                }
+            };
+            let author = req_data.author.as_deref().unwrap_or("anonymous");
+            match uteke.add_memory_to_room(&id, &req_data.room, author) {
+                Ok(linked) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "memory_id": id,
+                        "room": req_data.room,
+                        "linked": linked,
+                        "already_linked": !linked,
+                    }),
+                ),
+                Err(e) => ctx.core_error(req, &e),
+            }
+        }
+        Err(e) => ctx.error_response_for(req, 400, e),
+    }
+}
+
 // POST /room/remember — store memory and link to room (#762)
 pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let uteke = c.uteke;

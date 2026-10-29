@@ -86,6 +86,7 @@ Version: **0.21.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke room update <ID>` | Update title/description | `--title`, `--description` |
 | `uteke room rename <OLD> <NEW>` | Rename a room (members and document links move too) | |
 | `uteke room move-memory <MEMORY_ID>` | Move a memory between rooms, keeping link provenance | `--from`, `--to` |
+| `uteke room link <MEMORY_ID> <ROOM>` | Add an existing memory to a room without copying it (idempotent) | `--author` |
 | `uteke room add-document <ROOM> <SLUG>` | Link a document to a room | |
 | `uteke room remove-document <ROOM> <SLUG>` | Unlink a document | |
 | `uteke room list-documents <ROOM>` | List documents linked to a room | |

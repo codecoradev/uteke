@@ -499,6 +499,51 @@ impl super::Store {
         Ok(())
     }
 
+    /// Add an EXISTING memory to a room without copying it (#1589).
+    ///
+    /// Both must exist (`NotFound` otherwise). Idempotent: a memory already in
+    /// the room is left as it is, with its original author, role and
+    /// `joined_at`. Returns whether a new link was made.
+    pub fn add_memory_to_room(
+        &self,
+        memory_id: &str,
+        room_id: &str,
+        author: &str,
+    ) -> Result<bool, Error> {
+        let exists = |sql: &str, id: &str| -> Result<bool, Error> {
+            self.conn
+                .query_row(sql, params![id], |row| row.get::<_, bool>(0))
+                .map_err(|e| Error::db("link memory to room: existence check", e))
+        };
+        if !exists("SELECT EXISTS(SELECT 1 FROM rooms WHERE id = ?1)", room_id)? {
+            return Err(Error::not_found(format!("Room not found: {room_id}")));
+        }
+        if !exists(
+            "SELECT EXISTS(SELECT 1 FROM memories WHERE id = ?1)",
+            memory_id,
+        )? {
+            return Err(Error::not_found(format!("Memory not found: {memory_id}")));
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        let added = self
+            .conn
+            .execute(
+                "INSERT OR IGNORE INTO room_memories (room_id, memory_id, author, role, joined_at) \
+                 VALUES (?1, ?2, ?3, 'participant', ?4)",
+                params![room_id, memory_id, author, now],
+            )
+            .map_err(|e| Error::db("link memory to room", e))?;
+        if added > 0 {
+            self.conn
+                .execute(
+                    "UPDATE rooms SET updated_at = ?1 WHERE id = ?2",
+                    params![now, room_id],
+                )
+                .map_err(|e| Error::db("update room timestamp", e))?;
+        }
+        Ok(added > 0)
+    }
+
     /// Compatibility wrapper: old signature without a namespace filter.
     /// Delegates to `recall_room_scoped` with `namespace = None`.
     pub fn recall_room(

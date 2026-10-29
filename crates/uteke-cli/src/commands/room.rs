@@ -89,6 +89,33 @@ pub(crate) fn run(
             }
             Ok(())
         }
+        RoomCommands::Link {
+            memory_id,
+            room,
+            author,
+        } => {
+            let id = uteke_core::resolve_memory_id(uteke, memory_id)
+                .map_err(|e| e.message().to_string())?;
+            let linked = uteke
+                .add_memory_to_room(&id, room, author.as_deref().unwrap_or("anonymous"))
+                .map_err(|e| format!("Failed to link memory: {e}"))?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "memory_id": id,
+                        "room": room,
+                        "linked": linked,
+                        "already_linked": !linked
+                    })
+                );
+            } else if linked {
+                println!("\u{2713} Memory '{id}' added to room '{room}'");
+            } else {
+                println!("\u{2713} Memory '{id}' was already in room '{room}'");
+            }
+            Ok(())
+        }
         RoomCommands::List { namespace } => {
             // Rooms are cross-namespace collaboration spaces (#392).
             // Only filter when --namespace is explicitly passed on the

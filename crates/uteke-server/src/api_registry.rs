@@ -478,6 +478,17 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         method: "POST",
+        path: "/room/memory",
+        tier: Tier::Lab,
+        writes: true,
+        description: "Add an existing memory to a room without copying it (#1589). Accepts `{ memory_id, room, author? }` (`memory_id` is a full id or an unambiguous prefix; `author` defaults to `anonymous`). Idempotent: linking twice returns `already_linked: true` and keeps the first link. 404 when the room or the memory does not exist. Write op — blocked for read-only tokens.",
+        request_type: Some("serde_json::Value"),
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1589"],
+    },
+    Endpoint {
+        method: "POST",
         path: "/room/memory/move",
         tier: Tier::Core,
         writes: true,
