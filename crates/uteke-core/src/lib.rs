@@ -34,6 +34,8 @@ pub mod graph;
 pub mod graph_rerank;
 pub mod graph_view;
 pub mod guide;
+#[cfg(test)]
+mod hot_path_bench;
 mod import_export;
 mod index_sync;
 mod jaccard;
