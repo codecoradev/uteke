@@ -296,18 +296,20 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             // The core import method handles re-embedding.
             let import_ns = ns(&req_data.namespace);
             match uteke.import(&req_data.content, import_ns) {
-                Ok(result) => ctx.ok_response_for(
-                    req,
-                    &with_namespace_warning(
-                        serde_json::json!({
-                            "imported": result.imported,
-                            "skipped": result.skipped,
-                            "redacted": result.redacted,
-                            "rejected_secret": result.rejected_secret,
-                        }),
-                        import_ns,
-                    ),
-                ),
+                Ok(result) => {
+                    let mut body = serde_json::json!({
+                        "imported": result.imported,
+                        "skipped": result.skipped,
+                        "redacted": result.redacted,
+                        "rejected_secret": result.rejected_secret,
+                    });
+                    // Room links (#1588): only when the file named rooms.
+                    if result.room_links > 0 || !result.rooms_missing.is_empty() {
+                        body["room_links"] = result.room_links.into();
+                        body["rooms_missing"] = result.rooms_missing.into();
+                    }
+                    ctx.ok_response_for(req, &with_namespace_warning(body, import_ns))
+                }
                 Err(e) => {
                     error!("Import error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")

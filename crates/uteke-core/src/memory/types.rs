@@ -444,6 +444,11 @@ pub struct ExportEntry {
     /// files and on unattributed memories; an invalid value is dropped on import.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
+    /// Ids of the rooms the memory belongs to (#1588). Absent on rows from
+    /// older export files and on memories in no room. Import links the memory
+    /// to each room that exists in the target store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms: Vec<String>,
 }
 
 fn default_metadata() -> serde_json::Value {
@@ -468,6 +473,19 @@ pub struct ImportResult {
     /// Entries skipped because strict mode found a secret (also in `skipped`).
     #[serde(default)]
     pub rejected_secret: usize,
+    /// New memory-to-room links made from the `rooms` of the entries (#1588).
+    /// A duplicate of a stored memory is linked too, so importing a file again
+    /// after creating the missing rooms completes the links.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub room_links: usize,
+    /// Rooms named by the entries that do not exist in this store, so their
+    /// links were not made. Create them and import again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms_missing: Vec<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// A tag with its usage count.

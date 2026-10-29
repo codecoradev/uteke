@@ -499,6 +499,28 @@ impl super::Store {
         Ok(())
     }
 
+    /// Every room each memory belongs to, as `memory_id -> room ids` (sorted).
+    /// Memories in no room are absent (#1588).
+    pub fn room_ids_by_memory(
+        &self,
+    ) -> Result<std::collections::HashMap<String, Vec<String>>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT memory_id, room_id FROM room_memories ORDER BY room_id")
+            .map_err(|e| Error::db("prepare room ids by memory", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| Error::db("query room ids by memory", e))?;
+        let mut map: std::collections::HashMap<String, Vec<String>> = Default::default();
+        for row in rows {
+            let (memory, room) = row.map_err(|e| Error::db("read room ids by memory", e))?;
+            map.entry(memory).or_default().push(room);
+        }
+        Ok(map)
+    }
+
     /// Add an EXISTING memory to a room without copying it (#1589).
     ///
     /// Both must exist (`NotFound` otherwise). Idempotent: a memory already in
