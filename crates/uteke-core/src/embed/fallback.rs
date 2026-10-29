@@ -59,6 +59,10 @@ impl FallbackEmbedder {
 }
 
 impl Embedder for FallbackEmbedder {
+    fn caches_results(&self) -> bool {
+        self.primary.caches_results()
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
         match self.primary.embed(text) {
             Ok(vec) => Ok(vec),

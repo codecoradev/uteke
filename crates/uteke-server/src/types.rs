@@ -474,7 +474,16 @@ pub fn json_header() -> Header {
     Header::from_bytes("Content-Type", "application/json").unwrap()
 }
 
-pub fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
+thread_local! {
+    /// The request body when the router read it ahead of the handler (#1518).
+    /// One thread serves one request, so the slot cannot cross requests.
+    static PREREAD: std::cell::RefCell<Option<Result<String, String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Read the body text, at most `MAX_PAYLOAD_SIZE` bytes, whatever the transfer
+/// encoding.
+fn read_body_text(reader: &mut dyn IoRead) -> Result<String, String> {
     // Enforce payload size limit at the reader level — works regardless of
     // Content-Length header presence (handles chunked transfer, missing header, etc.)
     let mut limited = reader.take(uteke_core::MAX_PAYLOAD_SIZE as u64 + 1);
@@ -489,6 +498,33 @@ pub fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Res
             uteke_core::MAX_PAYLOAD_SIZE
         ));
     }
+    Ok(body)
+}
+
+/// Read the body now and keep it for the handler's [`read_body`], returning it
+/// parsed as JSON for a peek. The router uses this to embed the text of a
+/// recall or a remember before it takes the store lock (#1518); the handler
+/// then sees exactly the bytes and errors it would have seen itself.
+pub fn preread_body(reader: &mut dyn IoRead) -> Option<serde_json::Value> {
+    let text = read_body_text(reader);
+    let peek = text
+        .as_ref()
+        .ok()
+        .and_then(|t| serde_json::from_str(t).ok());
+    PREREAD.with(|p| *p.borrow_mut() = Some(text));
+    peek
+}
+
+/// Forget a pre-read body no handler consumed.
+pub fn clear_preread_body() {
+    PREREAD.with(|p| *p.borrow_mut() = None);
+}
+
+pub fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
+    let body = match PREREAD.with(|p| p.borrow_mut().take()) {
+        Some(text) => text?,
+        None => read_body_text(reader)?,
+    };
     serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))
 }
 

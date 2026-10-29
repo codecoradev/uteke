@@ -22,6 +22,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod embedding;
+pub use embedding::EmbeddingWarmer;
 pub mod embedding_config;
 #[cfg(test)]
 mod engine_settings_tests;
@@ -662,7 +663,9 @@ impl EmbeddingSettings {
 pub struct Uteke {
     store: Store,
     index: RwLock<VectorIndex>,
-    embedder: Mutex<Option<Box<dyn Embedder>>>,
+    /// Shared so a call can clone the handle and embed WITHOUT holding the
+    /// slot lock: a remote backend then never serialises other requests (#1518).
+    embedder: Mutex<Option<std::sync::Arc<dyn Embedder>>>,
     /// Cached initialization error (#822). `(message, cached_at, is_permanent)`.
     /// Permanent failures (missing ORT lib, feature disabled) are cached forever.
     /// Transient network failures (OpenAI/Ollama unreachable) use a 60s TTL so
@@ -1114,7 +1117,7 @@ impl Uteke {
         Ok(Self {
             store,
             index: RwLock::new(index),
-            embedder: Mutex::new(embedder),
+            embedder: Mutex::new(embedder.map(std::sync::Arc::from)),
             embedder_init_error: Mutex::new(None),
             embedder_build: Mutex::new(()),
             embedder_backend,
@@ -1262,7 +1265,8 @@ impl Uteke {
                 *self
                     .embedder
                     .lock()
-                    .map_err(|_| Error::lock("embedder lock during lazy init"))? = Some(embedder);
+                    .map_err(|_| Error::lock("embedder lock during lazy init"))? =
+                    Some(std::sync::Arc::from(embedder));
                 Ok(())
             }
             Err(failure) => {

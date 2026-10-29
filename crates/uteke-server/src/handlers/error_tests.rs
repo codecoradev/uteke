@@ -38,6 +38,7 @@ impl App {
             extraction_config: None,
             host_guard: Default::default(),
             store_id: String::new(),
+            embed_warmer: Default::default(),
         };
         let resp = route(&self.uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -162,6 +163,7 @@ fn answer(e: uteke_core::Error) -> (u16, String) {
         extraction_config: None,
         host_guard: Default::default(),
         store_id: String::new(),
+        embed_warmer: Default::default(),
     };
     let resp = ctx.core_error(&req, &e);
     let status = resp.status_code().0;

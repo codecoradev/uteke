@@ -40,4 +40,11 @@ pub trait Embedder: Send + Sync {
     fn identity(&self) -> String {
         format!("{}:{}", self.name(), self.dims())
     }
+
+    /// Whether `embed` remembers its results, so a second call for the same
+    /// text is a cache hit. Only then is embedding ahead of time useful
+    /// ([`crate::EmbeddingWarmer`]); otherwise it would just do the work twice.
+    fn caches_results(&self) -> bool {
+        false
+    }
 }

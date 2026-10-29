@@ -33,24 +33,27 @@ pub(crate) use recall::rrf_fuse_weighted;
 /// returns an embedding error instead of panicking. Validation errors are
 /// returned immediately: they can never succeed on retry.
 pub(crate) fn retry_embed(
-    embedder: &Mutex<Option<Box<dyn crate::embed::Embedder>>>,
+    embedder: &Mutex<Option<std::sync::Arc<dyn crate::embed::Embedder>>>,
     text: &str,
 ) -> Result<Vec<f32>, Error> {
     const MAX_RETRIES: usize = 3;
     let mut delay = Duration::from_millis(200);
 
     for attempt in 0..MAX_RETRIES {
-        let lock = embedder
+        // Clone the handle and release the slot lock: the call itself (a
+        // network round trip for a remote backend) must not block other
+        // embeds (#1518).
+        let handle = embedder
             .lock()
-            .map_err(|_| Error::lock("embedder lock during remember"))?;
-        let Some(embedder) = lock.as_ref() else {
+            .map_err(|_| Error::lock("embedder lock during remember"))?
+            .clone();
+        let Some(handle) = handle else {
             return Err(Error::embed_msg("No embedder configured"));
         };
-        match embedder.embed(text) {
+        match handle.embed(text) {
             Ok(embedding) => return Ok(embedding),
             Err(e @ Error::Validation(_)) => return Err(e),
             Err(e) => {
-                drop(lock); // Release lock before sleeping
                 if attempt < MAX_RETRIES - 1 {
                     tracing::warn!(
                         "Embedding attempt {}/{} failed: {}. Retrying in {:?}...",
@@ -191,11 +194,11 @@ mod retry_embed_tests {
         failures: usize,
         make_err: fn() -> Error,
     ) -> (
-        Mutex<Option<Box<dyn crate::embed::Embedder>>>,
+        Mutex<Option<Arc<dyn crate::embed::Embedder>>>,
         Arc<AtomicUsize>,
     ) {
         let calls = Arc::new(AtomicUsize::new(0));
-        let embedder: Box<dyn crate::embed::Embedder> = Box::new(ScriptedEmbedder {
+        let embedder: Arc<dyn crate::embed::Embedder> = Arc::new(ScriptedEmbedder {
             calls: Arc::clone(&calls),
             failures,
             make_err,
@@ -219,9 +222,50 @@ mod retry_embed_tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
+    /// #1518: the slot lock is held to look at the handle, never across the
+    /// embed call, so two slow embeds run at the same time.
+    #[test]
+    fn two_embeds_run_concurrently() {
+        use std::sync::atomic::AtomicUsize;
+        struct Slow {
+            inflight: Arc<AtomicUsize>,
+            peak: Arc<AtomicUsize>,
+        }
+        impl crate::embed::Embedder for Slow {
+            fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+                let now = self.inflight.fetch_add(1, Ordering::SeqCst) + 1;
+                self.peak.fetch_max(now, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                self.inflight.fetch_sub(1, Ordering::SeqCst);
+                Ok(vec![0.0; 4])
+            }
+            fn dims(&self) -> usize {
+                4
+            }
+            fn max_seq_len(&self) -> usize {
+                8
+            }
+            fn name(&self) -> &str {
+                "slow"
+            }
+        }
+        let peak = Arc::new(AtomicUsize::new(0));
+        let slot: Mutex<Option<Arc<dyn crate::embed::Embedder>>> =
+            Mutex::new(Some(Arc::new(Slow {
+                inflight: Arc::new(AtomicUsize::new(0)),
+                peak: Arc::clone(&peak),
+            })));
+        std::thread::scope(|s| {
+            for _ in 0..2 {
+                s.spawn(|| retry_embed(&slot, "x").unwrap());
+            }
+        });
+        assert_eq!(peak.load(Ordering::SeqCst), 2, "the embeds were serialised");
+    }
+
     #[test]
     fn no_embedder_is_an_error_not_a_panic() {
-        let embedder: Mutex<Option<Box<dyn crate::embed::Embedder>>> = Mutex::new(None);
+        let embedder: Mutex<Option<std::sync::Arc<dyn crate::embed::Embedder>>> = Mutex::new(None);
         let err = retry_embed(&embedder, "hello").unwrap_err();
         assert!(matches!(err, Error::Embedding { .. }), "{err:?}");
         assert!(err.to_string().contains("No embedder"), "{err}");

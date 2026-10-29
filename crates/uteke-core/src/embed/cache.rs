@@ -193,6 +193,10 @@ impl Embedder for CachingEmbedder {
     fn identity(&self) -> String {
         self.inner.identity()
     }
+
+    fn caches_results(&self) -> bool {
+        true
+    }
 }
 
 // ── Serialization ──────────────────────────────────────────────────────────
