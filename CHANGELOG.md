@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-30
+
+Patch release. Theme: **`uteke upgrade` verifies the cosign signature itself**, so
+a release no longer needs a manual signing step, plus three fixes from the Agent
+Memory Atlas review. **Builds before 0.22.1 cannot verify a release signed this
+way: reinstall once** (`brew upgrade codecoradev/tap/uteke`, `cargo install
+uteke-cli`, or a manual download); from 0.22.1 on `uteke upgrade` works as
+before. 0.22.0 was never signed with minisign, so it cannot be installed with
+`uteke upgrade`.
+
 ### Security
 
 - **`uteke upgrade` verifies the cosign signature of the release itself (#1610)** - it checks the `checksums-sha256.txt.bundle` the Release workflow already publishes, offline and fail closed: the signature over the file, the Fulcio certificate chain to a root compiled into the binary, the workflow identity (this repository's `release.yml` at exactly the tag being installed, issued to GitHub Actions), and the Rekor entry (signed timestamp inside the certificate's validity, same file, signature and certificate). A release no longer needs a manual signing step, so a lost signing password can no longer leave a release unverifiable, and there is no key to rotate. `v*` tags are now protected by a repository ruleset, which is what the scheme rests on (see SECURITY.md).
