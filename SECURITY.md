@@ -68,34 +68,44 @@ cosign verify-blob \
 sha256sum --check --ignore-missing checksums-sha256.txt
 ```
 
-### minisign signature
+### What `uteke upgrade` verifies
 
-The release maintainer also signs `checksums-sha256.txt` offline with a
-[minisign](https://jedisct1.github.io/minisign/) key that never leaves their
-machine (CI holds no signing key). The signature is published as
-`checksums-sha256.txt.minisig`; its trusted comment is `uteke <tag>`, binding it
-to one release. The public key is `scripts/uteke-release.pub`, key id
-`96924B76E31B048B`.
+`uteke upgrade` checks that bundle itself, offline, before it trusts any hash in
+`checksums-sha256.txt` and then checks the archive against that file (#1610). It
+needs nothing beyond the downloads: the Sigstore roots (the Fulcio root and
+intermediate, the Rekor log key) are compiled into the binary. It verifies:
 
-```bash
-curl -fsSLO "https://github.com/codecoradev/uteke/releases/download/$VER/checksums-sha256.txt.minisig"
+- the signature over `checksums-sha256.txt`, made by the key in the bundle's
+  certificate;
+- that the certificate chains to the embedded Fulcio root and is a code-signing
+  certificate, not a CA;
+- that its identity is this repository's `release.yml` workflow at exactly the
+  tag being installed, issued to GitHub Actions (so one release's files cannot be
+  served as another's);
+- that the Rekor entry's signed timestamp verifies against the embedded log key
+  and lies inside the certificate's 10-minute validity, and that the entry names
+  the same file, signature and certificate.
 
-minisign -Vm checksums-sha256.txt \
-  -P RWSLBBvjdkuSlvaQ/yoyoMlpQAOLTt5jACZGTgSOCKb+/1JoqhjOmT8G
-# the output must show: Trusted comment: uteke vX.Y.Z  (your $VER)
-```
+`uteke upgrade` installs only stable, published releases (`vX.Y.Z`), refuses to
+downgrade, and refuses any release older than the first one it can verify
+(v0.22.1): a pre-release or build-metadata tag is refused too. A missing or
+invalid bundle is a hard failure, never a silent downgrade to checksum-only, and
+there is no fallback to an older scheme. Setting `UTEKE_UPGRADE_SKIP_CHECKSUM=1`
+skips both checks (not recommended).
 
-Since the release that ships this change, `uteke upgrade` verifies this
-minisign signature over `checksums-sha256.txt` before trusting any hash in it,
-then checks the archive against that file. The signature is bound to the tag
-(the trusted comment must be `uteke <tag>`), so one release's files cannot be
-served as another's, and `uteke upgrade` refuses to downgrade to an older
-release. It installs only stable, published releases (`vX.Y.Z`): a pre-release
-or build-metadata tag is refused. A missing or invalid signature is a hard failure, never a silent
-downgrade to checksum-only. Setting `UTEKE_UPGRADE_SKIP_CHECKSUM=1` skips both
-checks (not recommended). Releases published before the signature existed
-cannot be installed with `uteke upgrade` from a build that verifies it.
+Builds before v0.22.1 (they verified an offline minisign signature, now retired)
+cannot verify a release signed this way. Reinstall once from a package manager
+(`brew upgrade`, `cargo install uteke-cli`) or a manual download; from v0.22.1 on
+`uteke upgrade` works as before.
 
-The minisign signature is checked by `uteke upgrade` ONLY. `install.sh`,
+The trust anchor is the workflow identity, so the control that matters is who can
+create a `v*` tag: the `release-tags-protected` repository ruleset restricts tag
+creation, update and deletion to the repository Admin role. A compromised
+maintainer account or a new repository admin can therefore publish a release
+that `uteke upgrade` accepts, the same trust the GitHub release itself needs.
+The embedded Sigstore roots can only be replaced by a uteke release, because an
+installed binary cannot learn a new root by itself.
+
+The signature is checked by `uteke upgrade` ONLY. `install.sh`,
 `install.ps1` and Homebrew do not verify it: Homebrew relies on the SHA256s in
 the formula, and for the scripts you should verify manually as described above.

@@ -1,0 +1,5 @@
+5a253c47378bfd32271b5bd329c4cb21ba952061a02cc616337db8d5d17859db  uteke-aarch64-apple-darwin-v0.22.0.tar.gz
+6c28758f365c31acca44e599d794254013a16d7d3beb6c46f21238ed3290f5d9  uteke-aarch64-unknown-linux-gnu-v0.22.0.tar.gz
+9c37ee740518f55aac26cee25cf531a32070dfeba9409302e9846f5ce7da7707  uteke-x86_64-pc-windows-msvc-v0.22.0.zip
+58fe54494d0313410943eec18079ac71852d759e2fe508df360601af9143c744  uteke-x86_64-unknown-linux-gnu-legacy-v0.22.0.tar.gz
+c1a51086d135b20e03f3ab42747b80915c7c9edef3b8a4d2312e2ef1260c4329  uteke-x86_64-unknown-linux-gnu-v0.22.0.tar.gz

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Security
+
+- **`uteke upgrade` verifies the cosign signature of the release itself (#1610)** - it checks the `checksums-sha256.txt.bundle` the Release workflow already publishes, offline and fail closed: the signature over the file, the Fulcio certificate chain to a root compiled into the binary, the workflow identity (this repository's `release.yml` at exactly the tag being installed, issued to GitHub Actions), and the Rekor entry (signed timestamp inside the certificate's validity, same file, signature and certificate). A release no longer needs a manual signing step, so a lost signing password can no longer leave a release unverifiable, and there is no key to rotate. `v*` tags are now protected by a repository ruleset, which is what the scheme rests on (see SECURITY.md).
+
+### Removed
+
+- **The minisign signature of `checksums-sha256.txt`** - `scripts/sign-release.sh`, its test, the release-signature reminder workflow and script, `scripts/uteke-release.pub` and the `minisign-verify` dependency are gone. `uteke upgrade` refuses any release older than v0.22.1, the first it can verify. Builds before v0.22.1 cannot verify a keyless-signed release and must be reinstalled once (`brew upgrade`, `cargo install uteke-cli`, or a manual download); v0.22.0 was never signed with minisign and cannot be installed with `uteke upgrade`.
+
 ## [0.22.0] - 2026-10-30
 
 ### Security
