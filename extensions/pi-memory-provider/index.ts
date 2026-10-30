@@ -26,7 +26,10 @@ import { existsSync } from "node:fs";
 
 const DEFAULT_NAMESPACE = "default";
 const RECALL_LIMIT = 6;
-const RECALL_MIN_SCORE = 0.45;
+// 0 = keep every hit. The default recall strategy (fusion) scores by rank, so
+// its scores top out near 0.04 and any threshold above that drops everything
+// (#1593); set UTEKE_RECALL_MIN_SCORE only with the strategy's scale in mind.
+const RECALL_MIN_SCORE = 0;
 const RECALL_TIMEOUT_MS = 15_000;
 
 // Known project root directories to scan for project detection
@@ -119,34 +122,36 @@ function runUteke(args: string[], timeout = RECALL_TIMEOUT_MS): string {
 	}
 }
 
-function recallMemories(query: string, project: string): string[] {
-	const ns = process.env.UTEKE_NAMESPACE || DEFAULT_NAMESPACE;
-	const limit = process.env.UTEKE_RECALL_LIMIT || String(RECALL_LIMIT);
-	const minScore = process.env.UTEKE_RECALL_MIN_SCORE || String(RECALL_MIN_SCORE);
-
-	const args: string[] = [
-		"recall", query,
-		"--namespace", ns,
-		"--limit", limit,
-		"--min-score", minScore,
-		"--json",
-	];
-
+/** Arguments for `uteke recall`. The CLI flag is `--min`; it is only passed when a threshold is set. */
+export function buildRecallArgs(
+	query: string,
+	ns: string,
+	limit: string,
+	minScore: string,
+	project: string,
+): string[] {
+	const args: string[] = ["recall", query, "--namespace", ns, "--limit", limit];
+	if (Number(minScore) > 0) {
+		args.push("--min", minScore);
+	}
+	args.push("--json");
 	// Filter by project tag if detected
 	if (project) {
 		args.push("--tags", `project:${project}`);
 	}
+	return args;
+}
 
-	const raw = runUteke(args);
-
+/** Memory texts from `uteke recall --json` (flat items; a nested `memory` object is also accepted). */
+export function parseRecallOutput(raw: string): string[] {
 	if (!raw.trim()) return [];
-
 	try {
 		const items = JSON.parse(raw);
+		if (!Array.isArray(items)) return [];
 		const results: string[] = [];
 		for (const item of items) {
-			const mem = item.memory || item;
-			const content = mem.content || "";
+			const mem = item?.memory || item;
+			const content = mem?.content || "";
 			if (content) {
 				results.push(content);
 			}
@@ -155,6 +160,13 @@ function recallMemories(query: string, project: string): string[] {
 	} catch {
 		return [];
 	}
+}
+
+function recallMemories(query: string, project: string): string[] {
+	const ns = process.env.UTEKE_NAMESPACE || DEFAULT_NAMESPACE;
+	const limit = process.env.UTEKE_RECALL_LIMIT || String(RECALL_LIMIT);
+	const minScore = process.env.UTEKE_RECALL_MIN_SCORE || String(RECALL_MIN_SCORE);
+	return parseRecallOutput(runUteke(buildRecallArgs(query, ns, limit, minScore, project)));
 }
 
 function formatMemories(memories: string[], project: string): string {

@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- **The pi and Hermes auto-recall hooks work with default settings (#1593)** - the pi extension called `uteke recall --min-score`, which the CLI rejects (the flag is `--min`), so its hook returned nothing; and both adapters dropped every hit below a default threshold (0.45 and 0.40) that the default fusion strategy never reaches (its scores are rank-based and top out near 0.04). The Hermes parser also expected a nested `memory` object, while `uteke recall --json` and `POST /recall` return flat items. Both adapters now keep every hit by default (`UTEKE_RECALL_MIN_SCORE` stays an opt-in), pi passes `--min` only when a threshold is set, Hermes reads the flat shape (the nested one still works), and `uteke recall --min-score` is accepted as an alias of `--min` (also on `uteke room recall`). Both adapters have tests that parse real `recall --json` output (`python3 -m unittest discover -s extensions/hermes-uteke-memory`, `bun test extensions/pi-memory-provider`), run by a new CI job. To keep a threshold, set `UTEKE_RECALL_MIN_SCORE` for the strategy you use.
+
 - **A consolidated record is linked to its room (#1594)** - room consolidation wrote the room under the metadata key `room` while the code that links the record read `room_id`, so a consolidated record was stored but never linked to the room it came from. The executor now writes `room_id`, and the reader still accepts the old `room` key. Records already written with `room` and no room link stay as they are; link them with `uteke room link <id> <room>`.
 
 ## [0.22.0] - 2026-10-30
