@@ -75,9 +75,12 @@ before an expiry; a release that adds the new root ships before the old one expi
 
 ## Rollout
 
-1. Verifier plus fixtures and tests (below), behind the current behaviour: a release is accepted when
-   the cosign bundle verifies; a minisign signature, when present, is also accepted during the
-   transition (releases up to v0.21.1 carry one). Neither present: refuse.
+1. Verifier plus fixtures and tests (below). The scheme is chosen by the version of the tag being
+   installed, never by which files the release happens to carry: a tag from v0.22.1 on is accepted
+   only with a valid cosign bundle, and a missing or invalid bundle is a refusal (no fallback to
+   minisign, so a missing bundle cannot downgrade the check). `uteke upgrade` only installs the latest
+   release, and the latest release is v0.22.1 or newer once this ships, so the minisign path has no
+   caller left and `minisign-verify` is removed from the dependencies in the same change.
 2. Ship in 0.22.1. Retire `scripts/sign-release.sh`, its test and the signature reminder workflow;
    update AGENTS.md (release step 6), SECURITY.md ("Verifying a release") and the CHANGELOG.
 3. Installed binaries (0.21.x and 0.22.0) cannot verify the new scheme: they reinstall once with
@@ -111,7 +114,6 @@ exfiltrated and used anywhere, at any time.
 
 - Accept the legacy bundle only, or also switch the workflow to the new protobuf bundle
   (`cosign sign-blob --new-bundle-format`) and accept both?
-- Minisign during the transition: accept either, or require cosign for tags from v0.22.1?
 - Environment reviewer on the release jobs: yes or no (it adds a click per release).
 - DER walk or `x509-parser`.
 - Alternative to all of this: remove `uteke upgrade` and point to the package managers (simplest,
