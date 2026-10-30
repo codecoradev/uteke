@@ -115,9 +115,11 @@ The offline key was an independent gate: even a fully compromised GitHub could n
 update. Keyless verification trusts the workflow identity, so whoever can create a `v*` tag can produce
 an accepted release: a modified `release.yml` on a new tag gets a valid certificate for that tag.
 
-**The one control that closes this path is a protected `v*` tag** (a repository ruleset: creation
-restricted to the maintainer, no update, no deletion, and an empty bypass list). Without it, nothing
-below matters.
+**The one control that closes this path is a protected `v*` tag** (a repository ruleset: creation,
+update and deletion restricted, with the bypass limited to the repository Admin role). GitHub offers
+bypass per role or team, not per person, so an empty list would also stop the maintainer from tagging a
+release; the Admin role is the narrowest choice, and today it is one account. It is active since
+2026-10-30 as ruleset `release-tags-protected` (refs/tags/v*). Without it, nothing below matters.
 
 These are defence in depth and do NOT stop a modified workflow on a new tag, because the attacker's
 copy of the file can drop them; do not count them as equivalent to the tag rule:
@@ -138,7 +140,8 @@ time.
 - Accept the legacy bundle only, or also switch the workflow to the new protobuf bundle
   (`cosign sign-blob --new-bundle-format`) and accept both?
 - Environment reviewer on the release jobs: yes or no (defence in depth only, it adds a click per release).
-- Who may create `v*` tags, and who is on the ruleset bypass list (it must be empty).
+- Who may create `v*` tags: decided, the repository Admin role only (one account today). Anyone added
+  as an admin later can mint an accepted release, so adding an admin is a release-signing decision.
 - DER walk or `x509-parser`.
 - Alternative to all of this: remove `uteke upgrade` and point to the package managers (simplest,
   loses self-update for manual installs).
