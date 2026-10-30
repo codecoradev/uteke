@@ -27,8 +27,9 @@ impl ConsolidationStore for Uteke {
 
     fn insert_memory(&self, memory: &mut Memory) -> Result<(), Error> {
         // Privacy filter (#1464): the consolidated text comes from an LLM and
-        // is stored like any other write. (The embedding was computed from the
-        // text before this point; it does not carry the secret as text.)
+        // is stored like any other write. The vector was computed from the
+        // filtered text too (see `embed_content`), so nothing unmasked reached
+        // the embedder.
         let tag_refs: Vec<&str> = memory.tags.iter().map(String::as_str).collect();
         let prepared = self.privacy_config().prepare_with_tags(
             &memory.content,
@@ -81,7 +82,12 @@ impl ConsolidationStore for Uteke {
     }
 
     fn embed_content(&self, content: &str) -> Result<Vec<f32>, Error> {
-        self.embed_text(content)
+        // The privacy filter runs BEFORE the embedder, as on every other write
+        // path: with a remote backend the text leaves the process, and the
+        // vector must match the text that will be stored. Strict mode refuses
+        // here, so a refused record is never embedded.
+        let prepared = self.privacy_config().prepare(content, None)?;
+        self.embed_text(&prepared.content)
     }
 }
 
@@ -294,6 +300,40 @@ mod tests {
                 .len(),
             1,
             "linked to its room"
+        );
+    }
+
+    /// A secret in consolidated text is masked (or refused in strict mode)
+    /// before the embedder sees it.
+    #[test]
+    fn consolidated_text_is_filtered_before_it_is_embedded() {
+        use crate::privacy::{PrivacyConfig, PrivacyMode};
+        use crate::test_support::{RecordingEmbedder, open_with_embedder};
+        let token = format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5");
+        let text = format!("the deploy token is {token}");
+
+        let (e, seen) = RecordingEmbedder::new();
+        let mut u = open_with_embedder(Box::new(e));
+        u.set_privacy_config(PrivacyConfig::default());
+        let v = u.embed_content(&text).unwrap();
+        assert!(!v.is_empty());
+        let sent = seen.lock().unwrap().join("\n");
+        assert!(
+            !sent.contains(&token),
+            "the embedder received a secret: {sent}"
+        );
+        assert!(sent.contains("the deploy token is"));
+
+        let (e, seen) = RecordingEmbedder::new();
+        let mut u = open_with_embedder(Box::new(e));
+        u.set_privacy_config(PrivacyConfig {
+            mode: PrivacyMode::Strict,
+            ..Default::default()
+        });
+        assert!(u.embed_content(&text).is_err(), "strict mode refuses");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a refused text was embedded"
         );
     }
 }
