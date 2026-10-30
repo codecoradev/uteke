@@ -15,6 +15,7 @@ mod maintenance;
 mod namespace;
 mod orphans;
 mod recall;
+mod release_verify;
 mod remember;
 mod room;
 mod server;

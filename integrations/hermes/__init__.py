@@ -22,7 +22,8 @@ Config via $HERMES_HOME/uteke.json (preferred) or environment variables:
   UTEKE_SERVER_URL    — uteke-serve HTTP URL (default: http://127.0.0.1:8767)
   UTEKE_TOKEN         — auth token for uteke-serve (Bearer token)
   UTEKE_RECALL_LIMIT  — number of memories to prefetch (default: 5)
-  UTEKE_RECALL_MIN_SCORE — drop recall hits below this score (default: 0.40)
+  UTEKE_RECALL_MIN_SCORE — drop recall hits below this score (default: 0 = keep all;
+                          default fusion scores are rank-based and top out near 0.04)
   UTEKE_RECALL_TIMEOUT — max seconds for recall per turn (default: 15)
 """
 
@@ -97,7 +98,7 @@ def _load_config() -> dict:
         "server_url": os.environ.get("UTEKE_SERVER_URL", ""),
         "token": os.environ.get("UTEKE_TOKEN", ""),
         "recall_limit": _envint("UTEKE_RECALL_LIMIT", 5),
-        "recall_min_score": _envfloat("UTEKE_RECALL_MIN_SCORE", 0.40),
+        "recall_min_score": _envfloat("UTEKE_RECALL_MIN_SCORE", 0.0),
         "recall_timeout": _envint("UTEKE_RECALL_TIMEOUT", _DEFAULT_RECALL_TIMEOUT),
     }
 
@@ -200,7 +201,11 @@ def _parse_recall_results(data: list) -> List[Dict[str, Any]]:
     for item in data:
         if not isinstance(item, dict):
             continue
-        mem = item.get("memory", {})
+        # `uteke recall --json` and `POST /recall` return flat items
+        # (`{"content": ..., "score": ..., "tags": [...]}`); an older shape
+        # nested them under "memory". Accept both (#1593).
+        nested = item.get("memory")
+        mem = nested if isinstance(nested, dict) else item
         score = item.get("score", 0.0)
         content = mem.get("content", "")
         if content and score >= 0:
@@ -224,7 +229,7 @@ class _RecallManager:
         self._token = ""
         self._use_http = False
         self._recall_limit = 5
-        self._recall_min_score = 0.40
+        self._recall_min_score = 0.0
         self._recall_timeout = _DEFAULT_RECALL_TIMEOUT
 
         self._consecutive_failures = 0
@@ -241,7 +246,7 @@ class _RecallManager:
         self._token = cfg.get("token", "")
         self._use_http = bool(self._server_url)
         self._recall_limit = int(cfg.get("recall_limit", 5) or 5)
-        self._recall_min_score = float(cfg.get("recall_min_score", 0.40) or 0.40)
+        self._recall_min_score = float(cfg.get("recall_min_score", 0.0) or 0.0)
         self._recall_timeout = int(cfg.get("recall_timeout", _DEFAULT_RECALL_TIMEOUT) or _DEFAULT_RECALL_TIMEOUT)
 
         # uteke stores under $HOME/.uteke; let the user point it at a fixed home.

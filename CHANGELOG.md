@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-30
+
+Patch release. Theme: **`uteke upgrade` verifies the cosign signature itself**, so
+a release no longer needs a manual signing step, plus three fixes from the Agent
+Memory Atlas review. **Builds before 0.22.1 cannot verify a release signed this
+way: reinstall once** (`brew upgrade codecoradev/tap/uteke`, `cargo install
+uteke-cli`, or a manual download); from 0.22.1 on `uteke upgrade` works as
+before. 0.22.0 was never signed with minisign, so it cannot be installed with
+`uteke upgrade`.
+
+### Security
+
+- **`uteke upgrade` verifies the cosign signature of the release itself (#1610)** - it checks the `checksums-sha256.txt.bundle` the Release workflow already publishes, offline and fail closed: the signature over the file, the Fulcio certificate chain to a root compiled into the binary, the workflow identity (this repository's `release.yml` at exactly the tag being installed, issued to GitHub Actions), and the Rekor entry (signed timestamp inside the certificate's validity, same file, signature and certificate). A release no longer needs a manual signing step, so a lost signing password can no longer leave a release unverifiable, and there is no key to rotate. `v*` tags are now protected by a repository ruleset, which is what the scheme rests on (see SECURITY.md).
+
+### Removed
+
+- **The minisign signature of `checksums-sha256.txt`** - `scripts/sign-release.sh`, its test, the release-signature reminder workflow and script, `scripts/uteke-release.pub` and the `minisign-verify` dependency are gone. `uteke upgrade` refuses any release older than v0.22.1, the first it can verify. Builds before v0.22.1 cannot verify a keyless-signed release and must be reinstalled once (`brew upgrade`, `cargo install uteke-cli`, or a manual download); v0.22.0 was never signed with minisign and cannot be installed with `uteke upgrade`.
+
+### Added
+
+- **`uteke-serve` and `uteke-mcp` can opt out of the update check (#1596)** - the daily check against GitHub could be turned off only in the CLI. `UTEKE_NO_UPDATE_CHECK` (any value) and `update_check = false` in the global `uteke.toml` are now honoured by every binary: the opt-out sits in the shared `uteke_core::update_check` module, in the two functions all callers go through, so a new binary cannot forget it. With it set, no binary calls GitHub for the check and `GET /health` reports no update; `uteke upgrade` is explicit and still does. The existing `update_check` key is reused instead of adding a second spelling.
+
+### Fixed
+
+- **The pi and Hermes auto-recall hooks work with default settings (#1593)** - the pi extension called `uteke recall --min-score`, which the CLI rejects (the flag is `--min`), so its hook returned nothing; and both adapters dropped every hit below a default threshold (0.45 and 0.40) that the default fusion strategy never reaches (its scores are rank-based and top out near 0.04). The Hermes parser also expected a nested `memory` object, while `uteke recall --json` and `POST /recall` return flat items. Both adapters now keep every hit by default (`UTEKE_RECALL_MIN_SCORE` stays an opt-in), pi passes `--min` only when a threshold is set, Hermes reads the flat shape (the nested one still works), and `uteke recall --min-score` is accepted as an alias of `--min` (also on `uteke room recall`). Both adapters have tests that parse real `recall --json` output (`python3 -m unittest discover -s extensions/hermes-uteke-memory`, `bun test extensions/pi-memory-provider`), run by a new CI job. To keep a threshold, set `UTEKE_RECALL_MIN_SCORE` for the strategy you use.
+
+- **A consolidated record is linked to its room (#1594)** - room consolidation wrote the room under the metadata key `room` while the code that links the record read `room_id`, so a consolidated record was stored but never linked to the room it came from. The executor now writes `room_id`, and the reader still accepts the old `room` key. Records already written with `room` and no room link stay as they are; link them with `uteke room link <id> <room>`.
+
 ## [0.22.0] - 2026-10-30
 
 ### Security

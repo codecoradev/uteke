@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.22.0** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
+Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
 
 > This skill ships with each release — its version tracks the CLI version
 > (a CI gate fails when they drift, see `skill-version-parity` test).
@@ -404,7 +404,7 @@ uteke init --agent hermes
 
 Config via `~/.hermes/uteke.json` or env vars:
 `UTEKE_BIN`, `UTEKE_NAMESPACE`, `UTEKE_SERVER_URL`, `UTEKE_TOKEN`,
-`UTEKE_RECALL_LIMIT` (default 5), `UTEKE_RECALL_MIN_SCORE` (default 0.40).
+`UTEKE_RECALL_LIMIT` (default 5), `UTEKE_RECALL_MIN_SCORE` (default 0, keeps every hit).
 
 ## Server Mode (uteke-serve)
 

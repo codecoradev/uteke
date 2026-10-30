@@ -135,10 +135,7 @@ pub fn execute_plan<U: ConsolidationStore>(
             content: fact.content,
             embedding: vec![],
             tags: vec![format!("room:{room_id}"), "consolidated".to_string()],
-            metadata: serde_json::json!({
-                "consolidated_from": batch.memory_ids,
-                "room": room_id,
-            }),
+            metadata: consolidation_metadata(&batch.memory_ids, room_id),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             namespace: sources
@@ -206,6 +203,16 @@ pub fn execute_plan<U: ConsolidationStore>(
         }
     }
     Ok(result)
+}
+
+/// Metadata of a consolidated record. The room goes under `room_id`, the key
+/// `ConsolidationStore::insert_memory` reads to link the record to its room
+/// (#1594); the key used to be `room`, so no consolidated record was linked.
+pub(crate) fn consolidation_metadata(source_ids: &[String], room_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "consolidated_from": source_ids,
+        "room_id": room_id,
+    })
 }
 
 /// Store operations the executor needs (implemented by `Uteke`; mocked in tests).

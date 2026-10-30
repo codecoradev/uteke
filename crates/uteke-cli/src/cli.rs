@@ -112,7 +112,8 @@ pub enum Commands {
         #[arg(long)]
         category: Option<String>,
         /// Minimum similarity score (0.0-1.0). Results below are filtered.
-        #[arg(long)]
+        /// `--min-score` is accepted as an alias (#1593).
+        #[arg(long, alias = "min-score")]
         min: Option<f32>,
         /// Use strict threshold from config (min_score_strict)
         #[arg(long)]
@@ -901,7 +902,7 @@ pub enum RoomCommands {
         #[arg(long, default_value = "0")]
         limit: usize,
         /// Minimum similarity score (0.0-1.0). Only used with --query.
-        #[arg(long)]
+        #[arg(long, alias = "min-score")]
         min: Option<f32>,
     },
     /// Delete a room (memories are NOT deleted, only room links)
@@ -1059,5 +1060,24 @@ mod skill_coverage {
             missing.is_empty(),
             "SKILL.md (assets/uteke-memory-skill.md + .agents copy) is missing: {missing:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod min_score_alias {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    /// `--min-score` is the long name scripts and the pi adapter used (#1593).
+    #[test]
+    fn recall_accepts_min_score_as_an_alias_of_min() {
+        for flag in ["--min", "--min-score"] {
+            let cli = Cli::try_parse_from(["uteke", "recall", "q", flag, "0.25"])
+                .unwrap_or_else(|e| panic!("{flag}: {e}"));
+            match cli.command {
+                Commands::Recall { min, .. } => assert_eq!(min, Some(0.25), "{flag}"),
+                _ => panic!("not a recall command"),
+            }
+        }
     }
 }

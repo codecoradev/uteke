@@ -723,6 +723,18 @@ mod tests {
     const PI_INDEX_TS: &str = include_str!("../assets/pi-memory-provider/index.ts");
     const PI_PACKAGE_JSON: &str = include_str!("../assets/pi-memory-provider/package.json");
 
+    /// What `uteke init --agent pi` installs must be the extension that is
+    /// tested and documented under `extensions/` (#1593): the embedded copy
+    /// once kept the old `--min-score` call after the extension was fixed.
+    #[test]
+    fn pi_memory_provider_asset_matches_the_extension() {
+        assert_eq!(
+            PI_INDEX_TS,
+            include_str!("../../../extensions/pi-memory-provider/index.ts"),
+            "crates/uteke-cli/assets/pi-memory-provider/index.ts drifted from extensions/pi-memory-provider/index.ts"
+        );
+    }
+
     #[test]
     fn pi_memory_provider_has_before_agent_start_hook() {
         assert!(

@@ -99,7 +99,8 @@ fn main() {
     // Skip update check in subprocess/batch mode (e.g. benchmarks calling
     // `uteke recall` 1000× via subprocess). Env var set by benchmark scripts
     // and any automated pipeline (#1006).
-    let skip_update_check = std::env::var("UTEKE_NO_UPDATE_CHECK").is_ok();
+    // The same opt-out gates `uteke-serve` and `uteke-mcp` (#1596).
+    let skip_update_check = uteke_core::update_check::is_disabled();
 
     let update_handle = if !early_exit && !skip_update_check {
         commands::update_check::spawn()

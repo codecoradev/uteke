@@ -1,2 +1,0 @@
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  uteke-x86_64-apple-darwin-v9.9.9.tar.gz
-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  uteke-aarch64-apple-darwin-v9.9.9.tar.gz

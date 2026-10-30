@@ -5,11 +5,19 @@
 //!
 //! Uses a 24h cache file to avoid hammering GitHub. Network failures are
 //! silently swallowed — this is a notification, not a critical path.
+//!
+//! The opt-out lives here too (#1596): [`is_disabled`] gates [`check_cached`]
+//! and [`check_network`], the two entry points every other function (and every
+//! binary) goes through, so a new binary cannot forget it.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Crate name on GitHub (`codecoradev/uteke`).
 const REPO: &str = "codecoradev/uteke";
+
+/// Environment variable that turns the update check off in every binary
+/// (CLI, `uteke-serve`, `uteke-mcp`). Any value counts, as it always did in the CLI.
+pub const NO_UPDATE_CHECK_ENV: &str = "UTEKE_NO_UPDATE_CHECK";
 
 /// Seconds before re-checking GitHub (24 hours).
 const CACHE_TTL: u64 = 86_400;
@@ -56,6 +64,9 @@ impl UpdateInfo {
 /// Returns `Some(UpdateInfo)` if the cache is fresh (< 24h) and contains
 /// a version string. Returns `None` if cache is stale, missing, or corrupt.
 pub fn check_cached() -> Option<UpdateInfo> {
+    if is_disabled() {
+        return None;
+    }
     let latest = read_cache()?;
     Some(UpdateInfo {
         latest,
@@ -69,12 +80,53 @@ pub fn check_cached() -> Option<UpdateInfo> {
 /// # Errors
 /// Returns `Err` only on network failure. Callers should silently ignore.
 pub fn check_network() -> Result<UpdateInfo, String> {
-    let latest = get_latest_version()?;
+    fetch_and_cache(is_disabled(), get_latest_version)
+}
+
+/// The network step behind [`check_network`], with the fetch injected so the
+/// opt-out can be tested without a network: when `disabled`, `fetch` is never
+/// called and nothing is cached.
+fn fetch_and_cache(
+    disabled: bool,
+    fetch: impl FnOnce() -> Result<String, String>,
+) -> Result<UpdateInfo, String> {
+    if disabled {
+        return Err("update check is disabled".to_string());
+    }
+    let latest = fetch()?;
     write_cache(&latest);
     Ok(UpdateInfo {
         latest,
         current: current_version().to_string(),
     })
+}
+
+/// Whether the update check is opted out: `UTEKE_NO_UPDATE_CHECK` is set (any
+/// value), or the global `uteke.toml` has `update_check = false`. Only the
+/// global file counts, like the other settings a project file must not change.
+///
+/// Read once per process: `GET /health` asks on every request, and a setting
+/// that gates a startup notification does not need to change under a running server.
+pub fn is_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        let global = crate::uteke_home()
+            .ok()
+            .and_then(|home| std::fs::read_to_string(home.join("uteke.toml")).ok());
+        disabled_by(
+            std::env::var_os(NO_UPDATE_CHECK_ENV).is_some(),
+            global.as_deref(),
+        )
+    })
+}
+
+/// Pure core of [`is_disabled`].
+fn disabled_by(env_set: bool, global_toml: Option<&str>) -> bool {
+    env_set
+        || global_toml
+            .and_then(|text| text.parse::<toml::Table>().ok())
+            .and_then(|table| table.get("update_check").and_then(toml::Value::as_bool))
+            == Some(false)
 }
 
 /// Convenience: check cached first, fall back to network.
@@ -298,6 +350,37 @@ fn is_newer(latest: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_env_var_or_update_check_false_disables_the_check() {
+        assert!(!disabled_by(false, None));
+        assert!(!disabled_by(false, Some("")));
+        assert!(!disabled_by(false, Some("update_check = true\n")));
+        assert!(disabled_by(true, None));
+        assert!(disabled_by(true, Some("update_check = true\n")));
+        assert!(disabled_by(false, Some("update_check = false\n")));
+        // Not a boolean, or not valid TOML: the check stays on.
+        assert!(!disabled_by(false, Some("update_check = \"false\"\n")));
+        assert!(!disabled_by(false, Some("not toml {{{")));
+        // A key in a section is a different key.
+        assert!(!disabled_by(
+            false,
+            Some("[server]\nupdate_check = false\n")
+        ));
+    }
+
+    #[test]
+    fn a_disabled_check_makes_no_network_call_and_caches_nothing() {
+        let err = fetch_and_cache(true, || panic!("the network must not be touched")).unwrap_err();
+        assert!(err.contains("disabled"), "{err}");
+    }
+
+    #[test]
+    fn an_enabled_check_still_fetches() {
+        // Only the error path: a success would write the real cache file.
+        let err = fetch_and_cache(false, || Err("offline".to_string())).unwrap_err();
+        assert_eq!(err, "offline");
+    }
 
     #[test]
     fn test_parse_tag_from_location_absolute() {
