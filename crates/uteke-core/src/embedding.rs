@@ -155,6 +155,47 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// The embedder's own sequence length is what chunk sizing reads.
+    #[test]
+    fn the_max_sequence_length_comes_from_the_embedder() {
+        let u = crate::test_support::open_keyword();
+        assert_eq!(u.embedder_max_seq_len().unwrap(), 128);
+    }
+
+    fn warmable() -> (crate::Uteke, Seen, std::path::PathBuf) {
+        let (inner, seen) = RecordingEmbedder::failing_first(0);
+        let dir = std::env::temp_dir().join(format!(
+            "warm-content-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = crate::embed::cache::EmbeddingCache::open(&dir.join("c.db")).unwrap();
+        let cached = crate::embed::CachingEmbedder::with_cache(Box::new(inner), cache);
+        (open_with_embedder(Box::new(cached)), seen, dir)
+    }
+
+    /// A content is embedded as a write would embed it: plain text yes, JSON
+    /// (flattened by the write) and content the write refuses no.
+    #[test]
+    fn warm_content_embeds_plain_text_and_skips_json_and_invalid_content() {
+        let (u, seen, dir) = warmable();
+        let w = u.embedding_warmer().unwrap();
+        w.warm_content("the quokka is a small marsupial");
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["the quokka is a small marsupial".to_string()]
+        );
+        w.warm_content("{\"animal\": \"quokka\"}");
+        w.warm_content("   ");
+        assert_eq!(seen.lock().unwrap().len(), 1, "json or blank was embedded");
+        drop(u);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn a_query_retries_a_transient_failure_like_a_write() {
         let (u, seen) = store(1);
