@@ -420,7 +420,7 @@ uteke recall "api design" --context
 
 | Flag | Description |
 |------|-------------|
-| `--min <score>` | Minimum similarity score (0.0-1.0) |
+| `--min <score>` | Minimum similarity score (0.0-1.0). `--min-score` is accepted as an alias (#1593) |
 | `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
 | `--min <score>` | Minimum similarity score threshold (default 0.0 since 0.17.x, #1223 — fusion scores are rank-based, not cosine) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |

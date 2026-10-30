@@ -404,7 +404,7 @@ Config via `~/.hermes/uteke.json` (preferred) or environment variables:
 | `UTEKE_SERVER_URL` | (empty = subprocess) | uteke-serve HTTP URL |
 | `UTEKE_TOKEN` | (empty) | Auth token for uteke-serve |
 | `UTEKE_RECALL_LIMIT` | `5` | Memories to recall per turn |
-| `UTEKE_RECALL_MIN_SCORE` | `0.40` | Min score to include |
+| `UTEKE_RECALL_MIN_SCORE` | `0` | Min score to include (`0` keeps every hit; default fusion scores are rank-based and top out near 0.04, so a higher value drops everything, #1593) |
 | `UTEKE_RECALL_TIMEOUT` | `15` | Max seconds per recall call |
 
 Example `~/.hermes/uteke.json`:
@@ -414,7 +414,7 @@ Example `~/.hermes/uteke.json`:
   "server_url": "http://uteke:8767",
   "token": "your-bearer-token",
   "recall_limit": 5,
-  "recall_min_score": 0.40
+  "recall_min_score": 0
 }
 ```
 

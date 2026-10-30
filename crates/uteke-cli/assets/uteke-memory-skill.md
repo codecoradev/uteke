@@ -404,7 +404,7 @@ uteke init --agent hermes
 
 Config via `~/.hermes/uteke.json` or env vars:
 `UTEKE_BIN`, `UTEKE_NAMESPACE`, `UTEKE_SERVER_URL`, `UTEKE_TOKEN`,
-`UTEKE_RECALL_LIMIT` (default 5), `UTEKE_RECALL_MIN_SCORE` (default 0.40).
+`UTEKE_RECALL_LIMIT` (default 5), `UTEKE_RECALL_MIN_SCORE` (default 0, keeps every hit).
 
 ## Server Mode (uteke-serve)
 

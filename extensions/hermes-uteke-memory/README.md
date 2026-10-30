@@ -78,7 +78,7 @@ hermes config set plugins.enabled.0 uteke-memory
 | `UTEKE_SERVER_URL` | (empty) | HTTP URL for uteke-serve |
 | `UTEKE_TOKEN` | (empty) | Bearer token for uteke-serve |
 | `UTEKE_RECALL_LIMIT` | `5` | Memories per turn |
-| `UTEKE_RECALL_MIN_SCORE` | `0.40` | Min relevance score |
+| `UTEKE_RECALL_MIN_SCORE` | `0` | Min score (`0` keeps every hit; default fusion scores top out near 0.04, #1593) |
 | `UTEKE_RECALL_TIMEOUT` | `15` | Max seconds per recall |
 
 ## Transport Modes

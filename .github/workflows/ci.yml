@@ -115,6 +115,17 @@ jobs:
       - run: cargo test -p uteke-core --features "usearch,vecq" --lib vector_engine
       - run: cargo test -p uteke-core --features "usearch,vecq" --lib memory::vector
 
+  adapters:
+    name: Adapter tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Hermes plugin parses real recall output (#1593)
+        run: python3 -I -m unittest discover -s extensions/hermes-uteke-memory -p 'test_*.py'
+      - uses: oven-sh/setup-bun@v2
+      - name: pi extension parses real recall output (#1593)
+        run: bun test extensions/pi-memory-provider
+
   docs-check:
     name: API Docs Fresh
     runs-on: ubuntu-latest
