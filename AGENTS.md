@@ -91,30 +91,23 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    the tag at the previous release (v0.15.0). The Release workflow takes ~35 min
    (the legacy-ORT build is the long pole) and publishes GitHub assets, crates.io
    (uteke-core/cli/mcp), Docker tags and opens the Homebrew tap PR.
-6. **Sign the checksums (offline).** After the Release workflow is green, run
-   `scripts/sign-release.sh vX.Y.Z` on the owner's machine (`--dry-run` stops before
-   upload). It first verifies the release's cosign bundle (so `cosign` must be installed on the
-   signing machine), shows the checksums and asks for confirmation, then signs
-   `checksums-sha256.txt` with the minisign key (trusted comment
-   `uteke vX.Y.Z`), verifies it against `scripts/uteke-release.pub` and uploads
-   `checksums-sha256.txt.minisig` after a confirmation. Key custody: password
-   manager plus an offline backup; never in CI or GitHub secrets. It can only sign releases that carry a cosign
-   bundle (v0.21.0 and later). Test it with `bash scripts/tests/sign-release.test.sh`
-   (stub gh/cosign, throwaway key; not wired into CI). Verify the
-   `.minisig` is on the release before announcing. Until it is uploaded,
-   `uteke upgrade` fails closed for that release (#1327).
-   Reminder: `.github/workflows/release-signature-reminder.yml` runs after the
-   Release workflow and every 6 hours. While the latest release has a bundle but no
-   `.minisig` it opens the issue `Sign release vX.Y.Z (minisign)` (assigned to the
-   owner), re-pings it every 12 h and closes it itself once the `.minisig` is
-   uploaded. Reminders for older releases are closed automatically, as superseded
-   (`uteke upgrade` only installs the latest release) or when their `.minisig`
-   appears. "Latest" follows GitHub's definition (by creation date, the same release
-   `uteke upgrade` installs), so a backport patch published after a newer minor
-   supersedes the newer release's reminder. Only issues and comments authored by the
-   Actions bot or the owner are acted on. It signs nothing and holds no key. Test its
-   script with `bash scripts/tests/release-signature-reminder.test.sh` (stub gh, not
-   wired into CI).
+6. **Check the signature (no manual signing).** The Release workflow signs
+   `checksums-sha256.txt` keyless with cosign and publishes
+   `checksums-sha256.txt.bundle`; `uteke upgrade` verifies that bundle itself
+   (#1610), so nothing is signed by hand any more. After the workflow is green,
+   confirm the release carries the bundle and that it verifies:
+   `cosign verify-blob --bundle checksums-sha256.txt.bundle
+   --certificate-identity https://github.com/codecoradev/uteke/.github/workflows/release.yml@refs/tags/vX.Y.Z
+   --certificate-oidc-issuer https://token.actions.githubusercontent.com
+   checksums-sha256.txt`. The control behind it is the `release-tags-protected`
+   ruleset on `v*` tags (creation, update and deletion restricted, bypass for the
+   Admin role only): tag with your own admin account, never loosen the ruleset,
+   and treat adding a repository admin as a release-signing decision. The Sigstore
+   roots are embedded in the binary (`crates/uteke-cli/trust/`); a root rotation
+   needs a uteke release that carries the new root before the old one expires
+   (Fulcio root: 2031-10-05). Builds before v0.22.1 verified an offline minisign
+   signature and cannot upgrade to a keyless-signed release: say so in the release
+   notes (reinstall once with `brew upgrade` or `cargo install uteke-cli`).
 7. **After the tag.** Merge the homebrew-tap PR the workflow opened (its title/body
    follow the tap's rules since #1384, and the job already re-verified every SHA256
    against `checksums-sha256.txt`; Cora there was fixed in homebrew-tap#6), then

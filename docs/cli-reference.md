@@ -62,7 +62,7 @@ uteke upgrade --yes
 |------|-------------|
 | `--yes` | Skip confirmation prompt |
 
-> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies the minisign signature of `checksums-sha256.txt` and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade, as does a release older than the installed version or a non-stable (pre-release) one; `uteke upgrade` installs only stable releases (see SECURITY.md). Only `uteke upgrade` checks the signature; `install.sh`, `install.ps1` and Homebrew do not. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
+> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies the cosign (Sigstore, keyless) signature of `checksums-sha256.txt` against roots built into the binary and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade, as does a release older than the installed version or a non-stable (pre-release) one; `uteke upgrade` installs only stable releases (see SECURITY.md). Only `uteke upgrade` checks the signature; `install.sh`, `install.ps1` and Homebrew do not. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
 
 ## uteke remember
 
