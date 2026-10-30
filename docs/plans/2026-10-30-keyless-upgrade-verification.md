@@ -87,13 +87,27 @@ before an expiry; a release that adds the new root ships before the old one expi
    `brew upgrade`, `cargo install uteke-cli` or a manual download. From 0.22.1 on `uteke upgrade` works
    as before. Say so in the release notes and in SECURITY.md.
 
+## Rollback and old tags
+
+The tag to install comes from the release API, so a manipulated answer could name an older tag. The
+identity check binds a bundle to its own tag, so it does not stop that on its own. Rules, applied before
+any download of a binary:
+
+- the target must be strictly newer than the running version (semver); an equal or older tag is
+  refused with a clear message ("already up to date" for equal, "refusing to downgrade" for older);
+- the tag must match the existing release-tag pattern and be at or above a minimum version compiled
+  into the binary (v0.22.1 for the first build that has the verifier), so a tag from before the scheme
+  existed is refused rather than checked against a scheme it never had;
+- the cosign bundle of a tag from v0.21.0 on is verifiable, but that is irrelevant to `upgrade`: it only
+  moves forward.
+
 ## Tests
 
 Fixtures from a real release (bundle, checksums, certificate chain). Positive: v0.22.0. Negative, each
 refused with its own message: file changed by one byte; bundle of another release; identity of
 another tag; identity of another workflow or repository; issuer other than GitHub Actions;
 `integratedTime` outside the certificate validity; altered `SignedEntryTimestamp`; altered Rekor
-body; certificate without Code Signing; chain to an unknown root; truncated or oversized bundle.
+body; certificate without Code Signing; chain to an unknown root; truncated or oversized bundle; a target equal to or older than the running version; a target below the minimum version.
 
 ## What is lost, and what replaces it
 
