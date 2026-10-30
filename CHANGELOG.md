@@ -10,6 +10,10 @@
 
 - **The minisign signature of `checksums-sha256.txt`** - `scripts/sign-release.sh`, its test, the release-signature reminder workflow and script, `scripts/uteke-release.pub` and the `minisign-verify` dependency are gone. `uteke upgrade` refuses any release older than v0.22.1, the first it can verify. Builds before v0.22.1 cannot verify a keyless-signed release and must be reinstalled once (`brew upgrade`, `cargo install uteke-cli`, or a manual download); v0.22.0 was never signed with minisign and cannot be installed with `uteke upgrade`.
 
+### Fixed
+
+- **A consolidated record is linked to its room (#1594)** - room consolidation wrote the room under the metadata key `room` while the code that links the record read `room_id`, so a consolidated record was stored but never linked to the room it came from. The executor now writes `room_id`, and the reader still accepts the old `room` key. Records already written with `room` and no room link stay as they are; link them with `uteke room link <id> <room>`.
+
 ## [0.22.0] - 2026-10-30
 
 ### Security

@@ -43,10 +43,11 @@ impl ConsolidationStore for Uteke {
         }
         let redactions = prepared.redactions;
 
-        let room_id = memory
-            .metadata
-            .get("room_id")
-            .and_then(|v| v.as_str())
+        // `room_id`, with the old `room` key as a fallback for a record built
+        // by a caller that still uses it (#1594).
+        let room_id = ["room_id", "room"]
+            .iter()
+            .find_map(|key| memory.metadata.get(*key).and_then(|v| v.as_str()))
             .map(str::to_string);
 
         // The same tail as `remember` (#1514): the row, the source hash, the
@@ -301,6 +302,38 @@ mod tests {
             1,
             "linked to its room"
         );
+    }
+
+    /// #1594: the executor wrote the room under `room`, the reader looked for
+    /// `room_id`, so a consolidated record was never linked to its room.
+    #[test]
+    fn a_record_built_by_the_executor_is_linked_to_its_room() {
+        let uteke = crate::test_support::open_keyword();
+        uteke.store.create_room("r1", None, "default").unwrap();
+        let mut m = mem("c1", "caching keeps hot data close to the reader");
+        m.metadata =
+            consolidation_exec::consolidation_metadata(&["s1".to_string(), "s2".to_string()], "r1");
+        assert_eq!(m.metadata["room_id"], "r1");
+        assert_eq!(
+            m.metadata["consolidated_from"],
+            serde_json::json!(["s1", "s2"])
+        );
+        ConsolidationStore::insert_memory(&uteke, &mut m).unwrap();
+        let linked = ConsolidationStore::room_memories(&uteke, "r1").unwrap();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].id, "c1");
+    }
+
+    /// A record carrying only the old `room` key is still recognised.
+    #[test]
+    fn the_old_room_key_is_still_recognised() {
+        let uteke = crate::test_support::open_keyword();
+        uteke.store.create_room("r1", None, "default").unwrap();
+        let mut m = mem("c2", "indexes trade write cost for read speed");
+        m.metadata = serde_json::json!({"room": "r1"});
+        ConsolidationStore::insert_memory(&uteke, &mut m).unwrap();
+        let linked = ConsolidationStore::room_memories(&uteke, "r1").unwrap();
+        assert_eq!(linked.len(), 1);
     }
 
     /// A secret in consolidated text is masked (or refused in strict mode)
