@@ -891,9 +891,8 @@ mod tests {
             }),
             ("wrong PEM label", {
                 let mut b = pki.bundle.clone();
-                b["cert"] = json!(
-                    B64.encode("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n")
-                );
+                b["cert"] =
+                    json!(B64.encode("-----BEGIN X509 CRL-----\nAAAA\n-----END X509 CRL-----\n"));
                 b
             }),
         ];
