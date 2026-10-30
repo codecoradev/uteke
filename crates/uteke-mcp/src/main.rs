@@ -36,8 +36,36 @@ fn main() {
         std::process::exit(1);
     });
 
-    let uteke = match Uteke::open(&store_path) {
-        Ok(u) => u,
+    // The engine sections of uteke.toml, read and applied like the CLI and the
+    // server do (#1515): recall defaults, tier, graph rerank, dream, lifecycle,
+    // embedding fallback. And the two sections that decide how the store is
+    // opened (#1535): `[embedding]` and `[vector]`, resolved by the core's one
+    // resolution (backend list, validation, UTEKE_EMBEDDING_* precedence).
+    let engine = uteke_core::EngineSettings::load();
+    let store_settings = uteke_core::embedding_config::StoreSettings::load();
+    let embedding = match store_settings.embedding.resolve() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Config error: {e}");
+            std::process::exit(1);
+        }
+    };
+    let uteke = match Uteke::open_with_embedding_and_graph(
+        &store_path,
+        &embedding.backend,
+        embedding.settings,
+        engine.tier,
+        engine.recall.recall_config(),
+        engine.recall.graph_rerank(),
+        // UTEKE_VECTOR_BACKEND (higher precedence) is read inside the core.
+        Some(store_settings.vector.backend.as_str()),
+    ) {
+        Ok(mut u) => {
+            u.apply_settings(&engine);
+            // #1464: secret filter on the write path ([privacy] in uteke.toml)
+            u.set_privacy_config(uteke_core::privacy::load_config());
+            u
+        }
         Err(e) => {
             eprintln!("Failed to open uteke store: {e}");
             std::process::exit(1);

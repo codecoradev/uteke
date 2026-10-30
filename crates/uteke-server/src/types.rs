@@ -216,6 +216,10 @@ pub struct RememberRequest {
     /// Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted.
     #[serde(default)]
     pub author_type: Option<String>,
+    /// Who wrote the memory (#1427 phase 2): free text, trimmed, 1 to 128
+    /// characters. Optional, with or without a room; returned on the memory.
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 impl RememberRequest {
@@ -237,15 +241,14 @@ impl RememberRequest {
             source_type: self.source_type.clone(),
             author_type: self.author_type.clone(),
             room: None,
-            author: None,
-            timestamp: None,
+            author: self.author.clone(),
         }
     }
 
-    /// Decode under the HTTP policy: content/tags, `author_type` and `type`
+    /// Decode under the HTTP policy: content/tags, `author_type`, `author` and `type`
     /// validated before any write, `type` mirrored into metadata.
     pub fn decode(&self) -> Result<uteke_core::RememberRequest, uteke_core::RememberRequestError> {
-        uteke_core::RememberRequest::decode(self.to_input(), uteke_core::RememberPolicy::HTTP)
+        uteke_core::RememberRequest::decode(self.to_input())
     }
 }
 
@@ -346,7 +349,7 @@ impl RecallRequest {
     /// Decode under the HTTP policy: limit cap, blank-query rejection, empty
     /// `tags` meaning "no filter", RFC3339 parsing of at/after/before.
     pub fn decode(&self) -> Result<uteke_core::RecallRequest, uteke_core::RecallRequestError> {
-        uteke_core::RecallRequest::decode(self.to_input(), uteke_core::RecallPolicy::HTTP)
+        uteke_core::RecallRequest::decode(self.to_input())
     }
 }
 
@@ -400,7 +403,7 @@ impl ListParams {
 
     /// Decode under the HTTP policy (cap [`MAX_LIST_LIMIT`]).
     pub fn decode(&self) -> Result<uteke_core::ListRequest, uteke_core::ListRequestError> {
-        uteke_core::ListRequest::decode(self.to_input(), uteke_core::ListPolicy::HTTP)
+        uteke_core::ListRequest::decode(self.to_input())
     }
 }
 
@@ -471,7 +474,16 @@ pub fn json_header() -> Header {
     Header::from_bytes("Content-Type", "application/json").unwrap()
 }
 
-pub fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
+thread_local! {
+    /// The request body when the router read it ahead of the handler (#1518).
+    /// One thread serves one request, so the slot cannot cross requests.
+    static PREREAD: std::cell::RefCell<Option<Result<String, String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Read the body text, at most `MAX_PAYLOAD_SIZE` bytes, whatever the transfer
+/// encoding.
+fn read_body_text(reader: &mut dyn IoRead) -> Result<String, String> {
     // Enforce payload size limit at the reader level — works regardless of
     // Content-Length header presence (handles chunked transfer, missing header, etc.)
     let mut limited = reader.take(uteke_core::MAX_PAYLOAD_SIZE as u64 + 1);
@@ -486,6 +498,33 @@ pub fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Res
             uteke_core::MAX_PAYLOAD_SIZE
         ));
     }
+    Ok(body)
+}
+
+/// Read the body now and keep it for the handler's [`read_body`], returning it
+/// parsed as JSON for a peek. The router uses this to embed the text of a
+/// recall or a remember before it takes the store lock (#1518); the handler
+/// then sees exactly the bytes and errors it would have seen itself.
+pub fn preread_body(reader: &mut dyn IoRead) -> Option<serde_json::Value> {
+    let text = read_body_text(reader);
+    let peek = text
+        .as_ref()
+        .ok()
+        .and_then(|t| serde_json::from_str(t).ok());
+    PREREAD.with(|p| *p.borrow_mut() = Some(text));
+    peek
+}
+
+/// Forget a pre-read body no handler consumed.
+pub fn clear_preread_body() {
+    PREREAD.with(|p| *p.borrow_mut() = None);
+}
+
+pub fn read_body<T: serde::de::DeserializeOwned>(reader: &mut dyn IoRead) -> Result<T, String> {
+    let body = match PREREAD.with(|p| p.borrow_mut().take()) {
+        Some(text) => text?,
+        None => read_body_text(reader)?,
+    };
     serde_json::from_str(&body).map_err(|e| format!("Invalid JSON: {e}"))
 }
 
@@ -545,27 +584,6 @@ pub fn ns(ns: &Option<String>) -> Option<&str> {
 }
 
 // ── Config Types (shared across modules) ─────────────────────────────────────
-
-#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
-#[derive(serde::Deserialize, Default, Clone)]
-pub struct RecallFileSection {
-    /// Minimum cosine similarity score for recall results.
-    pub min_score: Option<f64>,
-    /// Strict mode threshold (higher, for critical queries).
-    pub min_score_strict: Option<f64>,
-    /// Default recall strategy when a request omits `strategy` (#1034).
-    /// One of: vector | fts5 | hybrid | graph | fusion. Server-side default:
-    /// fusion (#1123).
-    pub default_strategy: Option<String>,
-    /// Weight of the edge-density boost of the `graph` strategy (#378, #1355).
-    pub graph_density_weight: Option<f32>,
-    /// Weight of the incoming-edge authority boost of the `graph` strategy.
-    pub graph_authority_weight: Option<f32>,
-    /// Feature flag for graph-augmented reranking.
-    pub graph_rerank_enabled: Option<bool>,
-    /// Weight of the Jaccard token reranking boost (#719). 0.0 disables.
-    pub jaccard_weight: Option<f32>,
-}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -1020,7 +1038,7 @@ mod recall_request_cross_surface_tests {
         let h = http(json!({"query": "q"})).unwrap();
         let m = mcp(json!({"query": "q"})).unwrap();
         assert_eq!(h, m);
-        assert_eq!(h.limit, 5);
+        assert_eq!(h.limit, 10);
         // Omitted namespace is "every namespace" on both, not "default".
         assert_eq!(h.namespace, None);
         assert_eq!(h.tags, None);
@@ -1029,44 +1047,54 @@ mod recall_request_cross_surface_tests {
 
     #[test]
     fn http_limit_cap_and_default_come_from_the_typed_module() {
-        assert_eq!(
-            uteke_core::RecallPolicy::HTTP.max_limit,
-            Some(uteke_core::RECALL_HTTP_MAX_LIMIT)
-        );
         assert_eq!(uteke_core::RECALL_DEFAULT_LIMIT, default_limit());
         assert_eq!(uteke_core::RECALL_HTTP_MAX_LIMIT, 100);
     }
 
-    // ── Disagreements pinned as they are today (owner decision pending) ──
+    // ── One behaviour on both surfaces (#1439, owner decisions of 2026-10-13) ──
 
     #[test]
-    fn disagreement_limit_cap() {
+    fn limit_cap_is_100_on_both() {
         assert_eq!(
             http(json!({"query": "q", "limit": 5000})).unwrap().limit,
             100
         );
         assert_eq!(
             mcp(json!({"query": "q", "limit": 5000})).unwrap().limit,
-            5000
+            100
         );
     }
 
     #[test]
-    fn disagreement_blank_query() {
-        assert_eq!(
-            http(json!({"query": "  "})).unwrap_err(),
-            "Query must not be empty or whitespace-only"
-        );
-        assert!(mcp(json!({"query": "  "})).is_ok());
+    fn blank_query_is_rejected_on_both() {
+        for q in ["", "  "] {
+            let msg = "Query must not be empty or whitespace-only";
+            assert_eq!(http(json!({"query": q})).unwrap_err(), msg);
+            assert_eq!(mcp(json!({"query": q})).unwrap_err(), msg);
+        }
     }
 
     #[test]
-    fn disagreement_empty_tags() {
+    fn empty_tags_mean_no_filter_on_both() {
         assert_eq!(http(json!({"query": "q", "tags": []})).unwrap().tags, None);
-        assert_eq!(
-            mcp(json!({"query": "q", "tags": []})).unwrap().tags,
-            Some(vec![])
-        );
+        assert_eq!(mcp(json!({"query": "q", "tags": []})).unwrap().tags, None);
+    }
+
+    #[test]
+    fn an_invalid_limit_is_an_error_on_both() {
+        for bad in [json!("ten"), json!(-1), json!(2.5)] {
+            assert!(
+                serde_json::from_value::<RecallRequest>(
+                    json!({"query": "q", "limit": bad.clone()})
+                )
+                .is_err(),
+                "HTTP: {bad}"
+            );
+            assert!(
+                mcp(json!({"query": "q", "limit": bad.clone()})).is_err(),
+                "MCP: {bad}"
+            );
+        }
     }
 
     #[test]
@@ -1139,49 +1167,52 @@ mod remember_request_cross_surface_tests {
         assert_eq!(mcp(json!({"content": "x"})).unwrap().namespace, None);
     }
 
-    // ── Disagreements pinned as they are today (owner decision pending) ──
+    // ── One behaviour (#1439): MCP follows the HTTP rules ──
 
     #[test]
-    fn disagreement_omitted_type() {
-        // HTTP: auto-inference. MCP: stored as `fact`, no inference.
+    fn an_omitted_type_is_inferred_on_both() {
         assert_eq!(http(json!({"content": "x"})).unwrap().memory_type, None);
-        assert_eq!(
-            mcp(json!({"content": "x"})).unwrap().memory_type.as_deref(),
-            Some("fact")
-        );
+        assert_eq!(mcp(json!({"content": "x"})).unwrap().memory_type, None);
     }
 
     #[test]
-    fn disagreement_type_copied_to_metadata() {
+    fn the_type_is_copied_to_metadata_on_both() {
         let t = json!({"content": "x", "type": "note"});
-        assert_eq!(
-            http(t.clone()).unwrap().metadata,
-            Some(json!({"type": "note"}))
-        );
-        assert_eq!(mcp(t).unwrap().metadata, None);
+        let want = Some(json!({"type": "note"}));
+        assert_eq!(http(t.clone()).unwrap().metadata, want);
+        assert_eq!(mcp(t).unwrap().metadata, want);
     }
 
     #[test]
-    fn disagreement_validation_point() {
-        assert_eq!(
-            http(json!({"content": " "})).unwrap_err(),
-            "Validation error: Content must not be empty"
-        );
-        assert!(mcp(json!({"content": " "})).is_ok());
-        assert!(http(json!({"content": "x", "type": "bogus"})).is_err());
-        assert!(mcp(json!({"content": "x", "type": "bogus"})).is_ok());
+    fn content_and_type_are_validated_at_decode_on_both() {
+        for f in [http, mcp] {
+            assert_eq!(
+                f(json!({"content": " "})).unwrap_err(),
+                "Validation error: Content must not be empty"
+            );
+            assert!(
+                f(json!({"content": "x", "type": "bogus"}))
+                    .unwrap_err()
+                    .starts_with("Unknown memory type 'bogus'")
+            );
+        }
     }
 
     #[test]
-    fn disagreement_tags_wire_shape() {
-        // MCP drops non-string tags; HTTP rejects the body.
-        assert_eq!(
-            mcp(json!({"content": "x", "tags": ["a", 1, "b"]}))
-                .unwrap()
-                .tags,
-            vec!["a", "b"]
-        );
+    fn wrong_shaped_tags_are_an_error_on_both() {
         assert!(http(json!({"content": "x", "tags": ["a", 1]})).is_err());
+        assert_eq!(
+            mcp(json!({"content": "x", "tags": ["a", 1, "b"]})).unwrap_err(),
+            "Invalid 'tags': expected an array of strings"
+        );
+        assert!(mcp(json!({"content": "x", "tags": "a"})).is_err());
+    }
+
+    #[test]
+    fn an_unknown_argument_is_refused_on_both() {
+        assert!(http(json!({"content": "x", "bogus": 1})).is_err());
+        let e = mcp(json!({"content": "x", "bogus": 1})).unwrap_err();
+        assert!(e.starts_with("Unknown argument 'bogus'. Supported:"), "{e}");
     }
 
     #[test]
@@ -1189,14 +1220,20 @@ mod remember_request_cross_surface_tests {
         let h = http(json!({"content": "x", "entity": "e", "source": "s"})).unwrap();
         assert_eq!(h.metadata, Some(json!({"entity": "e"})));
         assert_eq!(h.source.as_deref(), Some("s"));
-        // MCP ignores them; `room` and `author` are MCP-only (HTTP: unknown key).
-        let m =
-            mcp(json!({"content": "x", "entity": "e", "source": "s", "room": "r", "author": "a"}))
-                .unwrap();
+        // `room` is MCP-only (HTTP: unknown key); `author` is accepted by both
+        // (#1427 phase 2). The MCP tool does not take entity/source yet.
+        let m = mcp(json!({"content": "x", "room": "r", "author": "a"})).unwrap();
         assert_eq!(m.metadata, None);
-        assert_eq!(m.source, None);
         assert_eq!(m.room.as_deref(), Some("r"));
         assert_eq!(m.author.as_deref(), Some("a"));
+        assert_eq!(
+            http(json!({"content": "x", "author": " a "}))
+                .unwrap()
+                .author
+                .as_deref(),
+            Some("a"),
+            "HTTP trims the author"
+        );
         assert!(http(json!({"content": "x", "room": "r"})).is_err());
     }
 
@@ -1230,20 +1267,31 @@ mod remember_request_cross_surface_tests {
     }
 
     #[test]
-    fn cli_room_author_and_timestamp_are_rejected_by_the_server_today() {
-        for field in ["room", "author", "timestamp"] {
-            let mut input = uteke_core::RememberInput {
-                content: "x".into(),
-                ..uteke_core::RememberInput::default()
-            };
-            match field {
-                "room" => input.room = Some("r".into()),
-                "author" => input.author = Some("a".into()),
-                _ => input.timestamp = Some("t".into()),
-            }
-            let err = http(input.to_http_body()).unwrap_err();
-            assert!(err.contains(field), "{field}: {err}");
+    fn the_cli_body_never_carries_a_room_the_server_would_reject() {
+        let body = uteke_core::RememberInput {
+            content: "x".into(),
+            room: Some("r".into()),
+            ..uteke_core::RememberInput::default()
         }
+        .to_http_body();
+        assert!(body.get("room").is_none() && body.get("timestamp").is_none());
+        assert!(http(body).is_ok());
+        // A raw `room` key is still an unknown key for the server.
+        assert!(http(json!({"content": "x", "room": "r"})).is_err());
+    }
+
+    /// #1427 phase 2: the CLI forwards `--author` and the server accepts it.
+    #[test]
+    fn cli_author_is_accepted_by_the_server() {
+        let input = uteke_core::RememberInput {
+            content: "x".into(),
+            author: Some("claude-code".into()),
+            ..uteke_core::RememberInput::default()
+        };
+        assert_eq!(
+            http(input.to_http_body()).unwrap().author.as_deref(),
+            Some("claude-code")
+        );
     }
 }
 
@@ -1285,7 +1333,7 @@ mod list_request_cross_surface_tests {
 
     #[test]
     fn http_default_and_cap_come_from_the_typed_module() {
-        assert_eq!(uteke_core::ListPolicy::HTTP.max_limit, Some(MAX_LIST_LIMIT));
+        assert_eq!(uteke_core::LIST_HTTP_MAX_LIMIT, MAX_LIST_LIMIT);
         assert_eq!(uteke_core::LIST_HTTP_DEFAULT_LIMIT, default_limit());
         assert_eq!(MAX_LIST_LIMIT, 1000);
     }
@@ -1293,36 +1341,45 @@ mod list_request_cross_surface_tests {
     // -- Disagreements pinned as they are today (owner decision pending) --
 
     #[test]
-    fn disagreement_default_limit() {
-        assert_eq!(http(json!({})).unwrap().limit, 5);
-        assert_eq!(mcp(json!({})).unwrap().limit, 20);
+    fn the_default_limit_is_10_on_both() {
+        assert_eq!(http(json!({})).unwrap().limit, 10);
+        assert_eq!(mcp(json!({})).unwrap().limit, 10);
     }
 
     #[test]
-    fn disagreement_limit_cap() {
+    fn the_limit_cap_is_1000_on_both() {
         assert_eq!(http(json!({"limit": 5000})).unwrap().limit, 1000);
-        assert_eq!(mcp(json!({"limit": 5000})).unwrap().limit, 5000);
+        assert_eq!(mcp(json!({"limit": 5000})).unwrap().limit, 1000);
         assert_eq!(http(json!({"limit": 0})).unwrap().limit, 0);
         assert_eq!(mcp(json!({"limit": 0})).unwrap().limit, 0);
     }
 
     #[test]
-    fn disagreement_bad_types() {
-        // HTTP rejects at the serde layer; MCP silently falls back.
-        assert!(serde_json::from_value::<ListParams>(json!({"limit": "x"})).is_err());
-        assert!(serde_json::from_value::<ListParams>(json!({"limit": -1})).is_err());
-        assert_eq!(mcp(json!({"limit": "x"})).unwrap().limit, 20);
-        assert_eq!(mcp(json!({"limit": -1})).unwrap().limit, 20);
+    fn a_field_of_the_wrong_type_is_an_error_on_both() {
+        for bad in [
+            json!({"limit": "x"}),
+            json!({"limit": -1}),
+            json!({"offset": "x"}),
+        ] {
+            assert!(
+                serde_json::from_value::<ListParams>(bad.clone()).is_err(),
+                "HTTP: {bad}"
+            );
+            assert!(mcp(bad.clone()).is_err(), "MCP: {bad}");
+        }
+        assert!(mcp(json!({"tag": 5})).is_err());
+        assert!(mcp(json!({"include_meta": "yes"})).is_err());
     }
 
     #[test]
-    fn at_and_include_meta_are_http_only() {
+    fn at_and_include_meta_are_honoured_on_both() {
         let h = http(json!({"at": "2026-06-01T14:00:00+02:00", "include_meta": true})).unwrap();
         assert_eq!(h.at.unwrap().to_rfc3339(), "2026-06-01T12:00:00+00:00");
         assert!(h.include_meta);
         assert!(!h.wants_envelope());
         let m = mcp(json!({"at": "2026-06-01T12:00:00Z", "include_meta": true})).unwrap();
-        assert_eq!((m.at, m.include_meta), (None, false));
+        assert_eq!(m.at.unwrap().to_rfc3339(), "2026-06-01T12:00:00+00:00");
+        assert!(m.include_meta);
         assert_eq!(
             http(json!({"at": "bad"})).unwrap_err(),
             "Invalid 'at' timestamp: bad. Use RFC3339 format (e.g. 2026-06-01T12:00:00Z)"

@@ -49,6 +49,24 @@ impl EmbeddingCache {
         )
         .map_err(|e| Error::db("create embedding cache schema", e))?;
 
+        // The cache used to be keyed by the embedder's constant name
+        // ("openai", "embeddinggemma-q4"), which could serve the vector of
+        // another model (#1536). Rows written that way can never be hit again
+        // and may hold vectors of the wrong model: purge them once. A key now
+        // is an identity (`name:...:dims`), so an old name has no colon.
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap_or(0);
+        if version < 1 {
+            conn.execute(
+                "DELETE FROM embedding_cache WHERE model_name NOT LIKE '%:%'",
+                [],
+            )
+            .map_err(|e| Error::db("purge embedding cache rows of the old key", e))?;
+            conn.execute_batch("PRAGMA user_version = 1;")
+                .map_err(|e| Error::db("mark the embedding cache as migrated", e))?;
+        }
+
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -67,8 +85,9 @@ impl EmbeddingCache {
             .collect()
     }
 
-    /// Look up a cached embedding. Returns `None` on miss.
-    fn lookup(&self, model_name: &str, text: &str) -> Option<Vec<f32>> {
+    /// Look up a cached embedding. Returns `None` on miss, and for a stored
+    /// vector that does not have `dims` elements (it came from something else).
+    fn lookup(&self, model_name: &str, text: &str, dims: usize) -> Option<Vec<f32>> {
         let key = Self::cache_key(model_name, text);
         let conn = self.conn.lock().ok()?;
 
@@ -80,11 +99,15 @@ impl EmbeddingCache {
             )
             .ok()?;
 
-        deserialize_embedding(&blob)
+        deserialize_embedding(&blob).filter(|v| v.len() == dims)
     }
 
     /// Store an embedding in the cache.
     fn store(&self, model_name: &str, text: &str, embedding: &[f32]) {
+        // An empty vector is "no embedding", not something to remember.
+        if embedding.is_empty() {
+            return;
+        }
         let key = Self::cache_key(model_name, text);
         let blob = serialize_embedding(embedding);
 
@@ -97,16 +120,19 @@ impl EmbeddingCache {
         }
     }
 
-    /// Clear all cached embeddings for a specific model.
-    /// Called when the model is upgraded or changed.
+    /// Clear all cached embeddings of a backend or model: the rows whose
+    /// identity is `model_name` or starts with `model_name:` (an identity is
+    /// `name:...:dims`). Called when the model is upgraded or changed.
     #[allow(dead_code)] // Public API for future cache invalidation
     pub fn invalidate_model(&self, model_name: &str) -> Result<(), Error> {
         let conn = self
             .conn
             .lock()
             .map_err(|_| Error::lock("embedding cache during invalidation"))?;
+        // `substr` compare, not LIKE: a name may contain `%` or `_`.
         conn.execute(
-            "DELETE FROM embedding_cache WHERE model_name = ?1",
+            "DELETE FROM embedding_cache
+             WHERE model_name = ?1 OR substr(model_name, 1, length(?1) + 1) = ?1 || ':'",
             rusqlite::params![model_name],
         )
         .map_err(|e| Error::db("invalidate embedding cache", e))?;
@@ -132,10 +158,12 @@ impl CachingEmbedder {
 
 impl Embedder for CachingEmbedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
-        let model_name = self.inner.name();
+        // Keyed by what produced the vectors, not by the backend's name (#1536).
+        let model_name = self.inner.identity();
+        let model_name = model_name.as_str();
 
         // Try cache first
-        if let Some(cached) = self.cache.lookup(model_name, text) {
+        if let Some(cached) = self.cache.lookup(model_name, text, self.inner.dims()) {
             tracing::debug!(text_len = text.len(), "embedding cache hit");
             return Ok(cached);
         }
@@ -160,6 +188,14 @@ impl Embedder for CachingEmbedder {
 
     fn name(&self) -> &str {
         self.inner.name()
+    }
+
+    fn identity(&self) -> String {
+        self.inner.identity()
+    }
+
+    fn caches_results(&self) -> bool {
+        true
     }
 }
 
@@ -220,12 +256,11 @@ mod tests {
     }
 
     fn tmp_cache_path() -> std::path::PathBuf {
-        let dir = std::env::temp_dir();
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        dir.join(format!("uteke_test_cache_{nanos}.db"))
+        // Unique per call: tests run in parallel, and two calls in the same
+        // nanosecond used to share (and delete) one file.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        std::env::temp_dir().join(format!("uteke_test_cache_{}_{n}.db", std::process::id()))
     }
 
     #[test]
@@ -327,14 +362,9 @@ mod tests {
             .unwrap();
         assert_eq!(count, 2);
 
-        // Invalidate
-        let conn_invalidate = Connection::open(&cache_path).unwrap();
-        conn_invalidate
-            .execute(
-                "DELETE FROM embedding_cache WHERE model_name = ?1",
-                rusqlite::params!["mock-model"],
-            )
-            .unwrap();
+        // Invalidate through the real function: it removes every identity of
+        // the model (`mock-model:2`), and nothing of another one.
+        cache.cache.invalidate_model("mock-model").unwrap();
 
         let count_after: i64 = conn_check
             .query_row("SELECT COUNT(*) FROM embedding_cache", [], |row| row.get(0))
@@ -383,5 +413,270 @@ mod tests {
         }
 
         let _ = std::fs::remove_file(&cache_path);
+    }
+
+    // ── Identity (#1536) ─────────────────────────────────────────────────
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// An embedder whose identity, size and value the test chooses, counting calls.
+    struct Fake {
+        identity: String,
+        dims: usize,
+        value: f32,
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl Fake {
+        fn new(identity: &str, dims: usize, value: f32) -> (Self, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    identity: identity.to_string(),
+                    dims,
+                    value,
+                    calls: calls.clone(),
+                    fail: false,
+                },
+                calls,
+            )
+        }
+    }
+
+    impl Embedder for Fake {
+        fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                return Err(Error::embed_msg("fake failure"));
+            }
+            Ok(vec![self.value; self.dims])
+        }
+        fn dims(&self) -> usize {
+            self.dims
+        }
+        fn max_seq_len(&self) -> usize {
+            128
+        }
+        fn name(&self) -> &str {
+            "fake"
+        }
+        fn identity(&self) -> String {
+            self.identity.clone()
+        }
+    }
+
+    /// The same cache file used by two embedders in turn, like two runs of the CLI.
+    fn run_with(path: &std::path::Path, fake: Fake, text: &str) -> Vec<f32> {
+        let cache = EmbeddingCache::open(path).unwrap();
+        CachingEmbedder::with_cache(Box::new(fake), cache)
+            .embed(text)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_default_identity_is_the_name_and_the_dimensions() {
+        let c = CountingEmbedder {
+            dims: 4,
+            call_count: Mutex::new(0),
+        };
+        assert_eq!(c.identity(), "mock-model:4");
+    }
+
+    #[test]
+    fn a_different_model_size_or_endpoint_never_gets_the_vector_of_another() {
+        let path = tmp_cache_path();
+        let (a, a_calls) = Fake::new("openai:model-a:8:aaaa", 8, 1.0);
+        assert_eq!(run_with(&path, a, "same text"), vec![1.0; 8]);
+        assert_eq!(a_calls.load(Ordering::SeqCst), 1);
+
+        // Another model, another size, another endpoint: each must be computed.
+        for (identity, dims, value) in [
+            ("openai:model-b:8:aaaa", 8, 2.0),
+            ("openai:model-a:4:aaaa", 4, 3.0),
+            ("openai:model-a:8:bbbb", 8, 4.0),
+        ] {
+            let (f, calls) = Fake::new(identity, dims, value);
+            assert_eq!(
+                run_with(&path, f, "same text"),
+                vec![value; dims],
+                "{identity}"
+            );
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                1,
+                "{identity} must reach its own backend"
+            );
+        }
+
+        // The same identity is a hit.
+        let (again, again_calls) = Fake::new("openai:model-a:8:aaaa", 8, 99.0);
+        assert_eq!(run_with(&path, again, "same text"), vec![1.0; 8]);
+        assert_eq!(again_calls.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_stored_vector_of_the_wrong_length_is_ignored() {
+        let path = tmp_cache_path();
+        let (f, _) = Fake::new("x:8", 8, 1.0);
+        run_with(&path, f, "text");
+        // Corrupt the stored vector: four elements where the embedder makes eight.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "UPDATE embedding_cache SET embedding = ?1",
+                rusqlite::params![serialize_embedding(&[9.0; 4])],
+            )
+            .unwrap();
+        }
+        let (g, calls) = Fake::new("x:8", 8, 5.0);
+        assert_eq!(run_with(&path, g, "text"), vec![5.0; 8]);
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "the bad row was a miss");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_empty_vector_is_not_remembered() {
+        let path = tmp_cache_path();
+        let (f, _) = Fake::new("x:0", 0, 0.0);
+        run_with(&path, f, "text");
+        let conn = Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embedding_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn rows_written_under_the_old_key_are_purged_once() {
+        let path = tmp_cache_path();
+        // A cache as the previous version left it: keyed by a constant name,
+        // user_version 0.
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE embedding_cache (
+                    text_hash TEXT PRIMARY KEY, model_name TEXT NOT NULL,
+                    embedding BLOB NOT NULL, created_at TEXT NOT NULL DEFAULT '');",
+            )
+            .unwrap();
+            for (hash, name) in [
+                ("h1", "openai"),
+                ("h2", "embeddinggemma-q4"),
+                ("h3", "ollama"),
+            ] {
+                conn.execute(
+                    "INSERT INTO embedding_cache (text_hash, model_name, embedding) VALUES (?1, ?2, x'00000000')",
+                    rusqlite::params![hash, name],
+                )
+                .unwrap();
+            }
+        }
+        let count = |path: &std::path::Path| -> i64 {
+            Connection::open(path)
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM embedding_cache", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(count(&path), 3);
+        drop(EmbeddingCache::open(&path).unwrap());
+        assert_eq!(
+            count(&path),
+            0,
+            "the old rows are gone after the first open"
+        );
+
+        // A row of the new kind survives every later open.
+        let (f, _) = Fake::new("openai:m:8:cccc", 8, 1.0);
+        run_with(&path, f, "kept");
+        drop(EmbeddingCache::open(&path).unwrap());
+        assert_eq!(count(&path), 1, "the purge runs once, not at every open");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn what_the_cloud_fallback_answers_is_never_cached() {
+        use crate::embed::FallbackEmbedder;
+        let path = tmp_cache_path();
+        let (mut primary, _) = Fake::new("onnx:8", 8, 1.0);
+        primary.fail = true;
+        let (cloud, cloud_calls) = Fake::new("openai:cloud:8:dddd", 8, 7.0);
+        // The wrapping order of the core: the cache around the primary, the
+        // fallback around the cached primary.
+        let cached_primary =
+            CachingEmbedder::with_cache(Box::new(primary), EmbeddingCache::open(&path).unwrap());
+        let fb = FallbackEmbedder::new(Box::new(cached_primary), Some(Box::new(cloud))).unwrap();
+        assert_eq!(fb.embed("text").unwrap(), vec![7.0; 8]);
+        assert_eq!(fb.embed("text").unwrap(), vec![7.0; 8]);
+        assert_eq!(
+            cloud_calls.load(Ordering::SeqCst),
+            2,
+            "no cache served the cloud vector"
+        );
+        let conn = Connection::open(&path).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM embedding_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "nothing the cloud produced is in the cache");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn the_remote_embedders_identify_model_dimensions_and_endpoint_but_not_the_key() {
+        use crate::embed::{OllamaEmbedder, OpenAiEmbedder};
+        let o = |model: &str, dims: usize, url: &str, key: &str| {
+            OpenAiEmbedder::new(key, model, url, "", dims)
+                .unwrap()
+                .identity()
+        };
+        let base = o("m", 8, "https://a.example/v1", "key-one");
+        assert_eq!(
+            base,
+            o("m", 8, "https://a.example/v1", "key-two"),
+            "the key is not part of it"
+        );
+        assert!(
+            !base.contains("key-one") && !base.contains("a.example"),
+            "{base}"
+        );
+        assert_ne!(base, o("m2", 8, "https://a.example/v1", "k"));
+        assert_ne!(base, o("m", 16, "https://a.example/v1", "k"));
+        assert_ne!(base, o("m", 8, "https://b.example/v1", "k"));
+
+        let l = |model: &str, dims: usize, url: &str| {
+            OllamaEmbedder::new(url, model, dims).unwrap().identity()
+        };
+        let ollama = l("nomic", 8, "http://localhost:11434");
+        assert_ne!(ollama, l("other", 8, "http://localhost:11434"));
+        assert_ne!(ollama, l("nomic", 4, "http://localhost:11434"));
+        assert_ne!(ollama, l("nomic", 8, "http://other:11434"));
+        assert_ne!(ollama, base, "different backends never collide");
+    }
+
+    #[test]
+    fn invalidating_a_model_leaves_the_others_alone() {
+        let path = tmp_cache_path();
+        for identity in ["mock-model:8", "mock-model:4", "mock-model-2:8", "other:8"] {
+            let (f, _) = Fake::new(identity, 8, 1.0);
+            run_with(&path, f, "text");
+        }
+        EmbeddingCache::open(&path)
+            .unwrap()
+            .invalidate_model("mock-model")
+            .unwrap();
+        let conn = Connection::open(&path).unwrap();
+        let mut left: Vec<String> = conn
+            .prepare("SELECT model_name FROM embedding_cache ORDER BY model_name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec!["mock-model-2:8", "other:8"]);
+        let _ = std::fs::remove_file(&path);
     }
 }

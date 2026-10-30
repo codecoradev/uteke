@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="docs/assets/uteke-icon.png" alt="Uteke owl logo" width="96" />
+</p>
+
+<p align="center">
   <img src="docs/assets/uteke-banner.png" alt="Uteke: One memory. Every agent. Local-first." width="640" />
 </p>
 
@@ -108,6 +112,8 @@ one CPU, deterministic.
 The hard part isn't finding *a* needle; every question's evidence lands in the
 top-50 (**zero misses**). The residual gap is *ordering* when a question needs
 several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling.
+
+> **🧾 Receipts for the headline number:** [`v0.19.0-default-500q`](benchmarks/longmemeval/receipts/v0.19.0-default-500q/) holds the manifest (commit, dataset sha256, raw scores), the recomputed summary and the scope of the metric; the standard is in [benchmarks/RECEIPTS.md](benchmarks/RECEIPTS.md).
 
 > **🎯 Don't trust our benchmark. Run it yourself.** The full harness is in this
 > repo: public dataset, committed raw outputs for all three releases (v0.16/v0.17/v0.19),
@@ -353,7 +359,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.21.1 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.22.0 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
 
 ---

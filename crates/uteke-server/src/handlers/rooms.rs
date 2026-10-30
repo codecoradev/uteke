@@ -226,7 +226,7 @@ pub(super) fn post_room_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 let min_score = req_data.min_score.unwrap_or(
                     ctx.recall_config
                         .as_ref()
-                        .and_then(|r| r.min_score)
+                        .map(|r| r.min_score)
                         .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
                 );
                 match uteke.recall_room_semantic(
@@ -321,13 +321,7 @@ pub(super) fn post_room_rename(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     "room": room,
                 }),
             ),
-            Err(e) => {
-                let status = match e {
-                    uteke_core::Error::Validation(_) => 400,
-                    _ => 500,
-                };
-                ctx.error_response_for(req, status, e.to_string())
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -359,13 +353,7 @@ pub(super) fn post_room_update(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     404,
                     format!("Room not found: {}", req_data.room_id),
                 ),
-                Err(e) => {
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -408,13 +396,50 @@ pub(super) fn post_room_memory_move(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     ),
                 ),
                 Ok(_) => unreachable!("move returns 0 or 1"),
+                Err(e) => ctx.core_error(req, &e),
+            }
+        }
+        Err(e) => ctx.error_response_for(req, 400, e),
+    }
+}
+
+// POST /room/memory — add an existing memory to a room without copying it
+// (#1589). Idempotent; `memory_id` is a full id or an unambiguous prefix.
+pub(super) fn post_room_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
+    let uteke = c.uteke;
+    let ctx = c.ctx;
+    let req = &mut *c.req;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RoomMemoryRequest {
+        memory_id: String,
+        room: String,
+        author: Option<String>,
+    }
+    match read_body::<RoomMemoryRequest>(req.as_reader()) {
+        Ok(req_data) => {
+            let id = match uteke_core::resolve_memory_id(uteke, &req_data.memory_id) {
+                Ok(id) => id,
                 Err(e) => {
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
+                    let status = match e.kind() {
+                        uteke_core::ForgetErrorKind::NotFound => 404,
+                        _ => 400,
                     };
-                    ctx.error_response_for(req, status, e.to_string())
+                    return ctx.error_response_for(req, status, e.message());
                 }
+            };
+            let author = req_data.author.as_deref().unwrap_or("anonymous");
+            match uteke.add_memory_to_room(&id, &req_data.room, author) {
+                Ok(linked) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "memory_id": id,
+                        "room": req_data.room,
+                        "linked": linked,
+                        "already_linked": !linked,
+                    }),
+                ),
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -443,28 +468,31 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 &req_data.room_id,
                 author,
             ) {
-                Ok(outcome) => ctx.ok_response_for(
-                    req,
-                    &serde_json::json!({
-                        "id": outcome.id,
-                        "room_id": req_data.room_id,
-                        "embedding_written": outcome.embedding_written,
-                        "warning": uteke_core::namespace_deprecation::merge_warning(
-                            outcome.warning,
-                            uteke_core::namespace_deprecation::namespace_write_warning(
-                                ns(&req_data.namespace),
+                Ok(outcome) => {
+                    // The named writer is also the memory's own author (#1427
+                    // phase 2); the "user" fallback of the room link is not.
+                    if let Some(a) = req_data.author.as_deref()
+                        && let Err(e) = uteke.set_author_if_valid(&outcome.id, a)
+                    {
+                        error!("Failed to set author for {}: {e}", outcome.id);
+                    }
+                    ctx.ok_response_for(
+                        req,
+                        &serde_json::json!({
+                            "id": outcome.id,
+                            "room_id": req_data.room_id,
+                            "embedding_written": outcome.embedding_written,
+                            "redacted": outcome.redacted(),
+                            "warning": uteke_core::namespace_deprecation::merge_warning(
+                                outcome.warning,
+                                uteke_core::namespace_deprecation::namespace_write_warning(
+                                    ns(&req_data.namespace),
+                                ),
                             ),
-                        ),
-                    }),
-                ),
-                Err(e) => {
-                    error!("room/remember error: {e}");
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
+                        }),
+                    )
                 }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -639,17 +667,15 @@ pub(super) fn delete_room_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             &serde_json::json!({
                 "deleted": room_id,
                 "unlinked_memories": unlinked,
-                "note": "memories and documents are preserved in their namespaces, no longer linked to any room"
+                "note": "room unregistered; memories and documents are retained, no longer linked to any room. Delete a memory with POST /forget"
             }),
         ),
+        Err(e) if e.class() == uteke_core::ErrorClass::NotFound => {
+            ctx.error_response_for(req, 404, e.to_string())
+        }
         Err(e) => {
-            let msg = format!("{e}");
-            if msg.contains("not found") {
-                ctx.error_response_for(req, 404, &msg)
-            } else {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            error!("Internal error: {e}");
+            ctx.error_response_for(req, 500, "Internal server error")
         }
     }
 }

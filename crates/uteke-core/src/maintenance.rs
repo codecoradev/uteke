@@ -271,6 +271,64 @@ impl crate::Uteke {
     /// query (`load_missing_embeddings`), generates new embeddings, updates
     /// the database, and adds them to the index.
     pub fn reembed_missing(&self) -> Result<ReembedReport, Error> {
+        let mut report = self.reembed_missing_memories()?;
+        let (missing, reembedded, failed) = self.reembed_missing_chunks()?;
+        report.chunks_missing = missing;
+        report.chunks_reembedded = reembedded;
+        report.chunks_failed = failed;
+        Ok(report)
+    }
+
+    /// Re-embed document chunks that have no vector (#1587) and add them to the
+    /// index. Returns `(missing, reembedded, failed)`. One attempt per chunk, so
+    /// a dead backend is reported per chunk instead of waiting on retries.
+    pub fn reembed_missing_chunks(&self) -> Result<(usize, usize, usize), Error> {
+        let missing = self.store.chunks_missing_embeddings()?;
+        if missing.is_empty() {
+            return Ok((0, 0, 0));
+        }
+        // An embedder that cannot start is an error, not one failed chunk each.
+        self.ensure_embedder()?;
+        let (mut reembedded, mut failed) = (0usize, 0usize);
+        let mut new_items: Vec<(String, Vec<f32>)> = Vec::new();
+        for (id, content) in &missing {
+            match self.embed_once(content) {
+                Ok(vec) => match self.store.set_chunk_embedding(id, &vec) {
+                    Ok(_) => {
+                        new_items.push((format!("chunk:{id}"), vec));
+                        reembedded += 1;
+                    }
+                    Err(e) => {
+                        tracing::warn!(chunk = %id, error = %e, "Failed to store chunk embedding");
+                        failed += 1;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(chunk = %id, error = %e, "Failed to embed chunk");
+                    failed += 1;
+                }
+            }
+        }
+        if !new_items.is_empty() {
+            let mut index = self
+                .index
+                .write()
+                .map_err(|_| Error::lock("index write during chunk reembed"))?;
+            for (key, vec) in &new_items {
+                if let Err(e) =
+                    index_sync::insert_unsaved(&mut *index, key, vec, &SyncPolicy::STANDARD)
+                {
+                    tracing::warn!(key = %key, error = %e, "Failed to add chunk to index");
+                }
+            }
+            if let Err(e) = index_sync::persist(&mut *index, &SyncPolicy::STANDARD) {
+                tracing::warn!(error = %e, "Failed to save index after chunk reembed");
+            }
+        }
+        Ok((missing.len(), reembedded, failed))
+    }
+
+    fn reembed_missing_memories(&self) -> Result<ReembedReport, Error> {
         // Scan directly for NULL/empty embeddings (#1146). This must NOT go
         // through load_all(): its `embedding IS NOT NULL` guard (kept for
         // index.build() safety, #992) filtered out exactly the rows this
@@ -285,6 +343,9 @@ impl crate::Uteke {
                 missing_count,
                 reembedded: 0,
                 failed: 0,
+                chunks_missing: 0,
+                chunks_reembedded: 0,
+                chunks_failed: 0,
             });
         }
 
@@ -294,25 +355,18 @@ impl crate::Uteke {
             "Re-embedding memories with missing vectors"
         );
 
-        // Ensure embedder is initialized.
+        // An embedder that cannot start is an error, not one failed row each.
         self.ensure_embedder()?;
 
         let mut reembedded = 0usize;
         let mut failed = 0usize;
         let mut new_items: Vec<(String, Vec<f32>)> = Vec::new();
 
-        // Acquire embedder lock ONCE before the loop to avoid
-        // per-iteration mutex overhead (codecoradev/uteke#919 review).
-        let embedder_guard = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during reembed"))?;
-        let embedder = embedder_guard
-            .as_ref()
-            .ok_or_else(|| Error::embed("reembed", "embedder not initialized"))?;
-
+        // One attempt per row, and the embedder lock is taken per row: a repair
+        // over a dead backend reports each failed row instead of waiting on a
+        // retry for every one, and does not block recall for the whole loop.
         for mem in &missing {
-            match embedder.embed(&mem.content) {
+            match self.embed_once(&mem.content) {
                 Ok(vec) => {
                     // Update memory in database.
                     let mut updated = (*mem).clone();
@@ -358,6 +412,9 @@ impl crate::Uteke {
             missing_count,
             reembedded,
             failed,
+            chunks_missing: 0,
+            chunks_reembedded: 0,
+            chunks_failed: 0,
         })
     }
 
@@ -760,7 +817,6 @@ mod tests {
         assert_eq!(restored.deprecated, 3);
     }
 
-    #[ignore = "requires ONNX embedder — validates reembed repairs NULL-embedding rows (#1146)"]
     #[test]
     fn test_reembed_repairs_null_embedding_rows() {
         // Regression test for #1146: `repair --reembed` used to scan through
@@ -769,7 +825,7 @@ mod tests {
         // crash artifacts) were permanently invisible to reembed and doctor
         // reported an unresolvable MISMATCH.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = crate::Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
 
         // Create one healthy memory (gets a real embedding).
         let id = uteke
@@ -854,7 +910,6 @@ mod tests {
         assert_eq!(restored.deleted, 5);
     }
 
-    #[ignore = "requires ONNX embedder — verify/doctor count chunk vectors alongside memories"]
     #[test]
     fn test_verify_counts_doc_chunks() {
         // Regression test for #1111: verify()/doctor() must count document
@@ -862,7 +917,7 @@ mod tests {
         // reports a memory-only count vs index (which holds memories AND
         // chunk vectors) and flags a false MISMATCH.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = crate::Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
         uteke
             .doc_upsert(
                 "verify-chunks-doc",
@@ -887,14 +942,13 @@ mod tests {
         );
     }
 
-    #[ignore = "requires ONNX embedder — validates repair() keeps doc chunk vectors indexed"]
     #[test]
     fn test_repair_preserves_doc_chunk_vectors() {
         // Regression test for #1110: repair() rebuilt the index from
         // load_all() (memories only), silently evicting every "chunk:<id>"
         // vector. After repair, semantic doc search must still find chunks.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = crate::Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
         let doc_id = uteke
             .doc_upsert(
                 "repair-chunks-doc",

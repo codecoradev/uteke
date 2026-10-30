@@ -976,3 +976,55 @@ mod tests {
         std::fs::remove_dir_all(&dir_b).ok();
     }
 }
+
+#[cfg(test)]
+mod document_vector_tests {
+    use crate::test_support::open_keyword;
+
+    const BODY: &str = "# Caching\n\nThe quokka cache stores marsupial lookups.\n\n## Eviction\n\nEntries leave when the wombat timer fires.\n";
+
+    /// #1587: a structural bundle carries chunk text but no vectors, so the
+    /// restored documents are invisible to semantic search until the chunks
+    /// are embedded again.
+    #[test]
+    fn restored_documents_get_their_chunk_vectors_back() {
+        let src = open_keyword();
+        src.doc_upsert("root", "Root", BODY, &[], None).unwrap();
+        src.doc_upsert_with_parent("child", "Child", BODY, &[], None, Some("root"))
+            .unwrap();
+        let bundle = src.export_full().unwrap();
+
+        let dst = open_keyword();
+        let imported = dst.import_full(&bundle).unwrap();
+        assert_eq!(imported["imported"]["documents"], 2, "{imported}");
+        let chunks = imported["imported"]["document_chunks"].as_u64().unwrap() as usize;
+        assert!(chunks >= 2, "{imported}");
+
+        // Hierarchy, slug, title and content survive.
+        let child = dst.doc_get("child").unwrap().unwrap();
+        assert_eq!(child.title, "Child");
+        assert_eq!(child.content, BODY);
+        assert_eq!(
+            child.parent_id,
+            Some(dst.doc_get("root").unwrap().unwrap().id)
+        );
+
+        // No vectors yet: the import wrote none.
+        assert_eq!(dst.store.chunks_missing_embeddings().unwrap().len(), chunks);
+        let (missing, reembedded, failed) = dst.reembed_missing_chunks().unwrap();
+        assert_eq!((missing, reembedded, failed), (chunks, chunks, 0));
+        assert!(dst.store.chunks_missing_embeddings().unwrap().is_empty());
+        // A second run has nothing to do, and repair --reembed reports it.
+        assert_eq!(dst.reembed_missing_chunks().unwrap(), (0, 0, 0));
+        let report = dst.reembed_missing().unwrap();
+        assert_eq!(report.chunks_missing, 0);
+
+        let found = dst
+            .doc_search_semantic("quokka marsupial cache", 5)
+            .unwrap();
+        assert!(
+            found.iter().any(|r| r.document.slug == "child"),
+            "semantic search must find the restored document"
+        );
+    }
+}

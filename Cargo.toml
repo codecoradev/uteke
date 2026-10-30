@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.21.1"
+version = "0.22.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/codecoradev/uteke"
@@ -21,7 +21,7 @@ readme = "README.md"
 homepage = "https://uteke.dev"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [profile.release]
 opt-level = 3

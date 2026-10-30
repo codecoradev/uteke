@@ -30,4 +30,21 @@ pub trait Embedder: Send + Sync {
 
     /// Human-readable name for this backend.
     fn name(&self) -> &str;
+
+    /// What produced the vectors: the backend, the model, the dimensions and
+    /// (for a remote backend) a fingerprint of the endpoint. Two embedders
+    /// with the same identity return interchangeable vectors; the embedding
+    /// cache is keyed by it, so a changed model, size or endpoint never serves
+    /// the vector of the old one. The default (`name:dims`) suits a backend
+    /// with one fixed model.
+    fn identity(&self) -> String {
+        format!("{}:{}", self.name(), self.dims())
+    }
+
+    /// Whether `embed` remembers its results, so a second call for the same
+    /// text is a cache hit. Only then is embedding ahead of time useful
+    /// ([`crate::EmbeddingWarmer`]); otherwise it would just do the work twice.
+    fn caches_results(&self) -> bool {
+        false
+    }
 }

@@ -4,6 +4,42 @@ use crate::error::Error;
 use crate::index_sync::{self, SyncPolicy};
 use crate::memory::types::{ExportEntry, ImportResult, Memory};
 
+/// The room links made by one import, and the rooms it could not link to (#1588).
+#[derive(Default)]
+struct RoomLinks {
+    linked: usize,
+    missing: std::collections::BTreeSet<String>,
+    exists: std::collections::HashMap<String, bool>,
+}
+
+impl RoomLinks {
+    /// Link `memory_id` to each of `rooms` that exists. A failure to link is
+    /// logged and never fails the import: the memory is already stored.
+    ///
+    /// Rooms are cross-namespace collaboration spaces (#392): a room is not
+    /// owned by a namespace, and `remember_in_room`, `POST /room/remember` and
+    /// `POST /room/memory` accept any existing room for any memory. Import is a
+    /// write like those (a read-only token cannot call it), so it follows the
+    /// same rule rather than checking the room's namespace against the file's.
+    fn apply(&mut self, uteke: &crate::Uteke, memory_id: &str, rooms: &[String], author: &str) {
+        for room in rooms {
+            let known = *self
+                .exists
+                .entry(room.clone())
+                .or_insert_with(|| matches!(uteke.store.get_room(room), Ok(Some(_))));
+            if !known {
+                self.missing.insert(room.clone());
+                continue;
+            }
+            match uteke.add_memory_to_room(memory_id, room, author) {
+                Ok(true) => self.linked += 1,
+                Ok(false) => {}
+                Err(e) => tracing::warn!("Could not link {memory_id} to room {room}: {e}"),
+            }
+        }
+    }
+}
+
 impl crate::Uteke {
     /// Export all memories to JSONL format (one JSON object per line).
     ///
@@ -16,15 +52,18 @@ impl crate::Uteke {
     /// lifecycle endpoints to audit deprecated rows separately.
     pub fn export(&self, namespace: Option<&str>) -> Result<String, Error> {
         let memories = self.store.load_all(namespace)?;
+        let mut rooms_of = self.store.room_ids_by_memory()?;
         let entries: Vec<ExportEntry> = memories
             .into_iter()
             .map(|m| ExportEntry {
+                rooms: rooms_of.remove(&m.id).unwrap_or_default(),
                 content: m.content,
                 tags: m.tags,
                 metadata: m.metadata,
                 created_at: m.created_at,
                 source: m.source,
                 namespace: m.namespace,
+                author: m.author,
             })
             .collect();
 
@@ -78,20 +117,74 @@ impl crate::Uteke {
 
         let mut imported = 0;
         let mut deduped = 0;
+        let mut redacted = 0;
+        let mut rejected_secret = 0;
+        let mut room_links = RoomLinks::default();
 
-        for entry in entries {
+        for mut entry in entries {
             if entry.content.is_empty() {
                 skipped += 1;
                 continue;
             }
+            let rooms = std::mem::take(&mut entry.rooms);
+            let link_author = entry
+                .author
+                .as_deref()
+                .and_then(|a| crate::memory::types::validate_author(a).ok())
+                .unwrap_or("import")
+                .to_string();
+
+            // Privacy filter (#1464), before the content is embedded or stored.
+            // Strict mode skips the row (counted as skipped) instead of
+            // aborting the whole import.
+            // The tags and the source are filtered with the content (the
+            // source rides along as the last "tag" and is taken off again).
+            let mut fields: Vec<&str> = entry.tags.iter().map(String::as_str).collect();
+            if let Some(src) = entry.source.as_deref() {
+                fields.push(src);
+            }
+            let prepared = match self.privacy_config.prepare_with_tags(
+                &entry.content,
+                &fields,
+                Some(std::mem::take(&mut entry.metadata)),
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Skipping import entry: {e}");
+                    if matches!(e, Error::SecretDetected { .. }) {
+                        rejected_secret += 1;
+                    }
+                    skipped += 1;
+                    continue;
+                }
+            };
+            entry.content = prepared.content;
+            let mut masked_fields = prepared.tags;
+            if entry.source.is_some() {
+                entry.source = masked_fields.pop();
+            }
+            entry.tags = masked_fields;
+            if let Some(m) = prepared.metadata {
+                entry.metadata = m;
+            }
+            let redactions = prepared.redactions;
 
             // Re-embed the content with retry (consistent with remember path, #1005).
-            self.ensure_embedder()?;
-            let embedding = crate::operations::retry_embed(&self.embedder, &entry.content)?;
+            // A store with no embedding backend (#1166) imports FTS5-only, as
+            // `remember` stores there: no vector, so no duplicate check either.
+            let embedding = if self.embedder_backend.is_empty() {
+                Vec::new()
+            } else {
+                self.embed(&entry.content)?
+            };
 
             // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
-            if let Some(_existing_id) = self.check_duplicate(&embedding, namespace)? {
+            if !embedding.is_empty()
+                && let Some(existing_id) = self.check_duplicate(&embedding, namespace)?
+            {
                 deduped += 1;
+                // The stored memory is the one that belongs in the rooms (#1588).
+                room_links.apply(self, &existing_id, &rooms, &link_author);
                 continue;
             }
 
@@ -111,7 +204,7 @@ impl crate::Uteke {
             let memory = Memory {
                 id: id.clone(),
                 content: entry.content,
-                embedding: embedding.clone(),
+                embedding,
                 tags: entry.tags,
                 metadata: entry.metadata,
                 created_at: entry.created_at,
@@ -132,35 +225,37 @@ impl crate::Uteke {
                 source: Some(format!("import:{}", entry.source.unwrap_or_default())),
                 source_type: "import".to_string(),
                 author_type: "agent".to_string(),
+                // A bad value in a file is dropped, it must not fail the import.
+                author: entry
+                    .author
+                    .as_deref()
+                    .and_then(|a| crate::memory::types::validate_author(a).ok())
+                    .map(str::to_string),
             };
 
-            // Write-ahead: vector index first (can be rolled back), then SQLite.
-            {
-                let mut index = self
-                    .index
-                    .write()
-                    .map_err(|_| Error::lock("index write lock during import"))?;
-                index_sync::insert_unsaved(&mut *index, &id, &embedding, &SyncPolicy::STANDARD)?;
-                // Don't save per-item — we'll persist once after the full import.
+            // The same tail as `remember` (#1514): the row, the source hash, the
+            // `Created` event, edge wiring, recall-cache invalidation, the vector
+            // (its save is batched, the whole import is persisted once below)
+            // and the cosine links. A vector that could not be written leaves the
+            // row FTS5-only, as it does for `remember`; `uteke repair` backfills it.
+            match self.commit_memory(&memory, None) {
+                Ok(outcome) => {
+                    if let Some(w) = outcome.warning {
+                        tracing::warn!("Imported entry (id={id}) is FTS5-only: {w}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Skipping import entry (id={id}): {e}");
+                    skipped += 1;
+                    continue;
+                }
             }
 
-            if let Err(e) = self.store.insert(&memory) {
-                // Rollback: remove from vector index
-                let mut index = self
-                    .index
-                    .write()
-                    .map_err(|_| Error::lock("index write lock during import rollback"))?;
-                index_sync::remove_unsaved(&mut *index, &id);
-                // Note: don't save per-entry — save once at end of import.
-                // If process crashes, orphan entry is harmless and cleaned by repair.
-                tracing::warn!("Skipping import entry (id={id}): {e}");
-                skipped += 1;
-                continue;
+            self.record_redaction(&id, &redactions);
+            if !redactions.is_empty() {
+                redacted += 1;
             }
-
-            // Auto-link cosine edges (consistent with remember path, #1005).
-            // Must run AFTER index.insert() so the new memory is searchable.
-            self.auto_link_cosine(&id, &embedding, Some(memory.namespace.as_str()));
+            room_links.apply(self, &id, &rooms, &link_author);
 
             imported += 1;
         }
@@ -180,7 +275,14 @@ impl crate::Uteke {
             );
         }
 
-        Ok(ImportResult { imported, skipped })
+        Ok(ImportResult {
+            imported,
+            skipped,
+            redacted,
+            rejected_secret,
+            room_links: room_links.linked,
+            rooms_missing: room_links.missing.into_iter().collect(),
+        })
     }
 
     /// Parse JSONL input: one self-contained JSON object per line.
@@ -217,11 +319,63 @@ mod tests {
             created_at: chrono::Utc::now(),
             source: None,
             namespace: "default".to_string(),
+            author: None,
+            rooms: Vec::new(),
         };
         let json = serde_json::to_string(&entry).unwrap();
+        assert!(
+            !json.contains("author"),
+            "an unset author is not serialized: {json}"
+        );
         let restored: ExportEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.content, "hello world");
         assert_eq!(restored.tags.len(), 1);
+    }
+
+    /// #1427 phase 2: the author survives export and import; an invalid author
+    /// in a file is dropped without failing the row; old files have none.
+    #[test]
+    fn test_author_survives_export_import() {
+        let src = crate::test_support::open_keyword();
+        let a = src.remember("attributed note", &[], None, None).unwrap();
+        src.remember("plain note", &[], None, None).unwrap();
+        src.set_author(&a, Some("claude-code")).unwrap();
+        let exported = src.export(None).unwrap();
+        assert!(
+            exported.contains("\"author\":\"claude-code\""),
+            "{exported}"
+        );
+        assert_eq!(
+            exported.matches("\"author\"").count(),
+            1,
+            "only the attributed row"
+        );
+
+        let dst = crate::test_support::open_keyword();
+        assert_eq!(dst.import(&exported, None).unwrap().imported, 2);
+        let authors: std::collections::BTreeMap<String, Option<String>> = dst
+            .list(None, 10, 0, None)
+            .unwrap()
+            .into_iter()
+            .map(|m| (m.content, m.author))
+            .collect();
+        assert_eq!(authors["attributed note"].as_deref(), Some("claude-code"));
+        assert_eq!(authors["plain note"], None);
+
+        // An invalid author in a file is dropped, the row is still imported.
+        let long = "x".repeat(200);
+        let file = format!(
+            "{{\"content\":\"bad author\",\"author\":\"{long}\"}}\n{{\"content\":\"blank author\",\"author\":\"  \"}}\n{{\"content\":\"old row\"}}"
+        );
+        let other = crate::test_support::open_keyword();
+        assert_eq!(other.import(&file, None).unwrap().imported, 3);
+        assert!(
+            other
+                .list(None, 10, 0, None)
+                .unwrap()
+                .iter()
+                .all(|m| m.author.is_none())
+        );
     }
 
     /// #1036: export must carry per-row namespace; import must reconstruct
@@ -325,5 +479,95 @@ mod tests {
             "Pretty-printed JSON should parse as single object"
         );
         assert_eq!(result.unwrap().content, "hello pretty");
+    }
+}
+
+#[cfg(test)]
+mod room_link_tests {
+    use crate::test_support::open_keyword;
+
+    const A: &str = "alpha beta gamma delta epsilon zeta eta theta iota";
+    const B: &str = "one two three four five six seven eight nine ten";
+
+    #[test]
+    fn export_carries_room_ids_and_import_restores_the_links() {
+        let src = open_keyword();
+        src.create_room("team", None, "default").unwrap();
+        src.create_room("ops", None, "default").unwrap();
+        let a = src.remember(A, &[], None, None).unwrap();
+        let b = src.remember(B, &[], None, None).unwrap();
+        src.add_memory_to_room(&a, "team", "alice").unwrap();
+        src.add_memory_to_room(&a, "ops", "alice").unwrap();
+        // A memory in no room carries no `rooms` key (the old file shape).
+        let file = src.export(None).unwrap();
+        let rows: Vec<serde_json::Value> = file
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let row = |text: &str| rows.iter().find(|r| r["content"] == text).unwrap();
+        assert_eq!(row(A)["rooms"], serde_json::json!(["ops", "team"]));
+        assert!(row(B).get("rooms").is_none());
+        let _ = b;
+
+        let dst = open_keyword();
+        dst.create_room("team", None, "default").unwrap();
+        dst.create_room("ops", None, "default").unwrap();
+        let r = dst.import(&file, None).unwrap();
+        assert_eq!((r.imported, r.room_links), (2, 2), "{r:?}");
+        assert!(r.rooms_missing.is_empty());
+        assert_eq!(dst.recall_room("team", None, 0).unwrap().len(), 1);
+        assert_eq!(dst.recall_room("ops", None, 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn missing_rooms_are_reported_and_a_second_import_completes_the_links() {
+        let src = open_keyword();
+        src.create_room("team", None, "default").unwrap();
+        src.create_room("later", None, "default").unwrap();
+        let a = src.remember(A, &[], None, None).unwrap();
+        src.add_memory_to_room(&a, "team", "alice").unwrap();
+        src.add_memory_to_room(&a, "later", "alice").unwrap();
+        let file = src.export(None).unwrap();
+
+        let dst = open_keyword();
+        dst.create_room("team", None, "default").unwrap();
+        let first = dst.import(&file, None).unwrap();
+        assert_eq!((first.imported, first.room_links), (1, 1), "{first:?}");
+        assert_eq!(first.rooms_missing, vec!["later".to_string()]);
+
+        // Create the missing room and import the same file again: the memory
+        // is a duplicate, and the duplicate is linked.
+        dst.create_room("later", None, "default").unwrap();
+        let second = dst.import(&file, None).unwrap();
+        assert_eq!(second.imported, 0, "{second:?}");
+        assert_eq!(second.room_links, 1, "{second:?}");
+        assert!(second.rooms_missing.is_empty());
+        assert_eq!(dst.recall_room("later", None, 0).unwrap().len(), 1);
+        assert_eq!(dst.count(None).unwrap(), 1, "no copy was made");
+    }
+
+    #[test]
+    fn a_file_without_rooms_imports_exactly_as_before() {
+        let dst = open_keyword();
+        let r = dst
+            .import(&format!("{{\"content\":\"{A}\"}}"), None)
+            .unwrap();
+        assert_eq!((r.imported, r.room_links), (1, 0));
+        assert!(r.rooms_missing.is_empty());
+        let json = serde_json::to_value(&r).unwrap();
+        assert!(json.get("room_links").is_none() && json.get("rooms_missing").is_none());
+    }
+
+    /// #1166: a store opened without an embedding backend imports FTS5-only
+    /// instead of failing on the first row.
+    #[test]
+    fn a_store_without_an_embedder_imports_keyword_only() {
+        let u = crate::Uteke::open_with_backend(":memory:", None).unwrap();
+        let file = "{\"content\":\"alpha beta gamma\"}\n{\"content\":\"delta epsilon zeta\"}";
+        let r = u.import(file, None).unwrap();
+        assert_eq!((r.imported, r.skipped), (2, 0), "{r:?}");
+        assert_eq!(u.count(None).unwrap(), 2);
+        let found = u.search("alpha", 5, None, None).unwrap();
+        assert_eq!(found.len(), 1, "the rows are keyword-searchable");
     }
 }

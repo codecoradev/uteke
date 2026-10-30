@@ -334,9 +334,21 @@ fn find_ort_in_dir(dir: &PathBuf) -> Option<PathBuf> {
     None
 }
 
+/// The process-wide ORT environment. Since `ort` 2.0.0-rc.14 a session is built
+/// from an [`Environment`](ort::environment::Environment), and only one may
+/// exist per process, so it lives here for the life of the process.
+static ENVIRONMENT: std::sync::OnceLock<ort::environment::Environment> = std::sync::OnceLock::new();
+
+/// The environment created by [`init_ort_environment`], or `None` before it
+/// has run (or when it failed).
+pub fn environment() -> Option<&'static ort::environment::Environment> {
+    ENVIRONMENT.get()
+}
+
 /// Initialize the ORT environment using the resolved library path.
 ///
-/// This must be called **once** before any `ort::Session` is created.
+/// This must be called **once** before any `ort::Session` is created; the
+/// environment it builds is then available from [`environment`].
 /// Returns the `OrtLibInfo` on success so callers can log which variant is in use.
 ///
 /// # Errors
@@ -347,15 +359,18 @@ fn find_ort_in_dir(dir: &PathBuf) -> Option<PathBuf> {
 pub fn init_ort_environment() -> Result<OrtLibInfo, String> {
     let info = resolve_ort_lib()?;
 
-    ort::init_from(&info.lib_path)
+    let environment = ort::init_from(&info.lib_path)
         .map_err(|e| {
             format!(
                 "Failed to load ONNX Runtime from '{}': {e}. \
-             Ensure the library version matches ort crate 2.0.0-rc.12.",
+             Ensure the library version matches ort crate 2.0.0-rc.14.",
                 info.lib_path.display()
             )
         })?
-        .commit();
+        .build()
+        .map_err(|e| format!("Failed to create the ONNX Runtime environment: {e}"))?;
+    // Only the first call can get here: a second `build` is refused by ort.
+    let _ = ENVIRONMENT.set(environment);
 
     tracing::info!(
         "ORT environment initialized successfully (AVX2={})",
@@ -365,6 +380,7 @@ pub fn init_ort_environment() -> Result<OrtLibInfo, String> {
     Ok(info)
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -193,8 +193,8 @@ fn handle_request(
 
         "notifications/initialized" => Ok(Value::Null),
 
-        "tools/list" => Ok(serde_json::json!({
-            "tools": [
+        "tools/list" => {
+            let mut tools = vec![
                 tool_remember(),
                 tool_recall(),
                 tool_search(),
@@ -228,6 +228,7 @@ fn handle_request(
                 tool_room_rename(),
                 tool_room_update(),
                 tool_room_memory_move(),
+                tool_room_link_memory(),
                 tool_room_recall(),
                 tool_room_memories(),
                 tool_room_stats(),
@@ -244,8 +245,18 @@ fn handle_request(
                 tool_namespace_delete(),
                 tool_pin(),
                 tool_unpin(),
-            ]
-        })),
+            ];
+            // A read-only caller sees only the tools it can call (#1446);
+            // tools/call keeps its own gate below.
+            if access == Access::ReadOnly {
+                tools.retain(|t| {
+                    t["name"]
+                        .as_str()
+                        .is_some_and(|n| READ_ONLY_TOOLS.contains(&n))
+                });
+            }
+            Ok(serde_json::json!({ "tools": tools }))
+        }
 
         "tools/call" => {
             let params = params.ok_or("Missing params for tools/call")?;
@@ -302,6 +313,7 @@ fn handle_request(
                 "uteke_room_rename" => exec_room_rename(uteke, &arguments)?,
                 "uteke_room_update" => exec_room_update(uteke, &arguments)?,
                 "uteke_room_memory_move" => exec_room_memory_move(uteke, &arguments)?,
+                "uteke_room_link_memory" => exec_room_link_memory(uteke, &arguments)?,
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
                 "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
@@ -344,9 +356,12 @@ fn tool_remember() -> Value {
                 "content": { "type": "string", "description": "The text content to remember" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags for categorization (optional)" },
                 "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Namespace for isolation (default: 'default'); a non-default value makes the result carry a deprecation warning." },
-                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: fact)" },
+                "type": { "type": "string", "description": "Memory type: fact, procedure, preference, decision, context, note, insight, reference, event (default: inferred from the content, else fact)" },
                 "room": { "type": "string", "description": "Room ID for collaborative memory (optional)" },
-                "author": { "type": "string", "description": "Author attribution when storing in a room (default: anonymous)" }
+                "source": { "type": "string", "description": "Where the memory comes from: URL, file path or identifier (optional)" },
+                "source_type": { "type": "string", "description": "Source type: user, url, file, import, derived, system, unknown (default: user when a source is given)" },
+                "author_type": { "type": "string", "enum": ["human", "agent"], "description": "Who wrote it: human or agent (default: agent)" },
+                "author": { "type": "string", "description": "Who wrote this memory: the agent, user or tool name (1 to 128 characters). Recorded on the memory with or without a room; in a room it is also the room author (default there: anonymous)." }
             },
             "required": ["content"]
         }
@@ -361,13 +376,20 @@ fn tool_recall() -> Value {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "The search query" },
-                "limit": { "type": "integer", "description": "Max results (default 5)", "default": 5 },
+                "limit": { "type": "integer", "description": "Max results (default 10, at most 100; a larger value is capped at 100, a non-integer is an error)", "default": 10, "maximum": 100 },
                 "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace to search (default: 'default')" },
                 "tags": { "type": "array", "items": { "type": "string" }, "description": "Filter by tags (optional)" },
                 "min_score": { "type": "number", "description": "Minimum similarity score 0..1 (default: 0.0)" },
                 "type": { "type": "string", "enum": ["all", "memory", "doc"], "description": "Search type: 'all' (default, unified), 'memory', or 'doc'" },
                 "strategy": { "type": "string", "enum": ["fusion", "hybrid", "vector", "fts5", "graph"], "description": "Recall strategy: 'fusion' (default since 0.16.0, weighted RRF of vector×1.7 + hybrid×1, #1123), 'hybrid' (vector+FTS5 via RRF), 'vector' (similarity only), 'fts5' (keyword only), or 'graph' (hybrid + graph-signal reranking)", "default": "fusion" },
-                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only — omitted type is treated as memory; explicit type=all/doc is rejected." },
+                "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only: do not pass type with explain." },
+                "entity": { "type": "string", "description": "Only memories whose metadata entity equals this value" },
+                "category": { "type": "string", "description": "Only memories whose metadata category equals this value" },
+                "strict": { "type": "boolean", "description": "Use the strict similarity floor ([recall] min_score_strict, default 0.5) when min_score is not given" },
+                "enrich": { "type": "boolean", "description": "Attach linked documents and memories to each result" },
+                "at": { "type": "string", "description": "Point in time (RFC3339): recall the memories that existed then. Not combinable with explain or pack." },
+                "after": { "type": "string", "description": "Only memories created at or after this time (RFC3339). Not combinable with explain or pack." },
+                "before": { "type": "string", "description": "Only memories created at or before this time (RFC3339). Not combinable with explain or pack." },
                 "pack": { "type": "boolean", "description": "Return a budgeted context pack (#1281): {selected, skipped, budget_used, budget_chars} instead of a bare list. Deterministic, LLM-free, rank-order preserving. Pair with budget_chars and exclude_ids.", "default": false },
                 "budget_chars": { "type": "integer", "description": "Character budget for pack mode (default 4000).", "default": 4000 },
                 "exclude_ids": { "type": "array", "items": { "type": "string" }, "description": "Memory IDs already injected this turn; excluded from the pack and reported as skipped[reason=excluded]." },
@@ -386,9 +408,11 @@ fn tool_list() -> Value {
             "type": "object",
             "properties": {
                 "tag": { "type": "string", "description": "Filter by tag (optional)" },
-                "limit": { "type": "integer", "description": "Max results (default 20)", "default": 20 },
+                "limit": { "type": "integer", "description": "Max results (default 10, at most 1000; a larger value is capped at 1000, a non-integer is an error)", "default": 10, "maximum": 1000 },
                 "offset": { "type": "integer", "description": "Pagination offset (default 0)", "default": 0 },
                 "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): Namespace (optional)" },
+                "at": { "type": "string", "description": "Point in time (RFC3339): list the memories that existed then" },
+                "include_meta": { "type": "boolean", "description": "Append the total, has_more and next_offset of the page (not with at)", "default": false },
                 "full_ids": { "type": "boolean", "description": "Print full UUIDs instead of the 8-char prefix. Use when prefixes are ambiguous (ids are UUIDv7: memories written within ~65s share a prefix, #1357).", "default": false }
             }
         }
@@ -882,7 +906,7 @@ fn tool_room_list() -> Value {
 fn tool_room_delete() -> Value {
     serde_json::json!({
         "name": "uteke_room_delete",
-        "description": "Delete a room. Removes room links from memories but preserves the memories themselves.",
+        "description": "Unregister a room: its links are removed and the memories are retained (they are not deleted). To delete a memory, use uteke_forget with its id.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -936,6 +960,22 @@ fn tool_room_memory_move() -> Value {
                 "to_room": { "type": "string", "description": "Target room (must exist)" }
             },
             "required": ["memory_id", "from_room", "to_room"]
+        }
+    })
+}
+
+fn tool_room_link_memory() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_link_memory",
+        "description": "Add an EXISTING memory to a room without copying it (#1589). Idempotent: linking twice is not an error and keeps the first link.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "memory_id": { "type": "string", "description": "Full UUID or unambiguous prefix" },
+                "room_id": { "type": "string", "description": "Room to add the memory to (must exist)" },
+                "author": { "type": "string", "description": "Who adds it (default: anonymous)" }
+            },
+            "required": ["memory_id", "room_id"]
         }
     })
 }
@@ -1179,31 +1219,42 @@ fn tool_graph_remove_edge() -> Value {
 // ── Tool Executors ──────────────────────────────────────────────────────────
 
 /// Decode the arguments of `uteke_remember` into the typed request shared
-/// with the HTTP server and the CLI (#1343), under the MCP policy: content and
-/// tags validated by the core write, `type` defaulting to `fact` with no
-/// auto-inference, no metadata. Tags that are not strings are dropped. The
-/// tool exposes no entity/category/metadata/source/author_type fields, so
+/// with the HTTP server and the CLI (#1343), under the same rules as
+/// `POST /remember` (#1439): content and tags validated at decode, an omitted
+/// `type` inferred from the content, an unknown `type` refused, a `type` copied
+/// into the metadata, a wrong-shaped `tags` an error and an unknown argument
+/// refused. `room` is the one MCP-only argument (it routes the write to a room).
+/// The tool exposes no entity/category/metadata/source/author_type fields, so
 /// those stay unset.
 pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest, String> {
+    reject_unknown_args(&tool_remember(), args, &[])?;
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
+    let tags = match &args["tags"] {
+        Value::Null => Vec::new(),
+        Value::Array(a) => a
+            .iter()
+            .map(|v| v.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .ok_or("Invalid 'tags': expected an array of strings")?,
+        _ => return Err("Invalid 'tags': expected an array of strings".into()),
+    };
     let input = uteke_core::RememberInput {
         content: content.to_string(),
-        tags: args["tags"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        tags,
         namespace: args["namespace"].as_str().map(str::to_string),
-        memory_type: args["type"].as_str().map(str::to_string),
+        memory_type: match &args["type"] {
+            Value::Null => None,
+            Value::String(t) => Some(t.clone()),
+            _ => return Err("Invalid 'type': expected a string".into()),
+        },
         room: args["room"].as_str().map(str::to_string),
         author: args["author"].as_str().map(str::to_string),
+        source: args["source"].as_str().map(str::to_string),
+        source_type: args["source_type"].as_str().map(str::to_string),
+        author_type: args["author_type"].as_str().map(str::to_string),
         ..uteke_core::RememberInput::default()
     };
-    uteke_core::RememberRequest::decode(input, uteke_core::RememberPolicy::MCP)
-        .map_err(|e| e.to_string())
+    uteke_core::RememberRequest::decode(input).map_err(|e| e.to_string())
 }
 
 /// Deprecation signal for a namespaced write (#1427, phase 1): a trailing
@@ -1215,39 +1266,36 @@ fn namespace_deprecation_suffix(namespace: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
+/// The error text of a failed write. Strict privacy mode (#1464) is
+/// recognisable: it starts with `secret_detected`, the same code the HTTP API
+/// uses.
+fn write_error(e: uteke_core::Error) -> String {
+    match e {
+        uteke_core::Error::SecretDetected { .. } => format!("secret_detected: {e}"),
+        other => format!("Failed: {other}"),
+    }
+}
+
 fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let req = decode_remember_args(args)?;
-    let content = req.content.as_str();
-    let tags = req.tag_refs();
     let namespace = req.namespace.as_deref();
-    // The MCP policy always supplies a type (default `fact`).
-    let memory_type = req.memory_type.as_deref().unwrap_or("fact");
-    let room = req.room.as_deref();
-    let author = req.author.as_deref().unwrap_or("anonymous");
-
-    let outcome = if let Some(room_id) = room {
-        uteke
-            .remember_in_room(
-                content,
-                &tags,
-                None,
-                namespace,
-                memory_type,
-                room_id,
-                author,
-            )
-            .map_err(|e| format!("Failed: {e}"))?
-    } else {
-        uteke
-            .remember_typed_detailed(content, &tags, None, namespace, memory_type)
-            .map_err(|e| format!("Failed: {e}"))?
-    };
+    // The write and its provenance follow-ups run in the core (#1516).
+    let run = uteke.run_remember(&req).map_err(write_error)?;
+    let outcome = run.outcome;
 
     let mut text = format!("✓ Stored memory with ID: {}", outcome.id);
     if let Some(ref warn) = outcome.warning {
         text.push_str(&format!(
             "\n⚠ Embedding NOT written: {warn}\nMemory is keyword-searchable only; run `uteke repair` to backfill."
         ));
+    }
+    if let Some(summary) = outcome.redaction_summary() {
+        text.push_str(&format!(
+            "\n⚠ Secrets masked in the stored text (#1464): {summary}"
+        ));
+    }
+    for w in &run.provenance_warnings {
+        text.push_str(&format!("\n⚠ Stored, but could not record {w}"));
     }
     text.push_str(&namespace_deprecation_suffix(namespace));
 
@@ -1266,9 +1314,17 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 /// entity/category/enrich/at/after/before/strict, so those stay unset.
 pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
+    // An invalid `limit` is an error, as on `POST /recall`, not a silent default (#1439).
+    let limit = match &args["limit"] {
+        Value::Null => None,
+        v => Some(
+            v.as_u64()
+                .ok_or("Invalid 'limit': expected a non-negative integer")? as usize,
+        ),
+    };
     let input = uteke_core::RecallInput {
         query: query.to_string(),
-        limit: args["limit"].as_u64().map(|l| l as usize),
+        limit,
         tags: args["tags"].as_array().map(|a| {
             a.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
@@ -1277,6 +1333,13 @@ pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, Str
         namespace: args["namespace"].as_str().map(str::to_string),
         min_score: args["min_score"].as_f64().map(|m| m as f32),
         search_type: args["type"].as_str().map(str::to_string),
+        entity: args["entity"].as_str().map(str::to_string),
+        category: args["category"].as_str().map(str::to_string),
+        strict: args["strict"].as_bool().unwrap_or(false),
+        enrich: args["enrich"].as_bool().unwrap_or(false),
+        at: args["at"].as_str().map(str::to_string),
+        after: args["after"].as_str().map(str::to_string),
+        before: args["before"].as_str().map(str::to_string),
         pack: args["pack"].as_bool().unwrap_or(false),
         budget_chars: args["budget_chars"].as_u64().map(|b| b as usize),
         exclude_ids: args["exclude_ids"]
@@ -1289,184 +1352,158 @@ pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, Str
             .unwrap_or_default(),
         strategy: args["strategy"].as_str().map(str::to_string),
         explain: args["explain"].as_bool().unwrap_or(false),
-        ..uteke_core::RecallInput::default()
     };
-    uteke_core::RecallRequest::decode(input, uteke_core::RecallPolicy::MCP)
-        .map_err(|e| e.to_string())
+    uteke_core::RecallRequest::decode(input).map_err(|e| e.to_string())
 }
 
 fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    let req = decode_recall_args(args)?;
-    let query = req.query.as_str();
-    let limit = req.limit;
-    let namespace = req.namespace.as_deref();
+    reject_unknown_args(&tool_recall(), args, &["full_ids"])?;
+    let mut req = decode_recall_args(args)?;
+    // The documented MCP default is memories and documents; the shared
+    // execution treats an absent type as memory-only, so name it here. Explain
+    // is memory-only and keeps its type absent.
+    if !req.explain {
+        req = req.with_default_search_type("all");
+    }
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
-    let tag_vec = req.tag_filter();
-    let tags_ref = tag_vec.as_deref();
-    let min_score = req.resolve_min_score(None, None);
+    // The similarity floor and the strategy fall back to `[recall]` of
+    // uteke.toml (defaults equal the built-ins), as `POST /recall` does.
+    let recall = uteke.recall_settings();
+    let defaults = uteke_core::recall_exec::RecallDefaults {
+        min_score: Some(recall.min_score),
+        min_score_strict: Some(recall.min_score_strict),
+        default_strategy: Some(recall.default_strategy.as_str()),
+    };
+    // The same decision tree as `POST /recall` (#1439): a guard failure or an
+    // unknown strategy/type is the bare message; anything else is `Failed: ...`.
+    let output = uteke.run_recall(&req, defaults).map_err(|e| match e {
+        // The wire name of `search_type` is `type` on this tool.
+        uteke_core::Error::Validation(msg) => msg.replace("omit search_type", "omit type"),
+        other => format!("Failed: {other}"),
+    })?;
 
-    // Parse optional search type (#531)
-    let search_type = req.search_type().map_err(|e| e.to_string())?;
-
-    // Parse optional recall strategy (#1035): default fusion since 0.16.0
-    // (#1123), matching the CLI and HTTP defaults. Unknown values are a loud
-    // error (JSON-RPC -32603), never a silent fallback.
-    let strategy = req.strategy(None).map_err(|e| e.to_string())?;
-
-    // Explain mode (#1160): memory-only, bypasses unified results and
-    // returns full ranking signals per result. An omitted `type` (the
-    // documented default invocation) is accepted and treated as memory
-    // recall — only explicit all/doc are rejected (code-scanning fix:
-    // None maps to SearchType::All above, so the previous enum comparison
-    // wrongly rejected the default call).
-    if args["explain"].as_bool().unwrap_or(false) {
-        if !matches!(args["type"].as_str(), None | Some("memory")) {
-            return Err(
-                "explain is memory-only: pass \"type\": \"memory\" (or drop type)".to_string(),
-            );
-        }
-        let explained = uteke
-            .recall_explained(query, limit, tags_ref, namespace, strategy, min_score)
-            .map_err(|e| format!("Failed: {e}"))?;
-        if explained.is_empty() {
-            return Ok(ToolResult {
-                content: vec![McpContent::Text {
-                    r#type: "text".to_string(),
-                    text: "No results found.".to_string(),
-                }],
-                is_error: false,
-            });
-        }
-        let text = serde_json::to_string_pretty(&explained).unwrap_or_else(|_| "[]".to_string());
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text,
-            }],
-            is_error: false,
-        });
-    }
-
-    // Use unified search when type is specified or default (all).
-    // Fall back to legacy recall only for backward compat with existing MCP consumers.
-    // Budgeted context pack (#1281 Phase 1): `pack: true` returns a
-    // ContextPack envelope (selected/skipped/budget_used/budget_chars)
-    // instead of a bare ranked list. Deterministic, LLM-free, rank-order
-    // preserving; `exclude_ids` are memory IDs already injected this turn.
-    if req.pack {
-        let budget = req.budget_chars_or_default();
-        let exclude_ids = &req.exclude_ids;
-        let pack = uteke
-            .recall_unified_packed(
-                query,
-                limit,
-                tags_ref,
-                namespace,
-                min_score,
-                search_type,
-                None,
-                None,
-                false,
-                strategy,
-                budget,
-                exclude_ids,
-            )
-            .map_err(|e| format!("Failed: {e}"))?;
-        if pack.selected.is_empty() {
-            return Ok(ToolResult {
-                content: vec![McpContent::Text {
-                    r#type: "text".to_string(),
-                    text: "No results fit the budget.".to_string(),
-                }],
-                is_error: false,
-            });
-        }
-        let text = serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string());
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text,
-            }],
-            is_error: false,
-        });
-    }
-
-    let results = uteke
-        .recall_unified(
-            query,
-            limit,
-            tags_ref,
-            namespace,
-            min_score,
-            search_type,
-            None,
-            None,
-            false,
-            strategy,
-        )
-        .map_err(|e| format!("Failed: {e}"))?;
-
-    if results.is_empty() {
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text: "No results found.".to_string(),
-            }],
-            is_error: false,
-        });
-    }
-
-    let mut lines = Vec::new();
-    for (i, r) in results.iter().enumerate() {
-        let type_label = match r.result_type {
-            uteke_core::SearchResultType::Memory => "[mem]",
-            uteke_core::SearchResultType::Document => "[doc]",
-        };
-        let detail = match &r.result_type {
-            uteke_core::SearchResultType::Memory => r
-                .memory_id
-                .as_ref()
-                .map(|id| format!(" (id: {})", display_id(id, full_ids)))
-                .unwrap_or_default(),
-            uteke_core::SearchResultType::Document => r
-                .doc_slug
-                .as_ref()
-                .map(|slug| format!(" (slug: {})", slug))
-                .unwrap_or_default(),
-        };
-        lines.push(format!(
-            "{}{}. [{:.2}] {}",
-            i + 1,
-            type_label,
-            r.score,
-            r.content
-        ));
-        if !detail.is_empty() {
-            lines.push(format!("       {}", detail));
-        }
-        // #1053: flag memories superseded by a newer decision so agents
-        // don't act on stale info. Deprecated memories are already excluded
-        // from recall by default; this covers legacy/hard-restored rows.
-        if let uteke_core::SearchResultType::Memory = r.result_type {
-            if let Some(mid) = &r.memory_id {
-                if let Ok(Some(newer)) = uteke.supersession_of(mid) {
-                    let short: String = newer.chars().take(8).collect();
-                    lines.push(format!(
-                        "       ⚠ superseded by {short} — verify before acting"
-                    ));
-                }
-            }
-        }
-    }
-
-    Ok(ToolResult {
+    let text_result = |text: String| ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: lines.join("\n"),
+            text,
         }],
         is_error: false,
-    })
+    };
+    use uteke_core::recall_exec::RecallOutput;
+    match output {
+        RecallOutput::Explained(explained) => {
+            if explained.is_empty() {
+                return Ok(text_result("No results found.".to_string()));
+            }
+            Ok(text_result(
+                serde_json::to_string_pretty(&explained).unwrap_or_else(|_| "[]".to_string()),
+            ))
+        }
+        RecallOutput::Packed(pack) => {
+            if pack.selected.is_empty() {
+                return Ok(text_result("No results fit the budget.".to_string()));
+            }
+            Ok(text_result(
+                serde_json::to_string_pretty(&pack).unwrap_or_else(|_| "{}".to_string()),
+            ))
+        }
+        RecallOutput::Unified(results) => {
+            if results.is_empty() {
+                return Ok(text_result("No results found.".to_string()));
+            }
+            let mut lines = Vec::new();
+            for (i, r) in results.iter().enumerate() {
+                let type_label = match r.result_type {
+                    uteke_core::SearchResultType::Memory => "[mem]",
+                    uteke_core::SearchResultType::Document => "[doc]",
+                };
+                let detail = match &r.result_type {
+                    uteke_core::SearchResultType::Memory => r
+                        .memory_id
+                        .as_ref()
+                        .map(|id| format!(" (id: {})", display_id(id, full_ids)))
+                        .unwrap_or_default(),
+                    uteke_core::SearchResultType::Document => r
+                        .doc_slug
+                        .as_ref()
+                        .map(|slug| format!(" (slug: {})", slug))
+                        .unwrap_or_default(),
+                };
+                lines.push(format!(
+                    "{}{}. [{:.2}] {}",
+                    i + 1,
+                    type_label,
+                    r.score,
+                    r.content
+                ));
+                if !detail.is_empty() {
+                    lines.push(format!("       {}", detail));
+                }
+                // #1053: flag memories superseded by a newer decision so agents
+                // don't act on stale info.
+                if let uteke_core::SearchResultType::Memory = r.result_type {
+                    if let Some(mid) = &r.memory_id {
+                        if let Ok(Some(newer)) = uteke.supersession_of(mid) {
+                            let short: String = newer.chars().take(8).collect();
+                            lines.push(format!(
+                                "       ⚠ superseded by {short} — verify before acting"
+                            ));
+                        }
+                    }
+                }
+            }
+            Ok(text_result(lines.join("\n")))
+        }
+        // Memory-only results (a point in time was given): the same shape as
+        // the unified lines, all memories.
+        RecallOutput::Memories { results, .. } => {
+            if results.is_empty() {
+                return Ok(text_result("No results found.".to_string()));
+            }
+            let mut lines = Vec::new();
+            for (i, r) in results.iter().enumerate() {
+                lines.push(format!(
+                    "{}[mem]. [{:.2}] {}",
+                    i + 1,
+                    r.score,
+                    r.memory.content
+                ));
+                lines.push(format!(
+                    "       (id: {})",
+                    display_id(&r.memory.id, full_ids)
+                ));
+            }
+            Ok(text_result(lines.join("\n")))
+        }
+    }
+}
+
+/// Refuse an argument the tool does not declare (#1439), with the list of the
+/// ones it does. The list comes from the tool's own `inputSchema`, so the two
+/// cannot drift; `extra` are accepted names the schema does not list.
+fn reject_unknown_args(tool: &Value, args: &Value, extra: &[&str]) -> Result<(), String> {
+    let (Some(given), Some(declared)) = (
+        args.as_object(),
+        tool["inputSchema"]["properties"].as_object(),
+    ) else {
+        return Ok(());
+    };
+    for key in given.keys() {
+        if !declared.contains_key(key) && !extra.contains(&key.as_str()) {
+            let mut supported: Vec<&str> = declared
+                .keys()
+                .map(String::as_str)
+                .chain(extra.iter().copied())
+                .collect();
+            supported.sort_unstable();
+            return Err(format!(
+                "Unknown argument '{key}'. Supported: {}",
+                supported.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Decode the arguments of `uteke_list` into the typed request shared with
@@ -1474,28 +1511,66 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 /// 20, no cap. Fields of the wrong type fall back to their defaults. The tool
 /// exposes no `at`/`include_meta`, so those stay unset.
 pub fn decode_list_args(args: &Value) -> Result<uteke_core::ListRequest, String> {
-    let input = uteke_core::ListInput {
-        tag: args["tag"].as_str().map(str::to_string),
-        limit: args["limit"].as_u64().map(|l| l as usize),
-        offset: args["offset"].as_u64().map(|o| o as usize),
-        namespace: args["namespace"].as_str().map(str::to_string),
-        ..uteke_core::ListInput::default()
+    // A field of the wrong type is an error, as on `POST /list`, not a silent
+    // default (#1439).
+    let uint = |key: &str| -> Result<Option<usize>, String> {
+        match &args[key] {
+            Value::Null => Ok(None),
+            v => v
+                .as_u64()
+                .map(|n| Some(n as usize))
+                .ok_or_else(|| format!("Invalid '{key}': expected a non-negative integer")),
+        }
     };
-    uteke_core::ListRequest::decode(input, uteke_core::ListPolicy::MCP).map_err(|e| e.to_string())
+    let text = |key: &str| -> Result<Option<String>, String> {
+        match &args[key] {
+            Value::Null => Ok(None),
+            Value::String(s) => Ok(Some(s.clone())),
+            _ => Err(format!("Invalid '{key}': expected a string")),
+        }
+    };
+    let include_meta = match &args["include_meta"] {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        _ => return Err("Invalid 'include_meta': expected a boolean".to_string()),
+    };
+    let input = uteke_core::ListInput {
+        tag: text("tag")?,
+        limit: uint("limit")?,
+        offset: uint("offset")?,
+        namespace: text("namespace")?,
+        at: text("at")?,
+        include_meta,
+    };
+    uteke_core::ListRequest::decode(input).map_err(|e| e.to_string())
 }
 
 fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    reject_unknown_args(&tool_list(), args, &["full_ids"])?;
     let req = decode_list_args(args)?;
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
 
-    let memories = uteke
-        .list(
-            req.tag.as_deref(),
-            req.limit,
-            req.offset,
-            req.namespace.as_deref(),
-        )
-        .map_err(|e| format!("Failed: {e}"))?;
+    // The same page / point-in-time / envelope choice as `POST /list` (#1439).
+    use uteke_core::list_exec::ListOutput;
+    let (memories, footer) = match uteke.run_list(&req).map_err(|e| format!("Failed: {e}"))? {
+        ListOutput::Memories(m) => (m, None),
+        ListOutput::Page {
+            memories,
+            total,
+            meta,
+        } => {
+            let next = meta
+                .next_offset
+                .map_or("none".to_string(), |n| n.to_string());
+            (
+                memories,
+                Some(format!(
+                    "-- total {total}, has_more {}, next_offset {next}",
+                    meta.has_more
+                )),
+            )
+        }
+    };
 
     if memories.is_empty() {
         return Ok(ToolResult {
@@ -1507,13 +1582,14 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         });
     }
 
-    let lines: Vec<String> = memories
+    let mut lines: Vec<String> = memories
         .iter()
         .map(|m| {
             let id = display_id(&m.id, full_ids);
             format!("[{id}] {} ({})", m.content, m.tags.join(", "))
         })
         .collect();
+    lines.extend(footer);
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -1539,8 +1615,7 @@ fn display_id(id: &str, full: bool) -> &str {
 fn resolve_id<'a>(uteke: &'a Uteke, id: &'a str) -> Result<String, String> {
     // The shared resolver under the MCP policy (#1343): hex-and-dash ids
     // only (#1328), full UUIDs normalised, no existence check.
-    uteke_core::resolve_memory_id(uteke, id, uteke_core::ForgetPolicy::MCP)
-        .map_err(|e| e.message().to_string())
+    uteke_core::resolve_memory_id(uteke, id).map_err(|e| e.message().to_string())
 }
 
 /// #1053: mark old_id superseded by new_id — wires the edge pair
@@ -1628,8 +1703,8 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tags_ref = tags.as_deref();
     let metadata = args.get("metadata").filter(|m| !m.is_null());
 
-    let updated = uteke
-        .update_memory(
+    let outcome = uteke
+        .update_memory_detailed(
             &id,
             content,
             tags_ref,
@@ -1638,9 +1713,9 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             pinned,
             memory_type,
         )
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(write_error)?;
 
-    if !updated {
+    if !outcome.updated {
         return Ok(ToolResult {
             content: vec![McpContent::Text {
                 r#type: "text".to_string(),
@@ -1670,7 +1745,11 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: format!(
-                "✓ Updated memory {id}{}",
+                "✓ Updated memory {id}{}{}",
+                outcome
+                    .redaction_summary()
+                    .map(|s| format!("\n⚠ Secrets masked in the stored text (#1464): {s}"))
+                    .unwrap_or_default(),
                 namespace_deprecation_suffix(args["namespace"].as_str())
             ),
         }],
@@ -1679,19 +1758,18 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 }
 
 fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
-    // Typed request shared with HTTP and the CLI (#1343). The tool offers no
-    // tag or namespace, and (unlike HTTP) is not behind the read-only gate.
-    let policy = uteke_core::ForgetPolicy::MCP;
-    let request = uteke_core::ForgetRequest::decode(
-        uteke_core::ForgetInput {
-            id: args["id"].as_str().map(String::from),
-            ..Default::default()
-        },
-        policy,
-    )
+    // The tool takes an id only: a `tag` or `namespace` is refused rather than
+    // ignored, so an extra key can never widen the target. The id is resolved
+    // by the typed request shared with HTTP and the CLI (#1343, #1439).
+    reject_unknown_args(&tool_forget(), args, &[])?;
+    let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
+    let request = uteke_core::ForgetRequest::decode(uteke_core::ForgetInput {
+        id: Some(id_arg.to_string()),
+        ..Default::default()
+    })
     .map_err(|e| e.message().to_string())?;
     let id = request
-        .resolve(uteke, policy)
+        .resolve(uteke)
         .map_err(|e| e.message().to_string())?
         .ok_or("Missing 'id'")?;
 
@@ -2109,8 +2187,7 @@ fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
         Err(e) => return Err(format!("Failed: {e}")),
     }
 
-    let conn = uteke.graph_store();
-    let gs = uteke_core::graph::GraphStore::new(conn);
+    let gs = uteke.graph();
     gs.add_edge_for_memories(&source, &target, edge_type, weight)
         .map_err(|e| format!("Failed: {e}"))?;
 
@@ -2129,8 +2206,7 @@ fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
     let target_arg = args["target"].as_str().ok_or("Missing 'target'")?;
     let target = resolve_id(uteke, target_arg)?;
 
-    let conn = uteke.graph_store();
-    let gs = uteke_core::graph::GraphStore::new(conn);
+    let gs = uteke.graph();
     let removed = gs
         .remove_edge_between(&source, &target)
         .map_err(|e| format!("Failed: {e}"))?;
@@ -2551,7 +2627,7 @@ fn exec_room_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .map_err(|e| format!("Failed to delete room: {e}"))?;
 
     let text = format!(
-        "Room '{room_id}' deleted. {unlinked} memory link(s) removed; the memories themselves are preserved in their namespaces (no longer linked to any room)."
+        "Room '{room_id}' unregistered. {unlinked} memory link(s) removed; the memories are retained, no longer linked to any room. To delete a memory, use uteke_forget with its id."
     );
 
     Ok(ToolResult {
@@ -2621,6 +2697,29 @@ fn exec_room_memory_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: format!("✓ Memory '{memory_id}' moved from '{from_room}' to '{to_room}'"),
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_room_link_memory(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    reject_unknown_args(&tool_room_link_memory(), args, &[])?;
+    let memory_arg = args["memory_id"].as_str().ok_or("Missing 'memory_id'")?;
+    let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
+    let author = args["author"].as_str().unwrap_or("anonymous");
+    let memory_id = resolve_id(uteke, memory_arg)?;
+    let linked = uteke
+        .add_memory_to_room(&memory_id, room_id, author)
+        .map_err(|e| format!("Failed to link memory: {e}"))?;
+    let text = if linked {
+        format!("✓ Memory '{memory_id}' added to room '{room_id}'")
+    } else {
+        format!("✓ Memory '{memory_id}' was already in room '{room_id}'")
+    };
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
         }],
         is_error: false,
     })
@@ -3126,8 +3225,9 @@ mod id_resolution_tests {
             source_type: "user".to_string(),
 
             author_type: "agent".to_string(),
+            author: None,
         };
-        uteke.store().insert(&m).unwrap();
+        uteke.store_for_tests().insert(&m).unwrap();
         id
     }
 
@@ -3183,7 +3283,7 @@ mod id_resolution_tests {
         assert!(
             resolve_id(&uteke, &almost)
                 .unwrap_err()
-                .contains("No memory matches")
+                .contains("Memory not found")
         );
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
@@ -3272,12 +3372,23 @@ mod id_resolution_tests {
         );
         assert_eq!(
             err(serde_json::json!({"id": "ffffffff"})),
-            "No memory matches id prefix 'ffffffff'"
+            "Memory not found: ffffffff"
         );
-        // The tool has no tag or namespace: extra keys never widen the target.
+        // A full UUID that is not stored is refused too (#762), not a silent no-op.
+        let absent = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            err(serde_json::json!({"id": absent})),
+            format!("Memory not found: {absent}")
+        );
+        // The tool has no tag or namespace: extra keys are refused and never
+        // widen the target.
         assert_eq!(
             err(serde_json::json!({"tag": "probe", "namespace": "mcp-id-ns"})),
-            "Missing 'id'"
+            "Unknown argument 'namespace'. Supported: id"
+        );
+        assert_eq!(
+            err(serde_json::json!({"id": "ffffffff", "tag": "probe"})),
+            "Unknown argument 'tag'. Supported: id"
         );
         assert!(uteke.get_by_id(&id).unwrap().is_some());
         drop(uteke);
@@ -3367,8 +3478,9 @@ mod supersession_mcp_tests {
                 source_type: "user".to_string(),
 
                 author_type: "agent".to_string(),
+                author: None,
             };
-            uteke.store().insert(&m).unwrap();
+            uteke.store_for_tests().insert(&m).unwrap();
             id
         };
         let old = mk("old auth decision");
@@ -3447,8 +3559,9 @@ mod contradiction_mcp_tests {
                 source: None,
                 source_type: "user".to_string(),
                 author_type: "agent".to_string(),
+                author: None,
             };
-            uteke.store().insert(&m).unwrap();
+            uteke.store_for_tests().insert(&m).unwrap();
             id
         };
         let old = mk("old decision");
@@ -3530,6 +3643,7 @@ mod room_recall_tests {
                 source: None,
                 source_type: "user".to_string(),
                 author_type: "agent".to_string(),
+                author: None,
             },
             score,
         }
@@ -3686,18 +3800,39 @@ mod remember_decode_tests {
     use serde_json::json;
 
     #[test]
-    fn defaults_type_to_fact_and_author_stays_raw() {
+    fn an_omitted_type_is_left_to_inference_and_author_stays_raw() {
         let r = decode_remember_args(&json!({"content": "x"})).unwrap();
-        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+        assert_eq!(r.memory_type, None);
         assert_eq!(r.metadata, None);
         assert_eq!(r.author, None);
         assert_eq!(r.room, None);
     }
 
     #[test]
-    fn non_string_type_falls_back_to_fact_and_blank_content_is_accepted() {
-        let r = decode_remember_args(&json!({"content": "  ", "type": 5})).unwrap();
-        assert_eq!(r.memory_type.as_deref(), Some("fact"));
+    fn blank_content_a_non_string_type_and_odd_tags_are_errors() {
+        assert_eq!(
+            decode_remember_args(&json!({"content": "  "})).unwrap_err(),
+            "Validation error: Content must not be empty"
+        );
+        assert_eq!(
+            decode_remember_args(&json!({"content": "x", "type": 5})).unwrap_err(),
+            "Invalid 'type': expected a string"
+        );
+        assert_eq!(
+            decode_remember_args(&json!({"content": "x", "tags": ["a", 1]})).unwrap_err(),
+            "Invalid 'tags': expected an array of strings"
+        );
+        assert!(
+            decode_remember_args(&json!({"content": "x", "bogus": true}))
+                .unwrap_err()
+                .starts_with("Unknown argument 'bogus'. Supported: author, ")
+        );
+    }
+
+    #[test]
+    fn an_unknown_type_is_refused_before_any_write() {
+        let e = decode_remember_args(&json!({"content": "x", "type": "bogus"})).unwrap_err();
+        assert!(e.starts_with("Unknown memory type 'bogus'"), "{e}");
     }
 
     #[test]
@@ -3755,6 +3890,176 @@ mod namespace_deprecation_tests {
     }
 
     #[test]
+    fn recall_has_the_same_rules_as_http_for_limit_blank_query_and_empty_tags() {
+        // Blank query: rejected (#1439).
+        for q in ["", "   \t"] {
+            let e = decode_recall_args(&serde_json::json!({"query": q})).unwrap_err();
+            assert_eq!(e, "Query must not be empty or whitespace-only");
+        }
+        // Limit: capped at 100, an invalid value is an error, not a default.
+        let r = decode_recall_args(&serde_json::json!({"query": "q", "limit": 5000})).unwrap();
+        assert_eq!(r.limit, 100);
+        for bad in [
+            serde_json::json!("ten"),
+            serde_json::json!(-1),
+            serde_json::json!(2.5),
+        ] {
+            let e =
+                decode_recall_args(&serde_json::json!({"query": "q", "limit": bad})).unwrap_err();
+            assert!(e.starts_with("Invalid 'limit'"), "{e}");
+        }
+        assert_eq!(
+            decode_recall_args(&serde_json::json!({"query": "q"}))
+                .unwrap()
+                .limit,
+            10
+        );
+        // `tags: []` is no filter.
+        let r = decode_recall_args(&serde_json::json!({"query": "q", "tags": []})).unwrap();
+        assert_eq!(r.tag_filter(), None);
+    }
+
+    #[test]
+    fn recall_refuses_an_argument_the_tool_does_not_declare() {
+        let u = store();
+        let e = exec_recall(&u, &serde_json::json!({"query": "q", "limt": 5}))
+            .err()
+            .expect("must fail");
+        assert!(e.starts_with("Unknown argument 'limt'. Supported: "), "{e}");
+        for name in [
+            "limit", "entity", "category", "at", "after", "before", "strict", "enrich", "full_ids",
+        ] {
+            assert!(e.contains(name), "{name} missing from {e}");
+        }
+        // The declared names, including the new ones, are accepted.
+        let ok = decode_recall_args(&serde_json::json!({
+            "query": "q", "entity": "e", "category": "c", "strict": true, "enrich": true,
+            "at": "2026-01-01T00:00:00Z", "after": "2025-01-01T00:00:00Z", "before": "2027-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        assert_eq!(ok.entity.as_deref(), Some("e"));
+        assert!(
+            ok.strict && ok.enrich && ok.at.is_some() && ok.after.is_some() && ok.before.is_some()
+        );
+    }
+
+    #[test]
+    fn recall_honours_entity_and_time_filters_over_mcp() {
+        let u = store();
+        u.remember(
+            "rust gives memory safety",
+            &[],
+            Some(serde_json::json!({"entity": "rust"})),
+            None,
+        )
+        .unwrap();
+        let find = |extra: serde_json::Value| {
+            let mut a =
+                serde_json::json!({"query": "memory safety", "type": "memory", "strategy": "fts5"});
+            for (k, v) in extra.as_object().unwrap() {
+                a[k] = v.clone();
+            }
+            text(exec_recall(&u, &a).unwrap())
+        };
+        assert!(find(serde_json::json!({})).contains("rust gives memory safety"));
+        assert!(find(serde_json::json!({"entity": "rust"})).contains("rust gives memory safety"));
+        assert_eq!(
+            find(serde_json::json!({"entity": "go"})),
+            "No results found."
+        );
+        assert_eq!(
+            find(serde_json::json!({"after": "2999-01-01T00:00:00Z"})),
+            "No results found."
+        );
+        // Combinations the HTTP rules refuse.
+        let e = exec_recall(
+            &u,
+            &serde_json::json!({"query": "q", "pack": true, "at": "2026-01-01T00:00:00Z"}),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            e.starts_with("pack is not supported with at/after/before"),
+            "{e}"
+        );
+        let e = exec_recall(
+            &u,
+            &serde_json::json!({"query": "q", "explain": true, "entity": "x"}),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(e, "explain cannot be combined with entity/category/enrich");
+    }
+
+    #[test]
+    fn list_over_mcp_has_the_http_options_and_refuses_unknown_arguments() {
+        let u = store();
+        for i in 0..5 {
+            u.remember(&format!("note number {i}"), &["t"], None, None)
+                .unwrap();
+        }
+        // include_meta appends the pagination footer.
+        let t =
+            text(exec_list(&u, &serde_json::json!({"limit": 2, "include_meta": true})).unwrap());
+        assert!(
+            t.ends_with("-- total 5, has_more true, next_offset 2"),
+            "{t}"
+        );
+        let t = text(
+            exec_list(
+                &u,
+                &serde_json::json!({"limit": 2, "offset": 4, "include_meta": true}),
+            )
+            .unwrap(),
+        );
+        assert!(
+            t.ends_with("-- total 5, has_more false, next_offset none"),
+            "{t}"
+        );
+        // A point in time before everything lists nothing.
+        let t = text(exec_list(&u, &serde_json::json!({"at": "2000-01-01T00:00:00Z"})).unwrap());
+        assert_eq!(t, "No memories found.");
+        let e = exec_list(&u, &serde_json::json!({"at": "yesterday"}))
+            .err()
+            .unwrap();
+        assert!(e.starts_with("Invalid 'at' timestamp: yesterday"), "{e}");
+        // Wrong types and unknown arguments are errors.
+        assert!(exec_list(&u, &serde_json::json!({"limit": "x"})).is_err());
+        let e = exec_list(&u, &serde_json::json!({"limt": 3}))
+            .err()
+            .unwrap();
+        assert!(e.starts_with("Unknown argument 'limt'. Supported: "), "{e}");
+    }
+
+    #[test]
+    fn explain_with_any_type_is_refused_like_http() {
+        let u = store();
+        let err = exec_recall(
+            &u,
+            &serde_json::json!({"query": "q", "explain": true, "type": "memory"}),
+        )
+        .err()
+        .expect("must fail");
+        assert_eq!(err, "explain is memory-only: omit type");
+        // Without `type` the explain guard does not fire (the store here has no
+        // embedder, so the call may still fail later, but not on that rule).
+        if let Err(e) = exec_recall(&u, &serde_json::json!({"query": "q", "explain": true})) {
+            assert!(!e.contains("memory-only"), "{e}");
+        }
+    }
+
+    #[test]
+    fn room_delete_says_the_memories_are_retained_and_how_to_delete_them() {
+        let u = store();
+        u.create_room("gone", None, "default").unwrap();
+        let t = text(exec_room_delete(&u, &serde_json::json!({"room_id": "gone"})).unwrap());
+        assert!(t.contains("unregistered"), "{t}");
+        assert!(t.contains("retained"), "{t}");
+        assert!(t.contains("uteke_forget"), "{t}");
+        assert!(!t.contains("deleted"), "{t}");
+    }
+
+    #[test]
     fn room_create_warns_only_for_non_default() {
         let u = store();
         let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "r1"})).unwrap());
@@ -3767,6 +4072,36 @@ mod namespace_deprecation_tests {
             .unwrap(),
         );
         assert!(t.contains(NAMESPACE_DEPRECATION_WARNING), "{t}");
+    }
+
+    #[test]
+    fn read_only_tools_list_is_exactly_the_read_tools() {
+        let u = store();
+        let names = |access| -> std::collections::BTreeSet<String> {
+            handle_request(&u, "tools/list", None, access).unwrap()["tools"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let read_only = names(Access::ReadOnly);
+        // `uteke_room_document` is a dispatch alias that tools/list never advertises.
+        let expected: std::collections::BTreeSet<String> = READ_ONLY_TOOLS
+            .iter()
+            .filter(|n| **n != "uteke_room_document")
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(read_only, expected);
+        let full = names(Access::Full);
+        assert!(read_only.is_subset(&full));
+        assert_eq!(full.len(), 50, "full catalog must not change");
+        for write in ["uteke_remember", "uteke_forget", "uteke_doc_create"] {
+            assert!(
+                full.contains(write) && !read_only.contains(write),
+                "{write}"
+            );
+        }
     }
 
     #[test]
@@ -3926,5 +4261,489 @@ mod read_only_gate_tests {
         );
         assert!(resp.get("error").is_none(), "{resp}");
         assert_eq!(u.count(None).unwrap(), 1);
+    }
+}
+
+/// Scope-isolation regression gate over MCP (#1467, part 3).
+///
+/// The two-namespace store of `uteke_core::test_support::seed_two_scopes`
+/// (records of `alpha` and `beta` share one vocabulary, each ends in
+/// `of <namespace>`) is read through every read-only tool that takes a scope
+/// and must never return the other namespace's records or project tag.
+/// `every_read_tool_is_covered_or_exempt` fails when a read-only tool is added
+/// without an isolation check or a documented exemption.
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+    use serde_json::{Value, json};
+    use uteke_core::test_support::{ISOLATION_QUERY as Q, ISOLATION_SCOPES, seed_two_scopes};
+
+    fn call(u: &Uteke, tool: &str, args: Value) -> String {
+        let raw = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool, "arguments": args}
+        })
+        .to_string();
+        handle_jsonrpc_as(u, &raw, Access::ReadOnly).expect("a response")
+    }
+
+    /// (tool, arguments, the response must hold an `of <scope>` marker).
+    fn surfaces(scope: &str) -> Vec<(&'static str, Value, bool)> {
+        let mut v = vec![
+            (
+                "uteke_search",
+                json!({"query": Q, "namespace": scope, "limit": 20}),
+                true,
+            ),
+            ("uteke_list", json!({"namespace": scope, "limit": 50}), true),
+            (
+                "uteke_list",
+                json!({"namespace": scope, "tag": "shared", "limit": 50}),
+                true,
+            ),
+            ("uteke_graph", json!({"namespace": scope}), true),
+            (
+                "uteke_room_recall",
+                json!({"room_id": format!("room-{scope}"), "query": Q}),
+                true,
+            ),
+            (
+                "uteke_room_memories",
+                json!({"room_id": format!("room-{scope}")}),
+                true,
+            ),
+            ("uteke_tags_list", json!({"namespace": scope}), false),
+            ("uteke_room_list", json!({"namespace": scope}), false),
+            ("uteke_stats", json!({"namespace": scope}), false),
+            ("uteke_contradictions", json!({"namespace": scope}), false),
+        ];
+        for strategy in ["hybrid", "vector", "fts5", "graph", "fusion"] {
+            for kind in ["memory", "all"] {
+                v.push((
+                    "uteke_recall",
+                    json!({"query": Q, "namespace": scope, "limit": 20, "strategy": strategy, "type": kind}),
+                    true,
+                ));
+            }
+        }
+        v.push((
+            "uteke_recall",
+            json!({"query": Q, "namespace": scope, "pack": true, "budget_chars": 4000}),
+            true,
+        ));
+        v.push((
+            "uteke_recall",
+            json!({"query": Q, "namespace": scope, "explain": true}),
+            true,
+        ));
+        v.push((
+            "uteke_recall",
+            json!({"query": Q, "namespace": scope, "tags": ["shared"]}),
+            true,
+        ));
+        v
+    }
+
+    #[test]
+    fn every_scoped_read_tool_returns_only_its_own_namespace() {
+        let u = seed_two_scopes();
+        for scope in ISOLATION_SCOPES {
+            let foreign = if scope == "alpha" { "beta" } else { "alpha" };
+            for (tool, args, expects_hits) in surfaces(scope) {
+                let text = call(&u, tool, args.clone());
+                let what = format!("{tool} {args}");
+                let shown: String = text.chars().take(300).collect();
+                assert!(!text.contains("\"isError\":true"), "{what}: {shown}");
+                assert!(
+                    !text.contains(&format!("of {foreign}")),
+                    "{what} scoped to {scope} returned {foreign} records: {shown}"
+                );
+                assert!(
+                    !text.contains(&format!("project:{foreign}")),
+                    "{what} scoped to {scope} exposed the {foreign} project tag: {shown}"
+                );
+                if expects_hits {
+                    assert!(
+                        text.contains(&format!("of {scope}")),
+                        "{what} found no {scope} record, the check would be vacuous: {shown}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Read-only tools the suite does not scope-check, each with the reason.
+    const EXEMPT: &[(&str, &str)] = &[
+        ("uteke_get", "fetch by ID: IDs are global handles"),
+        ("uteke_provenance", "by memory ID"),
+        ("uteke_timeline", "by memory ID"),
+        (
+            "uteke_doc_get",
+            "by document slug; documents are global (#1271)",
+        ),
+        (
+            "uteke_doc_list",
+            "documents are global (#1271), no memory content",
+        ),
+        (
+            "uteke_doc_search",
+            "documents are global (#1271), no memory content",
+        ),
+        ("uteke_doc_list_rooms", "by document slug"),
+        ("uteke_room_stats", "by room ID; the room is the scope"),
+        ("uteke_room_summary", "by room ID; the room is the scope"),
+        (
+            "uteke_room_summary_document",
+            "by room ID; the room is the scope",
+        ),
+        (
+            "uteke_room_document",
+            "dispatch alias of uteke_room_summary_document, never advertised",
+        ),
+        (
+            "uteke_room_list_documents",
+            "by room ID; documents are global",
+        ),
+    ];
+
+    /// Every read-only tool must be covered by `surfaces` or exempt with a
+    /// reason, and a tool that advertises a `namespace` argument can never be
+    /// exempt: a new retrieval tool cannot skip the isolation suite unnoticed.
+    #[test]
+    fn every_read_tool_is_covered_or_exempt() {
+        let covered: std::collections::BTreeSet<&str> =
+            surfaces("alpha").iter().map(|(t, _, _)| *t).collect();
+        let exempt: std::collections::BTreeSet<&str> = EXEMPT.iter().map(|(t, _)| *t).collect();
+        for tool in READ_ONLY_TOOLS {
+            assert!(
+                covered.contains(tool) || exempt.contains(tool),
+                "{tool} is a read-only tool with no isolation check: add it to `surfaces` or to `EXEMPT` with a reason (#1467)"
+            );
+        }
+        for tool in covered.iter().chain(exempt.iter()) {
+            assert!(
+                READ_ONLY_TOOLS.contains(tool),
+                "{tool} is not a read-only tool"
+            );
+        }
+        assert!(
+            covered.is_disjoint(&exempt),
+            "a tool is both covered and exempt"
+        );
+        let u = seed_two_scopes();
+        let list = handle_request(&u, "tools/list", None, Access::ReadOnly).unwrap();
+        for t in list["tools"].as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            if t["inputSchema"]["properties"]["namespace"].is_object() {
+                assert!(
+                    covered.contains(name),
+                    "{name} takes a namespace but is not covered by the isolation suite"
+                );
+            }
+        }
+    }
+}
+
+/// `author` over MCP (#1427 phase 2): `uteke_remember` records it on the memory
+/// with or without a room, and rejects an invalid one before writing.
+#[cfg(test)]
+mod author_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn remember(u: &Uteke, args: Value) -> (bool, String) {
+        let raw = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "uteke_remember", "arguments": args}
+        })
+        .to_string();
+        let resp: Value = serde_json::from_str(&handle_jsonrpc(u, &raw).unwrap()).unwrap();
+        let result = &resp["result"];
+        let is_error = result["isError"].as_bool().unwrap_or(false) || resp.get("error").is_some();
+        // A tool error comes back either as an error result or as a JSON-RPC error.
+        let text = result["content"][0]["text"]
+            .as_str()
+            .or_else(|| resp["error"]["message"].as_str())
+            .unwrap_or_default();
+        (is_error, text.to_string())
+    }
+
+    fn stored_id(text: &str) -> String {
+        text.split("ID: ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn remember_records_the_author_with_or_without_a_room() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let author_of = |text: &str| u.get_by_id(&stored_id(text)).unwrap().unwrap().author;
+
+        let (err, text) = remember(&u, json!({"content": "no room", "author": " hermes "}));
+        assert!(!err, "{text}");
+        assert_eq!(author_of(&text).as_deref(), Some("hermes"));
+
+        let (err, text) = remember(
+            &u,
+            json!({"content": "in a room", "room": "r1", "author": "alice"}),
+        );
+        assert!(!err, "{text}");
+        assert_eq!(author_of(&text).as_deref(), Some("alice"));
+
+        // A room write that names no author leaves the memory unattributed.
+        let (err, text) = remember(&u, json!({"content": "unnamed", "room": "r1"}));
+        assert!(!err, "{text}");
+        assert_eq!(author_of(&text), None);
+    }
+
+    #[test]
+    fn the_stored_type_is_inferred_explicit_or_fact_on_every_write_path() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let type_of = |text: &str| {
+            u.get_by_id(&stored_id(text))
+                .unwrap()
+                .unwrap()
+                .memory_type
+                .as_str()
+                .to_string()
+        };
+        let cases = [
+            (json!({"content": "We decided to use SQLite"}), "decision"),
+            (json!({"content": "plain words"}), "fact"),
+            (
+                json!({"content": "We decided to use SQLite", "type": "note"}),
+                "note",
+            ),
+            (
+                json!({"content": "We decided to use SQLite", "room": "r"}),
+                "decision",
+            ),
+            (json!({"content": "plain words", "room": "r"}), "fact"),
+        ];
+        for (args, want) in cases {
+            let (err, text) = remember(&u, args.clone());
+            assert!(!err, "{args}: {text}");
+            assert_eq!(type_of(&text), want, "{args}");
+        }
+    }
+
+    #[test]
+    fn remember_records_source_and_author_type_and_refuses_bad_ones() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let (err, text) = remember(
+            &u,
+            json!({"content": "from the web", "source": "https://example.com",
+                   "source_type": "url", "author_type": "human"}),
+        );
+        assert!(!err, "{text}");
+        let m = u.get_by_id(&stored_id(&text)).unwrap().unwrap();
+        assert_eq!(m.source.as_deref(), Some("https://example.com"));
+        assert_eq!(
+            (m.source_type.as_str(), m.author_type.as_str()),
+            ("url", "human")
+        );
+
+        let (err, text) = remember(&u, json!({"content": "bad", "author_type": "robot"}));
+        assert!(err && text.contains("author_type"), "{text}");
+        assert_eq!(u.count(None).unwrap(), 1, "nothing stored for the bad one");
+    }
+
+    #[test]
+    fn room_link_memory_adds_an_existing_memory_once() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        u.create_room("team", None, "default").unwrap();
+        let (_, text) = remember(&u, json!({"content": "link me"}));
+        let id = stored_id(&text);
+        let call = |args: Value| {
+            let raw = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "uteke_room_link_memory", "arguments": args}
+            })
+            .to_string();
+            let resp: Value = serde_json::from_str(&handle_jsonrpc(&u, &raw).unwrap()).unwrap();
+            let is_error =
+                resp["result"]["isError"].as_bool().unwrap_or(false) || resp.get("error").is_some();
+            let text = resp["result"]["content"][0]["text"]
+                .as_str()
+                .or_else(|| resp["error"]["message"].as_str())
+                .unwrap_or_default()
+                .to_string();
+            (is_error, text)
+        };
+        let (err, text) = call(json!({"memory_id": &id[..8], "room_id": "team"}));
+        assert!(!err && text.contains("added to room 'team'"), "{text}");
+        let (err, text) = call(json!({"memory_id": id, "room_id": "team"}));
+        assert!(!err && text.contains("already in room"), "{text}");
+        assert_eq!(u.recall_room("team", None, 0).unwrap().len(), 1);
+        let (err, text) = call(json!({"memory_id": id, "room_id": "nope"}));
+        assert!(err && text.contains("Room not found: nope"), "{text}");
+        let (err, text) = call(json!({"memory_id": id, "room_id": "team", "bogus": 1}));
+        assert!(err && text.contains("Unknown argument 'bogus'"), "{text}");
+    }
+
+    #[test]
+    fn an_invalid_author_is_refused_before_anything_is_stored() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        for bad in ["", "  ", "line\nbreak", &"y".repeat(129)] {
+            let (err, text) = remember(&u, json!({"content": "must not be stored", "author": bad}));
+            assert!(err, "{bad:?} was accepted: {text}");
+            assert!(text.contains("author"), "{text}");
+        }
+        assert_eq!(u.count(None).unwrap(), 0, "nothing is stored");
+    }
+}
+
+/// The privacy filter over MCP (#1464): masked writes say so, strict mode is a
+/// tool error that starts with `secret_detected` and names kinds, not values.
+#[cfg(test)]
+mod privacy_mcp_tests {
+    use super::*;
+    use uteke_core::Uteke;
+    use uteke_core::privacy::{PrivacyConfig, PrivacyMode};
+
+    fn store(mode: PrivacyMode) -> Uteke {
+        let mut u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        u.set_privacy_config(PrivacyConfig {
+            mode,
+            allowlist: Vec::new(),
+        });
+        u
+    }
+
+    fn token() -> String {
+        format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5")
+    }
+
+    fn text(r: &ToolResult) -> String {
+        match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    #[test]
+    fn remember_says_when_a_secret_was_masked() {
+        let u = store(PrivacyMode::Redact);
+        let r = exec_remember(
+            &u,
+            &serde_json::json!({"content": format!("key {}", token())}),
+        )
+        .unwrap();
+        let t = text(&r);
+        assert!(
+            t.contains("Secrets masked") && t.contains("github-token x1"),
+            "{t}"
+        );
+        assert!(!t.contains("aB3dE5gH7jK9"), "{t}");
+
+        let clean = exec_remember(&u, &serde_json::json!({"content": "nothing secret"})).unwrap();
+        assert!(!text(&clean).contains("Secrets masked"));
+    }
+
+    #[test]
+    fn update_says_when_a_secret_was_masked() {
+        let u = store(PrivacyMode::Redact);
+        let ok = exec_remember(&u, &serde_json::json!({"content": "plain"})).unwrap();
+        let id = text(&ok).rsplit(' ').next().unwrap().trim().to_string();
+        let r = exec_update(&u, &serde_json::json!({"id": id, "tags": [token()]})).unwrap();
+        let t = text(&r);
+        assert!(
+            t.contains("Secrets masked") && t.contains("github-token x1"),
+            "{t}"
+        );
+        let r = exec_update(&u, &serde_json::json!({"id": id, "importance": 0.9})).unwrap();
+        assert!(!text(&r).contains("Secrets masked"));
+    }
+
+    #[test]
+    fn strict_mode_is_a_secret_detected_tool_error_for_remember_and_update() {
+        let u = store(PrivacyMode::Strict);
+        let err = exec_remember(
+            &u,
+            &serde_json::json!({"content": format!("key {}", token())}),
+        )
+        .err()
+        .expect("strict rejects");
+        assert!(err.starts_with("secret_detected:"), "{err}");
+        assert!(
+            err.contains("github-token") && !err.contains("aB3dE5gH7jK9"),
+            "{err}"
+        );
+
+        let ok = exec_remember(&u, &serde_json::json!({"content": "plain"})).unwrap();
+        let id = text(&ok).rsplit(' ').next().unwrap().trim().to_string();
+        let err = exec_update(
+            &u,
+            &serde_json::json!({"id": id, "content": format!("now {}", token())}),
+        )
+        .err()
+        .expect("strict rejects the update");
+        assert!(err.starts_with("secret_detected:"), "{err}");
+    }
+}
+
+/// `uteke_recall` falls back to the `[recall]` settings of `uteke.toml` (#1515):
+/// the similarity floor and the strategy, as `POST /recall` does.
+#[cfg(test)]
+mod recall_settings_mcp_tests {
+    use super::*;
+    use uteke_core::test_support::open_keyword;
+    use uteke_core::{EngineSettings, Uteke};
+
+    fn store(configure: impl FnOnce(&mut EngineSettings)) -> Uteke {
+        let mut u = open_keyword();
+        for text in ["rust ownership and borrowing", "python garbage collector"] {
+            u.remember_detailed(text, &[], None, None).unwrap();
+        }
+        let mut e = EngineSettings::default();
+        configure(&mut e);
+        u.apply_settings(&e);
+        u
+    }
+
+    fn recall(u: &Uteke, args: Value) -> String {
+        match &exec_recall(u, &args).unwrap().content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    #[test]
+    fn without_a_recall_section_nothing_changes() {
+        let u = store(|_| {});
+        let t = recall(&u, serde_json::json!({"query": "rust borrowing"}));
+        assert!(t.contains("rust ownership"), "{t}");
+    }
+
+    #[test]
+    fn the_configured_floor_filters_and_a_call_floor_wins_over_it() {
+        let u = store(|e| e.recall.min_score = 0.99);
+        let t = recall(&u, serde_json::json!({"query": "rust borrowing"}));
+        assert!(!t.contains("rust ownership"), "the floor is 0.99: {t}");
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "rust borrowing", "min_score": 0.0}),
+        );
+        assert!(
+            t.contains("rust ownership"),
+            "the call's own floor wins: {t}"
+        );
+    }
+
+    #[test]
+    fn the_configured_default_strategy_is_used_and_a_call_strategy_wins() {
+        let u = store(|e| e.recall.default_strategy = "vector".into());
+        // Both strategies answer; what matters is that neither is rejected and
+        // an explicit strategy still overrides the configured one.
+        assert!(recall(&u, serde_json::json!({"query": "rust"})).contains("rust ownership"));
+        assert!(
+            recall(&u, serde_json::json!({"query": "rust", "strategy": "fts5"}))
+                .contains("rust ownership")
+        );
+        // An unknown configured strategy was sanitized to hybrid at apply time.
+        let u = store(|e| e.recall.default_strategy = "nonsense".into());
+        assert!(recall(&u, serde_json::json!({"query": "rust"})).contains("rust ownership"));
     }
 }

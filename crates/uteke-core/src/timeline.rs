@@ -43,6 +43,9 @@ pub enum TimelineEventType {
     Superseded,
     /// A supersession was undone (#1172 Fase 2) — memory restored.
     SupersessionUndone,
+    /// The privacy filter masked secrets in the content (#1464). The event
+    /// data lists the kinds and counts, never the values.
+    Redacted,
 }
 
 impl TimelineEventType {
@@ -57,6 +60,7 @@ impl TimelineEventType {
             Self::Deprecated => "deprecated",
             Self::Superseded => "superseded",
             Self::SupersessionUndone => "supersession_undone",
+            Self::Redacted => "redacted",
         }
     }
 
@@ -71,6 +75,7 @@ impl TimelineEventType {
             "deprecated" => Some(Self::Deprecated),
             "superseded" => Some(Self::Superseded),
             "supersession_undone" => Some(Self::SupersessionUndone),
+            "redacted" => Some(Self::Redacted),
             _ => None,
         }
     }
@@ -285,6 +290,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 

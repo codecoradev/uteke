@@ -112,6 +112,14 @@ pub(crate) fn run_repair(
                     reembed_report.total_scanned
                 );
             }
+            if reembed_report.chunks_missing > 0 {
+                println!(
+                    "Re-embedded {}/{} document chunks ({} failed).",
+                    reembed_report.chunks_reembedded,
+                    reembed_report.chunks_missing,
+                    reembed_report.chunks_failed
+                );
+            }
         }
     }
 
@@ -302,9 +310,24 @@ pub(crate) fn run_import(
     if let Some(fl) = first_line {
         if fl.contains("\"uteke_export\"") {
             tracing::info!("Detected structural export manifest — full-store import");
-            let result = uteke
+            let mut result = uteke
                 .import_full(&content)
                 .map_err(|e| format!("Structural import failed: {e}"))?;
+            // The bundle carries chunk text but no vectors: regenerate them so
+            // the restored documents are found by semantic search (#1587). A
+            // backend that is down leaves the chunks for `repair --reembed`.
+            match uteke.reembed_missing_chunks() {
+                Ok((missing, reembedded, failed)) if missing > 0 => {
+                    result["chunks_reembedded"] = reembedded.into();
+                    if failed > 0 {
+                        result["chunks_failed"] = failed.into();
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    result["chunks_failed"] = serde_json::json!(e.to_string());
+                }
+            }
             if cli.json {
                 output::print_json(&result);
             } else {
@@ -313,6 +336,15 @@ pub(crate) fn run_import(
                     for (section, count) in imported {
                         println!("  {section}: {count}");
                     }
+                }
+                if let Some(n) = result["chunks_reembedded"].as_u64() {
+                    println!("  document chunks re-embedded: {n}");
+                }
+                if !result["chunks_failed"].is_null() {
+                    println!(
+                        "\u{26a0}\u{fe0f}  some document chunks have no vector ({}) — run `uteke repair --reembed`",
+                        result["chunks_failed"]
+                    );
                 }
                 if result["needs_reembed"].as_i64().unwrap_or(0) > 0 {
                     println!(
@@ -323,6 +355,12 @@ pub(crate) fn run_import(
             }
             return Ok(());
         }
+    }
+    if format == "full" {
+        return Err(
+            "--full needs a bundle written by `uteke export --full` (its first line is the manifest)"
+                .to_string(),
+        );
     }
 
     // LLM extraction path (opt-in). Distill the raw input into atomic facts,
@@ -375,6 +413,26 @@ pub(crate) fn run_import(
             "\u{2713} Imported {} memories ({} skipped) as {detected_format}",
             result.imported, result.skipped
         );
+        if result.redacted > 0 {
+            println!("  \u{26a0} Secrets masked in {} memories", result.redacted);
+        }
+        if result.rejected_secret > 0 {
+            println!(
+                "  \u{26a0} {} entries skipped: they contain a secret (strict privacy mode)",
+                result.rejected_secret
+            );
+        }
+        if result.room_links > 0 {
+            println!("  Linked memories to rooms: {} link(s)", result.room_links);
+        }
+        if !result.rooms_missing.is_empty() {
+            println!(
+                "  \u{26a0} {} room(s) named in the file do not exist, so their links were not made: {}",
+                result.rooms_missing.len(),
+                result.rooms_missing.join(", ")
+            );
+            println!("    Create them (`uteke room create <ID>`) and import the file again.");
+        }
     }
     Ok(())
 }
@@ -462,10 +520,7 @@ fn import_with_extraction(
 
     if facts.is_empty() {
         tracing::warn!("Extraction produced no facts from input");
-        return Ok(ImportResult {
-            imported: 0,
-            skipped: 0,
-        });
+        return Ok(ImportResult::default());
     }
 
     let mut imported = 0usize;
@@ -505,7 +560,11 @@ fn import_with_extraction(
         }
     }
 
-    Ok(ImportResult { imported, skipped })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        ..Default::default()
+    })
 }
 
 /// Detect import format from file extension and content.
@@ -564,7 +623,11 @@ fn import_text(
         }
     }
 
-    Ok(ImportResult { imported, skipped })
+    Ok(ImportResult {
+        imported,
+        skipped,
+        ..Default::default()
+    })
 }
 
 /// Split markdown by headings. Each heading + body becomes a chunk.

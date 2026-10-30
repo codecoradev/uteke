@@ -179,6 +179,7 @@ mod tests {
             source: None,
             source_type: String::new(),
             author_type: String::new(),
+            author: None,
         }
     }
 

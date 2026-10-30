@@ -61,7 +61,8 @@ pub struct Endpoint {
 }
 
 /// Complete API route registry.
-/// This must be kept in sync with the dispatch match in `handlers/mod.rs`.
+/// `handlers::HANDLERS` (bin side) must list the same (method, path) rows; the
+/// `handler_table_equals_the_registry` test fails when the two drift.
 pub const ENDPOINTS: &[Endpoint] = &[
     // ── Health & Info ────────────────────────────────────────────────────
     Endpoint {
@@ -96,6 +97,17 @@ pub const ENDPOINTS: &[Endpoint] = &[
         response_type: None,
         excludes_deprecated: false,
         issues: &["#1289"],
+    },
+    Endpoint {
+        method: "GET",
+        path: "/store",
+        tier: Tier::Lab,
+        writes: false,
+        description: "Identity of the store this server serves: {\"id\": \"<16 hex digits>\"}, the SHA-256 prefix of the store's canonical path (`uteke_core::store_identity`). The CLI compares it with the store it resolved before routing a command here, so `UTEKE_HOME` pointing elsewhere is not sent to this server (#1445). The path itself is never returned. Needs the usual token when auth is on.",
+        request_type: None,
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1445"],
     },
     Endpoint {
         method: "GET",
@@ -463,6 +475,17 @@ pub const ENDPOINTS: &[Endpoint] = &[
         response_type: None,
         excludes_deprecated: false,
         issues: &["#1202"],
+    },
+    Endpoint {
+        method: "POST",
+        path: "/room/memory",
+        tier: Tier::Lab,
+        writes: true,
+        description: "Add an existing memory to a room without copying it (#1589). Accepts `{ memory_id, room, author? }` (`memory_id` is a full id or an unambiguous prefix; `author` defaults to `anonymous`). Idempotent: linking twice returns `already_linked: true` and keeps the first link. 404 when the room or the memory does not exist. Write op — blocked for read-only tokens.",
+        request_type: Some("serde_json::Value"),
+        response_type: None,
+        excludes_deprecated: false,
+        issues: &["#1589"],
     },
     Endpoint {
         method: "POST",

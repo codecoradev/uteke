@@ -2,62 +2,30 @@
 //! CLI-via-server client (#1343, `remember` slice).
 //!
 //! Same shape as [`crate::recall_request`]: a surface decodes its wire format
-//! into a [`RememberInput`] (raw), picks a [`RememberPolicy`], and calls
-//! [`RememberRequest::decode`]. This is an extraction, not a unification:
-//! where the surfaces disagree today the disagreement is a policy value.
+//! into a [`RememberInput`] (raw) and calls [`RememberRequest::decode`]. All
+//! surfaces follow the HTTP rules (#1439); `room` is the one MCP-only argument.
 //!
 //! | aspect                    | HTTP `/remember`            | MCP `uteke_remember`        | CLI via server            |
 //! |---------------------------|-----------------------------|-----------------------------|---------------------------|
-//! | content/tags validation   | at decode (400)             | inside the core call        | server validates          |
-//! | `type` omitted            | auto-inference              | stored as `fact`, no infer  | omitted when empty        |
-//! | unknown `type`            | 400 at decode               | core error (`Failed: ...`)  | server 400                |
-//! | `type` in metadata        | copied as `"type"`          | not copied                  | not copied                |
+//! | content/tags validation   | at decode (400)             | at decode (#1439)           | server validates          |
+//! | `type` omitted            | auto-inference              | auto-inference (#1439)      | omitted when empty        |
+//! | unknown `type`            | 400 at decode               | error at decode (#1439)     | server 400                |
+//! | `type` in metadata        | copied as `"type"`          | copied as `"type"` (#1439)  | copied (server decodes)   |
 //! | metadata object           | merged, plus entity/etc.    | not accepted (always none)  | built from flags, sent    |
 //! | entity/category fields    | honoured (into metadata)    | not accepted                | folded into `metadata`    |
 //! | valid_from/valid_until    | honoured (into metadata)    | not accepted                | not sent                  |
 //! | detect_contradiction      | honoured                    | not accepted                | forwarded when set        |
 //! | source/source_type/author_type | honoured               | not accepted                | forwarded                 |
-//! | room/author               | rejected as unknown keys    | `room` routes to room write | sent (server rejects)     |
-//! | timestamp                 | rejected as unknown key     | not accepted                | sent (server rejects)     |
+//! | author                    | honoured, validated (1-128) | honoured, also room author  | forwarded                 |
+//! | room                      | rejected as unknown key     | routes to room write        | refused client-side       |
+//! | timestamp                 | rejected as unknown key     | not accepted                | applied to the content    |
 //! | namespace omitted         | core default                | core default                | `"default"` always sent   |
 //!
 //! Room remember is a separate operation and is not part of this module.
 
-use crate::memory::types::{MemoryType, validate_author_type};
+use crate::memory::types::{MemoryType, validate_author, validate_author_type};
 use serde_json::{Map, Value};
 use std::fmt;
-
-/// Where today's surfaces disagree, per surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RememberPolicy {
-    /// Validate content and tags when decoding (HTTP). Otherwise the core
-    /// write validates them and the error carries the caller's own prefix.
-    pub validate_content_and_tags: bool,
-    /// Validate an explicit `type` when decoding (HTTP).
-    pub validate_type: bool,
-    /// Type used when the request gives none. `None` leaves it to the core's
-    /// auto-inference.
-    pub default_type: Option<&'static str>,
-    /// Copy an explicit `type` into the metadata map (HTTP).
-    pub type_in_metadata: bool,
-}
-
-impl RememberPolicy {
-    /// `POST /remember`.
-    pub const HTTP: Self = Self {
-        validate_content_and_tags: true,
-        validate_type: true,
-        default_type: None,
-        type_in_metadata: true,
-    };
-    /// MCP `uteke_remember`.
-    pub const MCP: Self = Self {
-        validate_content_and_tags: false,
-        validate_type: false,
-        default_type: Some("fact"),
-        type_in_metadata: false,
-    };
-}
 
 /// Raw, undecoded remember arguments as a surface read them.
 #[derive(Debug, Clone, Default)]
@@ -77,12 +45,12 @@ pub struct RememberInput {
     pub source: Option<String>,
     pub source_type: Option<String>,
     pub author_type: Option<String>,
-    /// Room id (MCP routes the write to a room; the CLI forwards it).
+    /// Room id: MCP routes the write to a room. `POST /remember` takes none, so
+    /// [`Self::to_http_body`] never sends it.
     pub room: Option<String>,
-    /// Room author (MCP) / forwarded by the CLI.
+    /// Who wrote the memory (#1427 phase 2): the memory's own `author`, also
+    /// the room link's author when `room` is set.
     pub author: Option<String>,
-    /// CLI `--timestamp`. Only [`Self::to_http_body`] reads it.
-    pub timestamp: Option<String>,
 }
 
 impl RememberInput {
@@ -92,18 +60,14 @@ impl RememberInput {
     /// when set (`type` only when non-empty, `detect_contradiction` only when
     /// true, `metadata` only when a non-empty object). `entity`, `category`,
     /// `valid_from` and `valid_until` are not part of this encoding: the CLI
-    /// folds entity/category into `metadata`. `timestamp`, `room` and `author`
-    /// are forwarded even though the server rejects them as unknown keys
-    /// today; that is current behaviour, listed as an owner decision.
+    /// folds entity/category into `metadata`. `room` is never sent: the server
+    /// has no such key (#1439). `author` is accepted since #1427 phase 2.
     pub fn to_http_body(&self) -> Value {
         let mut body = serde_json::json!({
             "content": self.content,
             "tags": self.tags,
             "namespace": self.namespace,
         });
-        if let Some(ts) = &self.timestamp {
-            body["timestamp"] = serde_json::json!(ts);
-        }
         if let Some(at) = &self.author_type {
             body["author_type"] = serde_json::json!(at);
         }
@@ -117,9 +81,6 @@ impl RememberInput {
             && !m.is_empty()
         {
             body["metadata"] = Value::Object(m.clone());
-        }
-        if let Some(room) = &self.room {
-            body["room"] = serde_json::json!(room);
         }
         if let Some(author) = &self.author {
             body["author"] = serde_json::json!(author);
@@ -135,7 +96,11 @@ impl RememberInput {
 }
 
 /// Metadata the CLI builds from `--entity`, `--category` and repeated
-/// `--meta key:value` flags. A pair without `:` is dropped silently.
+/// `--meta` flags, the same on a local store and through a server (#1439).
+///
+/// A `key:value` pair becomes a number, a boolean or a string; a pair with no
+/// `:` is the key set to `true`; `rel:type:target` pairs collect into a
+/// `relationships` array. A `--meta` key wins over `--entity` / `--category`.
 pub fn metadata_from_cli_flags(
     entity: Option<&str>,
     category: Option<&str>,
@@ -148,10 +113,27 @@ pub fn metadata_from_cli_flags(
     if let Some(c) = category {
         map.insert("category".into(), Value::String(c.to_string()));
     }
+    let mut relationships: Vec<Value> = Vec::new();
     for pair in pairs {
-        if let Some((key, value)) = pair.split_once(':') {
-            map.insert(key.to_string(), Value::String(value.to_string()));
+        if let Some((rel_type, target)) = crate::is_relationship_meta(pair) {
+            relationships.push(serde_json::json!({"type": rel_type, "target": target}));
+        } else if let Some((key, value)) = pair.split_once(':') {
+            let val = if let Ok(n) = value.parse::<f64>() {
+                Value::from(n)
+            } else if value == "true" {
+                Value::Bool(true)
+            } else if value == "false" {
+                Value::Bool(false)
+            } else {
+                Value::String(value.to_string())
+            };
+            map.insert(key.to_string(), val);
+        } else {
+            map.insert(pair.clone(), Value::Bool(true));
         }
+    }
+    if !relationships.is_empty() {
+        map.insert("relationships".into(), Value::Array(relationships));
     }
     if map.is_empty() {
         None
@@ -185,7 +167,7 @@ pub struct RememberRequest {
     pub tags: Vec<String>,
     /// `None` = the core's default namespace.
     pub namespace: Option<String>,
-    /// After the policy default; `None` = auto-infer.
+    /// `None` = auto-infer.
     pub memory_type: Option<String>,
     /// `None` when empty (the core write takes no empty map).
     pub metadata: Option<Value>,
@@ -198,25 +180,17 @@ pub struct RememberRequest {
 }
 
 impl RememberRequest {
-    /// Decode `input` under `policy`. Errors surface in the order the HTTP
+    /// Decode `input`. Errors surface in the order the HTTP
     /// handler always reported them: content/tags, `author_type`, `type`.
-    pub fn decode(
-        input: RememberInput,
-        policy: RememberPolicy,
-    ) -> Result<Self, RememberRequestError> {
-        if policy.validate_content_and_tags {
-            crate::validate_input(&input.content, &input.tags)
-                .map_err(|e| RememberRequestError(e.to_string()))?;
-        }
+    pub fn decode(input: RememberInput) -> Result<Self, RememberRequestError> {
+        crate::validate_input(&input.content, &input.tags)
+            .map_err(|e| RememberRequestError(e.to_string()))?;
 
         let mut meta = Map::new();
-        if policy.type_in_metadata
-            && let Some(t) = &input.memory_type
-        {
+        if let Some(t) = &input.memory_type {
             meta.insert("type".into(), Value::String(t.clone()));
         }
-        // HTTP only: these fields exist on its wire format; MCP leaves them
-        // unset, so the metadata stays empty there.
+        // Wire fields a surface may leave unset (the MCP tool has none of them).
         for (key, value) in [
             ("valid_from", &input.valid_from),
             ("valid_until", &input.valid_until),
@@ -244,8 +218,15 @@ impl RememberRequest {
         if let Some(at) = input.author_type.as_deref() {
             validate_author_type(at).map_err(|e| RememberRequestError(e.to_string()))?;
         }
-        if policy.validate_type
-            && let Some(t) = input.memory_type.as_deref()
+        // `author` (#1427 phase 2): free text, trimmed. With a room it is also
+        // the room link's author; without one it is the memory's own.
+        let author = input
+            .author
+            .as_deref()
+            .map(|a| validate_author(a).map(str::to_string))
+            .transpose()
+            .map_err(|e| RememberRequestError(e.to_string()))?;
+        if let Some(t) = input.memory_type.as_deref()
             && MemoryType::from_str_opt(t).is_none()
         {
             return Err(RememberRequestError(format!(
@@ -253,22 +234,18 @@ impl RememberRequest {
             )));
         }
 
-        let memory_type = input
-            .memory_type
-            .or_else(|| policy.default_type.map(str::to_string));
-
         Ok(Self {
             content: input.content,
             tags: input.tags,
             namespace: input.namespace,
-            memory_type,
+            memory_type: input.memory_type,
             metadata,
             detect_contradiction: input.detect_contradiction,
             source: input.source,
             source_type: input.source_type,
             author_type: input.author_type,
             room: input.room,
-            author: input.author,
+            author,
         })
     }
 
@@ -291,17 +268,16 @@ mod tests {
     }
 
     #[test]
-    fn http_blank_content_rejected_mcp_defers_to_core() {
-        let e = RememberRequest::decode(input("  "), RememberPolicy::HTTP).unwrap_err();
+    fn blank_content_is_rejected_at_decode() {
+        let e = RememberRequest::decode(input("  ")).unwrap_err();
         assert_eq!(e.message(), "Validation error: Content must not be empty");
-        assert!(RememberRequest::decode(input("  "), RememberPolicy::MCP).is_ok());
     }
 
     #[test]
     fn http_too_many_tags_rejected_with_core_text() {
         let mut i = input("x");
         i.tags = (0..1000).map(|n| format!("t{n}")).collect();
-        let e = RememberRequest::decode(i, RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i).unwrap_err();
         assert!(
             e.message().starts_with("Validation error: Too many tags"),
             "{e}"
@@ -309,41 +285,29 @@ mod tests {
     }
 
     #[test]
-    fn default_type_is_none_on_http_and_fact_on_mcp() {
-        let h = RememberRequest::decode(input("x"), RememberPolicy::HTTP).unwrap();
-        let m = RememberRequest::decode(input("x"), RememberPolicy::MCP).unwrap();
-        assert_eq!(h.memory_type, None);
-        assert_eq!(m.memory_type.as_deref(), Some("fact"));
-        assert_eq!(m.metadata, None);
+    fn an_omitted_type_is_left_to_inference() {
+        let r = RememberRequest::decode(input("x")).unwrap();
+        assert_eq!(r.memory_type, None);
+        assert_eq!(r.metadata, None);
     }
 
     #[test]
-    fn explicit_type_wins_and_only_http_copies_it_to_metadata() {
+    fn an_explicit_type_wins_and_is_copied_to_metadata() {
         let mut i = input("x");
         i.memory_type = Some("decision".into());
-        let h = RememberRequest::decode(i.clone(), RememberPolicy::HTTP).unwrap();
-        let m = RememberRequest::decode(i, RememberPolicy::MCP).unwrap();
-        assert_eq!(h.memory_type.as_deref(), Some("decision"));
-        assert_eq!(h.metadata, Some(json!({"type": "decision"})));
-        assert_eq!(m.memory_type.as_deref(), Some("decision"));
-        assert_eq!(m.metadata, None);
+        let r = RememberRequest::decode(i).unwrap();
+        assert_eq!(r.memory_type.as_deref(), Some("decision"));
+        assert_eq!(r.metadata, Some(json!({"type": "decision"})));
     }
 
     #[test]
-    fn unknown_type_rejected_on_http_only_at_decode() {
+    fn an_unknown_type_is_rejected_at_decode() {
         let mut i = input("x");
         i.memory_type = Some("bogus".into());
-        let e = RememberRequest::decode(i.clone(), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i).unwrap_err();
         assert_eq!(
             e.message(),
             "Unknown memory type 'bogus'. Valid types: fact, procedure, preference, decision, context, note, insight, reference, event"
-        );
-        assert_eq!(
-            RememberRequest::decode(i, RememberPolicy::MCP)
-                .unwrap()
-                .memory_type
-                .as_deref(),
-            Some("bogus")
         );
     }
 
@@ -352,17 +316,17 @@ mod tests {
         let mut i = input("");
         i.author_type = Some("robot".into());
         i.memory_type = Some("bogus".into());
-        let e = RememberRequest::decode(i.clone(), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i.clone()).unwrap_err();
         assert_eq!(e.message(), "Validation error: Content must not be empty");
         i.content = "x".into();
-        let e = RememberRequest::decode(i.clone(), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(i.clone()).unwrap_err();
         assert_eq!(
             e.message(),
             "Validation error: Invalid author_type 'robot'. Valid values: human, agent"
         );
         i.author_type = None;
         assert!(
-            RememberRequest::decode(i, RememberPolicy::HTTP)
+            RememberRequest::decode(i)
                 .unwrap_err()
                 .message()
                 .starts_with("Unknown memory type")
@@ -377,7 +341,7 @@ mod tests {
         i.valid_from = Some("2026-01-01".into());
         i.valid_until = Some("2027-01-01".into());
         i.metadata = Some(json!({"project": "uteke", "entity": "override"}));
-        let r = RememberRequest::decode(i, RememberPolicy::HTTP).unwrap();
+        let r = RememberRequest::decode(i).unwrap();
         assert_eq!(
             r.metadata,
             Some(json!({
@@ -391,19 +355,9 @@ mod tests {
     fn non_object_or_empty_metadata_is_none() {
         let mut i = input("x");
         i.metadata = Some(json!("str"));
-        assert_eq!(
-            RememberRequest::decode(i.clone(), RememberPolicy::HTTP)
-                .unwrap()
-                .metadata,
-            None
-        );
+        assert_eq!(RememberRequest::decode(i.clone()).unwrap().metadata, None);
         i.metadata = Some(json!({}));
-        assert_eq!(
-            RememberRequest::decode(i, RememberPolicy::HTTP)
-                .unwrap()
-                .metadata,
-            None
-        );
+        assert_eq!(RememberRequest::decode(i).unwrap().metadata, None);
     }
 
     #[test]
@@ -415,13 +369,42 @@ mod tests {
         i.source_type = Some("st".into());
         i.author_type = Some("human".into());
         i.detect_contradiction = true;
-        let r = RememberRequest::decode(i, RememberPolicy::HTTP).unwrap();
+        let r = RememberRequest::decode(i).unwrap();
         assert_eq!(r.tag_refs(), vec!["a", "b"]);
         assert_eq!(r.namespace.as_deref(), Some("ns"));
         assert_eq!(r.source.as_deref(), Some("s"));
         assert_eq!(r.source_type.as_deref(), Some("st"));
         assert_eq!(r.author_type.as_deref(), Some("human"));
         assert!(r.detect_contradiction);
+    }
+
+    /// #1427 phase 2: `author` is validated before any write and trimmed; the error order is content, author_type, author, type.
+    #[test]
+    fn author_is_validated_and_trimmed() {
+        let mut i = input("x");
+        i.author = Some("  claude-code  ".into());
+        assert_eq!(
+            RememberRequest::decode(i).unwrap().author.as_deref(),
+            Some("claude-code")
+        );
+        for bad in ["", "   ", "tab\there", &"y".repeat(129)] {
+            let mut i = input("x");
+            i.author = Some(bad.to_string());
+            let e = RememberRequest::decode(i).unwrap_err().to_string();
+            assert!(e.starts_with("Validation error: author"), "{bad:?}: {e}");
+        }
+        let mut i = input("x");
+        i.author = Some("y".repeat(128));
+        assert!(RememberRequest::decode(i).is_ok(), "128 is the bound");
+        let mut i = input("x");
+        i.author_type = Some("robot".into());
+        i.author = Some("".into());
+        i.memory_type = Some("nope".into());
+        let e = RememberRequest::decode(i).unwrap_err().to_string();
+        assert!(
+            e.contains("author_type"),
+            "author_type is reported before author: {e}"
+        );
     }
 
     #[test]
@@ -441,15 +424,14 @@ mod tests {
         i.author = Some("a".into());
         i.source = Some("s".into());
         i.source_type = Some("st".into());
-        i.timestamp = Some("2026-01-01T00:00:00Z".into());
         assert_eq!(
             i.to_http_body(),
             json!({
                 "content": "hi", "tags": ["t"], "namespace": "default",
-                "timestamp": "2026-01-01T00:00:00Z", "author_type": "human",
+                "author_type": "human",
                 "type": "note", "detect_contradiction": true,
-                "metadata": {"entity": "e", "category": "c", "k": "v:w"},
-                "room": "r", "author": "a", "source": "s", "source_type": "st"
+                "metadata": {"entity": "e", "category": "c", "k": "v:w", "bad": true},
+                "author": "a", "source": "s", "source_type": "st"
             })
         );
     }
@@ -458,7 +440,7 @@ mod tests {
     fn http_body_omits_empty_type_false_flag_and_empty_metadata() {
         let mut i = input("hi");
         i.memory_type = Some(String::new());
-        i.metadata = metadata_from_cli_flags(None, None, &["nocolon".into()]);
+        i.metadata = metadata_from_cli_flags(None, None, &[]);
         assert_eq!(i.metadata, None);
         assert_eq!(
             i.to_http_body(),
@@ -467,8 +449,35 @@ mod tests {
     }
 
     #[test]
+    fn cli_meta_pairs_are_typed_and_relationships_collected() {
+        let m = metadata_from_cli_flags(
+            Some("e"),
+            None,
+            &[
+                "n:3".into(),
+                "ok:true".into(),
+                "off:false".into(),
+                "s:text:with:colons".into(),
+                "flag".into(),
+                "entity:override".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            m,
+            json!({"entity": "override", "n": 3.0, "ok": true, "off": false,
+                   "s": "text:with:colons", "flag": true})
+        );
+        let rel = metadata_from_cli_flags(None, None, &["rel:supersedes:abc".into()]).unwrap();
+        assert_eq!(
+            rel,
+            json!({"relationships": [{"type": "supersedes", "target": "abc"}]})
+        );
+    }
+
+    #[test]
     fn display_writes_the_exact_message() {
-        let e = RememberRequest::decode(input("  "), RememberPolicy::HTTP).unwrap_err();
+        let e = RememberRequest::decode(input("  ")).unwrap_err();
         assert_eq!(e.to_string(), "Validation error: Content must not be empty");
     }
 }

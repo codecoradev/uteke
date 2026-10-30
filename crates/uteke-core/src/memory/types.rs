@@ -89,6 +89,10 @@ pub struct Memory {
         skip_serializing_if = "is_default_author_type"
     )]
     pub author_type: String,
+    /// Who wrote the memory: the agent, user or tool name (#1427 phase 2).
+    /// Free text, set with or without a room; `None` when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
 }
 
 /// Weight of one recall/search hit relative to one explicit `get` when
@@ -132,6 +136,29 @@ fn is_default_author_type(s: &str) -> bool {
 /// Returns `Ok(())` for "human" | "agent", otherwise a [`crate::Error::Validation`].
 /// Validation lives in the application layer — SQLite cannot add a CHECK
 /// constraint to an existing table via ALTER TABLE ADD COLUMN.
+/// Longest accepted `author` (#1427 phase 2): same bound as the room author.
+pub const MAX_AUTHOR_LEN: usize = 128;
+
+/// Validate and normalise a memory `author` (#1427 phase 2): free text, trimmed,
+/// not empty, at most [`MAX_AUTHOR_LEN`] characters, no control characters.
+pub fn validate_author(author: &str) -> Result<&str, crate::Error> {
+    let a = author.trim();
+    if a.is_empty() {
+        return Err(crate::Error::Validation("author must not be empty".into()));
+    }
+    if a.chars().count() > MAX_AUTHOR_LEN {
+        return Err(crate::Error::Validation(format!(
+            "author is longer than {MAX_AUTHOR_LEN} characters"
+        )));
+    }
+    if a.chars().any(char::is_control) {
+        return Err(crate::Error::Validation(
+            "author must not contain control characters".into(),
+        ));
+    }
+    Ok(a)
+}
+
 pub fn validate_author_type(author_type: &str) -> Result<(), crate::Error> {
     match author_type {
         "human" | "agent" => Ok(()),
@@ -413,6 +440,15 @@ pub struct ExportEntry {
     /// falls back to the caller-provided namespace for those.
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Who wrote the memory (#1427 phase 2). Absent on rows from older export
+    /// files and on unattributed memories; an invalid value is dropped on import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// Ids of the rooms the memory belongs to (#1588). Absent on rows from
+    /// older export files and on memories in no room. Import links the memory
+    /// to each room that exists in the target store.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms: Vec<String>,
 }
 
 fn default_metadata() -> serde_json::Value {
@@ -424,12 +460,32 @@ fn default_created_at() -> chrono::DateTime<chrono::Utc> {
 }
 
 /// Result of an import operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImportResult {
     /// Number of memories imported.
     pub imported: usize,
-    /// Number of entries skipped (duplicate or invalid).
+    /// Number of entries skipped (duplicate, invalid or rejected by the
+    /// privacy filter in strict mode).
     pub skipped: usize,
+    /// Imported memories in which the privacy filter masked a secret (#1464).
+    #[serde(default)]
+    pub redacted: usize,
+    /// Entries skipped because strict mode found a secret (also in `skipped`).
+    #[serde(default)]
+    pub rejected_secret: usize,
+    /// New memory-to-room links made from the `rooms` of the entries (#1588).
+    /// A duplicate of a stored memory is linked too, so importing a file again
+    /// after creating the missing rooms completes the links.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub room_links: usize,
+    /// Rooms named by the entries that do not exist in this store, so their
+    /// links were not made. Create them and import again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms_missing: Vec<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// A tag with its usage count.
@@ -603,6 +659,16 @@ impl MemoryType {
             Self::Event => 0.02,
             Self::Note => -0.02,
             Self::Fact | Self::Procedure | Self::Context | Self::Reference => 0.0,
+        }
+    }
+
+    /// The type name stored when a write gives none: the inferred type, or
+    /// `fact` when the content is ambiguous (`Note`), as every write path
+    /// has done since #349.
+    pub fn infer_stored_name(content: &str) -> &'static str {
+        match Self::infer_from_content(content) {
+            Self::Note => "fact",
+            other => other.as_str(),
         }
     }
 

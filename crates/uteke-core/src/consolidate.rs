@@ -71,20 +71,36 @@ impl crate::Uteke {
         contradiction_threshold: f32,
     ) -> Result<(RememberOutcome, ContradictionResult), Error> {
         crate::validate_input(content, tags)?;
+        let memory_type = memory_type.unwrap_or("fact");
+        Self::validate_memory_type(memory_type)?;
         let ns = namespace.unwrap_or(DEFAULT_NAMESPACE);
+        // Privacy filter (#1464), before the content is embedded or stored.
+        let prepared = self
+            .privacy_config
+            .prepare_with_tags(content, tags, metadata)?;
+        let content = prepared.content.as_str();
+        let metadata = prepared.metadata.clone();
+        let tag_owned = prepared.tags.clone();
+        let tags: Vec<&str> = tag_owned.iter().map(String::as_str).collect();
+        let tags = tags.as_slice();
 
-        // Embed first to check for contradictions before persisting
-        self.ensure_embedder()?;
-        let embedding = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during remember_with_contradiction"))?
-            .as_ref()
-            .expect("embedder ensured above")
-            .embed(content)?;
+        // Embed first to check for contradictions before persisting: the same
+        // embedding step as `remember` (JSON flattened, retried; no vector
+        // means FTS5-only with a warning).
+        let content_type = crate::memory::crud::detect_content_type(content);
+        let (embedding, generation_error) = self.embed_for_write(content, content_type)?;
 
-        // Check for contradictions (read-only)
-        let contradiction = if check_contradiction {
+        // Check for contradictions (read-only). Without a vector there is
+        // nothing to compare, like the duplicate check of `remember`.
+        let skipped = check_contradiction && embedding.is_empty();
+        // The caller asked for the check: say it did not happen.
+        let generation_error = if skipped {
+            generation_error
+                .or_else(|| Some("contradiction check skipped: no embedding was produced".into()))
+        } else {
+            generation_error
+        };
+        let contradiction = if check_contradiction && !skipped {
             self.check_contradiction(content, &embedding, ns, contradiction_threshold)?
         } else {
             ContradictionResult {
@@ -94,21 +110,20 @@ impl crate::Uteke {
             }
         };
 
-        // Detect content type for consolidated memory
-        let content_type = crate::memory::crud::detect_content_type(content);
-
         // Use remember_precomputed to avoid double-embedding
-        let outcome = self.remember_precomputed_detailed(
+        let mut outcome = self.remember_precomputed_detailed(
             content,
             tags,
             metadata,
             Some(ns),
-            memory_type.unwrap_or("fact"),
+            memory_type,
             content_type,
             &embedding,
-            None,
+            generation_error,
         )?;
         let id = outcome.id.clone();
+        self.record_redaction(&id, &prepared.redactions);
+        outcome.redactions = prepared.redactions.clone();
 
         // Timeline: if this is a contradiction-aware remember that
         // supersedes an older memory, record a Consolidated event (#347)
@@ -357,7 +372,7 @@ impl crate::Uteke {
             .store
             .get_by_id(id_keep)
             .map_err(|e| Error::db("consolidate_pair lookup keeper", e))?
-            .ok_or_else(|| Error::validation(format!("memory {id_keep} not found")))?;
+            .ok_or_else(|| Error::not_found(format!("memory {id_keep} not found")))?;
         if keeper.deprecated {
             return Err(Error::validation(format!(
                 "memory {id_keep} is deprecated and cannot be kept"
@@ -367,7 +382,7 @@ impl crate::Uteke {
             .store
             .get_by_id(id_remove)
             .map_err(|e| Error::db("consolidate_pair lookup loser", e))?
-            .ok_or_else(|| Error::validation(format!("memory {id_remove} not found")))?;
+            .ok_or_else(|| Error::not_found(format!("memory {id_remove} not found")))?;
 
         let namespace = loser.namespace.clone();
         let dream_soft = self.lifecycle_config.dream_dedup_soft_delete;
@@ -628,6 +643,7 @@ mod tests {
             source: None,
             source_type: "direct".to_string(),
             author_type: "agent".to_string(),
+            author: None,
             id: String::new(),
         }
     }

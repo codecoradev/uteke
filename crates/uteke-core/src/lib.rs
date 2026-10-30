@@ -9,62 +9,90 @@
 //! let results = uteke.recall("query", 5, None, None, 0.0, None, None)?;
 //! ```
 
+#[cfg(test)]
+mod accessor_tests;
 pub mod chunker;
 pub mod config_layers;
 mod consolidate;
 pub mod consolidation_api;
 pub mod consolidation_exec;
 pub mod consolidation_plan;
+mod dimension_check;
 pub mod dream;
 mod edges;
 mod embed;
+mod embedding;
+pub use embedding::EmbeddingWarmer;
+pub mod embedding_config;
+#[cfg(test)]
+mod engine_settings_tests;
 mod error;
+#[cfg(test)]
+mod error_class_tests;
 pub mod extraction;
 mod forget_request;
 pub mod graph;
 pub mod graph_rerank;
 pub mod graph_view;
 pub mod guide;
+#[cfg(test)]
+mod hot_path_bench;
 mod import_export;
 mod index_sync;
 mod jaccard;
 mod list_request;
 mod maintenance;
 pub mod memory;
+#[cfg(test)]
+mod mutation_gap_tests;
 pub mod namespace_deprecation;
 pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
+pub mod privacy;
+#[cfg(test)]
+mod privacy_field_tests;
+#[cfg(test)]
+mod privacy_write_tests;
+mod redaction_flags;
+#[cfg(test)]
+mod write_path_tests;
 
 pub use forget_request::{
-    ForgetErrorKind, ForgetInput, ForgetPolicy, ForgetRequest, ForgetRequestError, FullIdForm,
-    IdCharset, UnmatchedPrefixText, resolve_memory_id,
+    ForgetErrorKind, ForgetInput, ForgetRequest, ForgetRequestError, resolve_memory_id,
 };
 pub use list_request::{
     LIST_DEFAULT_LIMIT, LIST_HTTP_DEFAULT_LIMIT, LIST_HTTP_MAX_LIMIT, ListInput, ListPageMeta,
-    ListPolicy, ListRequest, ListRequestError,
+    ListRequest, ListRequestError,
 };
-pub use operations::RememberOutcome;
+pub use operations::{RememberOutcome, UpdateOutcome};
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
-    RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallPolicy, RecallRequest,
-    RecallRequestError,
+    RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallRequest, RecallRequestError,
 };
 pub use remember_request::{
-    RememberInput, RememberPolicy, RememberRequest, RememberRequestError, metadata_from_cli_flags,
+    RememberInput, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
+pub mod engine_settings;
+#[cfg(test)]
+mod isolation_tests;
+pub mod list_exec;
 mod orphans;
 pub mod provenance;
 mod recall_cache;
+pub mod recall_exec;
 pub mod recall_explain;
 mod recall_request;
+pub mod recall_settings;
+pub mod remember_exec;
 mod remember_request;
-mod rooms;
+mod room_ops;
 pub mod rooms_segments;
 pub mod salience_recency;
 pub mod structural_export;
-#[cfg(test)]
-pub(crate) mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;
 mod timeline;
 mod types;
 pub mod update_check;
@@ -103,7 +131,9 @@ pub use timeline::{TimelineEvent, TimelineEventType};
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]
 pub use embed::OnnxEmbedder;
-pub use error::{Error, format_bytes};
+pub use engine_settings::EngineSettings;
+pub use error::{Error, ErrorClass, format_bytes};
+pub use recall_settings::RecallSettings;
 pub use types::{
     CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
     VerifyReport,
@@ -196,15 +226,33 @@ use std::os::unix::fs::PermissionsExt;
 
 /// Configuration for memory tier thresholds.
 ///
+/// A number of days read from `uteke.toml`: zero or more, as the `u32` the
+/// config sections used before they shared this type.
+fn non_negative_days<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let days = <i64 as serde::Deserialize>::deserialize(deserializer)?;
+    if days < 0 {
+        return Err(serde::de::Error::custom(
+            "days must be zero or more (a negative value is not a number of days)",
+        ));
+    }
+    Ok(days)
+}
+
 /// Controls how memories are classified into hot/warm/cold tiers
 /// and how hot memories are boosted in recall scoring.
 ///
 /// Defaults match the hardcoded values used before config wiring (#127).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(default)]
 pub struct TierConfig {
     /// Days before memory moves from hot → warm.
+    #[serde(deserialize_with = "non_negative_days")]
     pub hot_days: i64,
     /// Days before memory moves from warm → cold.
+    #[serde(deserialize_with = "non_negative_days")]
     pub warm_days: i64,
     /// Score boost added to hot memories during recall.
     pub hot_boost: f64,
@@ -236,7 +284,8 @@ impl Default for RecallConfig {
 /// Dream pipeline thresholds (#731). All phases in the dream cycle
 /// (contradiction scan, dedup/consolidate, orphan detection) read from
 /// these values instead of hardcoded constants.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
 pub struct DreamConfig {
     /// Cosine similarity threshold for contradiction scan. Memories with
     /// similarity ABOVE this value are NOT contradictions. Default: 0.6.
@@ -292,7 +341,8 @@ impl Default for DreamConfig {
 /// dream_dedup_soft_delete = true    # dream dedup → deprecate, not delete
 /// dream_compact_soft_delete = true  # dream compact → deprecate, not delete
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(default)]
 pub struct LifecycleConfig {
     /// When `true`, all destructive operations route through `deprecate()`
     /// instead of `delete()`. Set to `false` to restore pre-v0.13 hard-delete
@@ -412,6 +462,22 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Identity of the store rooted at `home`: the first 16 hex digits of the
+/// SHA-256 of its canonical path (the lexical path when it does not exist
+/// yet, trailing slashes trimmed). `GET /store` reports it so a client can tell
+/// whether a running server serves the store it resolved (#1445) without the
+/// server revealing its path. Two spellings of one directory give the same id.
+pub fn store_identity(home: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let canonical = std::fs::canonicalize(home).unwrap_or_else(|_| {
+        let lossy = home.to_string_lossy();
+        let trimmed = lossy.trim_end_matches('/');
+        PathBuf::from(if trimmed.is_empty() { "/" } else { trimmed })
+    });
+    let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
 /// ```text
 /// UTEKE_HOME=/data   → /data
 /// (not set)           → ~/.codecora/uteke  (auto-migrates from ~/.uteke)
@@ -493,7 +559,8 @@ pub struct EmbeddingSettings {
 /// When configured, the [`FallbackEmbedder`] wraps the primary backend (e.g.
 /// ONNX) and falls back to an OpenAI-compatible cloud API on failure.
 /// All fields default to empty — fallback is disabled until explicitly configured.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Deserialize)]
+#[serde(default)]
 pub struct FallbackSettings {
     pub api_key: String,
     pub base_url: String,
@@ -553,35 +620,37 @@ impl FallbackSettings {
 }
 
 impl EmbeddingSettings {
-    /// Merge caller-provided settings with env-var overrides. Env vars
-    /// (UTEKE_EMBEDDING_*) win over the caller-supplied values; the caller
-    /// is responsible for having already merged uteke.toml into the input.
-    fn resolve_with_defaults(input: &EmbeddingSettings) -> Self {
-        // Env vars win over caller-supplied values, but an explicitly empty
-        // env var is treated as "unset" so it cannot clobber a non-empty
-        // config-provided value (CodeCora finding: empty
-        // UTEKE_EMBEDDING_API_KEY previously overwrote a populated
-        // [embedding].api_key).
-        let env_or = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
-        let api_key = env_or("UTEKE_EMBEDDING_API_KEY")
-            .or_else(|| env_or("OPENAI_API_KEY"))
-            .unwrap_or_else(|| input.api_key.clone());
-        let base_url = env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or_else(|| input.base_url.clone());
-        let endpoint_path =
-            env_or("UTEKE_EMBEDDING_ENDPOINT_PATH").unwrap_or_else(|| input.endpoint_path.clone());
-        let model = env_or("UTEKE_EMBEDDING_MODEL").unwrap_or_else(|| input.model.clone());
-        let dims = std::env::var("UTEKE_EMBEDDING_DIMS")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(input.dims);
+    /// Apply the `UTEKE_EMBEDDING_{API_KEY,BASE_URL,ENDPOINT_PATH,MODEL,DIMS}`
+    /// environment overrides (`OPENAI_API_KEY` backs up the key): the variable
+    /// wins over the value already present, and an empty one counts as unset
+    /// (an empty `UTEKE_EMBEDDING_API_KEY` must not clobber a configured key).
+    /// A non-numeric `DIMS` is ignored with a warning. The one implementation
+    /// of this precedence (#1537).
+    pub fn with_overrides_from(self, get: impl Fn(&str) -> Option<String>) -> Self {
+        let env_or = |name: &str| get(name).filter(|v| !v.is_empty());
+        let dims = match env_or("UTEKE_EMBEDDING_DIMS") {
+            Some(v) => v.parse::<usize>().unwrap_or_else(|_| {
+                tracing::warn!("Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)");
+                self.dims
+            }),
+            None => self.dims,
+        };
         Self {
-            api_key,
-            base_url,
-            endpoint_path,
-            model,
+            api_key: env_or("UTEKE_EMBEDDING_API_KEY")
+                .or_else(|| env_or("OPENAI_API_KEY"))
+                .unwrap_or(self.api_key),
+            base_url: env_or("UTEKE_EMBEDDING_BASE_URL").unwrap_or(self.base_url),
+            endpoint_path: env_or("UTEKE_EMBEDDING_ENDPOINT_PATH").unwrap_or(self.endpoint_path),
+            model: env_or("UTEKE_EMBEDDING_MODEL").unwrap_or(self.model),
             dims,
         }
+    }
+
+    /// The caller's settings with the process environment applied.
+    fn resolve_with_defaults(input: &EmbeddingSettings) -> Self {
+        input
+            .clone()
+            .with_overrides_from(|name| std::env::var(name).ok())
     }
 }
 
@@ -596,13 +665,17 @@ impl EmbeddingSettings {
 pub struct Uteke {
     store: Store,
     index: RwLock<VectorIndex>,
-    embedder: Mutex<Option<Box<dyn Embedder>>>,
+    /// Shared so a call can clone the handle and embed WITHOUT holding the
+    /// slot lock: a remote backend then never serialises other requests (#1518).
+    embedder: Mutex<Option<std::sync::Arc<dyn Embedder>>>,
     /// Cached initialization error (#822). `(message, cached_at, is_permanent)`.
     /// Permanent failures (missing ORT lib, feature disabled) are cached forever.
     /// Transient network failures (OpenAI/Ollama unreachable) use a 60s TTL so
     /// they auto-retry after the outage passes. Stored as String because Error
     /// is not Clone (contains io::Error).
     embedder_init_error: Mutex<Option<(String, std::time::Instant, bool)>>,
+    /// Serializes building the embedder so a model load never runs twice.
+    embedder_build: Mutex<()>,
     /// Embedding backend name ("onnx", "openai", "ollama", "custom"). Used by lazy init.
     embedder_backend: String,
     /// Caller-supplied embedding settings (from uteke.toml). Env vars still
@@ -622,9 +695,15 @@ pub struct Uteke {
     /// Jaccard token reranking weight (#719). Additive boost applied
     /// post-RRF based on query-content token overlap. Default 0.0 (off).
     jaccard_weight: f32,
+    /// The `[recall]` settings in force: the defaults a transport falls back to
+    /// when a request does not give a floor or a strategy (set by `apply_settings`).
+    recall_settings: RecallSettings,
     /// Dream pipeline thresholds (#731). Used by contradiction scan,
     /// dedup/consolidate, and orphan detection phases.
     dream_config: DreamConfig,
+    /// Privacy filter applied to content before it is embedded or stored
+    /// (#1464). Default: mask secrets (`redact`), no allowlist.
+    privacy_config: privacy::PrivacyConfig,
     /// Memory lifecycle configuration (#928). Controls soft-delete behavior,
     /// dynamic deprecation caps, and TTL-based pruning.
     lifecycle_config: LifecycleConfig,
@@ -653,9 +732,33 @@ fn default_embedder_backend() -> &'static str {
 }
 
 impl Uteke {
-    /// Borrow the underlying store (for CLI/advanced use).
-    pub fn store(&self) -> &Store {
+    /// Borrow the underlying store. Inside the crate only: the transports ask
+    /// `Uteke` for what they need instead of reaching into the store.
+    pub(crate) fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// The store, for fixtures of the transport test suites (they seed rows
+    /// with exact ids and timestamps).
+    #[cfg(feature = "test-support")]
+    pub fn store_for_tests(&self) -> &Store {
+        &self.store
+    }
+
+    /// How many active (not deprecated) memories there are, optionally in one
+    /// namespace.
+    pub fn count_active(&self, namespace: Option<&str>) -> Result<usize, Error> {
+        self.store.count_active(namespace)
+    }
+
+    /// Deprecated memories, most recently deprecated first, with what the
+    /// lifecycle TTL display needs.
+    pub fn list_deprecated(
+        &self,
+        namespace: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<DeprecatedMemoryInfo>, Error> {
+        self.store.list_deprecated(namespace, limit)
     }
 
     /// Borrow lifecycle configuration (read-only).
@@ -667,36 +770,7 @@ impl Uteke {
     /// Used by the consolidation executor to embed consolidated records
     /// before writing them so they stay vector-searchable.
     pub fn embed_text(&self, text: &str) -> Result<Vec<f32>, Error> {
-        self.ensure_embedder()?;
-        self.embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during embed_text"))?
-            .as_ref()
-            .expect("embedder ensured above")
-            .embed(text)
-    }
-
-    /// Add an already-persisted memory's embedding to the vector index.
-    /// Used by the consolidation write path so new records are searchable.
-    pub(crate) fn add_to_index(&self, id: &str, embedding: &[f32]) -> Result<(), Error> {
-        let mut index = self
-            .index
-            .write()
-            .map_err(|_| Error::lock("index write lock during consolidation insert"))?;
-        let sync = index_sync::upsert(
-            &mut *index,
-            id,
-            embedding,
-            &index_sync::SyncPolicy::STANDARD,
-        );
-        match sync.insert_error {
-            Some(e) => Err(Error::embed_msg(format!(
-                "vector insert failed for id={id}: {e}"
-            ))),
-            // A failed persist is already logged by index_sync; the entry is
-            // in the in-memory index and `uteke repair` can resync the file.
-            None => Ok(()),
-        }
+        self.embed(text)
     }
 
     /// Remove an entry from the vector index (compensating action for a
@@ -948,6 +1022,21 @@ impl Uteke {
             dims
         };
 
+        // The dimension is decided here, once (#1540): what the backend produces
+        // against what the store already holds. Checked before the index is
+        // loaded, so a refused open touches nothing (a corrupt-index discard or a
+        // rebuild from SQLite would otherwise run at the wrong width).
+        let allow_dim_mismatch = dimension_check::mismatch_allowed();
+        dimension_check::verify(
+            dims,
+            &dimension_check::Held {
+                stored: store.infer_embedding_dims(),
+                index: None,
+            },
+            &embedder_backend,
+            allow_dim_mismatch,
+        )?;
+
         let mut index = match &index_path {
             Some(path) => match VectorIndex::load_or_create_for(path, dims, vector_backend) {
                 Ok(idx) => idx,
@@ -984,6 +1073,18 @@ impl Uteke {
             None => VectorIndex::new(dims)?,
         };
 
+        // The index file may carry another width than the one asked for (the
+        // loaded file's width wins); refuse that too.
+        dimension_check::verify(
+            dims,
+            &dimension_check::Held {
+                stored: None,
+                index: (!index.is_empty()).then(|| index.dims()),
+            },
+            &embedder_backend,
+            allow_dim_mismatch,
+        )?;
+
         // If index is empty but SQLite has memories, build from SQLite (migration)
         if index.is_empty() {
             let all_memories = store.load_all(None)?;
@@ -1018,8 +1119,9 @@ impl Uteke {
         Ok(Self {
             store,
             index: RwLock::new(index),
-            embedder: Mutex::new(embedder),
+            embedder: Mutex::new(embedder.map(std::sync::Arc::from)),
             embedder_init_error: Mutex::new(None),
+            embedder_build: Mutex::new(()),
             embedder_backend,
             embedding_settings,
             fallback_settings: FallbackSettings::default(),
@@ -1029,7 +1131,9 @@ impl Uteke {
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
             jaccard_weight: 0.0,
+            recall_settings: RecallSettings::default(),
             dream_config: DreamConfig::default(),
+            privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),
             embed_cache_path,
         })
@@ -1073,6 +1177,18 @@ impl Uteke {
         self.dream_config = config;
     }
 
+    /// Set the privacy filter (#1464): `redact` (default), `strict` or `off`,
+    /// plus the allowlist of values to keep. Called once at startup from the
+    /// CLI and server config.
+    pub fn set_privacy_config(&mut self, config: privacy::PrivacyConfig) {
+        self.privacy_config = config;
+    }
+
+    /// The privacy filter in force.
+    pub fn privacy_config(&self) -> &privacy::PrivacyConfig {
+        &self.privacy_config
+    }
+
     /// Set memory lifecycle configuration (#928).
     ///
     /// Controls soft-delete behavior, dynamic deprecation caps, and
@@ -1105,9 +1221,22 @@ impl Uteke {
     /// immediately instead of retrying the expensive ORT/model init on every
     /// request (which causes log spam and CPU waste in Docker environments).
     fn ensure_embedder(&self) -> Result<(), Error> {
-        // #822: Short-circuit — return cached init error if we already failed.
-        // Permanent failures (ORT lib missing) are cached forever.
-        // Transient network failures use a 60s TTL.
+        if self.embedder_ready()? {
+            return Ok(());
+        }
+        // One thread builds, the others wait here: a model load must not run
+        // twice. The embedder lock itself is only taken to look and to swap.
+        let _building = self
+            .embedder_build
+            .lock()
+            .map_err(|_| Error::lock("embedder build lock"))?;
+        if self.embedder_ready()? {
+            return Ok(());
+        }
+
+        // #822: Short-circuit — return the cached init error if we already
+        // failed. Permanent failures (ORT lib missing) are cached forever;
+        // transient network failures use a 60s TTL.
         if let Ok(mut cached) = self.embedder_init_error.lock() {
             if let Some((ref msg, cached_at, is_permanent)) = *cached {
                 if is_permanent || cached_at.elapsed() < std::time::Duration::from_secs(60) {
@@ -1115,198 +1244,55 @@ impl Uteke {
                         "Embedder initialization previously failed (cached): {msg}"
                     )));
                 }
-                // TTL expired — clear and retry
                 tracing::info!("Embedder init error cache expired (60s TTL), retrying...");
                 *cached = None;
             }
         }
 
-        // #822: Helper to cache an init error message.
-        // is_permanent: true for local failures (missing lib), false for network (transient).
-        fn cache_init_err(
-            slot: &Mutex<Option<(String, std::time::Instant, bool)>>,
-            e: &Error,
-            is_permanent: bool,
-        ) {
-            let _ = slot
-                .lock()
-                .map(|mut g| *g = Some((e.to_string(), std::time::Instant::now(), is_permanent)));
+        tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
+        let settings = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
+        let index_dims = self.index.read().map(|i| i.dims()).ok();
+        let plan = embed::factory::Plan {
+            backend: &self.embedder_backend,
+            settings: &settings,
+            cache_path: self.embed_cache_path.as_deref(),
+            fallback: &self.fallback_settings,
+            // Without a readable index there is nothing to disagree with.
+            index_dims: index_dims.unwrap_or(0),
+            allow_dim_mismatch: index_dims.is_none()
+                || std::env::var("UTEKE_ALLOW_DIM_MISMATCH").as_deref() == Ok("1"),
+        };
+        match embed::factory::build(&plan) {
+            Ok(embedder) => {
+                *self
+                    .embedder
+                    .lock()
+                    .map_err(|_| Error::lock("embedder lock during lazy init"))? =
+                    Some(std::sync::Arc::from(embedder));
+                Ok(())
+            }
+            Err(failure) => {
+                if let Some(permanent) = failure.cache {
+                    let _ = self.embedder_init_error.lock().map(|mut g| {
+                        *g = Some((
+                            failure.error.to_string(),
+                            std::time::Instant::now(),
+                            permanent,
+                        ))
+                    });
+                }
+                Err(failure.error)
+            }
         }
+    }
 
-        let mut guard = self
+    /// Whether the embedder slot is filled (the lock is held for the look only).
+    fn embedder_ready(&self) -> Result<bool, Error> {
+        Ok(self
             .embedder
             .lock()
-            .map_err(|_| Error::lock("embedder lock during lazy init"))?;
-        if guard.is_none() {
-            tracing::debug!(backend = %self.embedder_backend, "Lazy-initializing embedding backend");
-            let backend = self.embedder_backend.as_str();
-            let embedder: Box<dyn crate::embed::Embedder> = match backend {
-                #[cfg(feature = "onnx")]
-                "onnx" | "" => {
-                    let r = crate::embed::OnnxEmbedder::new();
-                    match r {
-                        Ok(e) => Box::new(e),
-                        Err(err) => {
-                            cache_init_err(&self.embedder_init_error, &err, true);
-                            return Err(err);
-                        }
-                    }
-                }
-                #[cfg(not(feature = "onnx"))]
-                "onnx" | "" => {
-                    return Err(Error::embed_msg(
-                        "ONNX embedding backend requested but 'onnx' feature is disabled at compile time. \
-                         Rebuild with --features onnx or use openai/ollama backend.",
-                    ));
-                }
-                "custom" => {
-                    return Err(Error::generic(
-                        "Custom embedder backend set but no embedder was provided",
-                    ));
-                }
-                "openai" => {
-                    let cfg = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
-                    let model = if cfg.model.is_empty() {
-                        crate::embed::openai::DEFAULT_MODEL.to_string()
-                    } else {
-                        cfg.model
-                    };
-                    let base_url = if cfg.base_url.is_empty() {
-                        crate::embed::openai::DEFAULT_BASE_URL.to_string()
-                    } else {
-                        cfg.base_url
-                    };
-                    let dims = if cfg.dims == 0 {
-                        crate::embed::openai::DEFAULT_DIMS
-                    } else {
-                        cfg.dims
-                    };
-                    let r = crate::embed::OpenAiEmbedder::new(
-                        &cfg.api_key,
-                        &model,
-                        &base_url,
-                        &cfg.endpoint_path,
-                        dims,
-                    );
-                    match r {
-                        Ok(e) => Box::new(e),
-                        Err(err) => {
-                            cache_init_err(&self.embedder_init_error, &err, false);
-                            return Err(err);
-                        }
-                    }
-                }
-                "ollama" => {
-                    let cfg = EmbeddingSettings::resolve_with_defaults(&self.embedding_settings);
-                    let model = if cfg.model.is_empty() {
-                        crate::embed::ollama::DEFAULT_MODEL.to_string()
-                    } else {
-                        cfg.model
-                    };
-                    let base_url = if cfg.base_url.is_empty() {
-                        crate::embed::ollama::DEFAULT_BASE_URL.to_string()
-                    } else {
-                        cfg.base_url
-                    };
-                    let dims = if cfg.dims == 0 {
-                        crate::embed::ollama::DEFAULT_DIMS
-                    } else {
-                        cfg.dims
-                    };
-                    let r = crate::embed::OllamaEmbedder::new(&base_url, &model, dims);
-                    match r {
-                        Ok(e) => Box::new(e),
-                        Err(err) => {
-                            cache_init_err(&self.embedder_init_error, &err, false);
-                            return Err(err);
-                        }
-                    }
-                }
-                other => {
-                    return Err(Error::Validation(format!(
-                        "Unknown embedding backend: '{other}'. Supported: onnx, openai, ollama."
-                    )));
-                }
-            };
-
-            // Dim mismatch detection (#337): refuse to silently mix vectors
-            // from different backends in one index. Catch it at first use
-            // so the user gets a clear error instead of garbage recall.
-            //
-            // Escape hatch: UTEKE_ALLOW_DIM_MISMATCH=1 skips the check so the
-            // user can open the store with a different backend to run
-            // `uteke repair` (which rebuilds vectors with the new backend).
-            // Without this, a user who flips backend on an existing store
-            // can never recover (CodeCora finding #154).
-            let backend_dims = embedder.dims();
-            let index_dims = self.index.read().map(|i| i.dims()).unwrap_or(backend_dims);
-            if index_dims != backend_dims
-                && std::env::var("UTEKE_ALLOW_DIM_MISMATCH").as_deref() != Ok("1")
-            {
-                return Err(Error::Validation(format!(
-                    "Embedding dimension mismatch: index has {index_dims}d vectors but backend '{backend}' produces {backend_dims}d. \
-                     Rebuild the index (`UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair`) or switch backend."
-                )));
-            }
-
-            *guard = Some(embedder);
-
-            // Wrap with fallback if configured.
-            // Must happen after dim mismatch check so primary dims are validated
-            // against the index before we potentially add a fallback.
-            if self.fallback_settings.is_configured() {
-                let fb = &self.fallback_settings;
-                tracing::info!(
-                    "Embedding fallback configured — wrapping primary with cloud backup"
-                );
-                let model = fb.model.clone();
-                let base_url = fb.base_url.clone();
-                let endpoint_path = fb.endpoint_path.clone();
-                let dims = backend_dims; // use validated primary dims
-                let cloud_embedder = crate::embed::OpenAiEmbedder::new(
-                    &fb.api_key,
-                    &model,
-                    &base_url,
-                    &endpoint_path,
-                    dims,
-                )?;
-                let fallback_embedder = crate::embed::FallbackEmbedder::new(
-                    // Take the primary out, wrap it, put back
-                    guard.take().unwrap(),
-                    Some(Box::new(cloud_embedder)),
-                )?;
-                *guard = Some(Box::new(fallback_embedder));
-            }
-
-            // Wrap with persistent embedding cache (#896).
-            // CachingEmbedder intercepts embed() calls and serves from SQLite
-            // cache on hit, avoiding the ~2s ONNX model load on repeated queries.
-            // Skipped for in-memory stores (tests) where no cache path exists.
-            if let Some(ref cache_path) = self.embed_cache_path {
-                // Init cache DB first (without moving `inner`), so on failure
-                // we can fall back to the uncached embedder cleanly.
-                match crate::embed::EmbeddingCache::open(cache_path) {
-                    Ok(cache) => {
-                        tracing::debug!(
-                            cache_path = %cache_path.display(),
-                            "Persistent embedding cache enabled"
-                        );
-                        let inner = guard.take().unwrap();
-                        *guard = Some(Box::new(crate::embed::CachingEmbedder::with_cache(
-                            inner, cache,
-                        )));
-                    }
-                    Err(e) => {
-                        // Cache init failure is non-fatal — use uncached embedder
-                        tracing::warn!(
-                            error = %e,
-                            "Failed to init embedding cache, using uncached embedder"
-                        );
-                    }
-                }
-            }
-        }
-        Ok(())
+            .map_err(|_| Error::lock("embedder lock"))?
+            .is_some())
     }
 
     /// Pin a memory so it never decays.
@@ -1399,7 +1385,18 @@ impl Uteke {
         source: Option<&str>,
         source_type: &str,
     ) -> Result<bool, Error> {
-        self.store.set_source(id, source, source_type)
+        // #1464: the source text is filtered like the content. It is set after
+        // the memory is stored, so in strict mode the rejection leaves the
+        // memory without a source.
+        let masked = source
+            .map(|s| self.privacy_config.mask_text(s))
+            .transpose()?;
+        let source = masked.as_ref().map(|(text, _)| text.as_str());
+        let found = self.store.set_source(id, source, source_type)?;
+        if let Some((_, redactions)) = &masked {
+            self.record_redaction(id, redactions);
+        }
+        Ok(found)
     }
 
     /// Set the content hash recorded at write time (#1172 Fase 1).
@@ -1417,6 +1414,25 @@ impl Uteke {
         self.store.set_author_type(id, author_type)
     }
 
+    /// Set or clear who wrote a memory (#1427 phase 2): free text, trimmed,
+    /// 1 to 128 characters, no control characters. Works with or without a
+    /// room. Returns false if the memory does not exist.
+    pub fn set_author(&self, id: &str, author: Option<&str>) -> Result<bool, Error> {
+        self.store.set_author(id, author)
+    }
+
+    /// Stamp the writer of a room write on the memory itself (#1427 phase 2),
+    /// when it is a valid author. The room link accepts any text, so an author
+    /// the memory field rejects (empty, over 128 characters, control
+    /// characters) leaves the memory unattributed instead of failing a write
+    /// that already succeeded. Returns whether the author was recorded.
+    pub fn set_author_if_valid(&self, id: &str, author: &str) -> Result<bool, Error> {
+        if crate::memory::types::validate_author(author).is_err() {
+            return Ok(false);
+        }
+        self.store.set_author(id, Some(author))
+    }
+
     /// Recalculate importance scores for all memories.
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         let updated = self.store.recompute_importance()?;
@@ -1427,8 +1443,14 @@ impl Uteke {
         Ok(updated)
     }
 
-    /// Get a reference to the raw connection for graph operations.
-    pub fn graph_store(&self) -> &rusqlite::Connection {
+    /// The knowledge graph of this store. The transports use this; the raw
+    /// connection stays inside the crate.
+    pub fn graph(&self) -> GraphStore<'_> {
+        GraphStore::new(self.graph_store())
+    }
+
+    /// The raw connection for graph operations (inside the crate only).
+    pub(crate) fn graph_store(&self) -> &rusqlite::Connection {
         &self.store.conn
     }
 
@@ -1707,37 +1729,16 @@ impl Uteke {
         content: &str,
         tags: &[String],
     ) -> Result<Vec<(DocumentChunk, Vec<f32>)>, Error> {
-        self.ensure_embedder()?;
-        // The embedder mutex is shared with recall/remember (query embedding),
-        // so take it per call, never across the whole loop: a long document
-        // must not make every other embed wait for all of its chunks (#1323).
-        let max_chars = {
-            let guard = self
-                .embedder
-                .lock()
-                .map_err(|_| Error::lock("embedder lock during document chunking"))?;
-            guard
-                .as_ref()
-                .expect("embedder ensured above")
-                .max_seq_len()
-                .saturating_mul(4)
-                .max(1024)
-        };
+        // The embedder lock is taken per call, never across the whole loop: a
+        // long document must not make every other embed wait for all of its
+        // chunks (#1323).
+        let max_chars = self.embedder_max_seq_len()?.saturating_mul(4).max(1024);
         let chunks = crate::chunker::chunk_markdown(content, max_chars);
         chunks
             .iter()
             .enumerate()
             .map(|(i, chunk)| {
-                let embedding = {
-                    let guard = self
-                        .embedder
-                        .lock()
-                        .map_err(|_| Error::lock("embedder lock during chunk embedding"))?;
-                    guard
-                        .as_ref()
-                        .expect("embedder ensured above")
-                        .embed(&chunk.content)?
-                };
+                let embedding = self.embed(&chunk.content)?;
                 Ok((
                     DocumentChunk {
                         id: uuid::Uuid::now_v7().to_string(),
@@ -1918,7 +1919,7 @@ impl Uteke {
             None => self
                 .store
                 .get_document(id_or_slug)?
-                .ok_or_else(|| Error::validation("document not found for move"))?,
+                .ok_or_else(|| Error::not_found("document not found for move"))?,
         };
 
         let new_parent_id = match new_parent_slug {
@@ -1927,7 +1928,7 @@ impl Uteke {
                 let parent = match self.store.get_document_by_slug(ps)? {
                     Some(d) => d,
                     None => self.store.get_document(ps)?.ok_or_else(|| {
-                        Error::validation(format!("parent document '{ps}' not found"))
+                        Error::not_found(format!("parent document '{ps}' not found"))
                     })?,
                 };
                 Some(parent.id)
@@ -2057,14 +2058,7 @@ impl Uteke {
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
-        self.ensure_embedder()?;
-        let query_embedding = self
-            .embedder
-            .lock()
-            .map_err(|_| Error::lock("embedder lock during doc search"))?
-            .as_ref()
-            .expect("embedder ensured above")
-            .embed(query)?;
+        let query_embedding = self.embed(query)?;
 
         let index = self
             .index
@@ -2769,6 +2763,7 @@ fn restrict_dir_permissions(dir: &Path) {
     let _ = dir;
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     /// #1166: `open()` must not request a backend the build cannot
@@ -2906,6 +2901,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn ensure_embedder_openai_missing_key_error_is_cached() {
         // No UTEKE_EMBEDDING_API_KEY / OPENAI_API_KEY in env → deterministic
         // init failure at OpenAiEmbedder::new, cached as transient (#822).
@@ -2967,7 +2963,6 @@ mod tests {
         assert!(validate_input_with_limits("c", &[&tag_huge], 100, 10, 0).is_ok());
     }
 
-    #[ignore = "requires ONNX embedder — index file extension follows active backend"]
     #[test]
     fn index_file_uses_backend_extension() {
         // #1112: the index filename must follow the active backend, so
@@ -3271,6 +3266,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
 
         let json = serde_json::to_string(&m).unwrap();
@@ -3322,6 +3318,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
 
         let sr = SearchResult {
@@ -3527,9 +3524,8 @@ mod tests {
 
     // These tests require ONNX embedding model (not available in CI)
     #[test]
-    #[ignore]
     fn test_recall_threshold_filters_low_scores() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Store a memory
         let _id = uteke
@@ -3562,9 +3558,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_recall_threshold_zero_returns_all() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let _id = uteke
             .remember("some content here", &[], None, None)
             .unwrap();
@@ -3577,9 +3572,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_recall_threshold_specific_score() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let _id = uteke
             .remember(
                 "Rust is a systems programming language focused on safety",
@@ -3617,12 +3611,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_unified_recall_reports_similarity_not_rrf_rank() {
         // A real directory, not ":memory:" — the usearch index is derived from the SQLite
         // path, so an in-memory store has no vector index and every recall returns empty.
         let dir = tempfile::tempdir().unwrap();
-        let uteke = Uteke::open(dir.path().join("uteke.db")).unwrap();
+        let uteke = crate::test_support::open_keyword_at(dir.path().join("uteke.db"));
         uteke
             .remember(
                 "Rust is a systems programming language focused on memory safety",
@@ -3677,10 +3670,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_recall_config_stored_but_override_per_call() {
         // Open with default config; per-call min_score controls recall threshold
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         let _id = uteke
             .remember("test content about rust programming", &[], None, None)
@@ -3805,9 +3797,8 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — needs document + memory with [[doc-slug]] wikilink"]
     fn recall_unified_enrich_populates_doc_links() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Create a document (requires embedder via doc_upsert).
         // In CI with a model loaded, this would create a real document.
@@ -3856,9 +3847,8 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — needs document + memory with [[doc-slug]] wikilink"]
     fn recall_unified_enrich_populates_memory_links() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Similar setup: create document "ref-doc", remember memory with [[ref-doc]],
         // then search documents and check linked_memory_ids.
@@ -3896,9 +3886,8 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder"]
     fn recall_unified_no_enrich_keeps_fields_none() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         uteke
             .remember(
@@ -3943,7 +3932,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — full E2E: document creation + wikilink wiring + enrichment"]
     fn e2e_wikilink_creates_doc_edge_and_enriches() {
         // Full cross-entity flow:
         // 1. Open Uteke with ONNX embedder
@@ -3957,7 +3945,7 @@ mod tests {
         // the public API (doc_upsert). This test validates the entire chain
         // from wikilink parsing → edge creation → enrichment.
 
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // Create a document (requires ONNX for embedding).
         // In CI with ONNX model loaded, this creates a real document.
@@ -4031,7 +4019,6 @@ mod tests {
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder — validates room+document+memory cross-entity enrichment"]
     fn e2e_room_doc_memory_cross_entity() {
         // Full flow:
         // 1. Open Uteke with ONNX embedder
@@ -4044,7 +4031,7 @@ mod tests {
         // NOTE: Room operations go through Store (accessible via Uteke's
         // public room_* methods). Document creation requires the embedder.
 
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
 
         // The test validates that the cross-entity integration works
         // when all three entity types (room, document, memory) are linked.
@@ -4124,6 +4111,7 @@ mod tests {
             source: None,
             source_type: "user".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         };
         uteke.store.insert(&m1).unwrap();
 
@@ -4157,37 +4145,36 @@ mod tests {
 
 #[cfg(test)]
 mod context_tests {
-    use crate::Uteke;
     use serial_test::serial;
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_build_context_empty_namespace() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         let ctx = uteke.build_context(Some("empty-ns")).unwrap();
         assert!(ctx.contains("0 memories"));
     }
 
     #[test]
     #[serial]
-    #[ignore = "requires ONNX embedder (model download) in CI"]
     fn test_build_context_with_data() {
-        let uteke = Uteke::open(":memory:").unwrap();
+        let uteke = crate::test_support::open_keyword();
         uteke
-            .remember(
+            .remember_typed(
                 "Use parameterized SQL queries",
                 &["tech"],
                 None,
                 Some("ctx-test"),
+                "procedure",
             )
             .unwrap();
         uteke
-            .remember(
+            .remember_typed(
                 "We chose Tauri 2 over Electron",
                 &["tech"],
                 None,
                 Some("ctx-test"),
+                "decision",
             )
             .unwrap();
 
@@ -4476,6 +4463,7 @@ mod documents_fts_heal_tests {
     }
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod fallback_settings_tests {
     //! #1355 step A — one env-override implementation for `[embed_fallback]`.
@@ -4563,5 +4551,39 @@ mod fallback_settings_tests {
         // in a developer's shell. Default::default() (the missed mutant) gives
         // an empty endpoint_path.
         assert_eq!(got.endpoint_path, "/env-path");
+    }
+}
+
+#[cfg(test)]
+mod store_identity_tests {
+    use super::store_identity;
+
+    #[test]
+    fn spellings_of_one_directory_share_an_id_and_directories_differ() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let plain = store_identity(a.path());
+        assert_eq!(plain.len(), 16);
+        assert!(plain.bytes().all(|c| c.is_ascii_hexdigit()));
+        let with_slash = format!("{}/", a.path().display());
+        assert_eq!(store_identity(std::path::Path::new(&with_slash)), plain);
+        let dotted = a.path().join(".");
+        assert_eq!(store_identity(&dotted), plain);
+        assert_ne!(store_identity(b.path()), plain);
+    }
+
+    #[test]
+    fn a_missing_directory_is_identified_by_its_trimmed_path() {
+        let x = store_identity(std::path::Path::new("/nonexistent/uteke-a"));
+        assert_eq!(
+            x,
+            store_identity(std::path::Path::new("/nonexistent/uteke-a/"))
+        );
+        assert_ne!(
+            x,
+            store_identity(std::path::Path::new("/nonexistent/uteke-b"))
+        );
+        // Pinned value: the id is part of the wire format of GET /store.
+        assert_eq!(x, "a424b195034e711e");
     }
 }

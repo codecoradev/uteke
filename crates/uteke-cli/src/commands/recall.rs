@@ -6,6 +6,31 @@ use crate::config::Config;
 use crate::output;
 use uteke_core::{RecallStrategy, SearchType, Uteke};
 
+/// Run the shared recall decode (#1439) over the arguments the local path has,
+/// and return the limit to use plus a warning when it was capped.
+fn decode_local(
+    query: &str,
+    limit: usize,
+    tags: &[String],
+    at: Option<&str>,
+) -> Result<(usize, Option<String>), String> {
+    let typed = uteke_core::RecallRequest::decode(uteke_core::RecallInput {
+        query: query.to_string(),
+        limit: Some(limit),
+        tags: Some(tags.to_vec()),
+        at: at.map(str::to_string),
+        ..Default::default()
+    })
+    .map_err(|e| e.to_string())?;
+    let warning = (typed.limit < limit).then(|| {
+        format!(
+            "Warning: --limit {limit} is capped at {} (the same cap as the server and MCP).",
+            typed.limit
+        )
+    });
+    Ok((typed.limit, warning))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_recall(
     cli: &Cli,
@@ -35,6 +60,17 @@ pub(crate) fn run_recall(
     budget: usize,
     exclude_ids: &[String],
 ) -> Result<(), String> {
+    // The same checks as HTTP and MCP (#1439): a blank query is refused, `--limit`
+    // is capped at 100 (with a warning), and `--at` must be RFC3339. Decoding only
+    // validates; it never changes which core function runs below.
+    let limit = {
+        let (capped, warning) = decode_local(query, limit, tags, at)?;
+        if let Some(w) = warning {
+            eprintln!("{w}");
+        }
+        capped
+    };
+
     // Resolve search type: --type flag > default (All = unified)
     let resolved_search_type = match search_type {
         Some("memory") => SearchType::Memory,
@@ -68,8 +104,8 @@ pub(crate) fn run_recall(
     // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
     let min_score = match min {
         Some(m) => m,
-        None if strict => config.recall.min_score_strict as f32,
-        None => config.recall.min_score as f32,
+        None if strict => config.engine.recall.min_score_strict as f32,
+        None => config.engine.recall.min_score as f32,
     };
 
     tracing::info!(
@@ -86,7 +122,7 @@ pub(crate) fn run_recall(
     // Resolve strategy: --strategy flag > config [recall].default_strategy
     // > built-in default ("hybrid"). Unknown values fall back to vector with
     // a warning so a typo never silently changes recall semantics.
-    let strategy_name = strategy.unwrap_or(&config.recall.default_strategy);
+    let strategy_name = strategy.unwrap_or(&config.engine.recall.default_strategy);
     let resolved_strategy = match RecallStrategy::from_str_opt(strategy_name) {
         Some(s) => s,
         None => {
@@ -101,13 +137,13 @@ pub(crate) fn run_recall(
     // Some(true) = use config weight (0.15), Some(false) / --no-* = 0.0.
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
         salience_weight: match salience {
-            Some(true) => config.recall.salience_weight, // explicit --salience
-            Some(false) => 0.0,                          // explicit --no-salience
+            Some(true) => config.engine.recall.salience_weight, // explicit --salience
+            Some(false) => 0.0,                                 // explicit --no-salience
             None => uteke_core::SalienceRecencyConfig::default().salience_weight, // default 0.1
         },
         recency_weight: match recency {
-            Some(true) => config.recall.recency_weight, // explicit --recency
-            Some(false) => 0.0,                         // explicit --no-recency
+            Some(true) => config.engine.recall.recency_weight, // explicit --recency
+            Some(false) => 0.0,                                // explicit --no-recency
             None => uteke_core::SalienceRecencyConfig::default().recency_weight, // default 0.1
         },
     });
@@ -494,4 +530,36 @@ fn parse_where(s: &str) -> Result<(String, String), String> {
         ));
     }
     Ok((parts[0].trim().to_string(), parts[1].trim().to_string()))
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::decode_local;
+
+    #[test]
+    fn a_blank_query_is_refused_like_on_the_server() {
+        for q in ["", "  \t"] {
+            assert_eq!(
+                decode_local(q, 5, &[], None).unwrap_err(),
+                "Query must not be empty or whitespace-only"
+            );
+        }
+    }
+
+    #[test]
+    fn a_limit_over_the_cap_is_capped_with_a_warning_and_a_small_one_is_untouched() {
+        let (l, w) = decode_local("q", 5000, &[], None).unwrap();
+        assert_eq!(l, 100);
+        assert!(w.unwrap().contains("capped at 100"));
+        // The benchmark harness uses --limit 50: unchanged, no warning.
+        let (l, w) = decode_local("q", 50, &[], None).unwrap();
+        assert_eq!((l, w), (50, None));
+    }
+
+    #[test]
+    fn an_invalid_at_is_refused_with_the_shared_text() {
+        let e = decode_local("q", 5, &[], Some("yesterday")).unwrap_err();
+        assert!(e.starts_with("Invalid 'at' timestamp: yesterday"), "{e}");
+        assert!(decode_local("q", 5, &[], Some("2026-06-01T12:00:00Z")).is_ok());
+    }
 }

@@ -151,11 +151,15 @@ fn main() {
     Config::write_default_config();
     let config = Config::load();
 
-    // Validate embedding backend early (fail-fast before store open)
-    if let Err(e) = config.embedding.validate_backend() {
-        eprintln!("Config error: {e}");
-        std::process::exit(1);
-    }
+    // Resolve the embedder early (fail-fast before store open): the backend, its
+    // settings and the UTEKE_EMBEDDING_* environment, in one place in the core.
+    let embedding = match config.embedding.resolve() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Config error: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // Namespace deprecation signal (#1427): one line on stderr for writes to a
     // non-default namespace; stdout and --json output are untouched.
@@ -166,9 +170,12 @@ fn main() {
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
     // Cheap check first: no network probe when --store names another store.
+    // Then the server must serve the store this invocation resolved (#1445):
+    // `UTEKE_HOME` pointing elsewhere is not sent to a server for another store.
     let server_available =
         should_route_via_server(&cli, &default_store_path(&config), config.server.enabled)
-            && commands::is_server_running(&server_url);
+            && commands::is_server_running(&server_url)
+            && commands::server_serves_store(&server_url, &resolve_store_path(&cli, &config));
 
     if server_available {
         tracing::info!("Server detected at {server_url}, routing via HTTP");
@@ -206,44 +213,21 @@ fn main() {
 
     let mut uteke = match Uteke::open_with_embedding_and_graph(
         &store_path,
-        &config.embedding.backend,
-        uteke_core::EmbeddingSettings {
-            api_key: config.embedding.api_key.clone(),
-            base_url: config.embedding.base_url.clone(),
-            endpoint_path: config.embedding.endpoint_path.clone(),
-            model: config.embedding.model.clone(),
-            dims: config.embedding.dims,
-        },
-        uteke_core::TierConfig {
-            hot_days: config.tier.hot_days as i64,
-            warm_days: config.tier.warm_days as i64,
-            hot_boost: config.tier.hot_boost,
-        },
-        uteke_core::RecallConfig {
-            min_score: config.recall.min_score as f32,
-        },
-        uteke_core::GraphRerankConfig {
-            density_weight: config.recall.graph_density_weight,
-            authority_weight: config.recall.graph_authority_weight,
-            enabled: config.recall.graph_rerank_enabled,
-        },
+        &embedding.backend,
+        embedding.settings,
+        config.engine.tier,
+        config.engine.recall.recall_config(),
+        config.engine.recall.graph_rerank(),
         // Runtime vector-engine preference from uteke.toml [vector] (#1168).
         // UTEKE_VECTOR_BACKEND env (higher precedence) is read inside core.
         Some(config.vector.backend.as_str()),
     ) {
         Ok(mut u) => {
-            // #719: apply Jaccard weight from config
-            u.set_jaccard_weight(config.recall.jaccard_weight);
-            // #731: apply dream pipeline thresholds from config
-            u.set_dream_config(uteke_core::DreamConfig {
-                contradict_similarity_threshold: config.dream.contradict_similarity_threshold,
-                contradict_tag_jaccard_min: config.dream.contradict_tag_jaccard_min,
-                contradict_max_memories: config.dream.contradict_max_memories,
-                dedup_threshold: config.dream.dedup_threshold,
-                orphan_importance_threshold: config.dream.orphan_importance_threshold,
-            });
-            // #928: apply lifecycle configuration from config
-            u.set_lifecycle_config(config.lifecycle.to_core());
+            // #719, #731, #928, #1355: Jaccard weight, dream thresholds, lifecycle
+            // and the embedding fallback, applied the same way as in the server.
+            u.apply_settings(&config.engine);
+            // #1464: secret filter on the write path ([privacy] in uteke.toml)
+            u.set_privacy_config(uteke_core::privacy::load_config());
             u
         }
         Err(e) => {
@@ -251,16 +235,6 @@ fn main() {
             std::process::exit(1);
         }
     };
-
-    // Configure embed fallback if enabled (zero-config: only when fields are set)
-    if config.embed_fallback.is_configured() {
-        uteke.set_fallback_settings(uteke_core::FallbackSettings {
-            api_key: config.embed_fallback.api_key.clone(),
-            base_url: config.embed_fallback.base_url.clone(),
-            endpoint_path: config.embed_fallback.endpoint_path.clone(),
-            model: config.embed_fallback.model.clone(),
-        });
-    }
 
     ctrlc::set_handler(|| {
         SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
@@ -306,6 +280,7 @@ pub(crate) fn resolve_namespace(cli: &Cli, config: &Config) -> String {
     "default".to_string()
 }
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod resolve_store_tests {
     use super::*;

@@ -147,6 +147,10 @@
     },
     {
       "method": "GET",
+      "path": "/store"
+    },
+    {
+      "method": "GET",
       "path": "/stats"
     },
     {
@@ -176,6 +180,10 @@
     {
       "method": "POST",
       "path": "/room/summary-document"
+    },
+    {
+      "method": "POST",
+      "path": "/room/memory"
     },
     {
       "method": "POST",
@@ -319,5 +327,5 @@
     }
   ],
   "source_of_truth": "uteke PROD store, document tree kontrak-core-cloud",
-  "version": "0.21.1"
+  "version": "0.22.0"
 }

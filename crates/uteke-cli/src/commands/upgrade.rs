@@ -42,6 +42,16 @@ const RELEASE_PUBLIC_KEYS: &[&str] = &["RWSLBBvjdkuSlvaQ/yoyoMlpQAOLTt5jACZGTgSO
 const SIGNATURE_HELP: &str = "See the \"Verifying a release\" section of SECURITY.md \
     (https://github.com/codecoradev/uteke/blob/main/SECURITY.md) to verify the release manually.";
 
+/// Error for a checksums download that did not work. A transient failure must
+/// not point the user at the bypass: `UTEKE_UPGRADE_SKIP_CHECKSUM=1` also drops
+/// the signature check, so the hint is to retry or verify by hand.
+fn checksums_unavailable(detail: &str) -> String {
+    format!(
+        "Failed to download checksums ({detail}). Refusing to install an unverified \
+         binary; retry later. {SIGNATURE_HELP}"
+    )
+}
+
 /// Entry point for `uteke upgrade`.
 pub fn run(yes: bool) -> Result<(), String> {
     // 1. Detect current version
@@ -166,17 +176,14 @@ pub fn run(yes: bool) -> Result<(), String> {
         eprintln!("[WARN] ============================================================");
         None
     } else {
-        let checksums_resp = client.get(&checksums_url).send().map_err(|e| {
-            format!("Failed to download checksums: {e}. Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to skip.")
-        })?;
+        let checksums_resp = client
+            .get(&checksums_url)
+            .send()
+            .map_err(|e| checksums_unavailable(&e.to_string()))?;
 
         if !checksums_resp.status().is_success() {
             let status = checksums_resp.status();
-            return Err(format!(
-                "Failed to download checksums (HTTP {status}). \
-                 Refusing to install unverified binary. \
-                 Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
-            ));
+            return Err(checksums_unavailable(&format!("HTTP {status}")));
         }
 
         check_declared_len(
@@ -714,8 +721,7 @@ fn verified_expected_hash(
     parse_checksum(text, archive_name).ok_or_else(|| {
         format!(
             "Checksum for '{archive_name}' not found in checksums file. \
-             Refusing to install unverified binary. \
-             Set UTEKE_UPGRADE_SKIP_CHECKSUM=1 to bypass."
+             Refusing to install unverified binary. {SIGNATURE_HELP}"
         )
     })
 }
@@ -1316,6 +1322,23 @@ mod signature_tests {
         assert!(e.contains("data mismatch"), "{e}");
         let e = hash(CHECKSUMS, ok(), "uteke-missing.tar.gz").unwrap_err();
         assert!(e.contains("not found in checksums file"), "{e}");
+    }
+
+    #[test]
+    fn error_hints_never_recommend_the_bypass() {
+        // The variable also disables signature verification, so a transient
+        // failure must point at retrying and manual verification instead.
+        let missing = hash(CHECKSUMS, Ok(OK_SIG.to_string()), "uteke-missing.tar.gz").unwrap_err();
+        for e in [
+            missing,
+            checksums_unavailable("HTTP 503 Service Unavailable"),
+            checksums_unavailable("connection reset"),
+        ] {
+            assert!(!e.contains("UTEKE_UPGRADE_SKIP_CHECKSUM"), "{e}");
+            assert!(e.contains("SECURITY.md"), "{e}");
+        }
+        let e = checksums_unavailable("HTTP 503");
+        assert!(e.contains("HTTP 503") && e.contains("retry later"), "{e}");
     }
 
     #[test]

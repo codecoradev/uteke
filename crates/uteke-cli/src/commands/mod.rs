@@ -31,7 +31,7 @@ use crate::cli::FeedbackAction;
 use crate::resolve_namespace;
 use uteke_core::Uteke;
 
-pub(crate) use server::{is_server_running, run_via_server};
+pub(crate) use server::{is_server_running, run_via_server, server_serves_store};
 
 /// Deprecation notice (#1427, phase 1) for write commands that target a
 /// non-default namespace (`--namespace`, `UTEKE_NAMESPACE` or config). The
@@ -85,7 +85,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             ns,
             content,
             tags,
-            r#type,
+            r#type.as_deref(),
             *detect_contradiction,
             entity.as_deref(),
             category.as_deref(),
@@ -254,6 +254,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             input,
             tags,
             format,
+            full,
             extract,
             extract_model,
             extract_api_key,
@@ -312,7 +313,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 ns,
                 input,
                 tags,
-                format,
+                if *full { "full" } else { format },
                 opts,
                 timestamp.as_deref(),
             )

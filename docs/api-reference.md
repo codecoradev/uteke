@@ -50,6 +50,12 @@ Returns the agent-facing memory tools guide for system prompt injection (#1010).
 
 *Related: `#1010`*
 
+#### 🟢 `GET` `/store`
+
+Identity of the store this server serves: {"id": "<16 hex digits>"}, the SHA-256 prefix of the store's canonical path (`uteke_core::store_identity`). The CLI compares it with the store it resolved before routing a command here, so `UTEKE_HOME` pointing elsewhere is not sent to this server (#1445). The path itself is never returned. Needs the usual token when auth is on.
+
+*Related: `#1445`*
+
 #### 🟢 `GET` `/namespaces`
 
 List all namespaces in the memory store. `?with_counts=true` adds `count` (total) plus `active`/`deprecated` breakdown fields (#1181).
@@ -445,6 +451,14 @@ Update a room's title and/or description; omitted fields stay unchanged (#1202).
 
 *Related: `#1202`*
 
+#### 🟡 `POST` `/room/memory`
+
+Add an existing memory to a room without copying it (#1589). Accepts `{ memory_id, room, author? }` (`memory_id` is a full id or an unambiguous prefix; `author` defaults to `anonymous`). Idempotent: linking twice returns `already_linked: true` and keeps the first link. 404 when the room or the memory does not exist. Write op — blocked for read-only tokens.
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1589`*
+
 #### 🟡 `POST` `/room/memory/move`
 
 Move a memory from one room to another, preserving the link's author/role/joined_at provenance (#1202). Accepts `{ memory_id, from_room, to_room }`; 404 when the memory has no link in `from_room`. Write op — blocked for read-only tokens.
@@ -768,6 +782,8 @@ Invalid values return HTTP 400. |
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
+| `author` | any | No | Who wrote the memory (#1427 phase 2): free text, trimmed, 1 to 128
+characters. Optional, with or without a room; returned on the memory. |
 | `author_type` | any | No | Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted. |
 | `category` | any | No | Category — stored as metadata key "category". |
 | `content` | `string` | Yes |  |

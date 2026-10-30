@@ -19,11 +19,38 @@ pub enum Error {
     #[error("Validation error: {0}")]
     Validation(String),
 
+    /// The thing a request names does not exist (a room, a document). The
+    /// message is shown as it is. Transports answer with a not-found status
+    /// instead of matching on message text. Sites that still report a missing
+    /// memory, room or namespace as [`Error::Validation`] keep their 400 until
+    /// the contract with uteke-cloud says otherwise.
+    #[error("{0}")]
+    NotFound(String),
+
+    /// Strict privacy mode (#1464): the content holds a secret and the write is
+    /// refused. `kinds` names what was found (never the value).
+    #[error("Secret detected in content ({}); strict privacy mode rejects the write", .kinds.join(", "))]
+    SecretDetected { kinds: Vec<String> },
+
     #[error("Lock error: {context}")]
     Lock { context: String },
 
     #[error("{0}")]
     Generic(String),
+}
+
+/// What kind of failure an [`Error`] is, for the transports (see
+/// [`Error::class`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorClass {
+    /// The request is wrong: HTTP 400.
+    BadRequest,
+    /// The named thing does not exist: HTTP 404.
+    NotFound,
+    /// Strict privacy mode refused the write: HTTP 400 `secret_detected`.
+    SecretDetected,
+    /// Anything else: HTTP 500.
+    Internal,
 }
 
 impl Error {
@@ -67,6 +94,26 @@ impl Error {
     /// Validation error — user input or business rule violation.
     pub fn validation(msg: impl Into<String>) -> Self {
         Error::Validation(msg.into())
+    }
+
+    /// Not-found error: the named room, document, ... does not exist.
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Error::NotFound(msg.into())
+    }
+
+    /// How a transport should treat this error. One mapping for HTTP, MCP and
+    /// the CLI, instead of a `match` in every handler.
+    pub fn class(&self) -> ErrorClass {
+        match self {
+            Error::Validation(_) => ErrorClass::BadRequest,
+            Error::NotFound(_) => ErrorClass::NotFound,
+            Error::SecretDetected { .. } => ErrorClass::SecretDetected,
+            Error::Io(_)
+            | Error::Database { .. }
+            | Error::Embedding { .. }
+            | Error::Lock { .. }
+            | Error::Generic(_) => ErrorClass::Internal,
+        }
     }
 
     /// Generic error with a message.

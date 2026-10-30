@@ -157,6 +157,15 @@ impl Embedder for OpenAiEmbedder {
     fn name(&self) -> &str {
         "openai"
     }
+
+    fn identity(&self) -> String {
+        format!(
+            "openai:{}:{}:{}",
+            self.model,
+            self.dims,
+            crate::embed::fingerprint(&[&self.base_url, &self.endpoint_path])
+        )
+    }
 }
 
 #[derive(serde::Deserialize)]

@@ -15,14 +15,14 @@ pub(super) fn get_lifecycle_status(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         })
         .collect();
     let ns_param = params.get("namespace").map(|s| s.as_str());
-    let active = match uteke.store().count_active(ns_param) {
+    let active = match uteke.count_active(ns_param) {
         Ok(v) => v,
         Err(e) => {
             error!("lifecycle status error: {e}");
             return ctx.error_response_for(req, 500, "Internal server error");
         }
     };
-    let deprecated = match uteke.store().count_deprecated(ns_param) {
+    let deprecated = match uteke.count_deprecated(ns_param) {
         Ok(v) => v,
         Err(e) => {
             error!("lifecycle status error: {e}");
@@ -55,7 +55,7 @@ pub(super) fn get_lifecycle_deprecated(c: &mut Call) -> Response<Cursor<Vec<u8>>
         .and_then(|s| s.parse().ok())
         .unwrap_or(100)
         .min(MAX_LIST_LIMIT as u32);
-    match uteke.store().list_deprecated(ns_param, limit) {
+    match uteke.list_deprecated(ns_param, limit) {
         Ok(items) => {
             #[derive(serde::Serialize)]
             struct DeprecatedListResponse {
@@ -296,16 +296,20 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             // The core import method handles re-embedding.
             let import_ns = ns(&req_data.namespace);
             match uteke.import(&req_data.content, import_ns) {
-                Ok(result) => ctx.ok_response_for(
-                    req,
-                    &with_namespace_warning(
-                        serde_json::json!({
-                            "imported": result.imported,
-                            "skipped": result.skipped,
-                        }),
-                        import_ns,
-                    ),
-                ),
+                Ok(result) => {
+                    let mut body = serde_json::json!({
+                        "imported": result.imported,
+                        "skipped": result.skipped,
+                        "redacted": result.redacted,
+                        "rejected_secret": result.rejected_secret,
+                    });
+                    // Room links (#1588): only when the file named rooms.
+                    if result.room_links > 0 || !result.rooms_missing.is_empty() {
+                        body["room_links"] = result.room_links.into();
+                        body["rooms_missing"] = result.rooms_missing.into();
+                    }
+                    ctx.ok_response_for(req, &with_namespace_warning(body, import_ns))
+                }
                 Err(e) => {
                     error!("Import error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")
@@ -435,14 +439,7 @@ pub(super) fn post_consolidate_pair(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 uteke.consolidate_pair(&req_data.id_keep, &req_data.id_remove, req_data.hard);
             match result {
                 Ok(r) => ctx.ok_response_for(req, &r),
-                Err(e) => {
-                    let status = if matches!(e, uteke_core::Error::Validation(_)) {
-                        400
-                    } else {
-                        500
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),

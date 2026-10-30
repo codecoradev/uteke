@@ -103,7 +103,7 @@ uteke remember "User prefers dark mode" --tags pref --namespace my-agent
 | `--source-type <type>` | Source type: user, url, file, import, derived, system (default: user) |
 | `--detect-contradiction` | Detect conflicting memories (default threshold: 0.65) |
 | `--room <room_id>` | Link memory to a room (collaborative context) |
-| `--author <name>` | Author attribution when storing in a room |
+| `--author <name>` | Who wrote the memory (1 to 128 characters). Recorded on the memory with or without `--room`; with `--room` it is also the room author (default there: `anonymous`) |
 | `--json` | Output stored memory as JSON |
 
 ## uteke recall
@@ -130,7 +130,7 @@ uteke recall "database caching" --pack --exclude-ids abc123,def456
 | Flag | Description |
 |------|-------------|
 | `--type <type>` | Search scope: `all` (default — memories + documents, unified via RRF), `memory` (memories only), `doc` (documents only) |
-| `--limit <n>` | Max results (default: 5) |
+| `--limit <n>` | Max results (default: 10, at most 100) |
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
 | `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
@@ -175,7 +175,7 @@ uteke list --at 2026-06-01T12:00:00Z   # Time-travel: list at point in time
 | `--tag <tag>` | Filter by single tag |
 | `--entity <name>` | Filter by entity name |
 | `--category <cat>` | Filter by category |
-| `--limit <n>` | Max results (default: 20) |
+| `--limit <n>` | Max results (default: 10, at most 1000) |
 | `--offset <n>` | Skip first N results |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--json` | Output as JSON |
@@ -614,6 +614,26 @@ uteke import memories.jsonl
 # Import markdown/plain text (split into chunks)
 uteke import notes.md --tags imported,notes
 ```
+
+### Moving a whole store (`--full`)
+
+```bash
+uteke export --full bundle.ndjson          # on the source: memories, rooms, graph, documents, ...
+uteke import --full bundle.ndjson          # on the target
+```
+
+The bundle restores documents with their slug, title, parent (hierarchy) and content, plus
+rooms, edges and the graph, keeping the original ids. It carries no vectors: `import`
+regenerates them (memories are marked for `uteke repair --reembed`, document chunks are
+re-embedded right away). `--full` makes any other file an error instead of a plain import. The
+bundle is a file, so a large document does not pass through a tool response; `POST /import`
+stays JSONL-only and capped at 10 MB.
+
+A JSONL export carries each memory's room ids. Import links the memory to every room that
+exists in the target store, also for a duplicate of a stored memory, and reports the new
+links (`room_links`) and the rooms the target lacks (`rooms_missing`). Create the missing
+rooms (`uteke room create <ID>`) and import the file again to finish the links; nothing is
+copied.
 
 ### LLM fact extraction (`--extract`)
 

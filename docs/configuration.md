@@ -122,8 +122,7 @@ Configure the embedding backend. Three backends are supported:
 ```toml
 [embedding]
 backend = "onnx"              # onnx | openai | ollama
-model = "embeddinggemma-q4"   # backend-specific
-max_seq_length = 2048
+model = ""                    # empty = the backend's default model
 api_key = ""                  # OpenAI only (or use UTEKE_EMBEDDING_API_KEY)
 base_url = ""                 # custom endpoint (Azure OpenAI, Ollama URL, proxy)
 endpoint_path = ""            # custom API path (default: /embeddings for OpenAI)
@@ -133,8 +132,7 @@ dims = 0                     # 0 = use model default (override only if you know)
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `backend` | `onnx` | `onnx`, `openai`, or `ollama` |
-| `model` | `embeddinggemma-q4` | Backend-specific model name |
-| `max_seq_length` | `2048` | Max tokens per input |
+| `model` | `""` | Backend-specific model name. Empty = the backend's default (`text-embedding-3-small` for `openai`, `nomic-embed-text` for `ollama`; `onnx` uses EmbeddingGemma Q4) |
 | `api_key` | `""` | OpenAI API key (ONNX/Ollama ignore) |
 | `base_url` | `""` | Custom endpoint. Empty = backend default |
 | `endpoint_path` | `""` | Custom API path appended to base_url. Empty = `/embeddings` (OpenAI) |
@@ -163,7 +161,7 @@ Embedding dimension mismatch: index has 768d vectors but backend 'openai' produc
 Rebuild the index (`uteke repair`) or switch backend.
 ```
 
-To migrate, run `uteke repair` after switching backends — it rebuilds the vector index from the SQLite source of truth using the new backend's embeddings. Because the dim-mismatch guard will block any embed-based operation on first contact, set `UTEKE_ALLOW_DIM_MISMATCH=1` once to let `uteke repair` open the store with the new backend:
+To migrate, run `uteke repair` after switching backends — it rebuilds the vector index from the SQLite source of truth using the new backend's embeddings. Because the dimension guard refuses to open a store whose vectors have another width than the new backend produces (the error says so and names this variable), set `UTEKE_ALLOW_DIM_MISMATCH=1` once to let `uteke repair` open the store with the new backend:
 
 ```bash
 UTEKE_ALLOW_DIM_MISMATCH=1 uteke repair
@@ -226,6 +224,8 @@ Resolution order per field: CLI flag (`--extract-*`) > `UTEKE_EXTRACTION_*` env
 var > `[extraction]` config > built-in default.
 
 ## Recall Threshold
+
+The `[recall]`, `[tier]`, `[dream]`, `[lifecycle]` and `[embed_fallback]` sections are read the same way by the CLI, `uteke-serve` and `uteke-mcp` (the global `uteke.toml`, then the project file with its untrusted keys stripped, then the `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` variables). `uteke_recall` over MCP, and MCP over HTTP, use `[recall] min_score` / `min_score_strict` as the floor and `default_strategy` as the strategy when a call gives none, exactly like `POST /recall`. With no `[recall]` section the defaults equal the built-ins, so nothing changes.
 
 Control minimum similarity score for recall results:
 
@@ -309,6 +309,7 @@ Resolution order (highest priority first):
 | Env Var | Config Equivalent | Default | Description |
 |---------|-------------------|---------|-------------|
 | `UTEKE_HOME` | — | `~/.codecora/uteke` | Data directory |
+| `UTEKE_PRIVACY_MODE` | `[privacy] mode` | `redact` | Secret filter mode: `redact`, `strict`, `off` |
 | `UTEKE_NAMESPACE` | `[store] namespace` | `default` | Default namespace (applied in CLI) |
 | `UTEKE_AUTH_TOKEN` | — | — | Server auth token (applied in server) |
 | `UTEKE_LOG_LEVEL` | `[logging] level` | `warn` | Log level (trace/debug/info/warn/error) |
@@ -327,7 +328,6 @@ Resolution order (highest priority first):
 | `UTEKE_EMBEDDING_BASE_URL` | `[embedding] base_url` | backend-specific | Custom endpoint URL |
 | `UTEKE_EMBEDDING_ENDPOINT_PATH` | `[embedding] endpoint_path` | — | Custom API path (default: `/embeddings`) |
 | `UTEKE_EMBEDDING_DIMS` | `[embedding] dims` | `0` (auto) | Force embedding dimensionality |
-| `UTEKE_MAX_SEQ_LENGTH` | `[embedding] max_seq_length` | `2048` | Max tokens per embedding input |
 | `UTEKE_EXTRACTION_MODEL` | `[extraction] model` | — | Chat model for `import --extract` |
 | `UTEKE_EXTRACTION_API_KEY` | `[extraction] api_key` | — | API key. Fallback: embedding key / `OPENAI_API_KEY` |
 | `UTEKE_EXTRACTION_BASE_URL` | `[extraction] base_url` | OpenAI default | OpenAI-compatible endpoint base URL |
@@ -400,9 +400,35 @@ A project directory can be an untrusted clone, so `.uteke/uteke.toml` is **not**
 
 - `[embedding]`: `backend`, `api_key`, `base_url`, `endpoint_path`
 - `[embed_fallback]` and `[extraction]`: `api_key`, `base_url`, `endpoint_path`
+- the whole `[privacy]` section (a cloned repository must not switch the secret filter off)
+- the whole `[lifecycle]`, `[dream]`, `[aging]` and `[maintenance]` sections: they set the thresholds of the cycles that deprecate or delete memories (`deprecated_ttl_days`, `max_deprecate_percent`, `soft_delete_only`, the aging age, the auto-dream switch), and a cloned repository must not choose them for your store
 - the whole `[server]` section (`enabled`, `host`, `port`, `auth_token`, `read_only_token`, `cors_origins`, `allowed_hosts`)
 
-Everything else (store path, namespace, logging, recall tuning, lifecycle, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
+Everything else (store path, namespace, logging, `[recall]` and `[tier]` tuning, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
+
+## Privacy Filter (#1464)
+
+Secrets in the content of a memory are masked before it is embedded or stored (`ghp_[REDACTED:github-token]`, `API_KEY=[REDACTED:env-secret]`). The memory is flagged with `metadata.redacted` and `metadata.redactions` (kinds and counts, never values) and gets a `redacted` timeline event. The original text is not kept anywhere.
+
+```toml
+[privacy]
+mode = "redact"            # redact (default) | strict | off
+allowlist = ["^dev-"]      # regexes; a value matching any of them is kept as it is
+```
+
+- `redact`: mask and store.
+- `strict`: refuse the write (`secret_detected`; import skips the row).
+- `off`: store as given.
+
+`UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content, the tags, the strings inside the metadata and the `source` of `remember`, room remember, `update` and `import`, and the text written by room consolidation. Only the string values inside metadata are filtered, not its object keys. Importing a structural export (`uteke export --full`, restored by `uteke import`) puts a backup back as it was and does not filter; restore backups you trust.
+
+Over HTTP, `POST /remember` and `POST /room/remember` return `"redacted": true` when something was masked (the stored text then differs from the request). In `strict` mode a write that contains a secret is refused with `400`:
+
+```json
+{"error": "secret_detected", "message": "...", "kinds": ["github-token"]}
+```
+
+`PUT /memory` answers the same way when the new content, tags or metadata have a secret, and returns `redacted` when it masked one. `uteke_update` over MCP says so in its result. `POST /import` reports `redacted` (rows masked) and `rejected_secret` (rows skipped in strict mode, also counted in `skipped`).
 
 ## CLI Flag Override
 

@@ -1,0 +1,135 @@
+{
+  "manifest": {
+    "kind": "uteke-perf",
+    "git_ref": "aa75441f0efc30edbe1174676a3353efe27178ce",
+    "onnx_runtime_from_release": "v0.21.1",
+    "modal": {
+      "cpu": 2,
+      "image_base": "ubuntu:24.04"
+    },
+    "spec": {
+      "clients": "1,4,16",
+      "duration": 20.0,
+      "counts": "100,1000",
+      "recall_share": 0.7,
+      "seed": 200
+    },
+    "tag": "baseline",
+    "driver": {
+      "python": "3.12.9",
+      "wall_s": 173.5
+    },
+    "created_utc": "20261029T013121Z"
+  },
+  "results": {
+    "nproc": 18,
+    "uteke_version": "uteke 0.21.1",
+    "bench": {
+      "exit": 0,
+      "wall_s": 28.1,
+      "results": [
+        {
+          "count": 100,
+          "insert_ops_per_sec": 13.517781932177872,
+          "insert_total_ms": 7397.6633520000005,
+          "recall_avg_ms": 12.131741819999997,
+          "recall_p95_ms": 13.401563999999999,
+          "db_size_kb": 724.0,
+          "index_size_kb": 318.478515625
+        },
+        {
+          "count": 1000,
+          "insert_ops_per_sec": 52.9109704926631,
+          "insert_total_ms": 18899.672236000002,
+          "recall_avg_ms": 15.560483400000003,
+          "recall_p95_ms": 18.943538,
+          "db_size_kb": 5404.0,
+          "index_size_kb": 3169.6884765625
+        }
+      ]
+    },
+    "serve": [
+      {
+        "clients": 1,
+        "duration_s": 20.02,
+        "recall_share": 0.7,
+        "seeded": 200,
+        "recall": {
+          "count": 646,
+          "errors": 0,
+          "ops_per_sec": 32.27,
+          "mean_ms": 20.75,
+          "p50_ms": 19.54,
+          "p95_ms": 26.62,
+          "p99_ms": 42.6,
+          "max_ms": 238.7
+        },
+        "remember": {
+          "count": 268,
+          "errors": 0,
+          "ops_per_sec": 13.39,
+          "mean_ms": 24.59,
+          "p50_ms": 23.18,
+          "p95_ms": 32.34,
+          "p99_ms": 52.75,
+          "max_ms": 84.45
+        },
+        "total_ops_per_sec": 45.66
+      },
+      {
+        "clients": 4,
+        "duration_s": 20.07,
+        "recall_share": 0.7,
+        "seeded": 200,
+        "recall": {
+          "count": 636,
+          "errors": 0,
+          "ops_per_sec": 31.69,
+          "mean_ms": 87.63,
+          "p50_ms": 84.86,
+          "p95_ms": 115.1,
+          "p99_ms": 143.0,
+          "max_ms": 204.01
+        },
+        "remember": {
+          "count": 266,
+          "errors": 0,
+          "ops_per_sec": 13.25,
+          "mean_ms": 91.66,
+          "p50_ms": 88.75,
+          "p95_ms": 118.79,
+          "p99_ms": 142.9,
+          "max_ms": 217.91
+        },
+        "total_ops_per_sec": 44.94
+      },
+      {
+        "clients": 16,
+        "duration_s": 20.41,
+        "recall_share": 0.7,
+        "seeded": 200,
+        "recall": {
+          "count": 731,
+          "errors": 0,
+          "ops_per_sec": 35.82,
+          "mean_ms": 306.89,
+          "p50_ms": 300.97,
+          "p95_ms": 355.15,
+          "p99_ms": 464.91,
+          "max_ms": 600.43
+        },
+        "remember": {
+          "count": 319,
+          "errors": 0,
+          "ops_per_sec": 15.63,
+          "mean_ms": 310.19,
+          "p50_ms": 305.17,
+          "p95_ms": 352.99,
+          "p99_ms": 414.99,
+          "max_ms": 554.78
+        },
+        "total_ops_per_sec": 51.45
+      }
+    ]
+  }
+}

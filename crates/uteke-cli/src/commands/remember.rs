@@ -4,47 +4,11 @@ use crate::cli::Cli;
 use crate::output;
 use uteke_core::Uteke;
 
-/// Parse --meta key:value pairs into a JSON object.
-/// Special handling for `rel:type:target` directives which are
-/// accumulated into a `relationships` array.
-fn parse_meta_pairs(pairs: &[String]) -> serde_json::Map<String, serde_json::Value> {
-    let mut map = serde_json::Map::new();
-    let mut relationships: Vec<serde_json::Value> = Vec::new();
-
-    for pair in pairs {
-        // Check for relationship directive: rel:type:target
-        if let Some((rel_type, target)) = uteke_core::is_relationship_meta(pair) {
-            relationships.push(serde_json::json!({
-                "type": rel_type,
-                "target": target
-            }));
-            continue;
-        }
-
-        if let Some((key, value)) = pair.split_once(':') {
-            let val = if let Ok(n) = value.parse::<f64>() {
-                serde_json::Value::from(n)
-            } else if value == "true" {
-                serde_json::Value::Bool(true)
-            } else if value == "false" {
-                serde_json::Value::Bool(false)
-            } else {
-                serde_json::Value::String(value.to_string())
-            };
-            map.insert(key.to_string(), val);
-        } else {
-            map.insert(pair.clone(), serde_json::Value::Bool(true));
-        }
+/// Tell the user when the privacy filter changed what was stored (#1464).
+fn print_redaction(outcome: &uteke_core::RememberOutcome) {
+    if let Some(summary) = outcome.redaction_summary() {
+        println!("  \u{26a0} Secrets masked in the stored text: {summary}");
     }
-
-    if !relationships.is_empty() {
-        map.insert(
-            "relationships".to_string(),
-            serde_json::Value::Array(relationships),
-        );
-    }
-
-    map
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -54,7 +18,7 @@ pub(crate) fn run(
     ns: Option<&str>,
     content: &str,
     tags: &[String],
-    r#type: &str,
+    r#type: Option<&str>,
     detect_contradiction: bool,
     entity: Option<&str>,
     category: Option<&str>,
@@ -66,7 +30,13 @@ pub(crate) fn run(
     source_type: Option<&str>,
     timestamp: Option<&str>,
 ) -> Result<(), String> {
-    tracing::debug!("Remembering: {content} (type: {type}, contradiction: {detect_contradiction})");
+    // The content is not logged: it may hold a secret the privacy filter has
+    // not masked yet (#1464).
+    tracing::debug!(
+        "Remembering {} bytes (type: {:?}, contradiction: {detect_contradiction})",
+        content.len(),
+        r#type
+    );
 
     // #1106: validate BEFORE any write so an invalid value fails loudly
     // without leaving a stored row behind (the post-store set would have
@@ -75,6 +45,14 @@ pub(crate) fn run(
         uteke_core::memory::types::validate_author_type(at)
             .map_err(|e| format!("Invalid --author-type: {e}"))?;
     }
+    // #1427 phase 2: the author is the memory's own, with or without a room;
+    // validated (and trimmed) before any write for the same reason.
+    let author: Option<&str> = author
+        .map(|a| {
+            uteke_core::memory::types::validate_author(a)
+                .map_err(|e| format!("Invalid --author: {e}"))
+        })
+        .transpose()?;
 
     // Read from stdin when content argument is "-" (#620).
     // Standard Unix convention: pipe content via echo "text" | uteke remember - --tags "test"
@@ -106,178 +84,83 @@ pub(crate) fn run(
         }
         None => content,
     };
-    let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
+    // The same decode as `POST /remember` and MCP (#1439): content, tags and
+    // type are validated, the type is copied into the metadata, and an omitted
+    // type stays `None`, which means "infer it from the content".
+    let request = uteke_core::RememberRequest::decode(uteke_core::RememberInput {
+        content: content.to_string(),
+        tags: tags.to_vec(),
+        namespace: ns.map(str::to_string),
+        memory_type: r#type.map(str::to_string),
+        detect_contradiction,
+        metadata: uteke_core::metadata_from_cli_flags(entity, category, meta),
+        source: source.map(str::to_string),
+        source_type: source_type.map(str::to_string),
+        author_type: author_type.map(str::to_string),
+        room: room.map(str::to_string),
+        author: author.map(str::to_string),
+        ..uteke_core::RememberInput::default()
+    })
+    .map_err(|e| format!("Failed to store memory: {e}"))?;
 
-    // Build metadata JSON from flags
-    let mut meta_map = serde_json::Map::new();
-    if let Some(entity_name) = entity {
-        meta_map.insert(
-            "entity".to_string(),
-            serde_json::Value::String(entity_name.to_string()),
-        );
+    // The write and its provenance follow-ups (source, author_type, author)
+    // run in the core, with one failure policy (#1516).
+    let run = uteke
+        .run_remember(&request)
+        .map_err(|e| format!("Failed to store memory: {e}"))?;
+    let outcome = run.outcome;
+    let id = outcome.id.clone();
+    tracing::info!("Memory stored with ID: {id}");
+    for w in &run.provenance_warnings {
+        eprintln!("warning: stored, but could not record {w}");
     }
-    if let Some(cat) = category {
-        meta_map.insert(
-            "category".to_string(),
-            serde_json::Value::String(cat.to_string()),
-        );
-    }
-    let extra = parse_meta_pairs(meta);
-    for (k, v) in extra {
-        meta_map.insert(k, v);
-    }
 
-    let metadata = if meta_map.is_empty() {
-        None
-    } else {
-        Some(serde_json::Value::Object(meta_map))
-    };
-
-    let stored_id: String; // captured for set_source (#348)
-
-    if detect_contradiction {
-        let (outcome, contradiction) = uteke
-            .remember_with_contradiction(
-                content,
-                &tag_refs,
-                metadata.clone(),
-                ns,
-                Some(r#type),
-                true,
-                0.65,
-            )
-            .map_err(|e| format!("Failed to store memory: {e}"))?;
-        let id = outcome.id.clone();
-        let embed_warning = outcome.warning.clone();
-        stored_id = id.clone();
-        tracing::info!("Memory stored with ID: {id}");
-        // #1084/#1106: persist the (already-validated) author_type.
-        if let Some(at) = author_type {
-            if let Err(e) = uteke.set_author_type(&id, at) {
-                return Err(format!("Failed to set author_type: {e}"));
-            }
-        }
-        if cli.json {
-            let mut obj = serde_json::json!({
-                "id": id,
-                "author_type": author_type.unwrap_or("agent"),
-                "embedding_written": embed_warning.is_none(),
-                "warning": embed_warning,
-                "contradiction": {
-                    "detected": contradiction.contradicted,
-                    "deprecated_id": contradiction.deprecated_id,
-                    "similarity": contradiction.similarity
-                }
+    if cli.json {
+        let mut obj = serde_json::json!({
+            "id": id,
+            "author_type": author_type.unwrap_or("agent"),
+            "embedding_written": outcome.embedding_written,
+            "redacted": outcome.redacted(),
+            "warning": outcome.warning,
+        });
+        if let Some(c) = &run.contradiction {
+            obj["contradiction"] = serde_json::json!({
+                "detected": c.contradicted,
+                "deprecated_id": c.deprecated_id,
+                "similarity": c.similarity
             });
-            if let Some(ref meta) = metadata {
-                if let Some(map) = obj.as_object_mut() {
-                    map.insert("metadata".to_string(), meta.clone());
-                }
-            }
-            println!("{obj}");
-        } else {
-            output::print_remember_human(&id);
-            if let Some(ref warn) = embed_warning {
-                println!("  \u{26a0} Embedding NOT written: {warn}");
-                println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");
-            }
-            if contradiction.contradicted {
-                if let Some(dep_id) = &contradiction.deprecated_id {
-                    println!(
-                        "  \u{26a0} Contradiction detected (sim: {:.3}): deprecated {}",
-                        contradiction.similarity,
-                        dep_id.get(..8).unwrap_or(dep_id)
-                    );
-                }
-            }
-            if let Some(entity_name) = entity {
-                println!("  entity: {entity_name}");
-            }
-            if let Some(cat) = category {
-                println!("  category: {cat}");
-            }
         }
+        // Metadata for JSON output (the write consumed its copy).
+        if let Some(m) = uteke_core::metadata_from_cli_flags(entity, category, meta) {
+            obj["metadata"] = m;
+        }
+        if let Some(a) = author {
+            obj["author"] = serde_json::json!(a);
+        }
+        println!("{obj}");
     } else {
-        let outcome = if let Some(room_id) = room {
-            // Room mode: store memory and link to room with author
-            let author_name = author.unwrap_or("anonymous");
-            uteke
-                .remember_in_room(
-                    content,
-                    &tag_refs,
-                    metadata.clone(),
-                    ns,
-                    r#type,
-                    room_id,
-                    author_name,
-                )
-                .map_err(|e| format!("Failed to store memory in room: {e}"))?
-        } else {
-            uteke
-                .remember_detailed(content, &tag_refs, metadata, ns)
-                .map_err(|e| format!("Failed to store memory: {e}"))?
-        };
-        let id = outcome.id.clone();
-        stored_id = id.clone();
-        tracing::info!("Memory stored with ID: {id}");
-        // #1084/#1106: persist the (already-validated) author_type.
-        if let Some(at) = author_type {
-            if let Err(e) = uteke.set_author_type(&id, at) {
-                return Err(format!("Failed to set author_type: {e}"));
-            }
+        output::print_remember_human(&id);
+        print_redaction(&outcome);
+        if let Some(ref warn) = outcome.warning {
+            println!("  \u{26a0} Embedding NOT written: {warn}");
+            println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");
         }
-        if cli.json {
-            let mut obj = serde_json::json!({
-                "id": id,
-                "author_type": author_type.unwrap_or("agent"),
-                "embedding_written": outcome.embedding_written,
-                "warning": outcome.warning,
-            });
-            // Reconstruct metadata for JSON output (already consumed by remember)
-            if entity.is_some() || category.is_some() || !meta.is_empty() {
-                let mut m = serde_json::Map::new();
-                if let Some(e) = entity {
-                    m.insert(
-                        "entity".to_string(),
-                        serde_json::Value::String(e.to_string()),
-                    );
-                }
-                if let Some(c) = category {
-                    m.insert(
-                        "category".to_string(),
-                        serde_json::Value::String(c.to_string()),
-                    );
-                }
-                for (k, v) in parse_meta_pairs(meta) {
-                    m.insert(k, v);
-                }
-                if let Some(map) = obj.as_object_mut() {
-                    map.insert("metadata".to_string(), serde_json::Value::Object(m));
-                }
-            }
-            println!("{obj}");
-        } else {
-            output::print_remember_human(&id);
-            if let Some(ref warn) = outcome.warning {
-                println!("  \u{26a0} Embedding NOT written: {warn}");
-                println!("    Memory is keyword-searchable only; run `uteke repair` to backfill.");
-            }
-            if let Some(entity_name) = entity {
-                println!("  entity: {entity_name}");
-            }
-            if let Some(cat) = category {
-                println!("  category: {cat}");
-            }
+        if let Some(c) = &run.contradiction
+            && c.contradicted
+            && let Some(dep_id) = &c.deprecated_id
+        {
+            println!(
+                "  \u{26a0} Contradiction detected (sim: {:.3}): deprecated {}",
+                c.similarity,
+                dep_id.get(..8).unwrap_or(dep_id)
+            );
+        }
+        if let Some(entity_name) = entity {
+            println!("  entity: {entity_name}");
+        }
+        if let Some(cat) = category {
+            println!("  category: {cat}");
         }
     }
-
-    // Set source provenance using the exact stored ID (#348).
-    if source.is_some() || source_type.is_some() {
-        let st = source_type.unwrap_or("user");
-        uteke
-            .set_source(&stored_id, source, st)
-            .map_err(|e| format!("Failed to set source: {e}"))?;
-    }
-
     Ok(())
 }

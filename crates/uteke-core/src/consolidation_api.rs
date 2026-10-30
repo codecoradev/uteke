@@ -26,25 +26,38 @@ impl ConsolidationStore for Uteke {
     }
 
     fn insert_memory(&self, memory: &mut Memory) -> Result<(), Error> {
+        // Privacy filter (#1464): the consolidated text comes from an LLM and
+        // is stored like any other write. The vector was computed from the
+        // filtered text too (see `embed_content`), so nothing unmasked reached
+        // the embedder.
+        let tag_refs: Vec<&str> = memory.tags.iter().map(String::as_str).collect();
+        let prepared = self.privacy_config().prepare_with_tags(
+            &memory.content,
+            &tag_refs,
+            Some(memory.metadata.clone()),
+        )?;
+        memory.content = prepared.content;
+        memory.tags = prepared.tags;
+        if let Some(m) = prepared.metadata {
+            memory.metadata = m;
+        }
+        let redactions = prepared.redactions;
+
         let room_id = memory
             .metadata
             .get("room_id")
             .and_then(|v| v.as_str())
             .map(str::to_string);
 
-        // Persist (transactional insert, mirrors crud flow).
-        self.store().insert(memory)?;
-
-        // Insert into the vector index so recall finds it; roll back the row
-        // if indexing fails so we never leave an un-searchable memory behind.
-        if !memory.embedding.is_empty() {
-            let key = memory.id.clone();
-            let embedding = memory.embedding.clone();
-            if let Err(e) = self.add_to_index(&key, &embedding) {
-                let _ = self.store().delete(&memory.id);
-                return Err(e);
-            }
+        // The same tail as `remember` (#1514): the row, the source hash, the
+        // `Created` event, edge wiring, recall-cache invalidation, the vector and
+        // the cosine links. A vector that cannot be written leaves the row
+        // FTS5-only with a warning, as for `remember` (`uteke repair` backfills it).
+        let outcome = self.commit_memory(memory, None)?;
+        if let Some(w) = outcome.warning {
+            tracing::warn!("Consolidated record {} is FTS5-only: {w}", memory.id);
         }
+        self.record_redaction(&memory.id, &redactions);
 
         // Keep the record linked to its room so recall_room returns it;
         // roll back the row + index entry on failure (no room links to a
@@ -69,7 +82,12 @@ impl ConsolidationStore for Uteke {
     }
 
     fn embed_content(&self, content: &str) -> Result<Vec<f32>, Error> {
-        self.embed_text(content)
+        // The privacy filter runs BEFORE the embedder, as on every other write
+        // path: with a remote backend the text leaves the process, and the
+        // vector must match the text that will be stored. Strict mode refuses
+        // here, so a refused record is never embedded.
+        let prepared = self.privacy_config().prepare(content, None)?;
+        self.embed_text(&prepared.content)
     }
 }
 
@@ -159,6 +177,7 @@ mod tests {
             source: None,
             source_type: "unknown".to_string(),
             author_type: "agent".to_string(),
+            author: None,
         }
     }
 
@@ -202,6 +221,119 @@ mod tests {
         assert!(
             after.is_empty(),
             "deprecated memory must not appear in room recall"
+        );
+    }
+
+    #[test]
+    fn a_consolidated_memory_goes_through_the_privacy_filter() {
+        let mut uteke = Uteke::open(":memory:").unwrap();
+        uteke.set_privacy_config(crate::privacy::PrivacyConfig::default());
+        let token = format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5");
+        let mut m = mem("m1", &format!("the LLM wrote {token}"));
+        m.metadata = serde_json::json!({"summary": format!("see {token}")});
+        ConsolidationStore::insert_memory(&uteke, &mut m).unwrap();
+        let stored = uteke.store.get_by_id("m1").unwrap().unwrap();
+        assert!(
+            !stored.content.contains("aB3dE5gH7jK9"),
+            "{}",
+            stored.content
+        );
+        assert!(!stored.metadata.to_string().contains("aB3dE5gH7jK9"));
+        assert_eq!(stored.metadata["redacted"], true);
+
+        let mut strict = Uteke::open(":memory:").unwrap();
+        strict.set_privacy_config(crate::privacy::PrivacyConfig {
+            mode: crate::privacy::PrivacyMode::Strict,
+            allowlist: Vec::new(),
+        });
+        let mut m = mem("m2", &format!("the LLM wrote {token}"));
+        assert!(ConsolidationStore::insert_memory(&strict, &mut m).is_err());
+        assert!(strict.store.get_by_id("m2").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_consolidated_record_leaves_the_same_side_effects_as_remember() {
+        use crate::embed::Embedder;
+        let uteke = crate::test_support::open_keyword();
+        uteke.store.create_room("r1", None, "default").unwrap();
+        let recall = || {
+            uteke
+                .recall_hybrid(
+                    "caching",
+                    10,
+                    None,
+                    Some("default"),
+                    crate::RecallStrategy::Hybrid,
+                    0.0,
+                )
+                .unwrap()
+        };
+        assert!(recall().is_empty());
+
+        let text = "caching keeps hot data close to the reader";
+        let mut m = mem("c1", text);
+        m.embedding = crate::test_support::KeywordEmbedder.embed(text).unwrap();
+        m.metadata = serde_json::json!({"room_id": "r1"});
+        ConsolidationStore::insert_memory(&uteke, &mut m).unwrap();
+
+        let events = uteke.timeline("c1", 20).unwrap();
+        assert!(
+            events.iter().any(|e| e.event_type == "created"),
+            "{events:?}"
+        );
+        assert!(
+            uteke
+                .provenance("c1")
+                .unwrap()
+                .unwrap()
+                .source_hash
+                .is_some()
+        );
+        assert_eq!(
+            recall().len(),
+            1,
+            "the insert invalidated the cached recall"
+        );
+        assert_eq!(
+            ConsolidationStore::room_memories(&uteke, "r1")
+                .unwrap()
+                .len(),
+            1,
+            "linked to its room"
+        );
+    }
+
+    /// A secret in consolidated text is masked (or refused in strict mode)
+    /// before the embedder sees it.
+    #[test]
+    fn consolidated_text_is_filtered_before_it_is_embedded() {
+        use crate::privacy::{PrivacyConfig, PrivacyMode};
+        use crate::test_support::{RecordingEmbedder, open_with_embedder};
+        let token = format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5");
+        let text = format!("the deploy token is {token}");
+
+        let (e, seen) = RecordingEmbedder::new();
+        let mut u = open_with_embedder(Box::new(e));
+        u.set_privacy_config(PrivacyConfig::default());
+        let v = u.embed_content(&text).unwrap();
+        assert!(!v.is_empty());
+        let sent = seen.lock().unwrap().join("\n");
+        assert!(
+            !sent.contains(&token),
+            "the embedder received a secret: {sent}"
+        );
+        assert!(sent.contains("the deploy token is"));
+
+        let (e, seen) = RecordingEmbedder::new();
+        let mut u = open_with_embedder(Box::new(e));
+        u.set_privacy_config(PrivacyConfig {
+            mode: PrivacyMode::Strict,
+            ..Default::default()
+        });
+        assert!(u.embed_content(&text).is_err(), "strict mode refuses");
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a refused text was embedded"
         );
     }
 }

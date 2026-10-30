@@ -19,7 +19,9 @@ use crate::memory::types::{RecallStrategy, SearchResult};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     query_hash: u64,
-    namespace: String,
+    /// `None` = a query across all namespaces; never equal to a namespace that
+    /// happens to be called "all".
+    namespace: Option<String>,
     limit: usize,
     /// Strategy affects which search path is used (vector, fts5, hybrid).
     strategy: &'static str,
@@ -74,7 +76,7 @@ impl RecallCache {
     pub fn get(
         &self,
         query: &str,
-        namespace: &str,
+        namespace: Option<&str>,
         limit: usize,
         tags_filter: Option<&[&str]>,
         strategy: RecallStrategy,
@@ -103,7 +105,7 @@ impl RecallCache {
     pub fn put(
         &self,
         query: &str,
-        namespace: &str,
+        namespace: Option<&str>,
         limit: usize,
         tags_filter: Option<&[&str]>,
         strategy: RecallStrategy,
@@ -145,7 +147,8 @@ impl RecallCache {
     /// namespace (#849).
     pub fn invalidate_namespace(&self, namespace: &str) {
         if let Ok(mut entries) = self.entries.lock() {
-            entries.retain(|k, _| k.namespace != namespace && k.namespace != "all");
+            // A write in `namespace` also affects every all-namespaces query.
+            entries.retain(|k, _| k.namespace.as_deref().is_some_and(|n| n != namespace));
         }
     }
 
@@ -167,7 +170,7 @@ impl RecallCache {
     fn make_key(
         &self,
         query: &str,
-        namespace: &str,
+        namespace: Option<&str>,
         limit: usize,
         tags_filter: Option<&[&str]>,
         strategy: RecallStrategy,
@@ -186,7 +189,7 @@ impl RecallCache {
         }
         CacheKey {
             query_hash: hasher.finish(),
-            namespace: namespace.to_string(),
+            namespace: namespace.map(str::to_string),
             limit,
             strategy: strategy.as_str(),
         }
@@ -229,6 +232,7 @@ mod tests {
                 source: None,
                 source_type: "user".to_string(),
                 author_type: "agent".to_string(),
+                author: None,
             },
             score: 0.95,
         }];
@@ -236,27 +240,45 @@ mod tests {
         // Miss first
         assert!(
             cache
-                .get("test query", "default", 5, None, RecallStrategy::Vector)
+                .get(
+                    "test query",
+                    Some("default"),
+                    5,
+                    None,
+                    RecallStrategy::Vector
+                )
                 .is_none()
         );
 
         // Put then hit (same strategy)
         cache.put(
             "test query",
-            "default",
+            Some("default"),
             5,
             None,
             RecallStrategy::Vector,
             results.clone(),
         );
-        let cached = cache.get("test query", "default", 5, None, RecallStrategy::Vector);
+        let cached = cache.get(
+            "test query",
+            Some("default"),
+            5,
+            None,
+            RecallStrategy::Vector,
+        );
         assert!(cached.is_some());
         assert_eq!(cached.unwrap().len(), 1);
 
         // Different strategy = miss
         assert!(
             cache
-                .get("test query", "default", 5, None, RecallStrategy::Hybrid)
+                .get(
+                    "test query",
+                    Some("default"),
+                    5,
+                    None,
+                    RecallStrategy::Hybrid
+                )
                 .is_none()
         );
 
@@ -275,7 +297,7 @@ mod tests {
         let results = vec![];
         cache.put(
             "query",
-            "ns1",
+            Some("ns1"),
             5,
             None,
             RecallStrategy::Vector,
@@ -283,7 +305,7 @@ mod tests {
         );
         cache.put(
             "query",
-            "ns2",
+            Some("ns2"),
             5,
             None,
             RecallStrategy::Vector,
@@ -293,12 +315,12 @@ mod tests {
         cache.invalidate_namespace("ns1");
         assert!(
             cache
-                .get("query", "ns1", 5, None, RecallStrategy::Vector)
+                .get("query", Some("ns1"), 5, None, RecallStrategy::Vector)
                 .is_none()
         );
         assert!(
             cache
-                .get("query", "ns2", 5, None, RecallStrategy::Vector)
+                .get("query", Some("ns2"), 5, None, RecallStrategy::Vector)
                 .is_some()
         );
     }
@@ -315,13 +337,20 @@ mod tests {
             ttl_secs: 0,
         });
 
-        cache.put("query", "default", 5, None, RecallStrategy::Vector, vec![]);
+        cache.put(
+            "query",
+            Some("default"),
+            5,
+            None,
+            RecallStrategy::Vector,
+            vec![],
+        );
 
         // With ttl=0, entry should be expired immediately.
         // Mutant (<=) would still return the cached entry.
         assert!(
             cache
-                .get("query", "default", 5, None, RecallStrategy::Vector)
+                .get("query", Some("default"), 5, None, RecallStrategy::Vector)
                 .is_none(),
             "ttl_secs=0 should expire immediately"
         );
@@ -338,35 +367,56 @@ mod tests {
         });
 
         // Insert 2 entries (at capacity)
-        cache.put("q1", "default", 5, None, RecallStrategy::Vector, vec![]);
-        cache.put("q2", "default", 5, None, RecallStrategy::Vector, vec![]);
+        cache.put(
+            "q1",
+            Some("default"),
+            5,
+            None,
+            RecallStrategy::Vector,
+            vec![],
+        );
+        cache.put(
+            "q2",
+            Some("default"),
+            5,
+            None,
+            RecallStrategy::Vector,
+            vec![],
+        );
 
         // Both should be present
         assert!(
             cache
-                .get("q1", "default", 5, None, RecallStrategy::Vector)
+                .get("q1", Some("default"), 5, None, RecallStrategy::Vector)
                 .is_some(),
             "q1 should be cached"
         );
         assert!(
             cache
-                .get("q2", "default", 5, None, RecallStrategy::Vector)
+                .get("q2", Some("default"), 5, None, RecallStrategy::Vector)
                 .is_some(),
             "q2 should be cached"
         );
 
         // Insert 3rd → FIFO evicts q1 (oldest)
-        cache.put("q3", "default", 5, None, RecallStrategy::Vector, vec![]);
+        cache.put(
+            "q3",
+            Some("default"),
+            5,
+            None,
+            RecallStrategy::Vector,
+            vec![],
+        );
 
         assert!(
             cache
-                .get("q1", "default", 5, None, RecallStrategy::Vector)
+                .get("q1", Some("default"), 5, None, RecallStrategy::Vector)
                 .is_none(),
             "q1 should be evicted (FIFO)"
         );
         assert!(
             cache
-                .get("q3", "default", 5, None, RecallStrategy::Vector)
+                .get("q3", Some("default"), 5, None, RecallStrategy::Vector)
                 .is_some(),
             "q3 should be cached"
         );
@@ -379,11 +429,42 @@ mod tests {
             ttl_secs: 60,
         });
 
-        cache.put("query", "default", 5, None, RecallStrategy::Vector, vec![]);
+        cache.put(
+            "query",
+            Some("default"),
+            5,
+            None,
+            RecallStrategy::Vector,
+            vec![],
+        );
         cache.clear();
         assert!(
             cache
-                .get("query", "default", 5, None, RecallStrategy::Vector)
+                .get("query", Some("default"), 5, None, RecallStrategy::Vector)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_all_namespaces_query_never_shares_a_key_with_a_namespace_called_all() {
+        let cache = RecallCache::new(RecallCacheConfig::default());
+        cache.put("q", None, 5, None, RecallStrategy::Vector, vec![]);
+        assert!(
+            cache
+                .get("q", None, 5, None, RecallStrategy::Vector)
+                .is_some()
+        );
+        assert!(
+            cache
+                .get("q", Some("all"), 5, None, RecallStrategy::Vector)
+                .is_none(),
+            "a namespace named all is not an all-namespaces query"
+        );
+        // A write in any namespace still drops the all-namespaces entries.
+        cache.invalidate_namespace("ns1");
+        assert!(
+            cache
+                .get("q", None, 5, None, RecallStrategy::Vector)
                 .is_none()
         );
     }

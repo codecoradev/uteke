@@ -89,6 +89,33 @@ pub(crate) fn run(
             }
             Ok(())
         }
+        RoomCommands::Link {
+            memory_id,
+            room,
+            author,
+        } => {
+            let id = uteke_core::resolve_memory_id(uteke, memory_id)
+                .map_err(|e| e.message().to_string())?;
+            let linked = uteke
+                .add_memory_to_room(&id, room, author.as_deref().unwrap_or("anonymous"))
+                .map_err(|e| format!("Failed to link memory: {e}"))?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "memory_id": id,
+                        "room": room,
+                        "linked": linked,
+                        "already_linked": !linked
+                    })
+                );
+            } else if linked {
+                println!("\u{2713} Memory '{id}' added to room '{room}'");
+            } else {
+                println!("\u{2713} Memory '{id}' was already in room '{room}'");
+            }
+            Ok(())
+        }
         RoomCommands::List { namespace } => {
             // Rooms are cross-namespace collaboration spaces (#392).
             // Only filter when --namespace is explicitly passed on the
@@ -158,7 +185,7 @@ pub(crate) fn run(
             let effective_query = query.as_ref().or(query_flag.as_ref());
             if let Some(q) = effective_query {
                 // Semantic recall — rank by relevance
-                let min_score = min.unwrap_or(config.recall.min_score as f32);
+                let min_score = min.unwrap_or(config.engine.recall.min_score as f32);
                 let results = uteke
                     .recall_room_semantic(room_id, q, *limit, author.as_deref(), min_score)
                     .map_err(|e| format!("Failed to recall room: {e}"))?;
@@ -235,7 +262,7 @@ pub(crate) fn run(
                 );
             } else {
                 println!(
-                    "Room {room_id} deleted. {unlinked} memory link(s) removed; memories are preserved in their namespaces."
+                    "Room {room_id} unregistered. {unlinked} memory link(s) removed; the memories are retained. Delete a memory with `uteke forget <id>`."
                 );
             }
             Ok(())

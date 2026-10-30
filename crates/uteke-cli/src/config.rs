@@ -37,145 +37,13 @@ pub struct VectorConfig {
     pub backend: String,
 }
 
-/// Embedding model configuration.
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct EmbeddingConfig {
-    /// Embedding backend: "onnx" (default), "openai", "ollama".
-    pub backend: String,
-    /// Embedding model name.
-    pub model: String,
-    /// Maximum sequence length for the embedding model.
-    pub max_seq_length: usize,
-    /// API key for backends that require one (OpenAI). Leave empty for ONNX/Ollama.
-    /// Can also be supplied via UTEKE_EMBEDDING_API_KEY / OPENAI_API_KEY.
-    pub api_key: String,
-    /// Custom endpoint URL. Empty string = backend default.
-    /// - OpenAI: https://api.openai.com/v1
-    /// - Ollama: http://localhost:11434
-    /// - Azure OpenAI: your endpoint base
-    pub base_url: String,
-    /// Embedding endpoint path appended to base_url. Empty string = "/embeddings" (OpenAI standard).
-    /// Override for non-standard OpenAI-compatible APIs, e.g. CodeCora Embed uses "/embed" (#473).
-    /// Can also be supplied via UTEKE_EMBEDDING_ENDPOINT_PATH.
-    pub endpoint_path: String,
-    /// Embedding dimensions. 0 = use backend/model default.
-    /// Override only when you know your model's output dim.
-    pub dims: usize,
-}
-
-impl Default for EmbeddingConfig {
-    fn default() -> Self {
-        Self {
-            backend: "onnx".to_string(),
-            model: "embeddinggemma-q4".to_string(),
-            max_seq_length: 2048,
-            api_key: String::new(),
-            base_url: String::new(),
-            endpoint_path: String::new(),
-            dims: 0,
-        }
-    }
-}
-
-impl EmbeddingConfig {
-    /// Supported embedding backends.
-    pub const SUPPORTED_BACKENDS: &'static [&'static str] = &["onnx", "openai", "ollama"];
-
-    /// Validate the backend field.
-    ///
-    /// Returns an error message if the backend is not recognized.
-    pub fn validate_backend(&self) -> Result<(), String> {
-        if Self::SUPPORTED_BACKENDS.contains(&self.backend.as_str()) {
-            Ok(())
-        } else {
-            Err(format!(
-                "Unsupported embedding backend: '{}'. Supported: {}",
-                self.backend,
-                Self::SUPPORTED_BACKENDS.join(", ")
-            ))
-        }
-    }
-}
+/// `[embedding]`: the core's section type, resolved in one place (#1537).
+pub type EmbeddingConfig = uteke_core::embedding_config::EmbeddingSection;
 
 /// LLM fact-extraction configuration for `import --extract` (opt-in).
 ///
 /// Re-exported from uteke-core so the server can share the same config.
 pub type ExtractionConfig = uteke_core::extraction::ExtractionConfig;
-
-/// Embedding fallback configuration for cloud API when local ONNX fails.
-///
-/// Entirely optional — all fields default to empty. When all fields are empty,
-/// no fallback is configured and local ONNX errors propagate normally.
-/// Env vars (UTEKE_EMBED_FALLBACK_*) win over toml values.
-#[derive(serde::Deserialize, Clone, Default)]
-#[serde(default)]
-pub struct EmbedFallbackConfig {
-    /// API key for the fallback embedding endpoint.
-    /// Env: UTEKE_EMBED_FALLBACK_API_KEY
-    pub api_key: String,
-    /// Base URL (e.g. "https://your-modal-app.modal.run").
-    /// Env: UTEKE_EMBED_FALLBACK_BASE_URL
-    pub base_url: String,
-    /// Endpoint path appended to base_url. Empty = "/embeddings".
-    /// Env: UTEKE_EMBED_FALLBACK_ENDPOINT_PATH
-    pub endpoint_path: String,
-    /// Model name for the fallback embedding endpoint.
-    /// Env: UTEKE_EMBED_FALLBACK_MODEL
-    pub model: String,
-}
-
-impl EmbedFallbackConfig {
-    /// The same settings as the core type, for `is_configured` and the env
-    /// overrides, so the rules live in one place (#1355).
-    fn to_core(&self) -> uteke_core::FallbackSettings {
-        uteke_core::FallbackSettings {
-            api_key: self.api_key.clone(),
-            base_url: self.base_url.clone(),
-            endpoint_path: self.endpoint_path.clone(),
-            model: self.model.clone(),
-        }
-    }
-
-    /// Check if fallback is fully configured (api_key, base_url, AND model).
-    /// Warns on partial config — partial config will be rejected by the core library.
-    pub fn is_configured(&self) -> bool {
-        self.to_core().is_configured()
-    }
-
-    /// Resolve with env var overrides. Env vars win over toml values.
-    fn resolve_with_env(self) -> Self {
-        let r = self.to_core().with_env_overrides();
-        Self {
-            api_key: r.api_key,
-            base_url: r.base_url,
-            endpoint_path: r.endpoint_path,
-            model: r.model,
-        }
-    }
-}
-
-/// Tier configuration for hot/warm/cold memory tiers.
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct TierConfig {
-    /// Days before memory moves from hot to warm.
-    pub hot_days: u32,
-    /// Days before memory moves from warm to cold.
-    pub warm_days: u32,
-    /// Score boost for hot memories.
-    pub hot_boost: f64,
-}
-
-impl Default for TierConfig {
-    fn default() -> Self {
-        Self {
-            hot_days: 7,
-            warm_days: 30,
-            hot_boost: 0.1,
-        }
-    }
-}
 
 /// Logging configuration.
 #[derive(serde::Deserialize, Clone)]
@@ -220,63 +88,6 @@ impl Default for AgingConfig {
             max_age_days: 365,
             max_access_count: 10,
             max_cold_count: 1000,
-        }
-    }
-}
-
-/// Recall / search threshold configuration.
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct RecallConfig {
-    /// Minimum similarity score for recall results. Results below are filtered out.
-    /// Default 0.0 (#1223): since fusion RRF became the default strategy (0.16.0),
-    /// returned scores are rank-based (~0.0-0.2), so a legacy cosine-era default of
-    /// 0.3 silently emptied default recalls. Threshold remains opt-in via config,
-    /// `--min`, or `--strict` (0.5).
-    pub min_score: f64,
-    /// Strict mode threshold (higher, for critical queries).
-    pub min_score_strict: f64,
-    /// Default recall strategy for the `recall` command when `--strategy` is
-    /// not given. One of: `vector`, `fts5`, `hybrid`, `graph`. Default
-    /// `hybrid` (RRF: vector + FTS5, R@5 98.0% vs vector-only 85.4% on
-    /// LongMemEval-S); `graph` enables graph-augmented reranking (#378).
-    pub default_strategy: String,
-    /// Weight for the edge-density boost applied by the `graph` strategy.
-    /// 0.0 disables; 0.1 is subtle (default).
-    pub graph_density_weight: f32,
-    /// Weight for the incoming-edge authority boost applied by the `graph`
-    /// strategy. 0.0 disables; 0.1 is subtle (default).
-    pub graph_authority_weight: f32,
-    /// Feature flag for graph-augmented reranking. When `false`, the `graph`
-    /// strategy behaves like `hybrid` (no boost applied).
-    pub graph_rerank_enabled: bool,
-    /// Weight for the salience boost applied when the `--salience` flag is
-    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
-    pub salience_weight: f32,
-    /// Weight for the recency boost applied when the `--recency` flag is
-    /// passed to `recall` (#352). 0.0 disables; 0.15 is the default.
-    pub recency_weight: f32,
-    /// Weight for the Jaccard token reranking boost (#719).
-    /// Applied post-RRF as an additive signal based on query-content token
-    /// overlap. 0.0 disables (default); 0.10-0.15 recommended.
-    pub jaccard_weight: f32,
-}
-
-impl Default for RecallConfig {
-    fn default() -> Self {
-        Self {
-            min_score: 0.0,
-            min_score_strict: 0.5,
-            // Fusion (weighted RRF: vector×1.7 + hybrid×1) is the default
-            // strategy since 0.16.0 (#1123). Benchmark: fast50 R@5 0.98 vs
-            // 0.9267 hybrid. Explicit config still overrides.
-            default_strategy: "fusion".to_string(),
-            graph_density_weight: 0.1,
-            graph_authority_weight: 0.1,
-            graph_rerank_enabled: true,
-            salience_weight: 0.15,
-            recency_weight: 0.15,
-            jaccard_weight: 0.0,
         }
     }
 }
@@ -331,116 +142,6 @@ impl Default for MaintenanceConfig {
     }
 }
 
-/// Dream pipeline thresholds (#731). All phases in the dream cycle
-/// (contradiction scan, dedup/consolidate, orphan detection) read from
-/// these values instead of hardcoded constants.
-#[derive(serde::Deserialize, Clone, Copy)]
-#[serde(default)]
-pub struct DreamConfig {
-    /// Cosine similarity threshold for contradiction scan. Memories with
-    /// similarity ABOVE this value are NOT contradictions. Default: 0.6.
-    pub contradict_similarity_threshold: f32,
-    /// Minimum Jaccard index for tag overlap to consider contradiction.
-    /// Default: 0.4 (up from original 0.3 to reduce false positives).
-    pub contradict_tag_jaccard_min: f32,
-    /// Maximum memories loaded for O(n²) contradiction scan. Default: 200.
-    pub contradict_max_memories: usize,
-    /// Cosine similarity threshold for dedup/consolidate. Memories with
-    /// similarity ABOVE this value are merge candidates. Default: 0.92.
-    pub dedup_threshold: f32,
-    /// Importance threshold for orphan detection. Memories below this AND
-    /// with no edges are flagged as orphans. Default: 0.15 (safer than 0.3).
-    pub orphan_importance_threshold: f64,
-}
-
-impl Default for DreamConfig {
-    fn default() -> Self {
-        Self {
-            contradict_similarity_threshold: 0.6,
-            contradict_tag_jaccard_min: 0.4,
-            contradict_max_memories: 200,
-            dedup_threshold: 0.92,
-            orphan_importance_threshold: 0.15,
-        }
-    }
-}
-
-/// Memory lifecycle configuration (#928).
-///
-/// Controls how memories transition through their lifecycle:
-/// `ACTIVE → DEPRECATED (hidden, restorable) → PRUNED (hard delete)`.
-///
-/// All destructive operations route through soft-delete when
-/// `soft_delete_only = true` (the default).
-#[derive(serde::Deserialize, Clone)]
-#[serde(default)]
-pub struct LifecycleConfig {
-    /// Route all destructive ops through `deprecate()` instead of `delete()`.
-    /// Default: true. Set to `false` to restore pre-v0.13 hard-delete behavior.
-    pub soft_delete_only: bool,
-    /// Whether auto lifecycle cycles are enabled. Default: true.
-    pub auto_aging_enabled: bool,
-    /// Hours between automatic lifecycle cycles (server mode). Default: 168 (weekly).
-    pub auto_aging_interval_hours: u64,
-    /// Minimum age in days before eligible for deprecation. Default: 90.
-    pub min_age_days: u32,
-    /// Maximum access count for "cold" eligibility. Default: 3.
-    pub max_access_count: u32,
-    /// Max percentage of total memories deprecable per cycle. Default: 1.0.
-    pub max_deprecate_percent: f64,
-    /// Minimum deprecations per cycle. Default: 1.
-    pub min_deprecate_per_cycle: usize,
-    /// Hard ceiling on deprecations per cycle. Default: 50.
-    pub max_deprecate_per_cycle: usize,
-    /// Days after deprecation before eligible for pruning (hard delete). Default: 30.
-    pub deprecated_ttl_days: u32,
-    /// Auto-prune expired deprecated memories during cycles. Default: true.
-    pub auto_prune_enabled: bool,
-    /// Dream dedup phase uses soft-delete. Default: true.
-    pub dream_dedup_soft_delete: bool,
-    /// Dream compact phase uses soft-delete. Default: true.
-    pub dream_compact_soft_delete: bool,
-}
-
-impl Default for LifecycleConfig {
-    fn default() -> Self {
-        Self {
-            soft_delete_only: true,
-            auto_aging_enabled: true,
-            auto_aging_interval_hours: 168,
-            min_age_days: 90,
-            max_access_count: 3,
-            max_deprecate_percent: 1.0,
-            min_deprecate_per_cycle: 1,
-            max_deprecate_per_cycle: 50,
-            deprecated_ttl_days: 30,
-            auto_prune_enabled: true,
-            dream_dedup_soft_delete: true,
-            dream_compact_soft_delete: true,
-        }
-    }
-}
-
-impl LifecycleConfig {
-    /// Convert CLI config to core config.
-    pub fn to_core(&self) -> uteke_core::LifecycleConfig {
-        uteke_core::LifecycleConfig {
-            soft_delete_only: self.soft_delete_only,
-            auto_aging_enabled: self.auto_aging_enabled,
-            auto_aging_interval_hours: self.auto_aging_interval_hours,
-            min_age_days: self.min_age_days,
-            max_access_count: self.max_access_count,
-            max_deprecate_percent: self.max_deprecate_percent,
-            min_deprecate_per_cycle: self.min_deprecate_per_cycle,
-            max_deprecate_per_cycle: self.max_deprecate_per_cycle,
-            deprecated_ttl_days: self.deprecated_ttl_days,
-            auto_prune_enabled: self.auto_prune_enabled,
-            dream_dedup_soft_delete: self.dream_dedup_soft_delete,
-            dream_compact_soft_delete: self.dream_compact_soft_delete,
-        }
-    }
-}
-
 /// Full uteke configuration, loaded from `uteke.toml`.
 #[derive(serde::Deserialize, Clone)]
 #[serde(default)]
@@ -450,16 +151,15 @@ pub struct Config {
     pub vector: VectorConfig,
     pub embedding: EmbeddingConfig,
     pub extraction: ExtractionConfig,
-    pub embed_fallback: EmbedFallbackConfig,
-    pub tier: TierConfig,
+    /// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`:
+    /// the engine sections, one schema shared with the server (#1515).
+    #[serde(flatten)]
+    pub engine: uteke_core::EngineSettings,
     pub logging: LoggingConfig,
     pub aging: AgingConfig,
-    pub recall: RecallConfig,
     pub server: ServerConfig,
     pub limits: LimitsConfig,
     pub maintenance: MaintenanceConfig,
-    pub dream: DreamConfig,
-    pub lifecycle: LifecycleConfig,
     /// Enable background update notification on startup. Default: true.
     /// Set to `false` to disable.
     #[serde(default = "default_true")]
@@ -483,16 +183,12 @@ impl Default for Config {
             vector: VectorConfig::default(),
             embedding: EmbeddingConfig::default(),
             extraction: ExtractionConfig::default(),
-            embed_fallback: EmbedFallbackConfig::default(),
-            tier: TierConfig::default(),
+            engine: uteke_core::EngineSettings::default(),
             logging: LoggingConfig::default(),
             aging: AgingConfig::default(),
-            recall: RecallConfig::default(),
             server: ServerConfig::default(),
             limits: LimitsConfig::default(),
             maintenance: MaintenanceConfig::default(),
-            dream: DreamConfig::default(),
-            lifecycle: LifecycleConfig::default(),
             update_check: true,
             doctor_footer: true,
         }
@@ -599,74 +295,9 @@ impl Config {
             }
         }
 
-        // Recall thresholds (must be 0.0-1.0)
-        if let Ok(v) = std::env::var("UTEKE_RECALL_MIN_SCORE") {
-            match v.parse::<f64>() {
-                Ok(score) if (0.0..=1.0).contains(&score) => self.recall.min_score = score,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_RECALL_MIN_SCORE='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_RECALL_MIN_SCORE='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_RECALL_MIN_SCORE_STRICT") {
-            match v.parse::<f64>() {
-                Ok(score) if (0.0..=1.0).contains(&score) => self.recall.min_score_strict = score,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_RECALL_MIN_SCORE_STRICT='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_RECALL_MIN_SCORE_STRICT='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-
-        // Graph-augmented reranking overrides (#378)
-        if let Ok(v) = std::env::var("UTEKE_RECALL_STRATEGY") {
-            if matches!(
-                v.as_str(),
-                "vector" | "fts5" | "hybrid" | "graph" | "fusion"
-            ) {
-                self.recall.default_strategy = v;
-            } else {
-                tracing::warn!(
-                    "Invalid UTEKE_RECALL_STRATEGY='{v}', ignoring (expected vector|fts5|hybrid|graph|fusion)"
-                );
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_GRAPH_DENSITY_WEIGHT") {
-            match v.parse::<f32>() {
-                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_density_weight = w,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_GRAPH_DENSITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_GRAPH_DENSITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_GRAPH_AUTHORITY_WEIGHT") {
-            match v.parse::<f32>() {
-                Ok(w) if (0.0..=1.0).contains(&w) => self.recall.graph_authority_weight = w,
-                Ok(_) => tracing::warn!(
-                    "UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}' out of range, ignoring (expected 0.0-1.0)"
-                ),
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_GRAPH_AUTHORITY_WEIGHT='{v}', ignoring (expected 0.0-1.0)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_GRAPH_RERANK_ENABLED") {
-            match v.to_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => self.recall.graph_rerank_enabled = true,
-                "0" | "false" | "no" | "off" => self.recall.graph_rerank_enabled = false,
-                _ => tracing::warn!(
-                    "Invalid UTEKE_GRAPH_RERANK_ENABLED='{v}', ignoring (expected true/false)"
-                ),
-            }
-        }
+        // Recall thresholds, strategy and graph-rerank weights (UTEKE_RECALL_*,
+        // UTEKE_GRAPH_*): validated in the core.
+        self.engine.recall = std::mem::take(&mut self.engine.recall).with_env_overrides();
 
         // Vector engine override (#1168). Ignored when the requested engine
         // is not compiled in (resolution falls back with a warning in core).
@@ -676,55 +307,7 @@ impl Config {
             }
         }
 
-        // Embedding backend overrides (#337)
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BACKEND") {
-            if !v.is_empty() {
-                self.embedding.backend = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_MODEL") {
-            if !v.is_empty() {
-                self.embedding.model = v;
-            }
-        }
-        // API key: prefer UTEKE_EMBEDDING_API_KEY, then OPENAI_API_KEY fallback.
-        // An explicitly empty env var is treated as unset so it cannot clobber
-        // a non-empty [embedding].api_key from uteke.toml (CodeCora finding).
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_API_KEY") {
-            if !v.is_empty() {
-                self.embedding.api_key = v;
-            }
-        } else if let Ok(v) = std::env::var("OPENAI_API_KEY") {
-            if !v.is_empty() {
-                self.embedding.api_key = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_BASE_URL") {
-            if !v.is_empty() {
-                self.embedding.base_url = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_ENDPOINT_PATH") {
-            if !v.is_empty() {
-                self.embedding.endpoint_path = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EMBEDDING_DIMS") {
-            match v.parse::<usize>() {
-                Ok(d) => self.embedding.dims = d,
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_EMBEDDING_DIMS='{v}', ignoring (expected integer)"
-                ),
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_MAX_SEQ_LENGTH") {
-            match v.parse::<usize>() {
-                Ok(len) if len > 0 => self.embedding.max_seq_length = len,
-                Ok(_) | Err(_) => tracing::warn!(
-                    "Invalid UTEKE_MAX_SEQ_LENGTH='{v}', ignoring (expected positive integer)"
-                ),
-            }
-        }
+        // The `UTEKE_EMBEDDING_*` variables are applied by `EmbeddingSection::resolve`.
 
         // Extraction (import --extract). All optional; inert unless --extract.
         if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MODEL") {
@@ -757,7 +340,7 @@ impl Config {
         }
 
         // Embed fallback (cloud API when local ONNX fails). All optional.
-        self.embed_fallback = self.embed_fallback.clone().resolve_with_env();
+        self.engine.embed_fallback = self.engine.embed_fallback.clone().with_env_overrides();
 
         self
     }
@@ -785,9 +368,8 @@ impl Config {
 # namespace = "default"
 
 [embedding]
-# backend = "onnx"  # future: "openai", "ollama"
-# model = "embeddinggemma-q4"
-# max_seq_length = 2048
+# backend = "onnx"  # or "openai", "ollama"
+# model = ""        # empty = the backend's default model
 
 [tier]
 # hot_days = 7
@@ -1058,6 +640,7 @@ fn set_namespace_in_toml(content: &str, namespace: &str) -> String {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[allow(unsafe_code)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1091,12 +674,15 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.store.path, "~/.codecora/uteke");
         assert_eq!(cfg.store.namespace, "default");
-        assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
-        assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 2048);
-        assert_eq!(cfg.tier.hot_days, 7);
-        assert_eq!(cfg.tier.warm_days, 30);
-        assert!((cfg.tier.hot_boost - 0.1).abs() < f64::EPSILON);
+        assert_eq!(cfg.embedding.model, "");
+        assert_eq!(
+            cfg.embedding.backend, "",
+            "unset: resolved to onnx by the core"
+        );
+        assert_eq!(cfg.embedding.max_seq_length, None);
+        assert_eq!(cfg.engine.tier.hot_days, 7);
+        assert_eq!(cfg.engine.tier.warm_days, 30);
+        assert!((cfg.engine.tier.hot_boost - 0.1).abs() < f64::EPSILON);
         assert_eq!(cfg.logging.level, "warn");
         assert!(cfg.logging.file.is_empty());
         assert!(!cfg.aging.enabled);
@@ -1136,10 +722,10 @@ max_cold_count = 5000
         assert_eq!(cfg.store.namespace, "test-ns");
         assert_eq!(cfg.embedding.model, "custom-model");
         assert_eq!(cfg.embedding.backend, "openai");
-        assert_eq!(cfg.embedding.max_seq_length, 512);
-        assert_eq!(cfg.tier.hot_days, 3);
-        assert_eq!(cfg.tier.warm_days, 14);
-        assert!((cfg.tier.hot_boost - 0.2).abs() < f64::EPSILON);
+        assert_eq!(cfg.embedding.max_seq_length, Some(512));
+        assert_eq!(cfg.engine.tier.hot_days, 3);
+        assert_eq!(cfg.engine.tier.warm_days, 14);
+        assert!((cfg.engine.tier.hot_boost - 0.2).abs() < f64::EPSILON);
         assert_eq!(cfg.logging.level, "debug");
         assert_eq!(cfg.logging.file, "/tmp/uteke.log");
         assert!(cfg.aging.enabled);
@@ -1162,10 +748,13 @@ level = "info"
         assert_eq!(cfg.logging.level, "info");
         // Everything else is default
         assert_eq!(cfg.store.path, "~/.codecora/uteke");
-        assert_eq!(cfg.embedding.model, "embeddinggemma-q4");
-        assert_eq!(cfg.embedding.backend, "onnx");
-        assert_eq!(cfg.embedding.max_seq_length, 2048);
-        assert_eq!(cfg.tier.hot_days, 7);
+        assert_eq!(cfg.embedding.model, "");
+        assert_eq!(
+            cfg.embedding.backend, "",
+            "unset: resolved to onnx by the core"
+        );
+        assert_eq!(cfg.embedding.max_seq_length, None);
+        assert_eq!(cfg.engine.tier.hot_days, 7);
         assert!(!cfg.aging.enabled);
     }
 
@@ -1185,8 +774,8 @@ model = "other-model"
         assert_eq!(merged.store.namespace, "prod");
         assert_eq!(merged.embedding.model, "other-model");
         // Unchanged defaults
-        assert_eq!(merged.embedding.max_seq_length, 2048);
-        assert_eq!(merged.tier.hot_days, 7);
+        assert_eq!(merged.embedding.max_seq_length, None);
+        assert_eq!(merged.engine.tier.hot_days, 7);
     }
 
     #[test]
@@ -1234,12 +823,15 @@ orphan_importance_threshold = 0.10
         let merged = from_toml(toml);
 
         // recall (salience/recency_weight were the original missing fields)
-        assert!((merged.recall.salience_weight - 0.25).abs() < f32::EPSILON);
-        assert!((merged.recall.recency_weight - 0.20).abs() < f32::EPSILON);
+        assert!((merged.engine.recall.salience_weight - 0.25).abs() < f32::EPSILON);
+        assert!((merged.engine.recall.recency_weight - 0.20).abs() < f32::EPSILON);
         // embed_fallback
-        assert_eq!(merged.embed_fallback.api_key, "sk-test");
-        assert_eq!(merged.embed_fallback.base_url, "https://embed.example.com");
-        assert_eq!(merged.embed_fallback.model, "text-embed");
+        assert_eq!(merged.engine.embed_fallback.api_key, "sk-test");
+        assert_eq!(
+            merged.engine.embed_fallback.base_url,
+            "https://embed.example.com"
+        );
+        assert_eq!(merged.engine.embed_fallback.model, "text-embed");
         // extraction
         assert_eq!(merged.extraction.model, "gpt-4o");
         assert_eq!(merged.extraction.max_facts, 30);
@@ -1251,8 +843,8 @@ orphan_importance_threshold = 0.10
         assert_eq!(merged.maintenance.auto_aging_interval_hours, 12);
         assert!(!merged.maintenance.auto_dream_enabled);
         // dream
-        assert!((merged.dream.dedup_threshold - 0.95).abs() < f32::EPSILON);
-        assert!((merged.dream.orphan_importance_threshold - 0.10).abs() < f64::EPSILON);
+        assert!((merged.engine.dream.dedup_threshold - 0.95).abs() < f32::EPSILON);
+        assert!((merged.engine.dream.orphan_importance_threshold - 0.10).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1353,7 +945,7 @@ namespace = "agent1"
 
     #[test]
     fn default_recall_config() {
-        let cfg = RecallConfig::default();
+        let cfg = uteke_core::RecallSettings::default();
         assert!((cfg.min_score - 0.0).abs() < f64::EPSILON);
         assert!((cfg.min_score_strict - 0.5).abs() < f64::EPSILON);
         // Fusion (vector×1.7 + hybrid×1 weighted RRF) is the default
@@ -1369,8 +961,8 @@ min_score = 0.45
 min_score_strict = 0.7
 "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert!((cfg.recall.min_score - 0.45).abs() < f64::EPSILON);
-        assert!((cfg.recall.min_score_strict - 0.7).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score - 0.45).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score_strict - 0.7).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1382,12 +974,12 @@ min_score_strict = 0.8
 "#;
         let merged = from_toml(toml);
 
-        assert!((merged.recall.min_score - 0.6).abs() < f64::EPSILON);
-        assert!((merged.recall.min_score_strict - 0.8).abs() < f64::EPSILON);
+        assert!((merged.engine.recall.min_score - 0.6).abs() < f64::EPSILON);
+        assert!((merged.engine.recall.min_score_strict - 0.8).abs() < f64::EPSILON);
         // Other config untouched
         assert_eq!(merged.store.path, "~/.codecora/uteke");
-        assert_eq!(merged.embedding.model, "embeddinggemma-q4");
-        assert_eq!(merged.tier.hot_days, 7);
+        assert_eq!(merged.embedding.model, "");
+        assert_eq!(merged.engine.tier.hot_days, 7);
         assert_eq!(merged.logging.level, "warn");
         assert!(!merged.aging.enabled);
         assert!(!merged.server.enabled);
@@ -1434,17 +1026,17 @@ port = 9999
         assert_eq!(merged.store.namespace, "full-test");
         assert_eq!(merged.embedding.model, "custom-embed");
         assert_eq!(merged.embedding.backend, "onnx");
-        assert_eq!(merged.embedding.max_seq_length, 512);
-        assert_eq!(merged.tier.hot_days, 5);
-        assert_eq!(merged.tier.warm_days, 21);
-        assert!((merged.tier.hot_boost - 0.3).abs() < f64::EPSILON);
+        assert_eq!(merged.embedding.max_seq_length, Some(512));
+        assert_eq!(merged.engine.tier.hot_days, 5);
+        assert_eq!(merged.engine.tier.warm_days, 21);
+        assert!((merged.engine.tier.hot_boost - 0.3).abs() < f64::EPSILON);
         assert_eq!(merged.logging.level, "trace");
         assert_eq!(merged.logging.file, "/tmp/test.log");
         assert!(merged.aging.enabled);
         assert_eq!(merged.aging.max_age_days, 60);
         assert_eq!(merged.aging.max_cold_count, 2000);
-        assert!((merged.recall.min_score - 0.4).abs() < f64::EPSILON);
-        assert!((merged.recall.min_score_strict - 0.65).abs() < f64::EPSILON);
+        assert!((merged.engine.recall.min_score - 0.4).abs() < f64::EPSILON);
+        assert!((merged.engine.recall.min_score_strict - 0.65).abs() < f64::EPSILON);
         assert!(merged.server.enabled);
         assert_eq!(merged.server.host, "0.0.0.0");
         assert_eq!(merged.server.port, 9999);
@@ -1519,17 +1111,17 @@ deprecated_ttl_days = 5
         assert!(!merged.update_check);
         assert!(!merged.doctor_footer);
         assert_eq!(merged.aging.max_access_count, 7);
-        assert!(!merged.lifecycle.soft_delete_only);
-        assert_eq!(merged.lifecycle.min_age_days, 11);
-        assert_eq!(merged.lifecycle.deprecated_ttl_days, 5);
+        assert!(!merged.engine.lifecycle.soft_delete_only);
+        assert_eq!(merged.engine.lifecycle.min_age_days, 11);
+        assert_eq!(merged.engine.lifecycle.deprecated_ttl_days, 5);
         // Keys absent from the file keep their defaults.
         assert_eq!(
-            merged.lifecycle.max_deprecate_per_cycle,
-            defaults.lifecycle.max_deprecate_per_cycle
+            merged.engine.lifecycle.max_deprecate_per_cycle,
+            defaults.engine.lifecycle.max_deprecate_per_cycle
         );
         assert_eq!(
-            merged.lifecycle.auto_aging_enabled,
-            defaults.lifecycle.auto_aging_enabled
+            merged.engine.lifecycle.auto_aging_enabled,
+            defaults.engine.lifecycle.auto_aging_enabled
         );
     }
 
@@ -1549,8 +1141,8 @@ backend = "ollama"
         let merged = from_toml(toml);
         assert_eq!(merged.embedding.backend, "ollama");
         // Other embedding fields stay default
-        assert_eq!(merged.embedding.model, "embeddinggemma-q4");
-        assert_eq!(merged.embedding.max_seq_length, 2048);
+        assert_eq!(merged.embedding.model, "");
+        assert_eq!(merged.embedding.max_seq_length, None);
     }
 
     #[test]
@@ -1570,89 +1162,7 @@ max_seq_length = 8191
         assert_eq!(merged.embedding.api_key, "sk-test-123");
         assert_eq!(merged.embedding.base_url, "https://my-proxy.example.com/v1");
         assert_eq!(merged.embedding.dims, 3072);
-        assert_eq!(merged.embedding.max_seq_length, 8191);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_overrides_embedding_backend() {
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_BACKEND", "openai");
-        }
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-env-test");
-        }
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_MODEL", "text-embedding-3-small");
-        }
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_DIMS", "1536");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_BACKEND");
-        }
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        }
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_MODEL");
-        }
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
-        }
-        assert_eq!(cfg.embedding.backend, "openai");
-        assert_eq!(cfg.embedding.api_key, "sk-env-test");
-        assert_eq!(cfg.embedding.model, "text-embedding-3-small");
-        assert_eq!(cfg.embedding.dims, 1536);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_openai_api_key_fallback() {
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        }
-        unsafe {
-            std::env::set_var("OPENAI_API_KEY", "sk-fallback");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("OPENAI_API_KEY");
-        }
-        assert_eq!(cfg.embedding.api_key, "sk-fallback");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_uteke_api_key_wins_over_openai() {
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_API_KEY", "sk-uteke");
-        }
-        unsafe {
-            std::env::set_var("OPENAI_API_KEY", "sk-openai");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_API_KEY");
-        }
-        unsafe {
-            std::env::remove_var("OPENAI_API_KEY");
-        }
-        assert_eq!(cfg.embedding.api_key, "sk-uteke");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn env_invalid_dims_ignored() {
-        unsafe {
-            std::env::set_var("UTEKE_EMBEDDING_DIMS", "not-a-number");
-        }
-        let cfg = Config::default().apply_env_overrides();
-        unsafe {
-            std::env::remove_var("UTEKE_EMBEDDING_DIMS");
-        }
-        assert_eq!(cfg.embedding.dims, 0, "invalid dims should keep default 0");
+        assert_eq!(merged.embedding.max_seq_length, Some(8191));
     }
 
     #[test]
@@ -1723,8 +1233,8 @@ max_seq_length = 128
         unsafe {
             std::env::remove_var("UTEKE_RECALL_MIN_SCORE_STRICT");
         }
-        assert!((cfg.recall.min_score - 0.7).abs() < f64::EPSILON);
-        assert!((cfg.recall.min_score_strict - 0.85).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score - 0.7).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score_strict - 0.85).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1761,7 +1271,7 @@ max_seq_length = 128
         assert_eq!(cfg.logging.level, "warn");
         assert_eq!(cfg.server.host, "127.0.0.1");
         assert_eq!(cfg.server.port, 8767);
-        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score - 0.0).abs() < f64::EPSILON);
     }
 
     // ── #1078 P0 batch 3: score range guards, strategy validation, graph
@@ -1777,7 +1287,7 @@ max_seq_length = 128
         unsafe {
             std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
         }
-        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1790,7 +1300,7 @@ max_seq_length = 128
         unsafe {
             std::env::remove_var("UTEKE_RECALL_MIN_SCORE");
         }
-        assert!((cfg.recall.min_score - 0.0).abs() < f64::EPSILON);
+        assert!((cfg.engine.recall.min_score - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1801,7 +1311,10 @@ max_seq_length = 128
                 std::env::set_var("UTEKE_RECALL_STRATEGY", v);
             }
             let cfg = Config::default().apply_env_overrides();
-            assert_eq!(cfg.recall.default_strategy, v, "strategy {v} rejected");
+            assert_eq!(
+                cfg.engine.recall.default_strategy, v,
+                "strategy {v} rejected"
+            );
         }
         unsafe {
             std::env::remove_var("UTEKE_RECALL_STRATEGY");
@@ -1819,7 +1332,7 @@ max_seq_length = 128
             std::env::remove_var("UTEKE_RECALL_STRATEGY");
         }
         // Invalid strategy keeps the fusion default
-        assert_eq!(cfg.recall.default_strategy, "fusion");
+        assert_eq!(cfg.engine.recall.default_strategy, "fusion");
     }
 
     #[test]
@@ -1834,8 +1347,8 @@ max_seq_length = 128
             std::env::remove_var("UTEKE_GRAPH_DENSITY_WEIGHT");
             std::env::remove_var("UTEKE_GRAPH_AUTHORITY_WEIGHT");
         }
-        assert!((cfg.recall.graph_density_weight - 0.5).abs() < f32::EPSILON);
-        assert!((cfg.recall.graph_authority_weight - 0.7).abs() < f32::EPSILON);
+        assert!((cfg.engine.recall.graph_density_weight - 0.5).abs() < f32::EPSILON);
+        assert!((cfg.engine.recall.graph_authority_weight - 0.7).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1850,8 +1363,8 @@ max_seq_length = 128
             std::env::remove_var("UTEKE_GRAPH_DENSITY_WEIGHT");
             std::env::remove_var("UTEKE_GRAPH_AUTHORITY_WEIGHT");
         }
-        assert!((cfg.recall.graph_density_weight - 0.1).abs() < f32::EPSILON);
-        assert!((cfg.recall.graph_authority_weight - 0.1).abs() < f32::EPSILON);
+        assert!((cfg.engine.recall.graph_density_weight - 0.1).abs() < f32::EPSILON);
+        assert!((cfg.engine.recall.graph_authority_weight - 0.1).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1870,17 +1383,17 @@ max_seq_length = 128
             std::env::remove_var("UTEKE_EMBED_FALLBACK_ENDPOINT_PATH");
             std::env::remove_var("UTEKE_EMBED_FALLBACK_MODEL");
         }
-        assert_eq!(cfg.embed_fallback.api_key, "fb-key");
-        assert_eq!(cfg.embed_fallback.base_url, "https://fb.example");
-        assert_eq!(cfg.embed_fallback.endpoint_path, "/v1/e");
-        assert_eq!(cfg.embed_fallback.model, "fb-model");
-        assert!(cfg.embed_fallback.is_configured());
+        assert_eq!(cfg.engine.embed_fallback.api_key, "fb-key");
+        assert_eq!(cfg.engine.embed_fallback.base_url, "https://fb.example");
+        assert_eq!(cfg.engine.embed_fallback.endpoint_path, "/v1/e");
+        assert_eq!(cfg.engine.embed_fallback.model, "fb-model");
+        assert!(cfg.engine.embed_fallback.is_configured());
     }
 
     #[test]
     fn embed_fallback_is_configured_matrix() {
         // Nothing set — not configured
-        let none = EmbedFallbackConfig {
+        let none = uteke_core::FallbackSettings {
             api_key: String::new(),
             base_url: String::new(),
             endpoint_path: String::new(),
@@ -1889,7 +1402,7 @@ max_seq_length = 128
         assert!(!none.is_configured());
 
         // Partial (2 of 3 required) — still not configured
-        let partial = EmbedFallbackConfig {
+        let partial = uteke_core::FallbackSettings {
             api_key: "k".into(),
             base_url: "u".into(),
             endpoint_path: String::new(),
@@ -1898,7 +1411,7 @@ max_seq_length = 128
         assert!(!partial.is_configured());
 
         // All three required set — configured (endpoint_path optional)
-        let full = EmbedFallbackConfig {
+        let full = uteke_core::FallbackSettings {
             api_key: "k".into(),
             base_url: "u".into(),
             endpoint_path: String::new(),
@@ -1993,5 +1506,36 @@ max_seq_length = 128
         let out = set_namespace_in_toml("[store]\nnamespace = \"a\"\n", "b");
         assert!(out.contains("namespace = \"b\""));
         assert!(!out.contains("\"a\""), "old value gone: {out}");
+    }
+
+    #[test]
+    fn a_project_file_cannot_set_lifecycle_or_dream_but_the_global_file_can() {
+        let toml = r#"
+[lifecycle]
+deprecated_ttl_days = 0
+soft_delete_only = false
+[dream]
+dedup_threshold = 0.1
+[recall]
+min_score = 0.3
+"#;
+        let defaults = Config::default();
+        let untrusted = from_project_toml(toml, false);
+        assert_eq!(
+            untrusted.engine.lifecycle.deprecated_ttl_days,
+            defaults.engine.lifecycle.deprecated_ttl_days
+        );
+        assert_eq!(
+            untrusted.engine.lifecycle.soft_delete_only,
+            defaults.engine.lifecycle.soft_delete_only
+        );
+        // A tuning key that is not a deletion threshold still applies.
+        assert!((untrusted.engine.recall.min_score - 0.3).abs() < 1e-6);
+        // The explicit opt-in restores the old behaviour.
+        let trusted = from_project_toml(toml, true);
+        assert_eq!(trusted.engine.lifecycle.deprecated_ttl_days, 0);
+        assert!(!trusted.engine.lifecycle.soft_delete_only);
+        // The global file (from_toml) is trusted.
+        assert_eq!(from_toml(toml).engine.lifecycle.deprecated_ttl_days, 0);
     }
 }

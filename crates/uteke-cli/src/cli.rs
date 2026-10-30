@@ -55,10 +55,10 @@ pub enum Commands {
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
         /// Memory type: fact, procedure, preference, decision, context,
-        /// note, insight, reference, event. Default 'fact' triggers pattern-based
-        /// auto-inference (#349) unless an explicit type is passed.
-        #[arg(long, default_value = "fact")]
-        r#type: String,
+        /// note, insight, reference, event. Without it the type is inferred
+        /// from the content (#349), falling back to fact.
+        #[arg(long)]
+        r#type: Option<String>,
         /// Enable contradiction detection (auto-deprecate conflicting memories)
         #[arg(long)]
         detect_contradiction: bool,
@@ -78,7 +78,9 @@ pub enum Commands {
         /// Room ID to link this memory to (collaborative context)
         #[arg(long)]
         room: Option<String>,
-        /// Author attribution when storing in a room
+        /// Who wrote this memory: agent, user or tool name (1 to 128
+        /// characters). Recorded on the memory with or without --room; with
+        /// --room it is also the room author (default there: anonymous)
         #[arg(long)]
         author: Option<String>,
         /// Source provenance: URL, file path, or identifier (#348)
@@ -98,7 +100,7 @@ pub enum Commands {
         /// The search query
         query: String,
         /// Maximum results to return
-        #[arg(long, default_value = "5")]
+        #[arg(long, default_value = "10")]
         limit: usize,
         /// Filter by tags (comma-separated)
         #[arg(long, value_delimiter = ',')]
@@ -199,7 +201,7 @@ pub enum Commands {
         #[arg(long)]
         tag: Option<String>,
         /// Maximum results to return
-        #[arg(long, default_value = "20")]
+        #[arg(long, default_value = "10")]
         limit: usize,
         /// Offset for pagination
         #[arg(long, default_value = "0")]
@@ -309,6 +311,12 @@ pub enum Commands {
         /// Import format: auto, jsonl, markdown, text (default: auto-detect)
         #[arg(long, default_value = "auto")]
         format: String,
+        /// The input must be a bundle from `uteke export --full`: restores the
+        /// documents (slug, title, hierarchy, content), rooms, graph and the
+        /// rest, and regenerates the vectors. A structural bundle is also
+        /// detected without this flag; with it, any other file is an error.
+        #[arg(long)]
+        full: bool,
         /// Distill the input into atomic facts before storing.
         ///
         /// Extraction mode depends on config:
@@ -848,6 +856,16 @@ pub enum RoomCommands {
         /// Target room ID (must exist)
         #[arg(long = "to")]
         to_room: String,
+    },
+    /// Add an existing memory to a room without copying it (#1589)
+    Link {
+        /// Memory ID (full UUID or unambiguous prefix)
+        memory_id: String,
+        /// Room ID (must exist)
+        room: String,
+        /// Who adds it (default: anonymous)
+        #[arg(long)]
+        author: Option<String>,
     },
     /// List all rooms
     List {

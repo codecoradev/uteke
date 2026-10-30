@@ -272,20 +272,7 @@ See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 ## License
 
-By contributing you agree your work is licensed under [Apache-2.0](LICENSE).
-
-## CLA
-
-All contributions (code, docs, tests, configuration) require a signed
-Contributor License Agreement before a pull request can be merged:
-
-- 📋 **Individual?** → [Sign the Individual CLA](https://codecoradev.github.io/cla/?type=individual)
-- 🏢 **Contributing on behalf of a company?** → [Sign the Corporate CLA](https://codecoradev.github.io/cla/?type=corporate)
-
-The CLA is a license agreement, not a copyright assignment — you keep
-ownership of your work. Signing takes a couple of minutes and is stored
-in the [codecoradev/.github](https://github.com/codecoradev/.github)
-repository; a bot checks it automatically on every pull request.
+Contributions are licensed to the project under the Apache-2.0 license (inbound = outbound). No additional agreement is required.
 
 ## Contributions are unpaid
 

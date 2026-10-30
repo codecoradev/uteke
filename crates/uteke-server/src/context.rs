@@ -5,7 +5,7 @@ use std::io::Cursor;
 use sha2::{Digest, Sha256};
 use tiny_http::{Header, Request, Response, StatusCode};
 
-use crate::types::{ErrorResponse, RecallFileSection, json_header};
+use crate::types::{ErrorResponse, json_header};
 
 /// Build a 401 Unauthorized response with CORS and WWW-Authenticate headers.
 pub fn unauthorized_response(
@@ -131,11 +131,18 @@ pub struct ReqCtx {
     /// Allowed CORS origins from config. Empty = no CORS headers; `"*"` = wildcard.
     pub cors_origins: Vec<String>,
     /// Recall threshold config from [recall] section in uteke.toml.
-    pub recall_config: Option<RecallFileSection>,
+    pub recall_config: Option<uteke_core::RecallSettings>,
     /// Extraction config from [extraction] section in uteke.toml.
     pub extraction_config: Option<uteke_core::extraction::ExtractionConfig>,
     /// `Host` header allowlist against DNS rebinding (#1326).
     pub host_guard: HostGuard,
+    /// Identity of the served store (`uteke_core::store_identity`), reported by
+    /// `GET /store` so a client can tell which store this server serves (#1445).
+    pub store_id: String,
+    /// Embeds a request's text before the store lock is taken (#1518). Every
+    /// request refreshes it from the store while it holds the lock, so a
+    /// changed privacy config or embedder is picked up; shared by clones.
+    pub embed_warmer: std::sync::Arc<std::sync::Mutex<Option<uteke_core::EmbeddingWarmer>>>,
 }
 
 /// `Host` header policy against DNS rebinding (#1326).
@@ -332,6 +339,59 @@ impl ReqCtx {
         )
     }
 
+    /// Answer a core error by its class: 400 for a bad request, 404 when the
+    /// named thing does not exist, `secret_detected` in strict privacy mode,
+    /// 500 otherwise. A 400 or 404 carries the error's own message. A 500
+    /// carries the generic `Internal server error` and the detail goes to the
+    /// log, except for an embedding failure, whose (sanitized) message tells
+    /// the user what to do, for example to run `uteke repair` (agreed with
+    /// uteke-cloud#244).
+    pub fn core_error(&self, req: &Request, e: &uteke_core::Error) -> Response<Cursor<Vec<u8>>> {
+        use uteke_core::{Error, ErrorClass};
+        if let Error::SecretDetected { kinds } = e {
+            return self.secret_detected_response(req, kinds);
+        }
+        match e.class() {
+            ErrorClass::BadRequest => self.error_response_for(req, 400, e.to_string()),
+            ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
+            _ => {
+                tracing::error!("Internal error: {e}");
+                let body = match e {
+                    Error::Embedding { .. } => e.to_string(),
+                    _ => "Internal server error".to_string(),
+                };
+                self.error_response_for(req, 500, body)
+            }
+        }
+    }
+
+    /// The privacy filter rejected the write in strict mode (#1464): 400 with
+    /// the kinds found, never the values.
+    pub fn secret_detected_response(
+        &self,
+        req: &Request,
+        kinds: &[String],
+    ) -> Response<Cursor<Vec<u8>>> {
+        let data = serde_json::json!({
+            "error": "secret_detected",
+            "message": format!(
+                "the content contains a secret ({}); remove it or set [privacy] mode to redact",
+                kinds.join(", ")
+            ),
+            "kinds": kinds,
+        })
+        .to_string();
+        let mut headers = self.cors_headers_for(req);
+        headers.push(json_header());
+        Response::new(
+            StatusCode::from(400),
+            headers,
+            Cursor::new(data.into_bytes()),
+            None,
+            None,
+        )
+    }
+
     /// Build an OK response with CORS headers specific to a request.
     pub fn ok_response_for<T: serde::Serialize>(
         &self,
@@ -365,6 +425,8 @@ mod cors_tests {
             recall_config: None,
             extraction_config: None,
             host_guard: HostGuard::default(),
+            store_id: String::new(),
+            embed_warmer: Default::default(),
         }
     }
 

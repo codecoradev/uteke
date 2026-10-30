@@ -17,6 +17,9 @@ readme = "../../README.md"
 # or --features "onnx,usearch" (classic single-engine desktop).
 default = ["onnx", "usearch", "vecq"]
 onnx = ["dep:ort", "dep:ndarray", "dep:tokenizers"]
+# Test helpers (keyword embedder, seeded two-scope store) shared with the
+# server, MCP and CLI isolation suites (#1467). Never enabled by a release build.
+test-support = []
 # Default vector search backend (HNSW, C++ FFI).
 usearch = ["dep:usearch"]
 # Alternative pure-Rust vector search backend (training-free 4-bit quantization).
@@ -29,10 +32,12 @@ vecq = ["dep:vecq-core"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 usearch = { version = "2", optional = true }
 vecq-core = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
+# Secret detection in the write path (#1464). Already in the graph via tokenizers.
+regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 thiserror = "2"
 dirs = "7"
@@ -42,7 +47,7 @@ fs2 = "0.4"
 # ONNX-only dependencies (gated behind `onnx` feature)
 # NOTE: load-dynamic requires api-18+ to avoid pykeio/ort#547 (vitis EP compile error).
 # download-binaries is intentionally removed — ORT lib is shipped as a sidecar instead.
-ort = { version = "2.0.0-rc.12", default-features = false, features = ["load-dynamic", "ndarray", "api-18"], optional = true }
+ort = { version = "2.0.0-rc.15", default-features = false, features = ["load-dynamic", "ndarray", "api-18"], optional = true }
 ndarray = { version = "0.17", optional = true }
 tokenizers = { version = "0.23", optional = true }
 # Non-optional: the embedding cache (all backends, incl. OpenAI/Ollama)
@@ -52,3 +57,6 @@ sha2 = { version = "0.11" }
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
+
+[lints]
+workspace = true

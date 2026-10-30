@@ -16,76 +16,42 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(t) => t,
                 Err(e) => return ctx.error_response_for(req, 400, e.message().to_string()),
             };
-            let tag_refs = req_data.tag_refs();
-            let metadata = req_data.metadata.clone();
-
-            let result: Result<uteke_core::RememberOutcome, uteke_core::Error> =
-                if req_data.detect_contradiction {
-                    uteke
-                        .remember_with_contradiction(
-                            &req_data.content,
-                            &tag_refs,
-                            metadata,
-                            ns(&req_data.namespace),
-                            req_data.memory_type.as_deref(),
-                            true,
-                            0.65,
-                        )
-                        .map(|(outcome, _)| outcome)
-                } else if let Some(t) = req_data.memory_type.as_deref() {
-                    uteke.remember_typed_detailed(
-                        &req_data.content,
-                        &tag_refs,
-                        metadata,
-                        ns(&req_data.namespace),
-                        t,
-                    )
-                } else {
-                    uteke.remember_detailed(
-                        &req_data.content,
-                        &tag_refs,
-                        metadata,
-                        ns(&req_data.namespace),
-                    )
-                };
-
-            match result {
-                Ok(outcome) => {
+            // The write, the source pre-check for strict privacy mode (#1464)
+            // and the provenance follow-ups (source, author_type, author) run
+            // in the core, with one failure policy (#1516).
+            match uteke.run_remember(&req_data) {
+                Ok(run) => {
+                    let outcome = run.outcome;
+                    let redacted = outcome.redacted();
                     let id = outcome.id;
-                    // Set source provenance after storage (#682) — matches CLI.
-                    if req_data.source.is_some() || req_data.source_type.is_some() {
-                        let st = req_data.source_type.as_deref().unwrap_or("user");
-                        if let Err(e) = uteke.set_source(&id, req_data.source.as_deref(), st) {
-                            error!("Failed to set source for {id}: {e}");
-                        }
-                    }
-                    // Set author type after storage (#1083). Validate before
-                    // writing so invalid values fail loudly (400, not silent).
-                    if let Some(at) = req_data.author_type.as_deref() {
-                        if let Err(e) = uteke.set_author_type(&id, at) {
-                            return ctx.error_response_for(req, 400, e.to_string());
-                        }
-                    }
                     // Echo author_type so clients can confirm what was
                     // recorded (#1106) — data was already stored correctly,
                     // the response just omitted the field. Default mirrors
                     // the schema default (author_type DEFAULT 'agent', #1083).
                     // #1273: honest embedding status — never a bare success
                     // when the vector write failed.
-                    ctx.ok_response_for(
-                        req,
-                        &serde_json::json!({
-                            "id": id,
-                            "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
-                            "embedding_written": outcome.embedding_written,
-                            "warning": uteke_core::namespace_deprecation::merge_warning(
-                                outcome.warning,
-                                uteke_core::namespace_deprecation::namespace_write_warning(
-                                    ns(&req_data.namespace),
-                                ),
+                    let mut body = serde_json::json!({
+                        "id": id,
+                        "author_type": req_data.author_type.clone().unwrap_or_else(|| "agent".to_string()),
+                        "embedding_written": outcome.embedding_written,
+                        // #1464: true when the privacy filter masked a secret,
+                        // so the stored text differs from the request.
+                        "redacted": redacted,
+                        "warning": uteke_core::namespace_deprecation::merge_warning(
+                            outcome.warning,
+                            uteke_core::namespace_deprecation::namespace_write_warning(
+                                ns(&req_data.namespace),
                             ),
-                        }),
-                    )
+                        ),
+                    });
+                    // Echo the author when one was recorded (#1427 phase 2).
+                    if let Some(a) = &req_data.author {
+                        body["author"] = serde_json::json!(a);
+                    }
+                    ctx.ok_response_for(req, &body)
+                }
+                Err(uteke_core::Error::SecretDetected { kinds }) => {
+                    ctx.secret_detected_response(req, &kinds)
                 }
                 Err(e) => {
                     error!("Internal error: {e}");
@@ -106,167 +72,38 @@ pub(super) fn post_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         Ok(req_data) => {
             // Defaults, the limit cap (#903), the blank-query rejection (#907)
             // and the RFC3339 parsing of at/after/before live in the typed
-            // request shared with MCP and the CLI (#1343).
+            // request shared with MCP and the CLI (#1343); the decision tree
+            // that runs it (explain, pack, unified, time travel, the
+            // memory-only path) is shared with MCP in the core (#1439).
             let typed = match req_data.decode() {
                 Ok(t) => t,
                 Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
             };
-            let limit = typed.limit;
-            let tag_vec = typed.tag_filter();
-            let tags_filter = tag_vec.as_deref();
             // Threshold: min_score > [recall] min_score(_strict) > built-in
-            // (strict 0.5, otherwise 0.0).
-            let min_score = typed.resolve_min_score(
-                ctx.recall_config.as_ref().and_then(|r| r.min_score),
-                ctx.recall_config.as_ref().and_then(|r| r.min_score_strict),
-            );
-            // Entity/category filters are now pushed into the core recall
-            // candidate loop (#663) — no 10x fetch amplification needed.
-
-            // Time-travel mode: recall_at_time
-            let point_in_time = typed.at;
-
-            let entity_filter = req_data.entity.as_deref();
-            let category_filter = req_data.category.as_deref();
-
-            // #902: temporal range filters (before/after).
-            let after_ts = typed.after;
-            let before_ts = typed.before;
-            let has_temporal = after_ts.is_some() || before_ts.is_some();
-
-            // Resolve recall strategy ONCE for every path (#1034):
-            // request `strategy` > config `[recall] default_strategy` >
-            // Hybrid — matching the CLI default. Unknown values are a
-            // loud 400 on all paths, never a silent no-op.
-            let strategy = match typed.strategy(
-                ctx.recall_config
+            // (strict 0.5, otherwise 0.0); strategy: request > [recall]
+            // default_strategy > fusion.
+            let defaults = uteke_core::recall_exec::RecallDefaults {
+                min_score: ctx.recall_config.as_ref().map(|r| r.min_score),
+                min_score_strict: ctx.recall_config.as_ref().map(|r| r.min_score_strict),
+                default_strategy: ctx
+                    .recall_config
                     .as_ref()
-                    .and_then(|r| r.default_strategy.as_deref()),
-            ) {
-                Ok(s) => s,
-                Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
+                    .map(|r| r.default_strategy.as_str()),
             };
-
-            // Explain mode (#1160): memory-only recall with per-result
-            // ranking signals. Mutually exclusive with the unified /
-            // time-travel / temporal surfaces.
-            if req_data.explain {
-                if req_data.search_type.is_some() {
-                    return ctx.error_response_for(
-                        req,
-                        400,
-                        "explain is memory-only: omit search_type",
-                    );
+            match uteke.run_recall(&typed, defaults) {
+                // A guard or an unknown strategy/search_type: 400 with the bare text.
+                Err(uteke_core::Error::Validation(msg)) => ctx.error_response_for(req, 400, msg),
+                Err(e) => {
+                    error!("Recall error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
                 }
-                if point_in_time.is_some() || has_temporal {
-                    return ctx.error_response_for(
-                        req,
-                        400,
-                        "explain cannot be combined with at/before/after",
-                    );
+                Ok(uteke_core::recall_exec::RecallOutput::Explained(explained)) => {
+                    ctx.ok_response_for(req, &explained)
                 }
-                if entity_filter.is_some() || category_filter.is_some() || req_data.enrich {
-                    return ctx.error_response_for(
-                        req,
-                        400,
-                        "explain cannot be combined with entity/category/enrich",
-                    );
+                Ok(uteke_core::recall_exec::RecallOutput::Packed(pack)) => {
+                    ctx.ok_response_for(req, &pack)
                 }
-                return match uteke.recall_explained(
-                    &req_data.query,
-                    limit,
-                    tags_filter,
-                    ns(&req_data.namespace),
-                    strategy,
-                    min_score,
-                ) {
-                    Ok(explained) => ctx.ok_response_for(req, &explained),
-                    Err(e) => {
-                        error!("Explain recall error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
-                };
-            }
-
-            // Budgeted context pack (#1281 Phase 1): unified recall +
-            // greedy character-budget fill; deterministic, LLM-free,
-            // rank-order preserving. Honours the caller's search_type
-            // (validated with the same 400 as the plain path).
-            if req_data.pack {
-                // Loud reject like the CLI: pack is not composable with
-                // point-in-time / range filters (the plain unified path
-                // consumes them further down, after this early return).
-                if req_data.at.is_some() || req_data.after.is_some() || req_data.before.is_some() {
-                    return ctx.error_response_for(
-                        req,
-                        400,
-                        "pack is not supported with at/after/before filters; rerun without time filters",
-                    );
-                }
-                let parsed_search_type = match typed.search_type() {
-                    Ok(t) => t,
-                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
-                };
-                let exclude_ids = typed.exclude_ids.clone();
-                return match uteke.recall_unified_packed(
-                    &req_data.query,
-                    limit,
-                    tags_filter,
-                    ns(&req_data.namespace),
-                    min_score,
-                    parsed_search_type,
-                    entity_filter,
-                    category_filter,
-                    req_data.enrich,
-                    strategy,
-                    typed.budget_chars_or_default(),
-                    &exclude_ids,
-                ) {
-                    Ok(pack) => ctx.ok_response_for(req, &pack),
-                    Err(e) => {
-                        error!("Pack recall error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
-                };
-            }
-
-            // Unified search path (#531): when search_type is specified,
-            // use recall_unified. Entity/category filters are passed
-            // through to the core recall candidate loop (#663).
-            let unified_result = if req_data.search_type.is_some() && point_in_time.is_none() {
-                let search_type = match typed.search_type() {
-                    Ok(t) => t,
-                    Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
-                };
-                Some(uteke.recall_unified(
-                    &req_data.query,
-                    limit,
-                    tags_filter,
-                    ns(&req_data.namespace),
-                    min_score,
-                    search_type,
-                    entity_filter,
-                    category_filter,
-                    req_data.enrich,
-                    strategy,
-                ))
-            } else {
-                None
-            };
-
-            // Prefer unified results when available (#531)
-            match unified_result {
-                Some(Ok(mut results)) => {
-                    // #902: Post-filter by temporal range (before/after).
-                    if has_temporal {
-                        results.retain(|r| {
-                            let ts = r.created_at.as_ref();
-                            ts.is_some_and(|t| {
-                                after_ts.is_none_or(|a| t >= &a)
-                                    && before_ts.is_none_or(|b| t <= &b)
-                            })
-                        });
-                    }
+                Ok(uteke_core::recall_exec::RecallOutput::Unified(results)) => {
                     if api_version == Some(ApiVersion::V1) {
                         // v1: flat format [{id, content, score, ...}]
                         let v1_results: Vec<serde_json::Value> =
@@ -276,95 +113,19 @@ pub(super) fn post_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         ctx.ok_response_for(req, &results)
                     }
                 }
-                Some(Err(e)) => {
-                    error!("Unified search error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
-                None => {
-                    // Memory-only recall path (#1034): route through
-                    // recall_hybrid so the resolved strategy applies to
-                    // the default path too — not just when search_type is
-                    // present. recall_hybrid has no native entity/category
-                    // support, so apply them as post-filters with 3×
-                    // over-fetch (same pattern as recall_unified_memories).
-                    let needs_post_filter = entity_filter.is_some() || category_filter.is_some();
-                    let fetch_limit = if needs_post_filter {
-                        (limit.saturating_mul(3)).max(limit + 10)
-                    } else {
-                        limit
-                    };
-                    let recall_result = if let Some(pit) = point_in_time {
-                        // Time-travel: strategy doesn't apply to
-                        // recall_at_time (point-in-time semantics).
-                        uteke.recall_at_time(
-                            &req_data.query,
-                            limit,
-                            tags_filter,
-                            ns(&req_data.namespace),
-                            pit,
-                            min_score,
-                            entity_filter,
-                            category_filter,
+                Ok(uteke_core::recall_exec::RecallOutput::Memories { results, min_score }) => {
+                    if results.is_empty() && min_score > 0.0 {
+                        ctx.ok_response_for(
+                            req,
+                            &serde_json::json!({
+                                "results": [],
+                                "total": 0,
+                                "threshold": min_score,
+                                "message": "No memories above similarity threshold"
+                            }),
                         )
                     } else {
-                        uteke.recall_hybrid(
-                            &req_data.query,
-                            fetch_limit,
-                            tags_filter,
-                            ns(&req_data.namespace),
-                            strategy,
-                            min_score,
-                        )
-                    };
-                    // Entity/category post-filter (memory results only) —
-                    // mirrors the CLI recall post-filter and core
-                    // recall_unified_memories (#663, #900).
-                    match recall_result {
-                        Ok(mut results) => {
-                            if needs_post_filter && point_in_time.is_none() {
-                                results.retain(|sr| {
-                                    entity_filter.is_none_or(|ent| {
-                                        sr.memory
-                                            .metadata
-                                            .get("entity")
-                                            .and_then(|v| v.as_str())
-                                            .is_some_and(|e| e == ent)
-                                    }) && category_filter.is_none_or(|cat| {
-                                        sr.memory
-                                            .metadata
-                                            .get("category")
-                                            .and_then(|v| v.as_str())
-                                            .is_some_and(|c| c == cat)
-                                    })
-                                });
-                                results.truncate(limit);
-                            }
-                            // #902: Post-filter by temporal range (before/after).
-                            if has_temporal {
-                                results.retain(|r| {
-                                    let t = &r.memory.created_at;
-                                    after_ts.is_none_or(|a| t >= &a)
-                                        && before_ts.is_none_or(|b| t <= &b)
-                                });
-                            }
-                            if results.is_empty() && min_score > 0.0 {
-                                ctx.ok_response_for(
-                                    req,
-                                    &serde_json::json!({
-                                        "results": [],
-                                        "total": 0,
-                                        "threshold": min_score,
-                                        "message": "No memories above similarity threshold"
-                                    }),
-                                )
-                            } else {
-                                ctx.ok_response_for(req, &results)
-                            }
-                        }
-                        Err(e) => {
-                            error!("Internal error: {e}");
-                            ctx.error_response_for(req, 500, "Internal server error")
-                        }
+                        ctx.ok_response_for(req, &results)
                     }
                 }
             }
@@ -413,46 +174,25 @@ pub(super) fn post_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(r) => r,
                 Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
             };
-            // Time-travel mode: use list_at_time
-            let list_result = match list_req.at {
-                Some(pit) => uteke.list_at_time(
-                    list_req.tag.as_deref(),
-                    list_req.limit,
-                    list_req.offset,
-                    ns(&list_req.namespace),
-                    pit,
-                ),
-                None => uteke.list(
-                    list_req.tag.as_deref(),
-                    list_req.limit,
-                    list_req.offset,
-                    ns(&list_req.namespace),
-                ),
-            };
-            match list_result {
-                Ok(memories) => {
-                    // #1188: opt-in pagination envelope. The default
-                    // response stays a bare array for existing clients.
-                    if list_req.wants_envelope() {
-                        // Total matching rows (same filters as the page).
-                        let total = match &list_req.tag {
-                            Some(tag) => uteke.count_by_tag(tag, ns(&list_req.namespace)),
-                            None => uteke.count(ns(&list_req.namespace)),
-                        }
-                        .unwrap_or(0);
-                        let meta = list_req.page_meta(total, memories.len());
-                        return ctx.ok_response_for(
-                            req,
-                            &serde_json::json!({
-                                "memories": memories,
-                                "total": total,
-                                "has_more": meta.has_more,
-                                "next_offset": meta.next_offset,
-                            }),
-                        );
-                    }
+            // The choice between a plain page, a point-in-time page and the
+            // pagination envelope (#1188) is shared with MCP (#1439).
+            match uteke.run_list(&list_req) {
+                Ok(uteke_core::list_exec::ListOutput::Memories(memories)) => {
                     ctx.ok_response_for(req, &memories)
                 }
+                Ok(uteke_core::list_exec::ListOutput::Page {
+                    memories,
+                    total,
+                    meta,
+                }) => ctx.ok_response_for(
+                    req,
+                    &serde_json::json!({
+                        "memories": memories,
+                        "total": total,
+                        "has_more": meta.has_more,
+                        "next_offset": meta.next_offset,
+                    }),
+                ),
                 Err(e) => {
                     error!("Internal error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")
@@ -470,19 +210,17 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let path = c.path;
     let query = path.split('?').nth(1).unwrap_or("");
     // Typed request shared with MCP and the CLI (#1343).
-    let request = match uteke_core::ForgetRequest::decode(
-        uteke_core::ForgetInput::from_http_query(query),
-        uteke_core::ForgetPolicy::HTTP,
-    ) {
-        Ok(r) => r,
-        Err(e) => return ctx.error_response_for(req, 400, e.message()),
-    };
+    let request =
+        match uteke_core::ForgetRequest::decode(uteke_core::ForgetInput::from_http_query(query)) {
+            Ok(r) => r,
+            Err(e) => return ctx.error_response_for(req, 400, e.message()),
+        };
     match request {
         uteke_core::ForgetRequest::Id(_) => {
             // Accept full UUID or short ID prefix (#794); the
             // existence check (#762) is part of the HTTP policy
             // because forget() silently returns Ok(()) for unknown ids.
-            let resolved_id = match request.resolve(uteke, uteke_core::ForgetPolicy::HTTP) {
+            let resolved_id = match request.resolve(uteke) {
                 Ok(Some(id)) => id,
                 Ok(None) => unreachable!("an id request resolves to an id"),
                 Err(e) => {
@@ -773,7 +511,7 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             }
             let tag_refs: Option<Vec<String>> = req_data.tags;
             let tag_slice: Option<&[String]> = tag_refs.as_deref();
-            match uteke.update_memory(
+            match uteke.update_memory_detailed(
                 &req_data.id,
                 req_data.content.as_deref(),
                 tag_slice,
@@ -782,38 +520,31 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 req_data.pinned,
                 req_data.memory_type.as_deref(),
             ) {
-                Ok(true) => {
+                Ok(outcome) if outcome.updated => {
                     // Namespace move (#1181): separate op after the field
                     // update — plain column change, no re-embed needed.
                     if let Some(ns) = req_data.namespace.as_deref() {
                         if let Err(e) = uteke.move_memory(&req_data.id, ns) {
-                            let status = match e {
-                                uteke_core::Error::Validation(_) => 400,
-                                _ => 500,
-                            };
-                            return ctx.error_response_for(req, status, e.to_string());
+                            return ctx.core_error(req, &e);
                         }
                     }
+                    // #1464: true when the filter masked a secret in the new
+                    // content, tags or metadata.
                     ctx.ok_response_for(
                         req,
                         &with_namespace_warning(
-                            serde_json::json!({"updated": req_data.id}),
+                            serde_json::json!({
+                                "updated": req_data.id,
+                                "redacted": outcome.redacted(),
+                            }),
                             req_data.namespace.as_deref(),
                         ),
                     )
                 }
-                Ok(false) => {
+                Ok(_) => {
                     ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
                 }
-                Err(e) => {
-                    error!("Update memory error: {e}");
-                    // Propagate validation errors with proper status codes
-                    let status = match e {
-                        uteke_core::Error::Validation(_) => 400,
-                        _ => 500,
-                    };
-                    ctx.error_response_for(req, status, e.to_string())
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),

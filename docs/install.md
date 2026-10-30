@@ -153,6 +153,6 @@ The install script deploys three binaries plus the bundled ONNX Runtime shared l
 | `uteke` | Core CLI — remember, recall, search, list, etc. |
 | `uteke-serve` | HTTP server for remote access and MCP over HTTP |
 | `uteke-mcp` | Standalone MCP server for AI agent integration |
-| `libonnxruntime.so*` (Linux) / `libonnxruntime*.dylib` (macOS) / `onnxruntime.dll` (Windows) | ONNX Runtime (currently v1.24.4, matches `ort` crate `2.0.0-rc.12`) — resolved via `<exe_dir>/libonnxruntime.so`, system paths, or `ORT_LIB_PATH` |
+| `libonnxruntime.so*` (Linux) / `libonnxruntime*.dylib` (macOS) / `onnxruntime.dll` (Windows) | ONNX Runtime (currently v1.24.4, matches `ort` crate `2.0.0-rc.14`) — resolved via `<exe_dir>/libonnxruntime.so`, system paths, or `ORT_LIB_PATH` |
 
 > **Arch / CachyOS note:** there is no system `libonnxruntime.so` by default and `pip install onnxruntime` may have no wheel for newer Python (e.g. 3.14), so you must keep the bundled `.so` next to the binary in `~/.local/bin/`. If you see `ONNX Runtime library not found` on `uteke remember`, re-run the installer above or set `ORT_LIB_PATH=/path/to/libonnxruntime.so`. Then `uteke doctor` should show `Embedding model: embeddinggemma-q4`.

@@ -155,13 +155,12 @@ pub(super) fn post_doc_move(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 let new_sort_order = req_data.new_sort_order;
                 match uteke.doc_move(id_or_slug, new_parent, new_sort_order) {
                     Ok(moved) => ctx.ok_response_for(req, &serde_json::json!({"moved": moved})),
+                    Err(e) if e.class() == uteke_core::ErrorClass::NotFound => {
+                        ctx.error_response_for(req, 404, e.to_string())
+                    }
                     Err(e) => {
-                        if e.to_string().contains("not found") {
-                            ctx.error_response_for(req, 404, e.to_string())
-                        } else {
-                            error!("doc move error: {e}");
-                            ctx.error_response_for(req, 500, "Internal server error")
-                        }
+                        error!("doc move error: {e}");
+                        ctx.error_response_for(req, 500, "Internal server error")
                     }
                 }
             }

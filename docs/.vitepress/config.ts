@@ -7,6 +7,8 @@ export default createConfig({
   accent: 'green',
   repo: 'uteke',
   head: [
+    ['link', { rel: 'icon', type: 'image/png', href: '/favicon.png' }],
+    ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],
     ['meta', { property: 'og:title', content: 'Uteke — One Memory. Every Agent. Local-first.' }],
     ['meta', { property: 'og:description', content: 'Offline semantic memory for AI agents. One binary, every MCP client, local-first. ~45ms recall.' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],

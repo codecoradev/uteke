@@ -18,8 +18,6 @@ use tiny_http::Server;
 use tracing::{error, info, warn};
 use uteke_core::Uteke;
 
-use types::RecallFileSection;
-
 // ── Main ────────────────────────────────────────────────────────────────────
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -257,14 +255,10 @@ fn main() {
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
-    let defaults = uteke_core::DreamConfig::default();
     // Embedding backend + vector engine from uteke.toml / env (#1399). Fail
     // fast on an unsupported backend instead of opening the store with a
     // different embedder than the operator asked for.
-    let embedding = match resolve_embedding(
-        &config,
-        std::env::var("UTEKE_EMBEDDING_BACKEND").ok().as_deref(),
-    ) {
+    let embedding = match resolve_embedding(&config, |name| std::env::var(name).ok()) {
         Ok(e) => e,
         Err(msg) => {
             error!("{msg}");
@@ -272,93 +266,45 @@ fn main() {
         }
     };
     info!("Embedding backend: {}", embedding.backend);
-    let recall_tuning = resolve_recall_tuning(&config);
+    // The engine sections: the file, then the UTEKE_RECALL_* / UTEKE_GRAPH_*
+    // overrides (as in the CLI), an unknown default strategy replaced by
+    // hybrid (#1034: a typo must not 400 every recall request), and the
+    // embedding fallback only when it is complete.
+    let mut engine = config.engine.clone();
+    engine.recall = engine.recall.with_env_overrides().sanitized();
+    let fallback = resolve_embed_fallback(&config, |k| std::env::var(k).ok());
+    if let Some(f) = &fallback {
+        info!("Embedding fallback: enabled ({})", f.base_url);
+    }
+    engine.embed_fallback = fallback.unwrap_or_default();
     let uteke = match Uteke::open_with_embedding_and_graph(
         &db_path,
         &embedding.backend,
         embedding.settings,
-        resolve_tier(&config),
+        engine.tier,
         uteke_core::RecallConfig::default(),
-        recall_tuning.graph.clone(),
+        engine.recall.graph_rerank(),
         embedding.vector_backend.as_deref(),
     ) {
         Ok(mut u) => {
-            // [recall] jaccard_weight (#719, #1355 step B); the core clamps to 0..=1.
-            u.set_jaccard_weight(recall_tuning.jaccard_weight);
-            // [embed_fallback] + UTEKE_EMBED_FALLBACK_* (#1355): only when complete.
-            if let Some(fallback) = resolve_embed_fallback(&config, |k| std::env::var(k).ok()) {
-                info!("Embedding fallback: enabled ({})", fallback.base_url);
-                u.set_fallback_settings(fallback);
-            }
-            // Apply dream pipeline thresholds from config (#731)
-            if let Some(ref dc) = config.dream {
-                u.set_dream_config(uteke_core::DreamConfig {
-                    contradict_similarity_threshold: dc
-                        .contradict_similarity_threshold
-                        .unwrap_or(defaults.contradict_similarity_threshold),
-                    contradict_tag_jaccard_min: dc
-                        .contradict_tag_jaccard_min
-                        .unwrap_or(defaults.contradict_tag_jaccard_min),
-                    contradict_max_memories: dc
-                        .contradict_max_memories
-                        .unwrap_or(defaults.contradict_max_memories),
-                    dedup_threshold: dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
-                    orphan_importance_threshold: dc
-                        .orphan_importance_threshold
-                        .unwrap_or(defaults.orphan_importance_threshold),
-                });
-                info!(
-                    "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
-                    dc.dedup_threshold.unwrap_or(defaults.dedup_threshold),
-                    dc.orphan_importance_threshold
-                        .unwrap_or(defaults.orphan_importance_threshold),
-                );
-            }
-
-            // Apply lifecycle config from uteke.toml [lifecycle] section (#928)
-            if let Some(ref lc) = config.lifecycle {
-                let defaults = uteke_core::LifecycleConfig::default();
-                u.set_lifecycle_config(uteke_core::LifecycleConfig {
-                    soft_delete_only: lc.soft_delete_only.unwrap_or(defaults.soft_delete_only),
-                    auto_aging_enabled: lc
-                        .auto_aging_enabled
-                        .unwrap_or(defaults.auto_aging_enabled),
-                    auto_aging_interval_hours: lc
-                        .auto_aging_interval_hours
-                        .unwrap_or(defaults.auto_aging_interval_hours),
-                    min_age_days: lc.min_age_days.unwrap_or(defaults.min_age_days),
-                    max_access_count: lc.max_access_count.unwrap_or(defaults.max_access_count),
-                    max_deprecate_percent: lc
-                        .max_deprecate_percent
-                        .unwrap_or(defaults.max_deprecate_percent),
-                    min_deprecate_per_cycle: lc
-                        .min_deprecate_per_cycle
-                        .unwrap_or(defaults.min_deprecate_per_cycle),
-                    max_deprecate_per_cycle: lc
-                        .max_deprecate_per_cycle
-                        .unwrap_or(defaults.max_deprecate_per_cycle),
-                    deprecated_ttl_days: lc
-                        .deprecated_ttl_days
-                        .unwrap_or(defaults.deprecated_ttl_days),
-                    auto_prune_enabled: lc
-                        .auto_prune_enabled
-                        .unwrap_or(defaults.auto_prune_enabled),
-                    dream_dedup_soft_delete: lc
-                        .dream_dedup_soft_delete
-                        .unwrap_or(defaults.dream_dedup_soft_delete),
-                    dream_compact_soft_delete: lc
-                        .dream_compact_soft_delete
-                        .unwrap_or(defaults.dream_compact_soft_delete),
-                });
-                info!(
-                    "Lifecycle config loaded: soft_delete_only={}, ttl={}d, max_deprecate={:.1}%",
-                    lc.soft_delete_only.unwrap_or(defaults.soft_delete_only),
-                    lc.deprecated_ttl_days
-                        .unwrap_or(defaults.deprecated_ttl_days),
-                    lc.max_deprecate_percent
-                        .unwrap_or(defaults.max_deprecate_percent),
-                );
-            }
+            // [privacy] (#1464): secret filter on the write path.
+            let privacy = uteke_core::privacy::load_config();
+            info!("Privacy filter: {:?}", privacy.mode);
+            u.set_privacy_config(privacy);
+            // Tier, graph rerank, Jaccard weight, recall defaults, dream
+            // thresholds, lifecycle and the embedding fallback, applied the same
+            // way as in the CLI and MCP.
+            u.apply_settings(&engine);
+            info!(
+                "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
+                engine.dream.dedup_threshold, engine.dream.orphan_importance_threshold,
+            );
+            info!(
+                "Lifecycle config loaded: soft_delete_only={}, ttl={}d, max_deprecate={:.1}%",
+                engine.lifecycle.soft_delete_only,
+                engine.lifecycle.deprecated_ttl_days,
+                engine.lifecycle.max_deprecate_percent,
+            );
             Arc::new(Mutex::new(u))
         }
         Err(e) => {
@@ -391,30 +337,11 @@ fn main() {
         auth_token_hash,
         read_only_token_hash,
         cors_origins: cors_origins.clone(),
-        recall_config: {
-            // Sanitize [recall] default_strategy at startup (#1034): the
-            // server only recently started honoring this key. An invalid
-            // value (typo in uteke.toml) must not 400 every recall request
-            // with a message blaming the request — warn loudly and fall
-            // back to hybrid instead. Explicit request-level `strategy`
-            // values remain strictly validated (HTTP 400).
-            let mut recall = config.recall.clone();
-            if let Some(r) = recall.as_mut() {
-                if let Some(s) = r.default_strategy.as_deref() {
-                    if uteke_core::RecallStrategy::from_str_opt(s).is_none() {
-                        warn!(
-                            "Invalid [recall] default_strategy='{s}' in config — \
-                             falling back to 'hybrid'. \
-                             Expected: vector | fts5 | hybrid | graph."
-                        );
-                        r.default_strategy = Some("hybrid".to_string());
-                    }
-                }
-            }
-            recall
-        },
+        recall_config: Some(engine.recall.clone()),
         extraction_config: config.extraction.clone(),
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
+        store_id: uteke_core::store_identity(&home),
+        embed_warmer: Default::default(),
     };
 
     // Start server
@@ -444,17 +371,10 @@ fn main() {
     // Auto-lifecycle background thread (#934 — replaces auto-aging #442).
     // Runs lifecycle_cycle periodically: soft-deprecate aged memories (cap-limited)
     // + auto-prune expired deprecated memories.
-    let lifecycle_enabled = config
-        .lifecycle
-        .as_ref()
-        .and_then(|lc| lc.auto_aging_enabled)
-        .unwrap_or(true);
-    let lifecycle_hours = config
-        .lifecycle
-        .as_ref()
-        .and_then(|lc| lc.auto_aging_interval_hours)
-        .unwrap_or(168) // weekly by default
-        .max(1); // Minimum 1 hour to prevent busy loop
+    let lifecycle_config = engine.lifecycle;
+    let lifecycle_enabled = lifecycle_config.auto_aging_enabled;
+    // Minimum 1 hour to prevent a busy loop.
+    let lifecycle_hours = lifecycle_config.auto_aging_interval_hours.max(1);
     let lifecycle_uteke = Arc::clone(&uteke);
     if lifecycle_enabled {
         info!("Auto-lifecycle: enabled (every {lifecycle_hours}h)");
@@ -695,35 +615,20 @@ fn main() {
 #[derive(serde::Deserialize, Default)]
 struct ServerFileConfig {
     /// `[embedding]`: which embedder the server uses (#1399).
-    embedding: Option<EmbeddingFileSection>,
+    #[serde(default)]
+    embedding: uteke_core::embedding_config::EmbeddingSection,
     /// `[vector]`: which vector engine runs when both are compiled in (#1168).
     vector: Option<VectorFileSection>,
-    /// `[embed_fallback]`: second embedding endpoint used when the primary fails (#1355).
-    embed_fallback: Option<EmbedFallbackFileSection>,
-    /// `[tier]`: hot/warm/cold memory tiers (#1355).
-    tier: Option<TierFileSection>,
+    /// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`: the
+    /// engine sections, one schema shared with the CLI (#1515).
+    #[serde(flatten)]
+    engine: uteke_core::EngineSettings,
     server: Option<ServerFileSection>,
-    recall: Option<RecallFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
     maintenance: Option<MaintenanceFileSection>,
     /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
     #[allow(dead_code)]
     aging: Option<AgingFileSection>,
-    dream: Option<DreamFileSection>,
-    lifecycle: Option<LifecycleFileSection>,
-}
-
-/// `[embedding]` in uteke.toml, same keys as the CLI. Empty / missing values
-/// fall back to the backend defaults; `UTEKE_EMBEDDING_*` env vars win over
-/// these at resolve time inside the core.
-#[derive(serde::Deserialize, Default, Clone)]
-struct EmbeddingFileSection {
-    backend: Option<String>,
-    model: Option<String>,
-    api_key: Option<String>,
-    base_url: Option<String>,
-    endpoint_path: Option<String>,
-    dims: Option<usize>,
 }
 
 /// `[vector]` in uteke.toml.
@@ -732,76 +637,19 @@ struct VectorFileSection {
     backend: Option<String>,
 }
 
-/// `[embed_fallback]` in uteke.toml, same keys as the CLI. `UTEKE_EMBED_FALLBACK_*`
-/// env vars win over these (resolved in the core).
-#[derive(serde::Deserialize, Default, Clone)]
-struct EmbedFallbackFileSection {
-    api_key: Option<String>,
-    base_url: Option<String>,
-    endpoint_path: Option<String>,
-    model: Option<String>,
-}
-
 /// The fallback embedder to apply, or `None` when it is not fully configured
 /// (api_key, base_url AND model). Env overrides come from `lookup`.
 fn resolve_embed_fallback(
     config: &ServerFileConfig,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Option<uteke_core::FallbackSettings> {
-    let file = config.embed_fallback.clone().unwrap_or_default();
-    let settings = uteke_core::FallbackSettings {
-        api_key: file.api_key.unwrap_or_default(),
-        base_url: file.base_url.unwrap_or_default(),
-        endpoint_path: file.endpoint_path.unwrap_or_default(),
-        model: file.model.unwrap_or_default(),
-    }
-    .with_overrides_from(lookup);
+    let settings = config
+        .engine
+        .embed_fallback
+        .clone()
+        .with_overrides_from(lookup);
     settings.is_configured().then_some(settings)
 }
-
-/// Recall tuning read from `[recall]` (#1355 step B): the graph-rerank weights
-/// and the Jaccard weight, with the same defaults as the CLI.
-struct RecallTuning {
-    graph: uteke_core::GraphRerankConfig,
-    jaccard_weight: f32,
-}
-
-fn resolve_recall_tuning(config: &ServerFileConfig) -> RecallTuning {
-    let default = uteke_core::GraphRerankConfig::default();
-    let file = config.recall.clone().unwrap_or_default();
-    RecallTuning {
-        graph: uteke_core::GraphRerankConfig {
-            density_weight: file.graph_density_weight.unwrap_or(default.density_weight),
-            authority_weight: file
-                .graph_authority_weight
-                .unwrap_or(default.authority_weight),
-            enabled: file.graph_rerank_enabled.unwrap_or(default.enabled),
-        },
-        jaccard_weight: file.jaccard_weight.unwrap_or(0.0),
-    }
-}
-
-/// `[tier]` in uteke.toml, same keys and defaults as the CLI.
-#[derive(serde::Deserialize, Default, Clone)]
-struct TierFileSection {
-    hot_days: Option<u32>,
-    warm_days: Option<u32>,
-    hot_boost: Option<f64>,
-}
-
-/// Tier settings: file values over the core defaults (7 / 30 days, boost 0.1).
-fn resolve_tier(config: &ServerFileConfig) -> uteke_core::TierConfig {
-    let default = uteke_core::TierConfig::default();
-    let file = config.tier.clone().unwrap_or_default();
-    uteke_core::TierConfig {
-        hot_days: file.hot_days.map_or(default.hot_days, i64::from),
-        warm_days: file.warm_days.map_or(default.warm_days, i64::from),
-        hot_boost: file.hot_boost.unwrap_or(default.hot_boost),
-    }
-}
-
-/// Backends `Uteke` can initialize lazily (same list as the CLI validates).
-const SUPPORTED_EMBEDDING_BACKENDS: &[&str] = &["onnx", "openai", "ollama"];
 
 /// What the server opens the store with.
 struct EmbeddingResolution {
@@ -810,36 +658,17 @@ struct EmbeddingResolution {
     vector_backend: Option<String>,
 }
 
-/// Resolve the embedder: `UTEKE_EMBEDDING_BACKEND` (non-empty) wins over
-/// `[embedding] backend`, which wins over the `onnx` default. An unsupported
-/// backend is an error with an actionable message (#1399).
+/// Resolve the embedder with the core's one resolution (backend list,
+/// validation, `UTEKE_EMBEDDING_*` precedence; #1399, #1537) and add the
+/// `[vector]` preference.
 fn resolve_embedding(
     config: &ServerFileConfig,
-    env_backend: Option<&str>,
+    get: impl Fn(&str) -> Option<String>,
 ) -> Result<EmbeddingResolution, String> {
-    let file = config.embedding.clone().unwrap_or_default();
-    let backend = env_backend
-        .map(str::trim)
-        .filter(|b| !b.is_empty())
-        .map(str::to_string)
-        .or_else(|| file.backend.clone().filter(|b| !b.trim().is_empty()))
-        .unwrap_or_else(|| "onnx".to_string());
-    if !SUPPORTED_EMBEDDING_BACKENDS.contains(&backend.as_str()) {
-        return Err(format!(
-            "Unsupported embedding backend '{backend}'. Supported: {}. \
-             Set UTEKE_EMBEDDING_BACKEND or [embedding] backend in uteke.toml.",
-            SUPPORTED_EMBEDDING_BACKENDS.join(", ")
-        ));
-    }
+    let resolved = config.embedding.resolve_from(get)?;
     Ok(EmbeddingResolution {
-        backend,
-        settings: uteke_core::EmbeddingSettings {
-            api_key: file.api_key.unwrap_or_default(),
-            base_url: file.base_url.unwrap_or_default(),
-            endpoint_path: file.endpoint_path.unwrap_or_default(),
-            model: file.model.unwrap_or_default(),
-            dims: file.dims.unwrap_or(0),
-        },
+        backend: resolved.backend,
+        settings: resolved.settings,
         // UTEKE_VECTOR_BACKEND (higher precedence) is read inside the core.
         vector_backend: config.vector.as_ref().and_then(|v| v.backend.clone()),
     })
@@ -863,33 +692,6 @@ struct MaintenanceFileSection {
     auto_aging_interval_hours: Option<u64>,
     auto_dream_enabled: Option<bool>,
     auto_dream_interval_days: Option<u64>,
-}
-
-/// Dream pipeline thresholds from uteke.toml [dream] section (#731).
-#[derive(serde::Deserialize, Default, Clone)]
-struct DreamFileSection {
-    contradict_similarity_threshold: Option<f32>,
-    contradict_tag_jaccard_min: Option<f32>,
-    contradict_max_memories: Option<usize>,
-    dedup_threshold: Option<f32>,
-    orphan_importance_threshold: Option<f64>,
-}
-
-/// Memory lifecycle config from uteke.toml [lifecycle] section (#928).
-#[derive(serde::Deserialize, Default, Clone)]
-struct LifecycleFileSection {
-    soft_delete_only: Option<bool>,
-    auto_aging_enabled: Option<bool>,
-    auto_aging_interval_hours: Option<u64>,
-    min_age_days: Option<u32>,
-    max_access_count: Option<u32>,
-    max_deprecate_percent: Option<f64>,
-    min_deprecate_per_cycle: Option<usize>,
-    max_deprecate_per_cycle: Option<usize>,
-    deprecated_ttl_days: Option<u32>,
-    auto_prune_enabled: Option<bool>,
-    dream_dedup_soft_delete: Option<bool>,
-    dream_compact_soft_delete: Option<bool>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -1000,7 +802,7 @@ mod config_overlay_tests {
             Some(&["https://app.example".to_string()][..])
         );
         assert!(
-            merged.recall.is_some(),
+            merged.engine.recall.min_score == 0.5,
             "project recall tuning still applies"
         );
     }
@@ -1025,9 +827,9 @@ mod config_overlay_tests {
             "[recall]\nmin_score = 0.6\n",
             false,
         );
-        let recall = merged.recall.expect("recall section");
-        assert_eq!(recall.min_score, Some(0.6));
-        assert_eq!(recall.default_strategy.as_deref(), Some("vector"));
+        let recall = merged.engine.recall;
+        assert_eq!(recall.min_score, 0.6);
+        assert_eq!(recall.default_strategy, "vector");
     }
 }
 
@@ -1040,9 +842,13 @@ mod embedding_config_tests {
         toml::from_str(toml_text).expect("valid toml")
     }
 
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
     #[test]
     fn default_is_onnx_with_empty_settings() {
-        let r = resolve_embedding(&ServerFileConfig::default(), None).unwrap();
+        let r = resolve_embedding(&ServerFileConfig::default(), no_env).unwrap();
         assert_eq!(r.backend, "onnx");
         assert!(r.settings.base_url.is_empty() && r.settings.model.is_empty());
         assert_eq!(r.settings.dims, 0);
@@ -1056,7 +862,7 @@ mod embedding_config_tests {
              model = \"embeddinggemma-q4\"\ndims = 768\nendpoint_path = \"/embed\"\n\
              [vector]\nbackend = \"vecq\"\n",
         );
-        let r = resolve_embedding(&cfg, None).unwrap();
+        let r = resolve_embedding(&cfg, no_env).unwrap();
         assert_eq!(r.backend, "openai");
         assert_eq!(r.settings.base_url, "http://embor:8355/v1");
         assert_eq!(r.settings.model, "embeddinggemma-q4");
@@ -1066,32 +872,26 @@ mod embedding_config_tests {
     }
 
     #[test]
-    fn env_backend_wins_over_toml_and_empty_env_is_ignored() {
+    fn the_env_backend_is_resolved_by_the_core_rules() {
         let cfg = parse("[embedding]\nbackend = \"ollama\"\n");
+        let env = |v: &'static str| {
+            move |n: &str| (n == "UTEKE_EMBEDDING_BACKEND").then(|| v.to_string())
+        };
         assert_eq!(
-            resolve_embedding(&cfg, Some("openai")).unwrap().backend,
+            resolve_embedding(&cfg, env("openai")).unwrap().backend,
             "openai"
         );
-        assert_eq!(resolve_embedding(&cfg, Some("")).unwrap().backend, "ollama");
         assert_eq!(
-            resolve_embedding(&cfg, Some("  ")).unwrap().backend,
+            resolve_embedding(&cfg, env("  ")).unwrap().backend,
             "ollama"
         );
-        // env alone, no [embedding] section (the labs setup)
-        let r = resolve_embedding(&ServerFileConfig::default(), Some("openai")).unwrap();
-        assert_eq!(r.backend, "openai");
-    }
-
-    #[test]
-    fn unsupported_backend_is_an_actionable_error() {
-        let err = resolve_embedding(&ServerFileConfig::default(), Some("cohere"))
+        let err = resolve_embedding(&ServerFileConfig::default(), env("cohere"))
             .err()
             .expect("must fail");
         assert!(
-            err.contains("cohere") && err.contains("onnx, openai, ollama"),
+            err.contains("cohere") && err.contains("UTEKE_EMBEDDING_BACKEND"),
             "{err}"
         );
-        assert!(err.contains("UTEKE_EMBEDDING_BACKEND"), "{err}");
     }
 
     #[test]
@@ -1113,7 +913,7 @@ mod embedding_config_tests {
             project: Some(&project),
             trust_project: false,
         });
-        let r = resolve_embedding(&cfg, None).unwrap();
+        let r = resolve_embedding(&cfg, no_env).unwrap();
         assert_eq!(r.backend, "onnx");
         assert!(r.settings.base_url.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1203,37 +1003,44 @@ mod recall_tuning_tests {
         toml::from_str(t).expect("valid toml")
     }
 
+    fn recall_of(c: ServerFileConfig) -> uteke_core::RecallSettings {
+        c.engine.recall
+    }
+
     #[test]
     fn defaults_match_the_core_and_the_cli() {
-        let t = resolve_recall_tuning(&ServerFileConfig::default());
+        let t = recall_of(ServerFileConfig::default());
         let d = uteke_core::GraphRerankConfig::default();
-        assert_eq!(t.graph.density_weight, d.density_weight);
-        assert_eq!(t.graph.authority_weight, d.authority_weight);
-        assert_eq!(t.graph.enabled, d.enabled);
+        assert_eq!(t.graph_rerank().density_weight, d.density_weight);
+        assert_eq!(t.graph_rerank().authority_weight, d.authority_weight);
+        assert_eq!(t.graph_rerank().enabled, d.enabled);
         assert_eq!(t.jaccard_weight, 0.0, "jaccard is opt-in");
         // a [recall] section without these keys changes nothing either
-        let t = resolve_recall_tuning(&parse("[recall]\nmin_score = 0.2\n"));
-        assert_eq!((t.graph.density_weight, t.jaccard_weight), (0.1, 0.0));
+        let t = recall_of(parse("[recall]\nmin_score = 0.2\n"));
+        assert_eq!(
+            (t.graph_rerank().density_weight, t.jaccard_weight),
+            (0.1, 0.0)
+        );
     }
 
     #[test]
     fn file_values_are_applied() {
-        let t = resolve_recall_tuning(&parse(
+        let t = recall_of(parse(
             "[recall]\ngraph_density_weight = 0.3\ngraph_authority_weight = 0.2\n\
              graph_rerank_enabled = false\njaccard_weight = 0.12\n",
         ));
-        assert_eq!(t.graph.density_weight, 0.3);
-        assert_eq!(t.graph.authority_weight, 0.2);
-        assert!(!t.graph.enabled);
+        assert_eq!(t.graph_rerank().density_weight, 0.3);
+        assert_eq!(t.graph_rerank().authority_weight, 0.2);
+        assert!(!t.graph_rerank().enabled);
         assert_eq!(t.jaccard_weight, 0.12);
     }
 
     #[test]
     fn a_partial_section_keeps_the_other_defaults() {
-        let t = resolve_recall_tuning(&parse("[recall]\ngraph_density_weight = 0.0\n"));
-        assert_eq!(t.graph.density_weight, 0.0);
-        assert_eq!(t.graph.authority_weight, 0.1);
-        assert!(t.graph.enabled);
+        let t = recall_of(parse("[recall]\ngraph_density_weight = 0.0\n"));
+        assert_eq!(t.graph_rerank().density_weight, 0.0);
+        assert_eq!(t.graph_rerank().authority_weight, 0.1);
+        assert!(t.graph_rerank().enabled);
     }
 
     #[test]
@@ -1241,10 +1048,10 @@ mod recall_tuning_tests {
         let cfg = parse(
             "[recall]\nmin_score = 0.4\ndefault_strategy = \"vector\"\njaccard_weight = 0.1\n",
         );
-        let r = cfg.recall.expect("recall");
-        assert_eq!(r.min_score, Some(0.4));
-        assert_eq!(r.default_strategy.as_deref(), Some("vector"));
-        assert_eq!(r.jaccard_weight, Some(0.1));
+        let r = cfg.engine.recall;
+        assert_eq!(r.min_score, 0.4);
+        assert_eq!(r.default_strategy, "vector");
+        assert_eq!(r.jaccard_weight, 0.1);
     }
 }
 
@@ -1257,9 +1064,13 @@ mod tier_config_tests {
         toml::from_str(t).expect("valid toml")
     }
 
+    fn tier_of(c: ServerFileConfig) -> uteke_core::TierConfig {
+        c.engine.tier
+    }
+
     #[test]
     fn defaults_equal_the_core_defaults() {
-        let t = resolve_tier(&ServerFileConfig::default());
+        let t = tier_of(ServerFileConfig::default());
         let d = uteke_core::TierConfig::default();
         assert_eq!(
             (t.hot_days, t.warm_days, t.hot_boost),
@@ -1270,11 +1081,11 @@ mod tier_config_tests {
 
     #[test]
     fn file_values_are_applied_and_a_partial_section_keeps_the_rest() {
-        let t = resolve_tier(&parse(
+        let t = tier_of(parse(
             "[tier]\nhot_days = 2\nwarm_days = 10\nhot_boost = 0.5\n",
         ));
         assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (2, 10, 0.5));
-        let t = resolve_tier(&parse("[tier]\nhot_boost = 0.0\n"));
+        let t = tier_of(parse("[tier]\nhot_boost = 0.0\n"));
         assert_eq!((t.hot_days, t.warm_days, t.hot_boost), (7, 30, 0.0));
     }
 }
