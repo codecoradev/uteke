@@ -43,6 +43,8 @@ mod jaccard;
 mod list_request;
 mod maintenance;
 pub mod memory;
+#[cfg(test)]
+mod mutation_gap_tests;
 pub mod namespace_deprecation;
 pub mod offline_extraction;
 mod operations;
