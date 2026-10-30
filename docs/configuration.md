@@ -322,6 +322,7 @@ Resolution order (highest priority first):
 | `UTEKE_GRAPH_DENSITY_WEIGHT` | `[recall] graph_density_weight` | `0.1` | Edge-density boost weight |
 | `UTEKE_GRAPH_AUTHORITY_WEIGHT` | `[recall] graph_authority_weight` | `0.1` | Incoming-edge authority boost weight |
 | `UTEKE_GRAPH_RERANK_ENABLED` | `[recall] graph_rerank_enabled` | `true` | Master switch for graph reranking |
+| `UTEKE_NO_UPDATE_CHECK` | `update_check = false` | unset | Any value turns the update check off in the CLI, `uteke-serve` and `uteke-mcp` (#1596) |
 | `UTEKE_EMBEDDING_BACKEND` | `[embedding] backend` | `onnx` | Embedding backend: onnx, openai, ollama |
 | `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
 | `UTEKE_EMBEDDING_API_KEY` | `[embedding] api_key` | — | API key (OpenAI). Fallback: `OPENAI_API_KEY` |
@@ -579,7 +580,9 @@ update_check = true    # Set to false to disable startup update notification
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `update_check` | true | Enable background update notification on startup |
+| `update_check` | true | Enable background update notification on startup. `uteke-serve` and `uteke-mcp` read it from the global `uteke.toml` (#1596); the CLI also honours a project file |
+
+To turn the check off in every binary, including an offline or hosted install, set `update_check = false` in the global `uteke.toml`, or set the environment variable `UTEKE_NO_UPDATE_CHECK` (any value). With either, no binary calls GitHub for the update check and `GET /health` reports no update. `uteke upgrade` is a separate, explicit command and still contacts GitHub.
 
 When an update is available, a banner is printed to **stderr** (does not interfere with stdout pipes). The check is non-blocking: it runs in a background thread joined before process exit, so it never delays command execution.
 
