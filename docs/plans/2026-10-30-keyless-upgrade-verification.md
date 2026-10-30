@@ -98,23 +98,33 @@ body; certificate without Code Signing; chain to an unknown root; truncated or o
 ## What is lost, and what replaces it
 
 The offline key was an independent gate: even a fully compromised GitHub could not produce a valid
-update. Keyless verification trusts the workflow identity, so anyone who can run `release.yml` on a
-tag can produce an accepted release (a modified workflow on a new tag gets a valid certificate for that
-tag). Mitigations to adopt together:
+update. Keyless verification trusts the workflow identity, so whoever can create a `v*` tag can produce
+an accepted release: a modified `release.yml` on a new tag gets a valid certificate for that tag.
 
-- protected tags (`v*`: creation restricted to the maintainer, no deletion or move);
-- a GitHub Environment (for example `release`) with a required reviewer on the publishing jobs, which
-  puts a human approval back in the path without a key or a password;
-- the workflow file itself under CODEOWNERS and branch protection (already behind required checks).
+**The one control that closes this path is a protected `v*` tag** (a repository ruleset: creation
+restricted to the maintainer, no update, no deletion, and an empty bypass list). Without it, nothing
+below matters.
 
-Keyless is still safer than the alternative of a signing key stored as a CI secret, which can be
-exfiltrated and used anywhere, at any time.
+These are defence in depth and do NOT stop a modified workflow on a new tag, because the attacker's
+copy of the file can drop them; do not count them as equivalent to the tag rule:
+
+- a GitHub Environment with a required reviewer: it only applies if the workflow declares
+  `environment: release`, which a modified copy can omit. It does protect against an honest workflow
+  being run by a stolen token that cannot edit it;
+- CODEOWNERS and branch protection on `release.yml`: they guard branches, not the commit a tag points
+  to (the existing "Verify tag is on main" job is inside the workflow and can be removed the same way).
+
+The residual risk is therefore: a compromised maintainer account or a repository admin who can create
+tags. That is the same trust the GitHub release itself already needs, and it is smaller than the
+alternative of a signing key stored as a CI secret, which can be exfiltrated and used anywhere, at any
+time.
 
 ## Open questions
 
 - Accept the legacy bundle only, or also switch the workflow to the new protobuf bundle
   (`cosign sign-blob --new-bundle-format`) and accept both?
-- Environment reviewer on the release jobs: yes or no (it adds a click per release).
+- Environment reviewer on the release jobs: yes or no (defence in depth only, it adds a click per release).
+- Who may create `v*` tags, and who is on the ruleset bypass list (it must be empty).
 - DER walk or `x509-parser`.
 - Alternative to all of this: remove `uteke upgrade` and point to the package managers (simplest,
   loses self-update for manual installs).
