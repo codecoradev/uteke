@@ -170,10 +170,18 @@ impl crate::Uteke {
             let redactions = prepared.redactions;
 
             // Re-embed the content with retry (consistent with remember path, #1005).
-            let embedding = self.embed(&entry.content)?;
+            // A store with no embedding backend (#1166) imports FTS5-only, as
+            // `remember` stores there: no vector, so no duplicate check either.
+            let embedding = if self.embedder_backend.is_empty() {
+                Vec::new()
+            } else {
+                self.embed(&entry.content)?
+            };
 
             // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
-            if let Some(existing_id) = self.check_duplicate(&embedding, namespace)? {
+            if !embedding.is_empty()
+                && let Some(existing_id) = self.check_duplicate(&embedding, namespace)?
+            {
                 deduped += 1;
                 // The stored memory is the one that belongs in the rooms (#1588).
                 room_links.apply(self, &existing_id, &rooms, &link_author);
@@ -548,5 +556,18 @@ mod room_link_tests {
         assert!(r.rooms_missing.is_empty());
         let json = serde_json::to_value(&r).unwrap();
         assert!(json.get("room_links").is_none() && json.get("rooms_missing").is_none());
+    }
+
+    /// #1166: a store opened without an embedding backend imports FTS5-only
+    /// instead of failing on the first row.
+    #[test]
+    fn a_store_without_an_embedder_imports_keyword_only() {
+        let u = crate::Uteke::open_with_backend(":memory:", None).unwrap();
+        let file = "{\"content\":\"alpha beta gamma\"}\n{\"content\":\"delta epsilon zeta\"}";
+        let r = u.import(file, None).unwrap();
+        assert_eq!((r.imported, r.skipped), (2, 0), "{r:?}");
+        assert_eq!(u.count(None).unwrap(), 2);
+        let found = u.search("alpha", 5, None, None).unwrap();
+        assert_eq!(found.len(), 1, "the rows are keyword-searchable");
     }
 }
