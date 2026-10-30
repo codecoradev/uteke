@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-cli"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2923,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-core"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "chrono",
  "dirs",
@@ -2949,7 +2949,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-mcp"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "chrono",
  "dirs",
@@ -2961,7 +2961,7 @@ dependencies = [
 
 [[package]]
 name = "uteke-server"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "chrono",
  "ctrlc",
