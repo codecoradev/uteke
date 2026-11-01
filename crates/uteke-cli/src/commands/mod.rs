@@ -235,8 +235,17 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Verify => maintenance::run_verify(cli, uteke),
 
-        Commands::Repair { rebuild, reembed } => {
-            maintenance::run_repair(cli, uteke, *rebuild, *reembed, config)
+        Commands::Repair {
+            rebuild,
+            reembed,
+            limit,
+            pause_ms,
+        } => {
+            let reembed = reembed.then(|| uteke_core::ReembedOptions {
+                limit: *limit,
+                pause: std::time::Duration::from_millis(*pause_ms),
+            });
+            maintenance::run_repair(cli, uteke, *rebuild, reembed, config)
         }
 
         Commands::Tags { command } => tags::run(cli, uteke, ns, command),
@@ -268,6 +277,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             max_size,
             recursive,
             timestamp,
+            defer_embed,
         } => {
             let opts = maintenance::ExtractOpts {
                 enabled: *extract,
@@ -317,6 +327,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 if *full { "full" } else { format },
                 opts,
                 timestamp.as_deref(),
+                *defer_embed,
             )
         }
 

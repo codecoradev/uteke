@@ -649,6 +649,27 @@ links (`room_links`) and the rooms the target lacks (`rooms_missing`). Create th
 rooms (`uteke room create <ID>`) and import the file again to finish the links; nothing is
 copied.
 
+### Store now, embed later (`--defer-embed`)
+
+A JSON/JSONL import embeds every row while it imports. With the local model that
+keeps the CPU busy for the whole file, and an embedding backend that is down stops
+the import at that row. `--defer-embed` stores the rows without a vector instead:
+the import does not wait on the embedder, the rows are found by keyword search at
+once, and the vectors are added later in portions you choose:
+
+```bash
+uteke import big-export.jsonl --defer-embed
+uteke repair --reembed --limit 500 --pause-ms 20   # repeat until nothing is left
+```
+
+`repair --reembed` only picks rows that have no vector, so each run continues where
+the last one stopped and reports how many are left. Rows embedded this way also get
+the cosine links `remember` makes. Without vectors the cosine duplicate check
+(similarity of 0.95 or more) cannot run during the import, so only exact copies of
+a stored memory, or of an earlier row in the same file, are skipped; near-duplicates
+stay. `--defer-embed` works with JSON/JSONL input (not `--full`, `--extract` or
+`--batch-dir`), and `POST /import` is unchanged.
+
 ### LLM fact extraction (`--extract`)
 
 Raw source material (chat transcripts, long notes, exported dumps) is noisy:
@@ -948,7 +969,7 @@ uteke timeline <memory-id> --json
 | `uteke verify-checksums --binary <path>` | Verify binary integrity against SHA256 checksums |
 | `uteke repair` | Rebuild index from SQLite |
 | `uteke repair --rebuild` | Rebuild index from SQLite (explicit) |
-| `uteke repair --reembed` | Regenerate missing embeddings for memories without vectors (#906) |
+| `uteke repair --reembed` | Regenerate missing embeddings for memories without vectors (#906); `--limit N` embeds at most N rows per run and `--pause-ms MS` sleeps between rows (#1608) |
 | `uteke namespace list` | List all namespaces with memory counts |
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
