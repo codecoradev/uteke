@@ -446,6 +446,12 @@ pub(crate) fn run_import(
                 result.rejected_secret
             );
         }
+        if result.rejected_tombstone > 0 {
+            println!(
+                "  \u{26a0} {} entries skipped: they were forgotten as wrong (`uteke tombstone list`)",
+                result.rejected_tombstone
+            );
+        }
         if result.room_links > 0 {
             println!("  Linked memories to rooms: {} link(s)", result.room_links);
         }

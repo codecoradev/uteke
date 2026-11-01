@@ -205,12 +205,15 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             r#type.clone(),
         ),
 
+        Commands::Tombstone { command } => forget::run_tombstone(cli, uteke, command),
+
         Commands::Forget {
             id,
             tag,
             cold,
             all,
             confirm,
+            reason,
         } => forget::run(
             cli,
             uteke,
@@ -221,6 +224,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 cold: *cold,
                 all: *all,
                 confirm: *confirm,
+                reason: reason.clone(),
             },
         ),
 

@@ -39,6 +39,7 @@ pub const SECTIONS: &[&str] = &[
     "documents",
     "document_chunks",
     "timeline_events",
+    "rejected_values",
 ];
 
 impl crate::Uteke {
@@ -81,6 +82,7 @@ impl crate::Uteke {
                 "graph_edges" => "SELECT COUNT(*) FROM graph_edges",
                 "documents" => "SELECT COUNT(*) FROM documents",
                 "document_chunks" => "SELECT COUNT(*) FROM document_chunks",
+                "rejected_values" => "SELECT COUNT(*) FROM rejected_values",
                 _ => unreachable!("unknown export section: {s}"),
             };
             let count: i64 = conn.query_row(count_sql, [], |r| r.get(0)).unwrap_or(0);
@@ -259,6 +261,18 @@ impl crate::Uteke {
             }
         }
 
+        // rejected-value tombstones (#1597): a moved store keeps refusing the
+        // values that were forgotten as wrong.
+        for t in self.tombstones()? {
+            let mut v = serde_json::to_value(&t)
+                .map_err(|e| Error::db_msg(format!("dump rejected_value serialize: {e}")))?;
+            v["type"] = serde_json::json!("rejected_value");
+            lines.push(
+                serde_json::to_string(&v)
+                    .map_err(|e| Error::db_msg(format!("dump rejected_value serialize: {e}")))?,
+            );
+        }
+
         // documents (full content) + document_chunks (content for re-chunking).
         {
             let mut stmt = conn
@@ -384,6 +398,7 @@ impl crate::Uteke {
         // room_documents has no FK on doc_slug, but restore it after documents
         // (pass 2) for clarity of dependency ordering (#1078).
         let mut pending_room_documents: Vec<serde_json::Value> = Vec::new();
+        let mut tombstones: Vec<crate::Tombstone> = Vec::new();
         let mut rest: Vec<serde_json::Value> = Vec::new();
 
         for line in input.lines().filter(|l| !l.trim().is_empty()) {
@@ -401,14 +416,38 @@ impl crate::Uteke {
                 "graph_node" => pending_nodes.push(v),
                 "graph_edge" => pending_graph_edges.push(v),
                 "room_document" => pending_room_documents.push(v),
+                "rejected_value" => {
+                    if let Ok(t) = serde_json::from_value::<crate::Tombstone>(v) {
+                        tombstones.push(t);
+                    }
+                }
                 _ => rest.push(v),
             }
         }
 
         // ── Pass 2: restore in dependency order ─────────────────────────
-        // memories first (sentinel embeddings; repair --reembed regenerates).
+        // Tombstones first (#1597): a memory row that matches one (from the
+        // bundle or already in this store) is skipped and counted.
+        let restored = crate::tombstone::insert_all(conn, &tombstones)?;
+        if restored > 0 {
+            *counts.entry("rejected_values".into()).or_default() += restored;
+        }
+        // Ids of skipped rows: their room links, edges and timeline events are
+        // skipped too (the junctions have a foreign key on memories), and a
+        // graph node keeps its entity but loses the link to the memory.
+        let mut skipped: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // memories (sentinel embeddings; repair --reembed regenerates).
         {
             for m in &pending_memories {
+                match crate::tombstone::check(conn, m["content"].as_str().unwrap_or("")) {
+                    Ok(()) => {}
+                    Err(Error::RejectedValue { .. }) => {
+                        *counts.entry("rejected_tombstone".into()).or_default() += 1;
+                        skipped.insert(m["id"].as_str().unwrap_or("").to_string());
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
                 let tags = serde_json::to_string(&m["tags"]).unwrap_or_else(|_| "[]".into());
                 let metadata =
                     serde_json::to_string(&m["metadata"]).unwrap_or_else(|_| "{}".into());
@@ -456,6 +495,18 @@ impl crate::Uteke {
         // rooms + junctions + memory_edges + timeline (all FK-safe now).
         for v in &rest {
             let tag = v["type"].as_str().unwrap_or("");
+            let refs_skipped = |cols: &[usize]| {
+                cols.iter()
+                    .any(|&i| v["row"][i].as_str().is_some_and(|id| skipped.contains(id)))
+            };
+            let dependent = match tag {
+                "room_memory" | "timeline_event" => refs_skipped(&[1]),
+                "memory_edge" => refs_skipped(&[0, 1]),
+                _ => false,
+            };
+            if dependent {
+                continue;
+            }
             match tag {
                 "room" => {
                     let r = &v["row"];
@@ -623,7 +674,7 @@ impl crate::Uteke {
                         r[1].as_str().unwrap_or(""),
                         r[2].as_str(),
                         props,
-                        r[4].as_str(),
+                        r[4].as_str().filter(|id| !skipped.contains(*id)),
                         r[5].as_str().unwrap_or(""),
                     ],
                 )

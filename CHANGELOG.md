@@ -4,6 +4,21 @@
 
 ### Added
 
+- **Rejected-value tombstones (#1597, schema v23)** - forgetting a memory with
+  `--reason wrong` (or `wrong: <note>`; also `supersede --reason wrong`,
+  `DELETE /forget?id=..&reason=..` and the MCP `uteke_forget` `reason`) records a
+  hash of its normalised text (NFKC, letter case, whitespace, invisible
+  characters). Every write refuses that text from then on: `remember`, room
+  remember, `update`, consolidation and `import` (the row is skipped and counted
+  as `rejected_tombstone`). The HTTP API answers `409 rejected_value` with the
+  recorded reason, never the value; MCP a `rejected_value:` tool error. Tombstones
+  survive `prune`, travel with `export --full` / `import --full`, and are managed
+  with `uteke tombstone list|remove`; `uteke promote` removes the tombstone of the
+  memory it restores. An ordinary forget records nothing. CORE contract issue:
+  uteke-cloud#437 (`POST /remember`, `/room/remember`, `/import` and
+  `/consolidate/pair` gain the 409; `/import` gains `rejected_tombstone` when
+  non-zero). Design: `docs/plans/2026-11-01-rejected-value-tombstone-1597.md`.
+
 - **`uteke import --defer-embed`: store first, embed later (#1608)** - a JSON/JSONL
   import can store its rows without a vector, so it does not wait on the
   embedder (a CPU-heavy local model, a backend that is down or rate-limited).

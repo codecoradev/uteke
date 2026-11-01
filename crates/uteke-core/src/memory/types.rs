@@ -482,6 +482,10 @@ pub struct ImportResult {
     /// links were not made. Create them and import again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rooms_missing: Vec<String>,
+    /// Entries skipped because the value was forgotten as wrong (#1597, a
+    /// rejected-value tombstone; also in `skipped`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_tombstone: usize,
     /// Imported memories stored without a vector because the import deferred
     /// embedding (#1608); `uteke repair --reembed` adds them.
     #[serde(default, skip_serializing_if = "is_zero")]

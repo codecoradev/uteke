@@ -53,6 +53,9 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Err(uteke_core::Error::SecretDetected { kinds }) => {
                     ctx.secret_detected_response(req, &kinds)
                 }
+                Err(uteke_core::Error::RejectedValue { reason }) => {
+                    ctx.rejected_value_response(req, &reason)
+                }
                 Err(e) => {
                     error!("Internal error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")
@@ -209,12 +212,13 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let req = &mut *c.req;
     let path = c.path;
     let query = path.split('?').nth(1).unwrap_or("");
+    let input = uteke_core::ForgetInput::from_http_query(query);
+    let reason = input.reason.clone();
     // Typed request shared with MCP and the CLI (#1343).
-    let request =
-        match uteke_core::ForgetRequest::decode(uteke_core::ForgetInput::from_http_query(query)) {
-            Ok(r) => r,
-            Err(e) => return ctx.error_response_for(req, 400, e.message()),
-        };
+    let request = match uteke_core::ForgetRequest::decode(input) {
+        Ok(r) => r,
+        Err(e) => return ctx.error_response_for(req, 400, e.message()),
+    };
     match request {
         uteke_core::ForgetRequest::Id(_) => {
             // Accept full UUID or short ID prefix (#794); the
@@ -235,7 +239,8 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     };
                 }
             };
-            match uteke.forget(&resolved_id) {
+            // `reason=wrong[: note]` also records a tombstone (#1597).
+            match uteke.forget_with_reason(&resolved_id, reason.as_deref()) {
                 Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id})),
                 Err(e) => {
                     error!("Internal error: {e}");

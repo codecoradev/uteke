@@ -208,6 +208,36 @@ uteke forget --tag stale --dry-run
 | `--all` | Delete all memories in namespace |
 | `--confirm` | Skip confirmation prompt |
 | `--dry-run` | Preview what would be deleted |
+| `--reason <text>` | Why the memory is forgotten (with an ID). `wrong` or `wrong: <note>` also rejects the value, see below |
+
+### Rejecting a wrong value (`--reason wrong`)
+
+Forgetting a memory does not stop the same text from being written again, by an
+agent, an import or a later extraction. When a memory is forgotten because it is
+**wrong**, say so:
+
+```bash
+uteke forget <id> --reason "wrong: the port is 8767" --confirm
+uteke supersede <old> <new> --reason wrong          # the old value is rejected
+```
+
+This records a tombstone: a hash of the text after normalisation (Unicode NFKC,
+letter case, whitespace and invisible characters do not matter). Every write
+refuses that text from then on: `remember`, room remember, `update`, `import`
+(the row is skipped and counted as `rejected_tombstone`), `import --full` and
+consolidation. The HTTP API answers `409 {"error": "rejected_value", "reason": ...}`,
+MCP a tool error starting with `rejected_value:`. The tombstone survives `prune`
+and is carried by `export --full`. A paraphrase is not caught. Any other reason
+(`--reason outdated`) is only kept on the forgotten memory.
+
+## uteke tombstone
+
+```bash
+uteke tombstone list                 # hash prefix, date, reason and the start of the text
+uteke tombstone remove <hash|id>     # allow the value again (8+ hash characters or the memory id)
+```
+
+`uteke promote <id>` (restoring the forgotten memory) also removes its tombstone.
 
 ## uteke consolidate
 

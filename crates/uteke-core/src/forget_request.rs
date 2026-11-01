@@ -24,6 +24,9 @@ pub struct ForgetInput {
     pub tag: Option<String>,
     /// Only meaningful with `tag`; an id target ignores it.
     pub namespace: Option<String>,
+    /// Why the memory is forgotten (id target only). `wrong` or `wrong: <note>`
+    /// also records a rejected-value tombstone (#1597). Percent-decoded.
+    pub reason: Option<String>,
 }
 
 impl ForgetInput {
@@ -43,6 +46,7 @@ impl ForgetInput {
                 "id" => input.id = Some(value.to_string()),
                 "tag" => input.tag = Some(value.to_string()),
                 "namespace" => input.namespace = Some(value.to_string()),
+                "reason" => input.reason = Some(percent_decode(value)),
                 _ => {}
             }
         }
@@ -55,7 +59,11 @@ impl ForgetInput {
     /// Nothing is validated or rewritten here: the server owns that.
     pub fn to_http_path(&self, encode: impl Fn(&str) -> String) -> Option<String> {
         if let Some(id) = &self.id {
-            Some(format!("/forget?id={}", encode(id)))
+            let mut path = format!("/forget?id={}", encode(id));
+            if let Some(r) = &self.reason {
+                path.push_str(&format!("&reason={}", encode(r)));
+            }
+            Some(path)
         } else {
             let tag = self.tag.as_ref()?;
             let mut path = format!("/forget?tag={}", encode(tag));
@@ -65,6 +73,32 @@ impl ForgetInput {
             Some(path)
         }
     }
+}
+
+/// Decode `%XX` escapes and `+` (a space) in a query value; an invalid
+/// escape is kept as written.
+fn percent_decode(value: &str) -> String {
+    fn hex(b: u8) -> Option<u8> {
+        (b as char).to_digit(16).map(|d| d as u8)
+    }
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => out.push(b' '),
+            b'%' if i + 2 < bytes.len() => match (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                (Some(h), Some(l)) => {
+                    out.push(h * 16 + l);
+                    i += 2;
+                }
+                _ => out.push(b'%'),
+            },
+            b => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Why a forget request failed.
@@ -243,7 +277,19 @@ mod tests {
             id: id.map(String::from),
             tag: tag.map(String::from),
             namespace: ns.map(String::from),
+            reason: None,
         }
+    }
+
+    #[test]
+    fn the_reason_is_percent_decoded_and_the_rest_is_not() {
+        let i = ForgetInput::from_http_query("id=ab%20c&reason=wrong%3A+it+is+%C3%A9t%C3%A9");
+        assert_eq!(i.id.as_deref(), Some("ab%20c"), "ids keep the old rule");
+        assert_eq!(i.reason.as_deref(), Some("wrong: it is \u{e9}t\u{e9}"));
+        assert_eq!(super::percent_decode("50%"), "50%");
+        assert_eq!(super::percent_decode("a%zzb"), "a%zzb");
+        assert_eq!(super::percent_decode("%4"), "%4");
+        assert_eq!(super::percent_decode("caf\u{e9}%21"), "caf\u{e9}!");
     }
 
     #[test]

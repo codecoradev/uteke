@@ -303,6 +303,11 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "redacted": result.redacted,
                         "rejected_secret": result.rejected_secret,
                     });
+                    // Rows forgotten as wrong (#1597): only when there were any,
+                    // so the response is unchanged for every other import.
+                    if result.rejected_tombstone > 0 {
+                        body["rejected_tombstone"] = result.rejected_tombstone.into();
+                    }
                     // Room links (#1588): only when the file named rooms.
                     if result.room_links > 0 || !result.rooms_missing.is_empty() {
                         body["room_links"] = result.room_links.into();

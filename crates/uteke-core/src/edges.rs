@@ -2055,6 +2055,12 @@ impl crate::Uteke {
                 params![reason_text, now, old.id],
             )
             .map_err(|e| Error::db("refresh superseded reason", e))?;
+            // Superseded because it was wrong (#1597): the old value may not
+            // come back. In the same transaction, so a supersession never
+            // lands without its tombstone.
+            if let Some(r) = reason.filter(|r| crate::tombstone::is_wrong_reason(r)) {
+                crate::tombstone::record(&tx, &old, r)?;
+            }
             tx.commit()
                 .map_err(|e| Error::db("commit supersede tx", e))?;
         }

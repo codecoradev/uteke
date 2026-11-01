@@ -690,11 +690,12 @@ fn tool_update() -> Value {
 fn tool_forget() -> Value {
     serde_json::json!({
         "name": "uteke_forget",
-        "description": "Delete a memory by its ID.",
+        "description": "Delete a memory by its ID. With reason \"wrong\" (or \"wrong: <note>\") the value is also recorded as rejected and cannot be stored again.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "id": { "type": "string", "description": "Full UUID or unambiguous prefix (8-char id from recall/list works)" }
+                "id": { "type": "string", "description": "Full UUID or unambiguous prefix (8-char id from recall/list works)" },
+                "reason": { "type": "string", "description": "Why it is forgotten. \"wrong\" or \"wrong: <note>\" records a rejected-value tombstone (#1597); other text is kept on the deprecation." }
             },
             "required": ["id"]
         }
@@ -1346,6 +1347,7 @@ fn namespace_deprecation_suffix(namespace: Option<&str>) -> String {
 fn write_error(e: uteke_core::Error) -> String {
     match e {
         uteke_core::Error::SecretDetected { .. } => format!("secret_detected: {e}"),
+        uteke_core::Error::RejectedValue { .. } => format!("rejected_value: {e}"),
         other => format!("Failed: {other}"),
     }
 }
@@ -1847,12 +1849,20 @@ fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         .map_err(|e| e.message().to_string())?
         .ok_or("Missing 'id'")?;
 
-    uteke.forget(&id).map_err(|e| format!("Failed: {e}"))?;
+    let reason = args["reason"].as_str();
+    uteke
+        .forget_with_reason(&id, reason)
+        .map_err(|e| format!("Failed: {e}"))?;
+    let rejected = reason.is_some_and(uteke_core::tombstone::is_wrong_reason);
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("✓ Forgotten: {id}"),
+            text: if rejected {
+                format!("✓ Forgotten: {id} (rejected as wrong: this value cannot be stored again)")
+            } else {
+                format!("✓ Forgotten: {id}")
+            },
         }],
         is_error: false,
     })
@@ -3458,11 +3468,11 @@ mod id_resolution_tests {
         // widen the target.
         assert_eq!(
             err(serde_json::json!({"tag": "probe", "namespace": "mcp-id-ns"})),
-            "Unknown argument 'namespace'. Supported: id"
+            "Unknown argument 'namespace'. Supported: id, reason"
         );
         assert_eq!(
             err(serde_json::json!({"id": "ffffffff", "tag": "probe"})),
-            "Unknown argument 'tag'. Supported: id"
+            "Unknown argument 'tag'. Supported: id, reason"
         );
         assert!(uteke.get_by_id(&id).unwrap().is_some());
         drop(uteke);
@@ -4955,5 +4965,41 @@ mod fence_tests {
             assert_eq!(desc.ends_with(FENCE_DESCRIPTION), is_fenced(name), "{name}");
         }
         assert!(initialize_instructions().contains(uteke_core::guide::STORED_DATA_IS_UNTRUSTED));
+    }
+}
+
+/// `uteke_forget` with reason `wrong` records a tombstone, and a later write
+/// of the value is a `rejected_value` tool error (#1597).
+#[cfg(test)]
+mod rejected_value_mcp_tests {
+    use super::*;
+
+    fn text(r: &ToolResult) -> String {
+        match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    #[test]
+    fn forget_wrong_then_remember_is_refused() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        let ok = exec_remember(&u, &serde_json::json!({"content": "Build uses node 16"})).unwrap();
+        let id = text(&ok).rsplit(' ').next().unwrap().trim().to_string();
+        let forgot = exec_forget(
+            &u,
+            &serde_json::json!({"id": id, "reason": "wrong: node 22"}),
+        )
+        .unwrap();
+        assert!(
+            text(&forgot).contains("rejected as wrong"),
+            "{}",
+            text(&forgot)
+        );
+
+        let err = exec_remember(&u, &serde_json::json!({"content": "build uses Node 16"}))
+            .err()
+            .expect("refused");
+        assert!(err.starts_with("rejected_value:"), "{err}");
+        assert!(err.contains("wrong: node 22"), "{err}");
     }
 }

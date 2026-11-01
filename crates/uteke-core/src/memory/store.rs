@@ -170,6 +170,16 @@ CREATE TABLE IF NOT EXISTS room_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_room_documents_room ON room_documents(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_documents_slug ON room_documents(doc_slug);
+
+-- v23: rejected-value tombstones (#1597). Not touched by prune, TTL or forget.
+CREATE TABLE IF NOT EXISTS rejected_values (
+    hash       TEXT PRIMARY KEY,
+    memory_id  TEXT,
+    reason     TEXT NOT NULL,
+    preview    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rejected_values_memory ON rejected_values(memory_id);
 "#;
 
 /// Indexes that depend on migration-added columns.
@@ -182,7 +192,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 22;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 23;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
