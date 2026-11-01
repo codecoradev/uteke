@@ -160,7 +160,7 @@ A client that parses the tool text itself can turn the block off with
 
 ## Available Tools
 
-Both transports expose the same 50 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 51 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -179,6 +179,7 @@ Both transports expose the same 50 tools (MCP protocol version `2025-06-18`):
 | `uteke_stats` | Memory store statistics |
 | `uteke_context` | AI-optimized context output for prompts |
 | `uteke_dream` | Maintenance pipeline (lint → backlinks → dedup → orphans → compact → verify). **Dry-run by default** — pass `dry_run: false` to apply; scope `namespace` or `confirm_large` for whole-store / >100-change runs |
+| `uteke_capture` | Queue one raw conversation turn (`session_id`, `role` user/assistant/tool, `content`) for deferred fact extraction (#1466). No LLM call now; refused unless `[capture] enabled` is on |
 | `uteke_verify` | Report SQLite row count vs vector index size with a match flag (#1272) — live audit without restarting `uteke-serve` (write-token surface) |
 | `uteke_repair` | Rebuild the vector index from stored embeddings (#1272) — fixes the stale-index failure mode where rows exist in SQLite+FTS5 but go missing under fusion/hybrid recall |
 | `uteke_doc_create` | Create a document (wiki/knowledge base entry) |

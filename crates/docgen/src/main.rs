@@ -343,6 +343,7 @@ fn collect_schemas(schemas: &mut BTreeMap<&'static str, Value>) {
     add_schema!("ImportanceRequest", uteke_server::types::ImportanceRequest);
     add_schema!("OrphansRequest", uteke_server::types::OrphansRequest);
     add_schema!("ExtractRequest", uteke_server::types::ExtractRequest);
+    add_schema!("CaptureRequest", uteke_server::types::CaptureRequest);
 
     // Response types
     add_schema!("HealthResponse", uteke_server::types::HealthResponse);

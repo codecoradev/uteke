@@ -6,6 +6,7 @@
 // api_registry is runtime data now: GET /routes serves it (#1289),
 // in addition to its original docgen role.
 mod api_registry;
+mod capture_worker;
 mod context;
 mod handlers;
 mod types;
@@ -458,6 +459,24 @@ fn main() {
         });
     } else {
         info!("Auto-dream: disabled");
+    }
+
+    // Scheduled extraction of the capture queue (#1466). Opt-in: runs only
+    // when `[capture] enabled` is on in the global uteke.toml.
+    let capture = engine.capture;
+    if capture.enabled {
+        info!(
+            "Capture extraction: enabled (every {}min, {} session(s) per run)",
+            capture.interval_minutes.max(1),
+            capture.budget_per_run
+        );
+        let capture_uteke = Arc::clone(&uteke);
+        let extraction = config.extraction.clone().unwrap_or_default();
+        std::thread::spawn(move || {
+            capture_worker::run_forever(&capture_uteke, &extraction, capture, &SHUTDOWN);
+        });
+    } else {
+        info!("Capture extraction: disabled");
     }
 
     // Update check — startup notification + periodic 24h re-check.

@@ -321,7 +321,7 @@ For Claude Desktop or Cursor with stdio transport:
 
 ### Available MCP Tools
 
-Both transports serve the same 50 tools (MCP protocol version `2025-06-18`). The
+Both transports serve the same 51 tools (MCP protocol version `2025-06-18`). The
 full list with arguments is in [MCP](mcp.md#available-tools).
 
 ## Behind a Reverse Proxy

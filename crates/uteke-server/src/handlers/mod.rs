@@ -26,6 +26,9 @@ const API_VERSIONS: &[&str] = &["v1", "v2"];
 
 #[cfg(test)]
 mod author_tests;
+mod capture;
+#[cfg(test)]
+mod capture_tests;
 mod docs;
 #[cfg(test)]
 mod error_tests;
@@ -188,6 +191,9 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/context", maintenance::post_context),
     // ── Dream Cycle (#442) ─────────────────────────────────────────────
     ("POST", "/dream", maintenance::post_dream),
+    // ── Capture queue (#1466) ────────────────────────────────────────
+    ("POST", "/capture", capture::post_capture),
+    ("GET", "/capture/status", capture::get_capture_status),
     ("POST", "/mcp", mcp::post_mcp),
     // ── Document: Create / Upsert ────────────────────────────────────
     ("POST", "/doc/create", docs::post_doc_create),

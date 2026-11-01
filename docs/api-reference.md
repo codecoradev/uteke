@@ -138,6 +138,20 @@ Undo a contradiction resolution (#1172): restore the retired memory to active, r
 
 *Related: `1172`*
 
+#### 🟡 `POST` `/capture`
+
+Queue one raw conversation turn for deferred, budgeted fact extraction. Refused (409) unless [capture] enabled is on.
+
+**Request body**: [`CaptureRequest`](#capturerequest)
+
+*Related: `#1466`*
+
+#### 🟢 `GET` `/capture/status`
+
+Capture queue counts: pending, extracting, done, failed turns and pending sessions.
+
+*Related: `#1466`*
+
 #### 🟡 `POST` `/lifecycle/cycle`
 
 Run lifecycle aging cycle: deprecate old memories, optionally prune expired ones.
@@ -559,6 +573,19 @@ Detailed field definitions for each request type.
 | `max_access_count` | any | No | Max access count threshold for preview/cleanup (default: 1). |
 | `namespace` | any | No |  |
 | `older_than_days` | any | No | Days threshold for preview/cleanup (default: warm_days from config, fallback 90). |
+
+
+### `CaptureRequest`
+
+One turn for the capture queue (`POST /capture`, LAB).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content` | `string` | Yes |  |
+| `namespace` | any | No | Namespace the extracted facts are stored in. |
+| `role` | `string` | Yes | `user`, `assistant` or `tool` (a tool output keeps its first 2000 characters). |
+| `session_id` | `string` | Yes | Conversation the turn belongs to; its turns are extracted together. |
+| `source` | any | No | Optional source label (e.g. the client name). |
 
 
 ### `ConsolidateRequest`

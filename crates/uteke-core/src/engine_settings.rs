@@ -53,6 +53,7 @@ impl Uteke {
         self.set_jaccard_weight(settings.recall.jaccard_weight);
         self.set_dream_config(settings.dream);
         self.set_lifecycle_config(settings.lifecycle);
+        self.set_capture_settings(settings.capture);
         if settings.embed_fallback.is_configured() {
             self.set_fallback_settings(settings.embed_fallback.clone());
         }
