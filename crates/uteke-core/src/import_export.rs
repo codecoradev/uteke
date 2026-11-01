@@ -2,7 +2,7 @@
 
 use crate::error::Error;
 use crate::index_sync::{self, SyncPolicy};
-use crate::memory::types::{ExportEntry, ImportResult, Memory};
+use crate::memory::types::{ExportEntry, ImportOptions, ImportResult, Memory};
 
 /// The room links made by one import, and the rooms it could not link to (#1588).
 #[derive(Default)]
@@ -87,6 +87,21 @@ impl crate::Uteke {
     /// Required field: `content`. Optional fields default automatically.
     /// Embeddings are re-computed during import.
     pub fn import(&self, input: &str, namespace: Option<&str>) -> Result<ImportResult, Error> {
+        self.import_with(input, namespace, ImportOptions::default())
+    }
+
+    /// [`Self::import`] with options. With `defer_embedding` (#1608) every row
+    /// is stored without a vector, so the import does not wait on the
+    /// embedder and a backend that is down does not stop it; the rows are
+    /// keyword-searchable at once and `uteke repair --reembed` adds the
+    /// vectors later. Duplicates are then caught by exact content (the
+    /// provenance hash), not by the cosine check.
+    pub fn import_with(
+        &self,
+        input: &str,
+        namespace: Option<&str>,
+        options: ImportOptions,
+    ) -> Result<ImportResult, Error> {
         let trimmed = input.trim();
 
         // Detect format: JSON array, single JSON object, or JSONL.
@@ -119,7 +134,15 @@ impl crate::Uteke {
         let mut deduped = 0;
         let mut redacted = 0;
         let mut rejected_secret = 0;
+        let mut deferred_embedding = 0;
         let mut room_links = RoomLinks::default();
+        // Exact-content duplicates for a deferred import: hash -> stored id,
+        // extended with every row this import stores.
+        let mut known_hashes = if options.defer_embedding {
+            self.store.active_content_hashes(namespace)?
+        } else {
+            std::collections::HashMap::new()
+        };
 
         for mut entry in entries {
             if entry.content.is_empty() {
@@ -172,11 +195,19 @@ impl crate::Uteke {
             // Re-embed the content with retry (consistent with remember path, #1005).
             // A store with no embedding backend (#1166) imports FTS5-only, as
             // `remember` stores there: no vector, so no duplicate check either.
-            let embedding = if self.embedder_backend.is_empty() {
+            let embedding = if self.embedder_backend.is_empty() || options.defer_embedding {
                 Vec::new()
             } else {
                 self.embed(&entry.content)?
             };
+            let content_hash = options
+                .defer_embedding
+                .then(|| crate::provenance::content_hash(&entry.content));
+            if let Some(existing_id) = content_hash.as_ref().and_then(|h| known_hashes.get(h)) {
+                deduped += 1;
+                room_links.apply(self, existing_id, &rooms, &link_author);
+                continue;
+            }
 
             // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
             if !embedding.is_empty()
@@ -257,6 +288,10 @@ impl crate::Uteke {
             }
             room_links.apply(self, &id, &rooms, &link_author);
 
+            if let Some(hash) = content_hash {
+                known_hashes.insert(hash, id.clone());
+                deferred_embedding += 1;
+            }
             imported += 1;
         }
 
@@ -282,6 +317,7 @@ impl crate::Uteke {
             rejected_secret,
             room_links: room_links.linked,
             rooms_missing: room_links.missing.into_iter().collect(),
+            deferred_embedding,
         })
     }
 
@@ -569,5 +605,234 @@ mod room_link_tests {
         assert_eq!(u.count(None).unwrap(), 2);
         let found = u.search("alpha", 5, None, None).unwrap();
         assert_eq!(found.len(), 1, "the rows are keyword-searchable");
+    }
+}
+
+/// An import that defers embedding (#1608) stores first and embeds later.
+#[cfg(test)]
+mod defer_embedding_tests {
+    use crate::test_support::{RecordingEmbedder, open_with_embedder};
+    use crate::{ImportOptions, ReembedOptions};
+
+    const DEFER: ImportOptions = ImportOptions {
+        defer_embedding: true,
+    };
+
+    fn vectors(u: &crate::Uteke) -> i64 {
+        u.graph_store()
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE embedding IS NOT NULL AND length(embedding) > 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn rows_are_stored_without_calling_the_embedder() {
+        let (emb, seen) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let input = "{\"content\":\"the quokka is a small marsupial\"}\n{\"content\":\"rust has no garbage collector\"}\n";
+        let r = u.import_with(input, None, DEFER).unwrap();
+        assert_eq!((r.imported, r.deferred_embedding, r.skipped), (2, 2, 0));
+        assert!(seen.lock().unwrap().is_empty(), "the import embedded");
+        assert_eq!(vectors(&u), 0);
+        // keyword search finds them at once
+        let hits = u.search("quokka", 5, None, None).unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn exact_copies_are_skipped_in_the_store_and_in_the_file() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        u.remember("already stored", &[], None, None).unwrap();
+        let input = "{\"content\":\"already stored\"}\n{\"content\":\"new fact\"}\n{\"content\":\"new fact\"}\n";
+        let r = u.import_with(input, None, DEFER).unwrap();
+        assert_eq!((r.imported, r.deferred_embedding), (1, 1));
+        assert_eq!(u.count(None).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_default_import_still_embeds_and_reports_nothing_deferred() {
+        let (emb, seen) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let r = u.import("{\"content\":\"embedded now\"}\n", None).unwrap();
+        assert_eq!((r.imported, r.deferred_embedding), (1, 0));
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(vectors(&u), 1);
+        let json = serde_json::to_value(&r).unwrap();
+        assert!(json.get("deferred_embedding").is_none(), "{json}");
+    }
+
+    #[test]
+    fn reembed_with_a_limit_continues_where_it_stopped() {
+        let (emb, seen) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let input: String = (0..5)
+            .map(|i| format!("{{\"content\":\"deferred fact number {i}\"}}\n"))
+            .collect();
+        u.import_with(&input, None, DEFER).unwrap();
+
+        let limited = ReembedOptions {
+            limit: Some(2),
+            pause: std::time::Duration::ZERO,
+        };
+        let first = u.reembed_missing_with(limited).unwrap();
+        assert_eq!(
+            (first.missing_count, first.reembedded, first.remaining),
+            (5, 2, 3)
+        );
+        assert_eq!(vectors(&u), 2);
+
+        let second = u.reembed_missing_with(limited).unwrap();
+        assert_eq!(
+            (second.missing_count, second.reembedded, second.remaining),
+            (3, 2, 1)
+        );
+        let last = u.reembed_missing_with(ReembedOptions::default()).unwrap();
+        assert_eq!((last.reembedded, last.remaining), (1, 0));
+        assert_eq!(vectors(&u), 5);
+        assert_eq!(seen.lock().unwrap().len(), 5, "each row embedded once");
+        // now found by meaning too
+        assert!(
+            !u.recall("deferred fact", 5, None, None, 0.0, None, None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_limit_of_zero_embeds_nothing() {
+        let (emb, seen) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        u.import_with("{\"content\":\"waits\"}\n", None, DEFER)
+            .unwrap();
+        let r = u
+            .reembed_missing_with(ReembedOptions {
+                limit: Some(0),
+                pause: std::time::Duration::ZERO,
+            })
+            .unwrap();
+        assert_eq!((r.reembedded, r.remaining), (0, 1));
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_duplicate_row_links_its_rooms_to_the_stored_memory() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let id = u.remember("shared fact", &[], None, None).unwrap();
+        u.create_room("r1", None, "default").unwrap();
+        let r = u
+            .import_with(
+                "{\"content\":\"shared fact\",\"rooms\":[\"r1\"]}\n",
+                None,
+                DEFER,
+            )
+            .unwrap();
+        assert_eq!((r.imported, r.room_links), (0, 1));
+        let linked: i64 = u
+            .graph_store()
+            .query_row(
+                "SELECT COUNT(*) FROM room_memories WHERE room_id = 'r1' AND memory_id = ?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, 1);
+    }
+
+    #[test]
+    fn duplicates_follow_the_current_content_not_the_insert_time_hash() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let id = u.remember("old text", &[], None, None).unwrap();
+        // an update rewrites the content but keeps source_hash (tamper audit)
+        u.graph_store()
+            .execute(
+                "UPDATE memories SET content = 'new text' WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        let old = u
+            .import_with("{\"content\":\"old text\"}\n", None, DEFER)
+            .unwrap();
+        assert_eq!(old.imported, 1, "the old text is no longer stored");
+        let new = u
+            .import_with("{\"content\":\"new text\"}\n", None, DEFER)
+            .unwrap();
+        assert_eq!(new.imported, 0, "the current text is a duplicate");
+    }
+
+    #[test]
+    fn rows_that_fail_do_not_use_up_the_limit() {
+        let (emb, _) = RecordingEmbedder::failing_first(2);
+        let u = open_with_embedder(Box::new(emb));
+        let input: String = (0..3)
+            .map(|i| format!("{{\"content\":\"row {i}\"}}\n"))
+            .collect();
+        u.import_with(&input, None, DEFER).unwrap();
+        let one = ReembedOptions {
+            limit: Some(1),
+            pause: std::time::Duration::ZERO,
+        };
+        let r = u.reembed_missing_with(one).unwrap();
+        assert_eq!((r.failed, r.reembedded, r.remaining), (2, 1, 0));
+        assert_eq!(vectors(&u), 1);
+    }
+
+    #[test]
+    fn chunks_left_by_the_limit_are_counted_as_remaining() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        u.doc_upsert("guide", "Guide", "first part of the guide", &[], None)
+            .unwrap();
+        let chunks: i64 = u
+            .graph_store()
+            .execute("UPDATE document_chunks SET embedding = NULL", [])
+            .unwrap() as i64;
+        assert!(chunks > 0);
+        u.import_with("{\"content\":\"a deferred memory\"}\n", None, DEFER)
+            .unwrap();
+        let r = u
+            .reembed_missing_with(ReembedOptions {
+                limit: Some(1),
+                pause: std::time::Duration::ZERO,
+            })
+            .unwrap();
+        assert_eq!((r.reembedded, r.chunks_reembedded), (1, 0));
+        assert_eq!(r.remaining as i64, chunks);
+        let rest = u.reembed_missing_with(ReembedOptions::default()).unwrap();
+        assert_eq!((rest.chunks_reembedded as i64, rest.remaining), (chunks, 0));
+    }
+
+    #[test]
+    fn reembedded_rows_get_the_cosine_links_remember_makes() {
+        let texts = [
+            "the quokka lives on rottnest island in western australia",
+            "the quokka lives on rottnest island near perth in western australia",
+        ];
+        // control: `remember` links these two
+        let (emb, _) = RecordingEmbedder::new();
+        let control = open_with_embedder(Box::new(emb));
+        for t in texts {
+            control.remember(t, &[], None, None).unwrap();
+        }
+        assert!(
+            control.count_edges().unwrap() > 0,
+            "fixture texts must link"
+        );
+
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let input: String = texts
+            .iter()
+            .map(|t| format!("{{\"content\":\"{t}\"}}\n"))
+            .collect();
+        u.import_with(&input, None, DEFER).unwrap();
+        assert_eq!(u.count_edges().unwrap(), 0);
+        u.reembed_missing_with(ReembedOptions::default()).unwrap();
+        assert!(u.count_edges().unwrap() > 0);
     }
 }

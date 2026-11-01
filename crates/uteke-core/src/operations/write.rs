@@ -446,11 +446,7 @@ impl crate::Uteke {
 
         // Provenance: record the content hash at write time (#1172 Fase 1).
         // Best-effort — audits recompute this to detect post-write tampering.
-        use sha2::Digest;
-        let source_hash: String = sha2::Sha256::digest(content.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let source_hash = crate::provenance::content_hash(content);
         if let Err(e) = self.store.set_source_hash(&id, Some(source_hash.as_str())) {
             tracing::warn!("source_hash write failed for {id}: {e}");
         }

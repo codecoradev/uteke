@@ -91,6 +91,20 @@ pub struct ReembedReport {
     /// Document chunks whose vector could not be generated.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub chunks_failed: usize,
+    /// Rows (memories and chunks) still without a vector because a `limit`
+    /// stopped the run before them (#1608); run it again to continue.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub remaining: usize,
+}
+
+/// How [`crate::Uteke::reembed_missing_with`] paces the work (#1608).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReembedOptions {
+    /// At most this many rows per run (memories first, then chunks); `None`
+    /// for all of them.
+    pub limit: Option<usize>,
+    /// Sleep between rows, to keep the CPU free for other work.
+    pub pause: std::time::Duration,
 }
 
 fn is_zero(n: &usize) -> bool {

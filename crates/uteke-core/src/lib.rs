@@ -112,7 +112,7 @@ pub use graph_rerank::{GraphRerankConfig, GraphSignals, compute_graph_signals, r
 pub use memory::aging::DeprecatedMemoryInfo;
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
-    DEFAULT_NAMESPACE, ExportEntry, ImportResult, Memory, MemoryTier, MemoryType,
+    DEFAULT_NAMESPACE, ExportEntry, ImportOptions, ImportResult, Memory, MemoryTier, MemoryType,
     NamespaceDeleteResult, NamespaceRenameResult, PruneResult, RecallStrategy, SearchResult,
     SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo, UnifiedSearchResult,
 };
@@ -135,8 +135,8 @@ pub use engine_settings::EngineSettings;
 pub use error::{Error, ErrorClass, format_bytes};
 pub use recall_settings::RecallSettings;
 pub use types::{
-    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
-    VerifyReport,
+    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedOptions, ReembedReport,
+    RepairReport, VerifyReport,
 };
 
 /// Maximum memory content length (characters) — default, overridable via config (#404).

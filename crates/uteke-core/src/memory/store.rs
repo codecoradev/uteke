@@ -306,6 +306,35 @@ impl Store {
             .map_err(|e| Error::db("get source hash", e))
     }
 
+    /// The hash of the CURRENT content of every active memory, mapped to its
+    /// id, optionally in one namespace (#1608). An import that defers
+    /// embedding has no vector for the cosine duplicate check, so it skips
+    /// exact copies with this map. Not `source_hash`: that is the content at
+    /// insert time (kept for the tamper audit) and is not refreshed by an
+    /// update.
+    pub fn active_content_hashes(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<std::collections::HashMap<String, String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT content, id FROM memories
+                 WHERE deprecated = 0 AND (?1 IS NULL OR namespace = ?1)",
+            )
+            .map_err(|e| Error::db("prepare active content hashes", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |row| {
+                Ok((
+                    crate::provenance::content_hash(&row.get::<_, String>(0)?),
+                    row.get::<_, String>(1)?,
+                ))
+            })
+            .map_err(|e| Error::db("query active content hashes", e))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read active content hashes", e))
+    }
+
     /// Set author type on a memory (#1083): "human" or "agent".
     /// Returns false if the memory does not exist.
     pub fn set_author_type(&self, id: &str, author_type: &str) -> Result<bool, Error> {

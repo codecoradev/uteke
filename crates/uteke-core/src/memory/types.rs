@@ -482,6 +482,19 @@ pub struct ImportResult {
     /// links were not made. Create them and import again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rooms_missing: Vec<String>,
+    /// Imported memories stored without a vector because the import deferred
+    /// embedding (#1608); `uteke repair --reembed` adds them.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub deferred_embedding: usize,
+}
+
+/// How [`crate::Uteke::import_with`] treats each row.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ImportOptions {
+    /// Store the rows without a vector (keyword-searchable at once) and leave
+    /// the embedding to `uteke repair --reembed` (#1608). Duplicates are then
+    /// caught by exact content only, not by the cosine check.
+    pub defer_embedding: bool,
 }
 
 fn is_zero(n: &usize) -> bool {

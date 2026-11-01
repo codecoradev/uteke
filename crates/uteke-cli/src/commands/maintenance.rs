@@ -33,7 +33,7 @@ pub(crate) fn run_repair(
     cli: &Cli,
     uteke: &Uteke,
     rebuild: bool,
-    reembed: bool,
+    reembed: Option<uteke_core::ReembedOptions>,
     config: &crate::Config,
 ) -> Result<(), String> {
     if rebuild {
@@ -69,9 +69,9 @@ pub(crate) fn run_repair(
     // Runs BEFORE the Repair Report is printed so `index_after` and the
     // "still differs" warning reflect the final state, not the intermediate
     // rebuild that legitimately excludes NULL/empty-embedding rows (#1149).
-    let reembed_report = if reembed {
+    let reembed_report = if let Some(options) = reembed {
         tracing::info!("Running repair --reembed (regenerating missing embeddings)");
-        match uteke.reembed_missing() {
+        match uteke.reembed_missing_with(options) {
             Ok(r) => {
                 // Refresh the vector count to include newly appended vectors.
                 if let Ok(v) = uteke.verify() {
@@ -118,6 +118,12 @@ pub(crate) fn run_repair(
                     reembed_report.chunks_reembedded,
                     reembed_report.chunks_missing,
                     reembed_report.chunks_failed
+                );
+            }
+            if reembed_report.remaining > 0 {
+                println!(
+                    "{} rows were not tried (--limit reached) — run `uteke repair --reembed` again to continue.",
+                    reembed_report.remaining
                 );
             }
         }
@@ -278,6 +284,7 @@ pub(crate) fn run_import(
     format: &str,
     extract_opts: ExtractOpts<'_>,
     timestamp: Option<&str>,
+    defer_embed: bool,
 ) -> Result<(), String> {
     tracing::info!("Importing memories from {input} (format: {format})");
 
@@ -309,6 +316,12 @@ pub(crate) fn run_import(
     let first_line = content.lines().find(|l| !l.trim().is_empty());
     if let Some(fl) = first_line {
         if fl.contains("\"uteke_export\"") {
+            if defer_embed {
+                return Err(
+                    "--defer-embed works with JSON/JSONL memories; a full bundle is restored with `uteke import --full`"
+                        .to_string(),
+                );
+            }
             tracing::info!("Detected structural export manifest — full-store import");
             let mut result = uteke
                 .import_full(&content)
@@ -391,9 +404,20 @@ pub(crate) fn run_import(
         format.to_string()
     };
 
+    if defer_embed && !matches!(detected_format.as_str(), "jsonl" | "json") {
+        return Err(format!(
+            "--defer-embed works with JSON/JSONL input (got: {detected_format})"
+        ));
+    }
     let result = match detected_format.as_str() {
         "jsonl" | "json" => uteke
-            .import(&content, ns)
+            .import_with(
+                &content,
+                ns,
+                uteke_core::ImportOptions {
+                    defer_embedding: defer_embed,
+                },
+            )
             .map_err(|e| format!("Failed to import JSON: {e}"))?,
         "markdown" | "text" => {
             let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
@@ -424,6 +448,12 @@ pub(crate) fn run_import(
         }
         if result.room_links > 0 {
             println!("  Linked memories to rooms: {} link(s)", result.room_links);
+        }
+        if result.deferred_embedding > 0 {
+            println!(
+                "  {} memories stored without a vector (keyword search works now) — run `uteke repair --reembed` to embed them (add --limit N to spread the work)",
+                result.deferred_embedding
+            );
         }
         if !result.rooms_missing.is_empty() {
             println!(

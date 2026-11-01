@@ -290,6 +290,17 @@ pub enum Commands {
         /// Makes previously invisible memories searchable via semantic recall.
         #[arg(long)]
         reembed: bool,
+
+        /// With --reembed: stop after N rows were embedded (memories first, then
+        /// document chunks; a row that fails does not count). Run it again to
+        /// continue; the report says how many were not tried (#1608).
+        #[arg(long, requires = "reembed")]
+        limit: Option<usize>,
+
+        /// With --reembed: pause this many milliseconds between rows, to leave
+        /// the CPU to other work (#1608).
+        #[arg(long, requires = "reembed", default_value_t = 0)]
+        pause_ms: u64,
     },
     /// Export all memories to JSONL file (no embeddings — portable)
     Export {
@@ -363,6 +374,12 @@ pub enum Commands {
         /// (#1232). Accepts RFC 3339, "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
         #[arg(long)]
         timestamp: Option<String>,
+        /// JSON/JSONL only: store the rows without a vector and embed them
+        /// later with `uteke repair --reembed [--limit N]` (#1608). The import
+        /// does not wait on the embedder; rows are keyword-searchable at once,
+        /// and only exact copies are skipped as duplicates.
+        #[arg(long, conflicts_with_all = ["full", "extract", "batch_dir"])]
+        defer_embed: bool,
     },
     /// Generate shell completions
     Completions {
