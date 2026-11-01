@@ -175,7 +175,7 @@ Both transports expose the same 51 tools (MCP protocol version `2025-06-18`):
 | `uteke_contradictions` | List the contradiction resolution ledger (#1172): superseded-but-not-restored memories with winner, reason, and timestamp |
 | `uteke_contradictions_undo` | Undo a contradiction resolution (#1172): restore the retired memory, remove the supersession edge pair, record `supersession_undone` events |
 | `uteke_timeline` | Read the audit-grade timeline for a memory (#1280, schema v20): `id`, optional `limit`. Includes `deprecated` events (with reason) and `forgot` tombstones of hard-forgotten memories — history is never deleted |
-| `uteke_forget` | Delete a memory (accepts UUID or unambiguous prefix) |
+| `uteke_forget` | Delete a memory (accepts UUID or unambiguous prefix). `reason: "wrong"` (or `"wrong: <note>"`) also records a rejected-value tombstone, so the value cannot be stored again |
 | `uteke_stats` | Memory store statistics |
 | `uteke_context` | AI-optimized context output for prompts |
 | `uteke_dream` | Maintenance pipeline (lint → backlinks → dedup → orphans → compact → verify). **Dry-run by default** — pass `dry_run: false` to apply; scope `namespace` or `confirm_large` for whole-store / >100-change runs |

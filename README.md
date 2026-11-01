@@ -221,6 +221,7 @@ Author attribution on every memory; cross-agent recall without manual sync. 📖
 | ✏️ **Partial Updates** | `uteke update <id>` changes content, tags, importance, pin or type in place. |
 | 📎 **Citations** | Source attribution on every memory (URL, file, user, import batch). |
 | 👤 **Author** | Who wrote a memory, with or without a room (`--author`), plus `human` vs `agent` type. |
+| 🚫 **Rejected Values** | `uteke forget <id> --reason wrong` records a tombstone: every write path (remember, update, import, supersede) refuses that value again, matched after normalization, until `uteke tombstone remove`. |
 
 ### Search & intelligence
 
@@ -241,7 +242,8 @@ Author attribution on every memory; cross-agent recall without manual sync. 📖
 |---------|-------------|
 | 🔌 **MCP Server** | JSON-RPC over stdio + Streamable HTTP. Works with Claude Code, Cursor, Hermes. |
 | 🖥️ **Server Mode** | Persistent daemon: eliminates cold-start embedding load on every call. |
-| 📂 **Batch Import** | Import entire directories with auto-strategy routing (document vs. memory extraction). |
+| 📂 **Batch Import** | Import entire directories with auto-strategy routing (document vs. memory extraction). `--defer-embed` stores a JSONL file first and embeds later in portions (`repair --reembed --limit`). |
+| 🎙️ **Raw Capture** | Queue conversation turns with no LLM call (`uteke capture`, `POST /capture`, MCP `uteke_capture`); `extract-queue run` or the server's schedule turns them into memories later, on a budget. Opt-in. |
 | 📝 **Document Engine** | Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking. |
 | 📥 **Import/Export** | JSONL backup and restore; `export --full` / `import --full` move the whole store: documents, rooms, the graph and each memory's author and provenance (vectors are rebuilt on the target). |
 | 🔑 **View-Only API Keys** | Read-only tokens for safe GET-only access to the server. |
@@ -253,6 +255,7 @@ Author attribution on every memory; cross-agent recall without manual sync. 📖
 | 📦 **Single Binary** | Zero dependencies. No Python, no API keys. Local-first by default. |
 | 🐳 **Docker Ready** | Official multi-arch image on [Docker Hub](https://hub.docker.com/r/codecoradev/uteke). Run as a shared service for teams or cloud deployments. |
 | 🔒 **Fully Offline** | Local ONNX embeddings (EmbeddingGemma Q4, 768d). No telemetry, no cloud. The only network call is a daily release check, off with `UTEKE_NO_UPDATE_CHECK=1`. |
+| 🧱 **Fenced MCP Output** | MCP read tools wrap stored text in `<uteke-stored-data>` so an agent treats recalled memories as data, not instructions (`UTEKE_MCP_FENCE=0` turns it off). |
 | 🛡️ **Privacy Filter** | Secrets (API keys, tokens, `.env` values) are masked before a memory is embedded or stored; `[privacy] mode = "strict"` refuses the write instead. |
 | ✍️ **Signed Upgrades** | `uteke upgrade` verifies the release's cosign (Sigstore keyless) signature before installing. |
 | ⚡ **Recall Cache** | LRU cache eliminates redundant embedding for repeated queries. |
