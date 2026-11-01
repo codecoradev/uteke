@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `export --full` / `import --full` dropped the columns added since the format was
+  introduced: a memory's `author`, `author_type`, `source_hash` and `recall_count`,
+  the room member `role`, the timeline `actor` and `evidence_json`, and the
+  document `path` (an empty path made a later `doc move` skip the subtree). They
+  now round-trip; older bundles import with the schema defaults and rebuilt paths.
+
 ## [0.22.1] - 2026-10-30
 
 Patch release. Theme: **`uteke upgrade` verifies the cosign signature itself**, so

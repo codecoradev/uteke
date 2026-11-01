@@ -102,7 +102,8 @@ impl crate::Uteke {
                 .prepare(
                     "SELECT id, content, tags, metadata, created_at, updated_at, namespace, \
                      access_count, last_accessed, deprecated, valid_from, valid_until, \
-                     memory_type, importance, pinned, content_type, slug, source, source_type \
+                     memory_type, importance, pinned, content_type, slug, source, source_type, \
+                     recall_count, author, author_type, source_hash \
                      FROM memories WHERE deprecated = 0",
                 )
                 .map_err(|e| Error::db("dump memories prepare", e))?;
@@ -130,6 +131,10 @@ impl crate::Uteke {
                     let slug = row.get::<_, Option<String>>(16)?;
                     let source = row.get::<_, Option<String>>(17)?;
                     let source_type = row.get::<_, String>(18)?;
+                    let recall_count = row.get::<_, i64>(19)?;
+                    let author = row.get::<_, Option<String>>(20)?;
+                    let author_type = row.get::<_, String>(21)?;
+                    let source_hash = row.get::<_, Option<String>>(22)?;
                     Ok(serde_json::json!({
                         "type": "memory",
                         "id": id,
@@ -151,6 +156,10 @@ impl crate::Uteke {
                         "slug": slug,
                         "source": source,
                         "source_type": source_type,
+                        "recall_count": recall_count,
+                        "author": author,
+                        "author_type": author_type,
+                        "source_hash": source_hash,
                     }))
                 })
                 .map_err(|e| Error::db("dump memories query", e))?;
@@ -174,7 +183,7 @@ impl crate::Uteke {
                 // #1243: only memberships of live (non-deprecated) memories —
                 // junction rows must not outlive the memories they reference.
                 "room_memory",
-                "SELECT rm.room_id, rm.memory_id, rm.author, rm.joined_at \
+                "SELECT rm.room_id, rm.memory_id, rm.author, rm.joined_at, rm.role \
                  FROM room_memories rm \
                  JOIN memories m ON m.id = rm.memory_id WHERE m.deprecated = 0",
             ),
@@ -210,7 +219,8 @@ impl crate::Uteke {
             (
                 // #1243: events of a soft-deleted memory are dropped with it.
                 "timeline_event",
-                "SELECT te.id, te.memory_id, te.event_type, te.event_data, te.created_at \
+                "SELECT te.id, te.memory_id, te.event_type, te.event_data, te.created_at, \
+                 te.actor, te.evidence_json \
                  FROM timeline_events te \
                  JOIN memories m ON m.id = te.memory_id WHERE m.deprecated = 0",
             ),
@@ -255,7 +265,7 @@ impl crate::Uteke {
                 .prepare(
                     "SELECT id, slug, title, content, namespace, author, tags, metadata, \
                      version, content_type, created_at, updated_at, parent_id, depth, \
-                     sort_order, has_children FROM documents",
+                     sort_order, has_children, path FROM documents",
                 )
                 .map_err(|e| Error::db("dump documents prepare", e))?;
             let rows = stmt
@@ -282,6 +292,7 @@ impl crate::Uteke {
                         "depth": row.get::<_, i64>(13)?,
                         "sort_order": row.get::<_, i64>(14)?,
                         "has_children": row.get::<_, i64>(15)? != 0,
+                        "path": row.get::<_, String>(16)?,
                     }))
                 })
                 .map_err(|e| Error::db("dump documents query", e))?;
@@ -407,8 +418,8 @@ impl crate::Uteke {
                 // into index.build() and crash on dimension mismatch.
                 let n = conn
                     .execute(
-                        "INSERT OR IGNORE INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type) \
-                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+                        "INSERT OR IGNORE INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, recall_count, author, author_type, source_hash) \
+                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
                         rusqlite::params![
                             m["id"].as_str().unwrap_or(""),
                             m["content"].as_str().unwrap_or(""),
@@ -429,6 +440,12 @@ impl crate::Uteke {
                             m["slug"].as_str(),
                             m["source"].as_str(),
                             m["source_type"].as_str().unwrap_or("import"),
+                            // Absent in bundles written before these columns
+                            // were exported: fall back to the schema defaults.
+                            m["recall_count"].as_i64().unwrap_or(0),
+                            m["author"].as_str(),
+                            m["author_type"].as_str().unwrap_or("agent"),
+                            m["source_hash"].as_str(),
                         ],
                     )
                     .map_err(|e| Error::db_msg(format!("import memory: {e}")))?;
@@ -465,12 +482,14 @@ impl crate::Uteke {
                     let r = &v["row"];
                     let n = conn
                         .execute(
-                            "INSERT OR IGNORE INTO room_memories (room_id, memory_id, author, joined_at) VALUES (?1,?2,?3,?4)",
+                            "INSERT OR IGNORE INTO room_memories (room_id, memory_id, author, joined_at, role) VALUES (?1,?2,?3,?4,?5)",
                             rusqlite::params![
                                 r[0].as_str().unwrap_or(""),
                                 r[1].as_str().unwrap_or(""),
                                 r[2].as_str().unwrap_or("imported"),
                                 r[3].as_str().unwrap_or(""),
+                                // Older exports carry 4 columns (no role).
+                                r.get(4).and_then(|v| v.as_str()).unwrap_or("participant"),
                             ],
                         )
                         .map_err(|e| Error::db_msg(format!("import room_memory: {e}")))?;
@@ -495,13 +514,16 @@ impl crate::Uteke {
                     let r = &v["row"];
                     let n = conn
                         .execute(
-                            "INSERT OR IGNORE INTO timeline_events (id, memory_id, event_type, event_data, created_at) VALUES (?1,?2,?3,?4,?5)",
+                            "INSERT OR IGNORE INTO timeline_events (id, memory_id, event_type, event_data, created_at, actor, evidence_json) VALUES (?1,?2,?3,?4,?5,?6,?7)",
                             rusqlite::params![
                                 r[0].as_i64().unwrap_or(0),
                                 r[1].as_str().unwrap_or(""),
                                 r[2].as_str().unwrap_or(""),
                                 r[3].as_str(),
                                 r[4].as_str().unwrap_or(""),
+                                // Older exports carry 5 columns (no provenance).
+                                r.get(5).and_then(|v| v.as_str()),
+                                r.get(6).and_then(|v| v.as_str()),
                             ],
                         )
                         .map_err(|e| Error::db_msg(format!("import timeline_event: {e}")))?;
@@ -521,8 +543,8 @@ impl crate::Uteke {
             let metadata = serde_json::to_string(&v["metadata"]).unwrap_or_else(|_| "{}".into());
             let n = conn
                 .execute(
-                    "INSERT OR IGNORE INTO documents (id, slug, title, content, namespace, author, tags, metadata, version, content_type, created_at, updated_at, parent_id, depth, sort_order, has_children) \
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                    "INSERT OR IGNORE INTO documents (id, slug, title, content, namespace, author, tags, metadata, version, content_type, created_at, updated_at, parent_id, depth, sort_order, has_children, path) \
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
                     rusqlite::params![
                         v["id"].as_str().unwrap_or(""),
                         v["slug"].as_str().unwrap_or(""),
@@ -540,10 +562,27 @@ impl crate::Uteke {
                         v["depth"].as_i64().unwrap_or(0),
                         v["sort_order"].as_i64().unwrap_or(0),
                         v["has_children"].as_bool().unwrap_or(false),
+                        v["path"].as_str().unwrap_or(""),
                     ],
                 )
                 .map_err(|e| Error::db_msg(format!("import document: {e}")))?;
             *counts.entry("documents".into()).or_default() += n;
+        }
+
+        // Bundles written before `path` was exported leave it empty, and an
+        // empty path makes a later move skip the document's subtree. Derive
+        // it from the parent chain (`/root/` then `/root/child/`).
+        if !pending_documents.is_empty() {
+            conn.execute_batch(
+                "WITH RECURSIVE tree(id, path) AS ( \
+                     SELECT id, '/' || id || '/' FROM documents WHERE parent_id IS NULL \
+                     UNION ALL \
+                     SELECT d.id, tree.path || d.id || '/' FROM documents d \
+                     JOIN tree ON d.parent_id = tree.id) \
+                 UPDATE documents SET path = (SELECT path FROM tree WHERE tree.id = documents.id) \
+                 WHERE path = '' AND id IN (SELECT id FROM tree);",
+            )
+            .map_err(|e| Error::db_msg(format!("import document paths: {e}")))?;
         }
 
         // document_chunks
@@ -1025,6 +1064,169 @@ mod document_vector_tests {
         assert!(
             found.iter().any(|r| r.document.slug == "child"),
             "semantic search must find the restored document"
+        );
+    }
+}
+
+#[cfg(test)]
+mod column_roundtrip_tests {
+    use crate::test_support::open_keyword;
+
+    fn seed(src: &crate::Uteke) {
+        let conn = src.graph_store();
+        conn.execute_batch(
+            "INSERT INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, \
+                 namespace, access_count, recall_count, deprecated, memory_type, importance, pinned, \
+                 content_type, source_type, author, author_type, source_hash) \
+             VALUES ('m1','who wrote this',NULL,'[]','{}','t','t','default',3,7,0,'fact',0.5,0, \
+                 'text','user','alice','human','hash-m1'); \
+             INSERT INTO rooms (id, title, namespace, created_at, updated_at) \
+                 VALUES ('r1',NULL,'default','t','t'); \
+             INSERT INTO room_memories (room_id, memory_id, author, role, joined_at) \
+                 VALUES ('r1','m1','alice','owner','t'); \
+             INSERT INTO timeline_events (memory_id, event_type, event_data, created_at, actor, evidence_json) \
+                 VALUES ('m1','created','{}','t','alice','{\"source\":\"chat\"}');",
+        )
+        .unwrap();
+    }
+
+    /// A full bundle keeps the columns added after #1057: author, author
+    /// type, provenance hash and recall count on memories, the room role,
+    /// the timeline actor and evidence, and the document path.
+    #[test]
+    fn full_bundle_keeps_attribution_provenance_and_paths() {
+        let src = open_keyword();
+        seed(&src);
+        src.doc_upsert("root", "Root", "# Root\n\nbody\n", &[], None)
+            .unwrap();
+        src.doc_upsert_with_parent(
+            "child",
+            "Child",
+            "# Child\n\nbody\n",
+            &[],
+            None,
+            Some("root"),
+        )
+        .unwrap();
+        let bundle = src.export_full().unwrap();
+
+        let dst = open_keyword();
+        dst.import_full(&bundle).unwrap();
+        let conn = dst.graph_store();
+        let memory: (Option<String>, String, Option<String>, i64) = conn
+            .query_row(
+                "SELECT author, author_type, source_hash, recall_count FROM memories WHERE id = 'm1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            memory,
+            (
+                Some("alice".to_string()),
+                "human".to_string(),
+                Some("hash-m1".to_string()),
+                7
+            )
+        );
+        let role: String = conn
+            .query_row(
+                "SELECT role FROM room_memories WHERE memory_id = 'm1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(role, "owner");
+        let event: (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT actor, evidence_json FROM timeline_events WHERE memory_id = 'm1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            event,
+            (
+                Some("alice".to_string()),
+                Some("{\"source\":\"chat\"}".to_string())
+            )
+        );
+        let path_of = |slug: &str| -> String {
+            conn.query_row("SELECT path FROM documents WHERE slug = ?1", [slug], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        let src_conn = src.graph_store();
+        for slug in ["root", "child"] {
+            let original: String = src_conn
+                .query_row("SELECT path FROM documents WHERE slug = ?1", [slug], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            assert!(!original.is_empty());
+            assert_eq!(path_of(slug), original, "path of {slug}");
+        }
+    }
+
+    /// A bundle written before these columns were exported still imports:
+    /// the schema defaults apply and document paths are rebuilt from the
+    /// parent chain, so a later move still finds the subtree.
+    #[test]
+    fn older_bundle_gets_defaults_and_derived_paths() {
+        let bundle = [
+            r#"{"uteke_export":{"format_version":1,"sections":{}}}"#,
+            r#"{"type":"memory","id":"m1","content":"old","tags":[],"metadata":{},"created_at":"t","updated_at":"t","namespace":"default","access_count":0,"memory_type":"fact","importance":0.5,"pinned":false,"content_type":"text","source_type":"user"}"#,
+            r#"{"type":"room","row":["r1",null,"default","t","t"]}"#,
+            r#"{"type":"room_memory","row":["r1","m1","bob","t"]}"#,
+            r#"{"type":"timeline_event","row":[1,"m1","created","{}","t"]}"#,
+            r#"{"type":"document","id":"d1","slug":"root","title":"Root","content":"x","tags":[],"metadata":{},"version":1,"content_type":"markdown","created_at":"t","updated_at":"t","parent_id":null,"depth":0,"sort_order":0,"has_children":true}"#,
+            r#"{"type":"document","id":"d2","slug":"child","title":"Child","content":"y","tags":[],"metadata":{},"version":1,"content_type":"markdown","created_at":"t","updated_at":"t","parent_id":"d1","depth":1,"sort_order":0,"has_children":false}"#,
+        ]
+        .join("\n");
+
+        let dst = open_keyword();
+        dst.import_full(&bundle).unwrap();
+        let conn = dst.graph_store();
+        let memory: (Option<String>, String, Option<String>, i64) = conn
+            .query_row(
+                "SELECT author, author_type, source_hash, recall_count FROM memories WHERE id = 'm1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(memory, (None, "agent".to_string(), None, 0));
+        let role: String = conn
+            .query_row(
+                "SELECT role FROM room_memories WHERE memory_id = 'm1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(role, "participant");
+        let actor: Option<String> = conn
+            .query_row(
+                "SELECT actor FROM timeline_events WHERE memory_id = 'm1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(actor, None);
+        let paths: Vec<(String, String)> = {
+            let mut stmt = conn
+                .prepare("SELECT id, path FROM documents ORDER BY id")
+                .unwrap();
+            stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(
+            paths,
+            vec![
+                ("d1".to_string(), "/d1/".to_string()),
+                ("d2".to_string(), "/d1/d2/".to_string())
+            ]
         );
     }
 }
