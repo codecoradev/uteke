@@ -314,6 +314,7 @@ Resolution order (highest priority first):
 | `UTEKE_GRAPH_DENSITY_WEIGHT` | `[recall] graph_density_weight` | `0.1` | Edge-density boost weight |
 | `UTEKE_GRAPH_AUTHORITY_WEIGHT` | `[recall] graph_authority_weight` | `0.1` | Incoming-edge authority boost weight |
 | `UTEKE_GRAPH_RERANK_ENABLED` | `[recall] graph_rerank_enabled` | `true` | Master switch for graph reranking |
+| `UTEKE_MCP_FENCE` | — | on | `0`, `false`, `off` or `no` stops `uteke-mcp` and `POST /mcp` from wrapping stored text in a `<uteke-stored-data>` block ([MCP](mcp.md#stored-text-is-fenced-as-data), #1599) |
 | `UTEKE_NO_UPDATE_CHECK` | `update_check = false` | unset | Any value turns the update check off in the CLI, `uteke-serve` and `uteke-mcp` (#1596) |
 | `UTEKE_EMBEDDING_BACKEND` | `[embedding] backend` | `onnx` | Embedding backend: onnx, openai, ollama |
 | `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
