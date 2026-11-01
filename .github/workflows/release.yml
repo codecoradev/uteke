@@ -265,33 +265,50 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Publish uteke-core
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-core --allow-dirty
-        continue-on-error: true
+      # Publish in dependency order. Each crate waits until the versions it
+      # depends on are in the sparse index that cargo resolves against: a
+      # fixed sleep was too short for v0.22.1, so uteke-mcp, uteke-cli and
+      # uteke-server failed to find uteke-core ^0.22.1. A version that is
+      # already on crates.io is skipped, so a re-run finishes the job.
+      - name: Publish crates in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
 
-      - name: Wait for crates.io index propagation
-        run: sleep 60
+          # Sparse index path for names of four or more characters: ab/cd/name
+          indexed() {
+            curl -sf -A "uteke-release-publish" \
+              "https://index.crates.io/${1:0:2}/${1:2:2}/$1?t=$(date +%s)" \
+              | jq -e --arg v "$VERSION" 'select(.vers == $v)' >/dev/null
+          }
 
-      - name: Publish uteke-mcp
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-mcp --allow-dirty
-        continue-on-error: true
+          wait_indexed() {
+            for attempt in $(seq 1 40); do
+              indexed "$1" && { echo "✓ $1 $VERSION is in the index"; return 0; }
+              echo "waiting for $1 $VERSION in the index (attempt $attempt/40)"
+              sleep 15
+            done
+            echo "::error::$1 $VERSION did not appear in the crates.io index within 10 minutes"
+            return 1
+          }
 
-      - name: Wait for crates.io index propagation
-        run: sleep 30
+          for crate in uteke-core uteke-mcp uteke-cli uteke-server; do
+            case "$crate" in
+              uteke-mcp|uteke-cli) deps="uteke-core" ;;
+              uteke-server) deps="uteke-core uteke-mcp" ;;
+              *) deps="" ;;
+            esac
+            for dep in $deps; do wait_indexed "$dep"; done
 
-      - name: Publish uteke-cli
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-cli --allow-dirty
-        continue-on-error: true
+            if indexed "$crate"; then
+              echo "$crate $VERSION is already published, skipping"
+              continue
+            fi
+            cargo publish -p "$crate" --allow-dirty
+          done
 
-      - name: Wait for crates.io index propagation
-        run: sleep 30
-
-      - name: Publish uteke-server
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} -p uteke-server --allow-dirty
-        continue-on-error: true
-
-      - name: Wait for crates.io index
-        run: sleep 30
+          wait_indexed uteke-server
 
       - name: Verify crates.io versions
         run: |
