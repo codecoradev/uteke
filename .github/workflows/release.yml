@@ -271,25 +271,27 @@ jobs:
       # uteke-server failed to find uteke-core ^0.22.1. A version that is
       # already on crates.io is skipped, so a re-run finishes the job.
       - name: Publish crates in dependency order
+        shell: bash
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
-          # Sparse index path for names of four or more characters: ab/cd/name
+          # The same sparse index URL cargo fetches (names of four or more
+          # characters live at ab/cd/name), so a hit here is what cargo sees.
           indexed() {
             curl -sf -A "uteke-release-publish" \
-              "https://index.crates.io/${1:0:2}/${1:2:2}/$1?t=$(date +%s)" \
+              "https://index.crates.io/${1:0:2}/${1:2:2}/$1" \
               | jq -e --arg v "$VERSION" 'select(.vers == $v)' >/dev/null
           }
 
           wait_indexed() {
-            for attempt in $(seq 1 40); do
+            for attempt in $(seq 1 80); do
               indexed "$1" && { echo "✓ $1 $VERSION is in the index"; return 0; }
-              echo "waiting for $1 $VERSION in the index (attempt $attempt/40)"
+              echo "waiting for $1 $VERSION in the index (attempt $attempt/80)"
               sleep 15
             done
-            echo "::error::$1 $VERSION did not appear in the crates.io index within 10 minutes"
+            echo "::error::$1 $VERSION did not appear in the crates.io index within 20 minutes"
             return 1
           }
 
