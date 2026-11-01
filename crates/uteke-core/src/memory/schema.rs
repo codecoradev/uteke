@@ -81,6 +81,18 @@ impl super::Store {
                 .map_err(|e| Error::db("database operation", e))?;
         }
 
+        // The capture queue (#1466) gained columns while unreleased: a store
+        // opened by an intermediate build has the table without them.
+        for column in ["batch_id", "namespace"] {
+            if !self.column_exists_in("observations", column) {
+                self.conn
+                    .execute_batch(&format!(
+                        "ALTER TABLE observations ADD COLUMN {column} TEXT;"
+                    ))
+                    .map_err(|e| Error::db("observations column", e))?;
+            }
+        }
+
         // Run versioned migrations (adds slug, source, source_type, etc.)
         self.ensure_schema_version()?;
 
@@ -667,6 +679,7 @@ impl super::Store {
             "memory_doc_refs",
             "doc_mem_refs",
             "timeline_events",
+            "observations",
         ];
         if !ALLOWED_TABLES.contains(&table) {
             return false;

@@ -200,7 +200,6 @@ CREATE TABLE IF NOT EXISTS observations (
     namespace    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);
-CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);
 "#;
 
 /// Indexes that depend on migration-added columns.
@@ -210,6 +209,8 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
     "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
     "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;",
+    // After the observations column check: an early build lacked batch_id.
+    "CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
 ];
 
 /// Current schema version. Increment when adding migrations.
