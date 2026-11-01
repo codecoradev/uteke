@@ -57,6 +57,19 @@ pub enum TombstoneCommands {
     },
 }
 
+/// `uteke extract-queue` subcommands (#1466).
+#[derive(Subcommand)]
+pub enum ExtractQueueCommands {
+    /// Counts of captured turns: pending, extracting, done, failed
+    Status,
+    /// Extract up to N pending sessions now (one extractor call each)
+    Run {
+        /// Sessions to extract (default: [capture] budget_per_run, 10)
+        #[arg(long)]
+        budget: Option<usize>,
+    },
+}
+
 /// All top-level CLI subcommands.
 #[derive(Subcommand)]
 pub enum Commands {
@@ -282,6 +295,27 @@ pub enum Commands {
     Tombstone {
         #[command(subcommand)]
         command: TombstoneCommands,
+    },
+    /// Queue one conversation turn for later extraction (#1466). Reads the
+    /// text from the argument or stdin. Needs `[capture] enabled = true`.
+    Capture {
+        /// Session the turn belongs to (an agent's conversation id)
+        #[arg(long)]
+        session: String,
+        /// Who said it: user, assistant or tool (a tool result is kept as a
+        /// summary of its first 2000 characters)
+        #[arg(long)]
+        role: String,
+        /// Where it came from (agent or machine name)
+        #[arg(long)]
+        source: Option<String>,
+        /// The text; read from stdin when omitted
+        text: Option<String>,
+    },
+    /// Turn captured sessions into memories, on a budget (#1466)
+    ExtractQueue {
+        #[command(subcommand)]
+        command: ExtractQueueCommands,
     },
     /// Show memory store statistics
     Stats,

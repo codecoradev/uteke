@@ -15,6 +15,9 @@ pub struct EngineSettings {
     pub dream: DreamConfig,
     pub lifecycle: LifecycleConfig,
     pub embed_fallback: FallbackSettings,
+    /// `[capture]` (#1466). Global file only: listed in
+    /// `UNTRUSTED_PROJECT_KEYS`, so a cloned repository cannot turn it on.
+    pub capture: crate::capture::CaptureSettings,
 }
 
 impl EngineSettings {

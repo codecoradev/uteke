@@ -81,6 +81,18 @@ impl super::Store {
                 .map_err(|e| Error::db("database operation", e))?;
         }
 
+        // The capture queue (#1466) gained columns while unreleased: a store
+        // opened by an intermediate build has the table without them.
+        for column in ["batch_id", "namespace"] {
+            if !self.column_exists_in("observations", column) {
+                self.conn
+                    .execute_batch(&format!(
+                        "ALTER TABLE observations ADD COLUMN {column} TEXT;"
+                    ))
+                    .map_err(|e| Error::db("observations column", e))?;
+            }
+        }
+
         // Run versioned migrations (adds slug, source, source_type, etc.)
         self.ensure_schema_version()?;
 
@@ -478,6 +490,8 @@ impl super::Store {
                 // v23: rejected_values — tombstones of values forgotten as
                 // wrong (#1597)
                 23 => self.migrate_v22_to_v23()?,
+                // v24: observations — the raw capture queue (#1466)
+                24 => self.migrate_v23_to_v24()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -665,6 +679,7 @@ impl super::Store {
             "memory_doc_refs",
             "doc_mem_refs",
             "timeline_events",
+            "observations",
         ];
         if !ALLOWED_TABLES.contains(&table) {
             return false;
@@ -1184,6 +1199,35 @@ impl super::Store {
                 CREATE INDEX IF NOT EXISTS idx_rejected_values_memory ON rejected_values(memory_id);",
             )
             .map_err(|e| Error::db("schema migration v22 to v23", e))?;
+        Ok(())
+    }
+
+    /// v24: the `observations` capture queue (#1466). `SCHEMA` already creates
+    /// it on every open (IF NOT EXISTS); the step records the version.
+    fn migrate_v23_to_v24(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v23 to v24: observations table");
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS observations (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE,
+    source       TEXT,
+    captured_at  TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    claimed_at   TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    finished_at  TEXT,
+    batch_id     TEXT,
+    namespace    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);
+CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
+            )
+            .map_err(|e| Error::db("schema migration v23 to v24", e))?;
         Ok(())
     }
 

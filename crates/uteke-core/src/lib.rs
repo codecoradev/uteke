@@ -11,6 +11,7 @@
 
 #[cfg(test)]
 mod accessor_tests;
+pub mod capture;
 pub mod chunker;
 pub mod config_layers;
 mod consolidate;
