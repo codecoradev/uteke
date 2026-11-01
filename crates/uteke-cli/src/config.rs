@@ -309,35 +309,8 @@ impl Config {
 
         // The `UTEKE_EMBEDDING_*` variables are applied by `EmbeddingSection::resolve`.
 
-        // Extraction (import --extract). All optional; inert unless --extract.
-        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MODEL") {
-            if !v.is_empty() {
-                self.extraction.model = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_API_KEY") {
-            if !v.is_empty() {
-                self.extraction.api_key = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_BASE_URL") {
-            if !v.is_empty() {
-                self.extraction.base_url = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_ENDPOINT_PATH") {
-            if !v.is_empty() {
-                self.extraction.endpoint_path = v;
-            }
-        }
-        if let Ok(v) = std::env::var("UTEKE_EXTRACTION_MAX_FACTS") {
-            match v.parse::<usize>() {
-                Ok(n) => self.extraction.max_facts = n,
-                Err(_) => tracing::warn!(
-                    "Invalid UTEKE_EXTRACTION_MAX_FACTS='{v}', ignoring (expected integer)"
-                ),
-            }
-        }
+        // Extraction (import --extract, extract-queue). All optional.
+        self.extraction = std::mem::take(&mut self.extraction).with_env_overrides();
 
         // Embed fallback (cloud API when local ONNX fails). All optional.
         self.engine.embed_fallback = self.engine.embed_fallback.clone().with_env_overrides();

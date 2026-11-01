@@ -19,7 +19,10 @@
   `uteke-serve` extracts on its own every `interval_minutes`, taking the store
   lock per session, and doubles the wait after a run the extractor stopped (up
   to 16 intervals). LAB surfaces: `POST /capture`, `GET /capture/status` and the
-  MCP tool `uteke_capture`, all refused (HTTP 409) while capture is off.
+  MCP tool `uteke_capture`; `POST /capture` (HTTP 409) and `uteke_capture` are
+  refused while capture is off, `GET /capture/status` always answers. `uteke-serve`
+  now applies the `UTEKE_EXTRACTION_*` variables over `[extraction]` like the CLI
+  (for the schedule and `POST /extract`).
 
 - **Rejected-value tombstones (#1597, schema v23)** - forgetting a memory with
   `--reason wrong` (or `wrong: <note>`; also `supersede --reason wrong`,
