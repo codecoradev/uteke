@@ -287,6 +287,14 @@
     },
     {
       "method": "POST",
+      "path": "/capture"
+    },
+    {
+      "method": "GET",
+      "path": "/capture/status"
+    },
+    {
+      "method": "POST",
       "path": "/extract"
     },
     {

@@ -154,6 +154,54 @@ impl FactSource for OfflineFacts {
     }
 }
 
+/// Captured conversations go to an LLM only when the user chose one: mode
+/// `llm`, or no mode at all with an API key. Any other mode (`offline`, the
+/// `none` that onboarding writes, an unknown value) keeps them local.
+pub fn sends_to_llm(cfg: &crate::extraction::ExtractionConfig) -> bool {
+    match cfg.mode.as_str() {
+        "llm" => true,
+        "" => !cfg.api_key.is_empty(),
+        _ => false,
+    }
+}
+
+/// The fact source of an extraction run (CLI, server schedule): the LLM
+/// extractor when [`sends_to_llm`], else the offline rules.
+pub fn fact_source(
+    cfg: &crate::extraction::ExtractionConfig,
+) -> Result<Box<dyn FactSource>, Error> {
+    if sends_to_llm(cfg) {
+        let mut llm = cfg.clone();
+        llm.mode = "llm".to_string();
+        Ok(Box::new(crate::extraction::Extractor::new(&llm)?))
+    } else {
+        Ok(Box::new(OfflineFacts {
+            max_facts: cfg.max_facts,
+        }))
+    }
+}
+
+/// How far a failing schedule backs off: at most this many intervals.
+pub const MAX_BACKOFF_INTERVALS: u32 = 16;
+
+/// Wait before the next scheduled run: the interval after a run that went
+/// through, double the previous wait after one that failed (rate limit,
+/// provider down), up to [`MAX_BACKOFF_INTERVALS`] intervals.
+pub fn next_run_delay(
+    interval: std::time::Duration,
+    previous: std::time::Duration,
+    failed: bool,
+) -> std::time::Duration {
+    if failed {
+        previous
+            .max(interval)
+            .saturating_mul(2)
+            .min(interval.saturating_mul(MAX_BACKOFF_INTERVALS))
+    } else {
+        interval
+    }
+}
+
 /// `text` without a leading `user:`, `assistant:` or `tool:` label.
 fn strip_role_label(text: &str) -> &str {
     let t = text.trim_start();
@@ -1110,5 +1158,42 @@ mod tests {
     fn capture_is_off_by_default() {
         assert!(!CaptureSettings::default().enabled);
         assert_eq!(CaptureSettings::default().retention_days, 30);
+    }
+
+    #[test]
+    fn the_llm_is_used_only_when_extraction_names_one() {
+        use crate::extraction::ExtractionConfig;
+        let cfg = |mode: &str, key: &str| ExtractionConfig {
+            mode: mode.into(),
+            api_key: key.into(),
+            ..Default::default()
+        };
+        assert!(!sends_to_llm(&cfg("", "")), "unconfigured: offline rules");
+        assert!(sends_to_llm(&cfg("", "sk-test")));
+        assert!(sends_to_llm(&cfg("llm", "")));
+        assert!(!sends_to_llm(&cfg("offline", "sk-test")));
+        assert!(
+            !sends_to_llm(&cfg("none", "sk-test")),
+            "onboarding's none stays local"
+        );
+        assert!(!sends_to_llm(&cfg("typo", "sk-test")));
+    }
+
+    #[test]
+    fn a_failing_schedule_doubles_its_wait_up_to_the_cap_and_resets_after_success() {
+        use std::time::Duration;
+        let hour = Duration::from_secs(3600);
+        assert_eq!(next_run_delay(hour, hour, false), hour);
+        assert_eq!(next_run_delay(hour, hour, true), hour * 2);
+        assert_eq!(next_run_delay(hour, hour * 2, true), hour * 4);
+        assert_eq!(next_run_delay(hour, hour * 8, true), hour * 16);
+        assert_eq!(
+            next_run_delay(hour, hour * 16, true),
+            hour * MAX_BACKOFF_INTERVALS,
+            "capped"
+        );
+        assert_eq!(next_run_delay(hour, hour * 16, false), hour, "reset");
+        // A previous wait shorter than the interval still doubles the interval.
+        assert_eq!(next_run_delay(hour, Duration::ZERO, true), hour * 2);
     }
 }

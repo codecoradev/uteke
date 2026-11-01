@@ -721,6 +721,25 @@ pub struct GraphEdgeRequest {
     pub weight: Option<f64>,
 }
 
+// ── Capture Types (#1466) ──────────────────────────────────────────────────
+
+/// One turn for the capture queue (`POST /capture`, LAB).
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+pub struct CaptureRequest {
+    /// Conversation the turn belongs to; its turns are extracted together.
+    pub session_id: String,
+    /// `user`, `assistant` or `tool` (a tool output keeps its first 2000 characters).
+    pub role: String,
+    pub content: String,
+    /// Optional source label (e.g. the client name).
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Namespace the extracted facts are stored in.
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
 // ── Extract Types ──────────────────────────────────────────────────────────
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]

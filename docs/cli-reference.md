@@ -256,6 +256,12 @@ uteke extract-queue run --budget 5  # extract up to 5 sessions now
   stops the run and the session is retried next time; after `max_attempts` it is
   marked failed. A session left mid-run by a crash is requeued after the lease.
 - Done turns are deleted after `retention_days` (30).
+- `uteke-serve` extracts on its own every `interval_minutes` (60) when capture is
+  on, `budget_per_run` sessions per run, and doubles the wait after a run the
+  extractor stopped (up to 16 intervals). Over HTTP a turn is queued with
+  `POST /capture` and the counts read with `GET /capture/status`; over MCP with
+  the `uteke_capture` tool. Queueing is refused while capture is off (HTTP 409);
+  the status always answers.
 
 ## uteke tombstone
 

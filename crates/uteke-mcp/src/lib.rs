@@ -273,6 +273,7 @@ fn handle_request(
                 tool_stats(),
                 tool_context(),
                 tool_dream(),
+                tool_capture(),
                 tool_verify(),
                 tool_repair(),
                 tool_doc_create(),
@@ -366,6 +367,7 @@ fn handle_request(
                 "uteke_stats" => exec_stats(uteke, &arguments)?,
                 "uteke_context" => exec_context(uteke, &arguments)?,
                 "uteke_dream" => exec_dream(uteke, &arguments)?,
+                "uteke_capture" => exec_capture(uteke, &arguments)?,
                 "uteke_verify" => exec_verify(uteke)?,
                 "uteke_repair" => exec_repair(uteke)?,
                 "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
@@ -879,6 +881,24 @@ fn tool_dream() -> Value {
                 "phases": { "type": "array", "items": { "type": "string" }, "description": "Specific phases: lint, backlinks, dedup, orphans, compact, verify (default: all)" },
                 "confirm_large": { "type": "boolean", "description": "Required when an APPLYING run projects more than 100 changes (default: false — run refuses instead)" }
             }
+        }
+    })
+}
+
+fn tool_capture() -> Value {
+    serde_json::json!({
+        "name": "uteke_capture",
+        "description": "Queue one raw conversation turn for later fact extraction (#1466). No embedding, no LLM call now: a scheduled run (uteke-serve) or `uteke extract-queue run` extracts each session's turns together, on a budget. Refused unless [capture] enabled is on in the global uteke.toml. Capturing the same turn twice is a no-op.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "session_id": { "type": "string", "description": "Conversation the turn belongs to; its turns are extracted together" },
+                "role": { "type": "string", "enum": ["user", "assistant", "tool"], "description": "Who said it (a tool output keeps its first 2000 characters)" },
+                "content": { "type": "string", "description": "The turn text" },
+                "source": { "type": "string", "description": "Optional source label (e.g. the client name)" },
+                "namespace": { "type": "string", "description": "DEPRECATED (prefer rooms, tags and author): namespace the extracted facts are stored in" }
+            },
+            "required": ["session_id", "role", "content"]
         }
     })
 }
@@ -2345,6 +2365,47 @@ fn exec_verify(uteke: &Uteke) -> Result<ToolResult, String> {
 fn exec_repair(uteke: &Uteke) -> Result<ToolResult, String> {
     let report = uteke.repair().map_err(|e| format!("Failed: {e}"))?;
     let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
+fn exec_capture(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    if !uteke.capture_settings().enabled {
+        return Err(
+            "Capture is off: set `enabled = true` under [capture] in the global uteke.toml"
+                .to_string(),
+        );
+    }
+    let session = args["session_id"]
+        .as_str()
+        .ok_or("Missing required parameter: session_id")?;
+    let content = args["content"]
+        .as_str()
+        .ok_or("Missing required parameter: content")?;
+    let role: uteke_core::capture::Role = args["role"]
+        .as_str()
+        .ok_or("Missing required parameter: role")?
+        .parse()
+        .map_err(|e: uteke_core::Error| e.to_string())?;
+    let out = uteke
+        .capture(
+            session,
+            role,
+            content,
+            args["source"].as_str(),
+            args["namespace"].as_str(),
+        )
+        .map_err(write_error)?;
+    let text = if out.duplicate {
+        format!("Already captured: {}", out.id)
+    } else {
+        format!("✓ Captured: {}", out.id)
+    };
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
@@ -4179,7 +4240,7 @@ mod namespace_deprecation_tests {
         assert_eq!(read_only, expected);
         let full = names(Access::Full);
         assert!(read_only.is_subset(&full));
-        assert_eq!(full.len(), 50, "full catalog must not change");
+        assert_eq!(full.len(), 51, "full catalog must not change");
         for write in ["uteke_remember", "uteke_forget", "uteke_doc_create"] {
             assert!(
                 full.contains(write) && !read_only.contains(write),
@@ -5001,5 +5062,60 @@ mod rejected_value_mcp_tests {
             .expect("refused");
         assert!(err.starts_with("rejected_value:"), "{err}");
         assert!(err.contains("wrong: node 22"), "{err}");
+    }
+}
+
+/// `uteke_capture` (#1466): opt-in, queues a turn, a repeat is a no-op.
+#[cfg(test)]
+mod capture_mcp_tests {
+    use super::*;
+    use uteke_core::{EngineSettings, Uteke};
+
+    fn store(enabled: bool) -> Uteke {
+        let mut u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        let mut e = EngineSettings::default();
+        e.capture.enabled = enabled;
+        u.apply_settings(&e);
+        u
+    }
+
+    fn text(r: &ToolResult) -> String {
+        match &r.content[0] {
+            McpContent::Text { text, .. } => text.clone(),
+        }
+    }
+
+    #[test]
+    fn capture_is_refused_while_it_is_off() {
+        let u = store(false);
+        let args = serde_json::json!({"session_id": "s", "role": "user", "content": "hi"});
+        let Err(err) = exec_capture(&u, &args) else {
+            panic!("capture accepted while off")
+        };
+        assert!(err.contains("[capture]"), "{err}");
+        assert_eq!(u.capture_status().unwrap().pending, 0);
+    }
+
+    #[test]
+    fn a_turn_is_queued_once_and_a_bad_role_is_refused() {
+        let u = store(true);
+        let args = serde_json::json!({"session_id": "s", "role": "user", "content": "I use zsh"});
+        assert!(text(&exec_capture(&u, &args).unwrap()).starts_with("✓ Captured:"));
+        assert!(text(&exec_capture(&u, &args).unwrap()).starts_with("Already captured:"));
+        assert_eq!(u.capture_status().unwrap().pending, 1);
+
+        let bad = serde_json::json!({"session_id": "s", "role": "system", "content": "x"});
+        assert!(exec_capture(&u, &bad).is_err());
+        let missing = serde_json::json!({"role": "user", "content": "x"});
+        let Err(err) = exec_capture(&u, &missing) else {
+            panic!("capture accepted without a session")
+        };
+        assert!(err.contains("session_id"), "{err}");
+    }
+
+    #[test]
+    fn the_tool_is_listed_and_not_offered_to_a_read_only_caller() {
+        assert!(!READ_ONLY_TOOLS.contains(&"uteke_capture"));
+        assert_eq!(tool_capture()["name"], "uteke_capture");
     }
 }

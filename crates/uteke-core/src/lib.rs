@@ -710,6 +710,9 @@ pub struct Uteke {
     /// Memory lifecycle configuration (#928). Controls soft-delete behavior,
     /// dynamic deprecation caps, and TTL-based pruning.
     lifecycle_config: LifecycleConfig,
+    /// `[capture]` (#1466): read by the HTTP and MCP surfaces (opt-in gate)
+    /// and the server's scheduled extraction.
+    capture_settings: capture::CaptureSettings,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
     /// Path to the persistent embedding cache DB (`embed_cache.db`).
@@ -1138,6 +1141,7 @@ impl Uteke {
             dream_config: DreamConfig::default(),
             privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),
+            capture_settings: capture::CaptureSettings::default(),
             embed_cache_path,
         })
     }
@@ -1203,6 +1207,17 @@ impl Uteke {
     /// Get the current lifecycle configuration (#928).
     pub fn lifecycle_config(&self) -> LifecycleConfig {
         self.lifecycle_config
+    }
+
+    /// Set the `[capture]` settings (#1466). Called from `apply_settings`.
+    pub fn set_capture_settings(&mut self, settings: capture::CaptureSettings) {
+        self.capture_settings = settings;
+    }
+
+    /// The `[capture]` settings (#1466): off unless the global file turns
+    /// capture on.
+    pub fn capture_settings(&self) -> capture::CaptureSettings {
+        self.capture_settings
     }
 
     /// Configure cloud embedding fallback.

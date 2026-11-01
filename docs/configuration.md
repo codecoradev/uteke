@@ -225,19 +225,25 @@ var > `[extraction]` config > built-in default.
 
 ## Raw Capture (#1466)
 
-`uteke capture` queues conversation turns; `uteke extract-queue run` turns them into
-memories later ([CLI reference](cli-reference.md#uteke-capture--extract-queue)).
+`uteke capture` (or `POST /capture`, or the MCP tool `uteke_capture`) queues
+conversation turns; `uteke extract-queue run`, or `uteke-serve` on its schedule, turns
+them into memories later ([CLI reference](cli-reference.md#uteke-capture--extract-queue)).
 Global file only: a project `.uteke/uteke.toml` cannot set this section.
 
 ```toml
 [capture]
 enabled = false          # opt-in: capture refuses turns until this is true
-budget_per_run = 10      # sessions (extractor calls) per `extract-queue run`
+budget_per_run = 10      # sessions (extractor calls) per run
 retention_days = 30      # done turns are deleted after this many days
 max_attempts = 3         # a session that keeps failing is marked failed
 lease_minutes = 15       # a session left `extracting` by a crash is requeued
-interval_minutes = 60    # for the scheduled server run (coming with the server part)
+interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
 ```
+
+`uteke-serve` starts the schedule only when `enabled = true`. It takes the store lock
+once per session, not for the whole run. A run the extractor stopped (rate limit,
+provider down) doubles the wait before the next one, up to 16 intervals; a run that
+goes through resets it.
 
 ## Recall Threshold
 

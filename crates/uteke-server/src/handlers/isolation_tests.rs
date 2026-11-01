@@ -291,6 +291,11 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "/lifecycle/deprecated",
         "deprecated memories; none in this fixture",
     ),
+    (
+        "GET",
+        "/capture/status",
+        "store-wide queue counts; no memory or turn content",
+    ),
 ];
 
 /// A read route (GET, or a POST that does not write) added to the registry

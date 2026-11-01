@@ -103,6 +103,69 @@ impl ExtractedFact {
     }
 }
 
+impl ExtractionConfig {
+    /// Apply the `UTEKE_EXTRACTION_*` variables over the file values (env wins,
+    /// an empty variable is ignored). The CLI and `uteke-serve` both call this,
+    /// so a key set only in the environment reaches every extraction path.
+    pub fn with_env_overrides(self) -> Self {
+        self.with_overrides(|k| std::env::var(k).ok())
+    }
+
+    fn with_overrides(mut self, var: impl Fn(&str) -> Option<String>) -> Self {
+        let set = |k: &str| var(k).filter(|v| !v.is_empty());
+        if let Some(v) = set("UTEKE_EXTRACTION_MODEL") {
+            self.model = v;
+        }
+        if let Some(v) = set("UTEKE_EXTRACTION_API_KEY") {
+            self.api_key = v;
+        }
+        if let Some(v) = set("UTEKE_EXTRACTION_BASE_URL") {
+            self.base_url = v;
+        }
+        if let Some(v) = set("UTEKE_EXTRACTION_ENDPOINT_PATH") {
+            self.endpoint_path = v;
+        }
+        if let Some(v) = set("UTEKE_EXTRACTION_MAX_FACTS") {
+            match v.parse::<usize>() {
+                Ok(n) => self.max_facts = n,
+                Err(_) => tracing::warn!(
+                    "Invalid UTEKE_EXTRACTION_MAX_FACTS='{v}', ignoring (expected integer)"
+                ),
+            }
+        }
+        self
+    }
+}
+
+#[cfg(test)]
+mod env_override_tests {
+    use super::ExtractionConfig;
+
+    #[test]
+    fn the_environment_wins_over_the_file_and_empty_or_invalid_values_are_ignored() {
+        let file = ExtractionConfig {
+            mode: "llm".into(),
+            model: "file-model".into(),
+            api_key: "file-key".into(),
+            max_facts: 7,
+            ..Default::default()
+        };
+        let env = |k: &str| match k {
+            "UTEKE_EXTRACTION_API_KEY" => Some("env-key".to_string()),
+            "UTEKE_EXTRACTION_MODEL" => Some(String::new()),
+            "UTEKE_EXTRACTION_BASE_URL" => Some("https://env.test".to_string()),
+            "UTEKE_EXTRACTION_MAX_FACTS" => Some("lots".to_string()),
+            _ => None,
+        };
+        let c = file.with_overrides(env);
+        assert_eq!(c.api_key, "env-key");
+        assert_eq!(c.model, "file-model", "an empty variable is ignored");
+        assert_eq!(c.base_url, "https://env.test");
+        assert_eq!(c.max_facts, 7, "an invalid number is ignored");
+        assert_eq!(c.mode, "llm", "mode has no variable");
+    }
+}
+
 /// An OpenAI-compatible chat-completions client used for fact extraction.
 #[derive(Debug)]
 pub struct Extractor {

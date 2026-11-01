@@ -15,8 +15,14 @@
   run and the session is retried (failed after `max_attempts`); a session left
   by a crash is requeued after a lease, and a re-run never stores its facts
   twice. Done turns are deleted after 30 days. Off by default: `[capture]
-  enabled = true` in the global `uteke.toml` (a project file cannot set it). The
-  scheduled server run and the HTTP/MCP surfaces follow separately.
+  enabled = true` in the global `uteke.toml` (a project file cannot set it).
+  `uteke-serve` extracts on its own every `interval_minutes`, taking the store
+  lock per session, and doubles the wait after a run the extractor stopped (up
+  to 16 intervals). LAB surfaces: `POST /capture`, `GET /capture/status` and the
+  MCP tool `uteke_capture`; `POST /capture` (HTTP 409) and `uteke_capture` are
+  refused while capture is off, `GET /capture/status` always answers. `uteke-serve`
+  now applies the `UTEKE_EXTRACTION_*` variables over `[extraction]` like the CLI
+  (for the schedule and `POST /extract`).
 
 - **Rejected-value tombstones (#1597, schema v23)** - forgetting a memory with
   `--reason wrong` (or `wrong: <note>`; also `supersede --reason wrong`,
