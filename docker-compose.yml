@@ -1,10 +1,13 @@
 # Uteke Docker Compose — default: localhost only, no auth
-# Images available: ghcr.io/codecoradev/uteke:latest (GHCR) or codecoradev/uteke:latest (Docker Hub)
+# Image: codecoradev/uteke:latest (Docker Hub)
 # For network access, uncomment UTEKE_AUTH_TOKEN below.
 services:
   uteke:
-    image: ghcr.io/codecoradev/uteke:latest
+    image: codecoradev/uteke:latest
     container_name: uteke
+    # uteke-serve binds 127.0.0.1 by default, which a published port cannot
+    # reach inside a container; the entrypoint forwards these args to it.
+    command: ["--host", "0.0.0.0"]
     ports:
       - "127.0.0.1:${UTEKE_PORT:-8767}:8767"
     volumes:

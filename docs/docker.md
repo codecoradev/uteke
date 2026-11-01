@@ -4,24 +4,23 @@ title: Docker
 
 # Docker
 
-Uteke ships as a lightweight multi-arch Docker image (~10MB). The embedding model (~200MB) downloads automatically on first run and is cached in the volume, so subsequent updates are instant.
+Uteke ships as a multi-arch Docker image on Docker Hub (`codecoradev/uteke`, about 300 MB with the ONNX Runtime). The embedding model (~200MB) downloads automatically on first run and is cached in the volume, so later updates skip it.
 
 ## Quick Start
 
-> ⚠️ **Security**: The default config listens on `127.0.0.1` (localhost only). For network access, set `UTEKE_AUTH_TOKEN` (see [Authentication](#with-authentication)).
+`uteke-serve` binds to `127.0.0.1` unless told otherwise, and inside a container
+that address cannot be reached through a published port. Pass `--host 0.0.0.0`
+after the image name (the entrypoint forwards every argument to `uteke-serve`), or
+set `host = "0.0.0.0"` in the `[server]` section of `/data/uteke.toml`.
+
+> ⚠️ **Security**: keep the published port on `127.0.0.1` as below. To expose the
+> server on a network, set `UTEKE_AUTH_TOKEN` first (see [Authentication](#with-authentication)).
 
 ```bash
-# Pull and run (GHCR)
 docker run -d --name uteke \
   -p 127.0.0.1:8767:8767 \
   -v uteke-data:/data \
-  ghcr.io/codecoradev/uteke:latest
-
-# Or pull from Docker Hub
-docker run -d --name uteke \
-  -p 127.0.0.1:8767:8767 \
-  -v uteke-data:/data \
-  codecoradev/uteke:latest
+  codecoradev/uteke:latest --host 0.0.0.0
 
 # Verify it's running
 curl http://localhost:8767/health
@@ -47,7 +46,8 @@ docker compose up -d
 cat > docker-compose.yml << 'EOF'
 services:
   uteke:
-    image: ghcr.io/codecoradev/uteke:latest
+    image: codecoradev/uteke:latest
+    command: ["--host", "0.0.0.0"]
     ports:
       - "127.0.0.1:8767:8767"
     volumes:
@@ -67,7 +67,6 @@ docker compose up -d
 |----------|---------|-------------|
 | `UTEKE_HOME` | `/data` | Data directory (set in Dockerfile) |
 | `UTEKE_AUTH_TOKEN` | — | Bearer token for API authentication |
-| `UTEKE_NAMESPACE` | `default` | Default namespace |
 | `UTEKE_READ_ONLY_TOKEN` | — | Bearer token that is only allowed to read (GET and `POST /recall`) |
 | `UTEKE_EMBEDDING_BACKEND` | `onnx` | `onnx` (local model), `openai` (any OpenAI-compatible endpoint) or `ollama`. Read by the server since v0.20.1 |
 | `UTEKE_EMBEDDING_BASE_URL` | — | Endpoint of the external embedder, e.g. `http://embor:8355/v1` |
@@ -75,6 +74,7 @@ docker compose up -d
 | `UTEKE_EMBEDDING_DIMS` | backend default | Vector size; must match the existing store |
 | `UTEKE_EMBEDDING_API_KEY` | — | Key for the endpoint (also read from `OPENAI_API_KEY`) |
 | `UTEKE_EMBEDDING_ENDPOINT_PATH` | `/embeddings` | Path appended to the base URL |
+| `UTEKE_NO_UPDATE_CHECK` | — | Set to `1` to stop the daily check for a newer release on GitHub (v0.22.1+) |
 
 ### With authentication
 
@@ -87,7 +87,7 @@ docker run -d --name uteke \
   -p 127.0.0.1:8767:8767 \
   -v uteke-data:/data \
   -e UTEKE_AUTH_TOKEN \
-  ghcr.io/codecoradev/uteke:latest
+  codecoradev/uteke:latest --host 0.0.0.0
 
 # Now all requests need Authorization header
 curl -H "Authorization: Bearer $UTEKE_AUTH_TOKEN" \
@@ -103,7 +103,7 @@ container needs in one of two ways:
 ```yaml
 services:
   uteke:
-    image: ghcr.io/codecoradev/uteke:latest
+    image: codecoradev/uteke:latest
     # (a) load every variable of .env into the container ...
     env_file: .env
     environment:
@@ -201,7 +201,6 @@ Docker automatically pulls the correct architecture.
 
 | Registry | Image |
 |----------|-------|
-| **GitHub Container Registry** | `ghcr.io/codecoradev/uteke:latest` |
 | **Docker Hub** | `codecoradev/uteke:latest` |
 
 ## Image Tags
@@ -209,9 +208,8 @@ Docker automatically pulls the correct architecture.
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `v0.12.0` | Specific version |
-| `0.12` | Minor version (latest patch) |
-| `slim` | Slim image (no embedded model — mount model volume separately, see below) |
+| `0.22.1` | Specific version (no `v` prefix) |
+| `0.22` | Minor version (latest patch) |
 
 ## CLI in Docker
 
@@ -224,7 +222,7 @@ docker exec uteke uteke recall "deployment" --limit 5
 # Or override the entrypoint
 docker run --rm -v uteke-data:/data \
   --entrypoint uteke \
-  ghcr.io/codecoradev/uteke:latest \
+  codecoradev/uteke:latest \
   stats
 ```
 
@@ -232,8 +230,11 @@ docker run --rm -v uteke-data:/data \
 
 ```bash
 curl http://localhost:8767/health
-# → {"status":"healthy","memories":42,"index_size":1024}
+# → {"status":"ok","version":"0.22.1","memories":0,"namespaces":0,"api_versions":["v1","v2"],"api_latest":"v2"}
 ```
+
+With an auth token configured, a request without the token gets only
+`{"status":"ok"}`; send the token to see the full payload.
 
 Docker Compose includes a built-in health check (`curl` is pre-installed in the image):
 ```yaml
@@ -243,8 +244,6 @@ healthcheck:
   timeout: 5s
   retries: 3
 ```
-
-## Behind a Reverse Proxy
 
 ## MCP (Model Context Protocol)
 
@@ -259,7 +258,7 @@ HTTP transport is available through `uteke-serve` at the `/mcp` endpoint. Start 
 docker run -d --name uteke \
   -p 127.0.0.1:8767:8767 \
   -v uteke-data:/data \
-  ghcr.io/codecoradev/uteke:latest
+  codecoradev/uteke:latest --host 0.0.0.0
 
 # The MCP endpoint is available at:
 # http://localhost:8767/mcp (Streamable HTTP transport)
@@ -298,7 +297,7 @@ The `uteke-mcp` binary in the container provides stdio transport for clients tha
 ```bash
 docker run --rm -v uteke-data:/data \
   --entrypoint uteke-mcp \
-  -i ghcr.io/codecoradev/uteke:latest
+  -i codecoradev/uteke:latest
 ```
 
 For Claude Desktop or Cursor with stdio transport:
@@ -313,7 +312,7 @@ For Claude Desktop or Cursor with stdio transport:
         "run", "--rm", "-i",
         "-v", "uteke-data:/data",
         "--entrypoint", "uteke-mcp",
-        "ghcr.io/codecoradev/uteke:latest"
+        "codecoradev/uteke:latest"
       ]
     }
   }
@@ -322,39 +321,9 @@ For Claude Desktop or Cursor with stdio transport:
 
 ### Available MCP Tools
 
-Both transports expose the same tools (MCP protocol version `2025-06-18`):
+Both transports serve the same 50 tools (MCP protocol version `2025-06-18`). The
+full list with arguments is in [MCP](mcp.md#available-tools).
 
-| Tool | Description |
-|------|-------------|
-| `uteke_remember` | Store a memory (supports type, room, author, tags) |
-| `uteke_recall` | Semantic search (supports tags filter, min_score) |
-| `uteke_search` | Text search with optional tag filter |
-| `uteke_list` | List memories (supports pagination via offset) |
-| `uteke_forget` | Delete a memory |
-| `uteke_stats` | Memory store statistics |
-| `uteke_context` | AI-optimized context output for prompts |
-| `uteke_dream` | One-command maintenance pipeline (lint → backlinks → dedup → orphans) |
-| `uteke_doc_create` | Create a document (wiki/knowledge base entry) |
-| `uteke_doc_get` | Retrieve a document by ID |
-| `uteke_doc_list` | List all documents |
-| `uteke_doc_search` | Search documents |
-| `uteke_doc_delete` | Delete a document |
-| `uteke_doc_update` | Partial document update with chunk rebuild (#589) |
-| `uteke_doc_move` | Move document to new parent (#438) |
-| `uteke_graph` | Get nodes + edges JSON for visualization |
-| `uteke_room_recall` | Semantic recall within a room |
-| `uteke_room_memories` | List memories in a room (#569) |
-| `uteke_room_create` | Create a room |
-| `uteke_room_delete` | Delete a room |
-| `uteke_room_stats` | Room statistics |
-| `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
-| `uteke_room_summary_document` | Generate summary document from room (→ `POST /room/summary-document`) |
-| `uteke_tags_list` | List all tags with counts (#566) |
-| `uteke_tags_rename` | Rename a tag across all memories (#566) |
-| `uteke_tags_delete` | Delete a tag from all memories (#566) |
-| `uteke_pin` | Pin a memory (prevent decay) (#566) |
-| `uteke_unpin` | Unpin a memory (#566) |
-
-
+## Behind a Reverse Proxy
 
 See [TLS & Reverse Proxy](/tls) for Caddy, Nginx, and Cloudflare Tunnel setup.
