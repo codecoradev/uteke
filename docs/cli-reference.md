@@ -230,6 +230,33 @@ MCP a tool error starting with `rejected_value:`. The tombstone survives `prune`
 and is carried by `export --full`. A paraphrase is not caught. Any other reason
 (`--reason outdated`) is only kept on the forgotten memory.
 
+## uteke capture / extract-queue
+
+Queue conversation turns now, turn them into memories later (#1466). Capture makes
+no LLM call and no network request (one SQLite insert per turn), so an agent hook
+can call it at the end of every session. Extraction runs when you choose, on a
+budget, one extractor call per session.
+
+```bash
+uteke capture --session sess-42 --role user "We moved billing to PostgreSQL"
+echo "Noted." | uteke capture --session sess-42 --role assistant
+uteke extract-queue status          # pending / extracting / done / failed
+uteke extract-queue run --budget 5  # extract up to 5 sessions now
+```
+
+- Capture is **off by default**: set `enabled = true` under `[capture]` in the global
+  `uteke.toml` (a project file cannot set it). See [Configuration](configuration.md#raw-capture-1466).
+- Roles are `user`, `assistant` and `tool`; a tool result is kept as a summary (its
+  first 2000 characters). The privacy filter runs before a turn is queued.
+- Capturing the same text from the same role in the same session again is a no-op.
+- `run` uses the `[extraction]` settings: the LLM endpoint when one is configured,
+  otherwise the offline rules. Facts are stored like any other write (duplicate
+  check, rejected-value tombstones), tagged `capture`, with the source
+  `capture:<session>:<batch>`. An extractor error (rate limit, provider down)
+  stops the run and the session is retried next time; after `max_attempts` it is
+  marked failed. A session left mid-run by a crash is requeued after the lease.
+- Done turns are deleted after `retention_days` (30).
+
 ## uteke tombstone
 
 ```bash

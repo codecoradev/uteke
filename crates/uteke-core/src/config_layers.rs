@@ -55,6 +55,8 @@ pub const UNTRUSTED_PROJECT_KEYS: &[&str] = &[
     "aging",
     "maintenance",
     "server",
+    // Raw capture (#1466): a cloned repository must not turn capture on.
+    "capture",
 ];
 
 /// The files to resolve. Missing files are fine.
@@ -418,6 +420,8 @@ dedup_threshold = 0.1
 max_age_days = 0
 [maintenance]
 auto_dream_enabled = true
+[capture]
+enabled = true
 [recall]
 min_score = 0.3
 [tier]
@@ -426,7 +430,7 @@ hot_days = 1
         )
         .unwrap();
         let removed = strip_untrusted(&mut table);
-        for section in ["lifecycle", "dream", "aging", "maintenance"] {
+        for section in ["lifecycle", "dream", "aging", "maintenance", "capture"] {
             assert!(
                 removed.contains(&section.to_string()),
                 "{section}: {removed:?}"

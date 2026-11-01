@@ -180,6 +180,24 @@ CREATE TABLE IF NOT EXISTS rejected_values (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rejected_values_memory ON rejected_values(memory_id);
+
+-- v24: raw observation capture queue (#1466). Turns wait here, after the
+-- privacy filter, until an extraction run turns them into memories.
+CREATE TABLE IF NOT EXISTS observations (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE,
+    source       TEXT,
+    captured_at  TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    claimed_at   TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    finished_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);
 "#;
 
 /// Indexes that depend on migration-added columns.
@@ -192,7 +210,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 23;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 24;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

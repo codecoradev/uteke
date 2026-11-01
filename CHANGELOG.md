@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Raw capture with deferred extraction (#1466, schema v24)** - `uteke capture
+  --session <id> --role user|assistant|tool [TEXT]` queues one conversation turn
+  (no LLM call, no network: one SQLite insert after the privacy filter; the same
+  turn twice is one row; a tool result is kept as a 2000-character summary).
+  `uteke extract-queue run [--budget N]` turns pending sessions into memories, one
+  extractor call per session (LLM when `[extraction]` names one, otherwise the
+  offline rules), through `remember`, so duplicates and rejected values are
+  refused; `extract-queue status` shows the counts. An extractor error stops the
+  run and the session is retried (failed after `max_attempts`); a session left
+  by a crash is requeued after a lease, and a re-run never stores its facts
+  twice. Done turns are deleted after 30 days. Off by default: `[capture]
+  enabled = true` in the global `uteke.toml` (a project file cannot set it). The
+  scheduled server run and the HTTP/MCP surfaces follow separately.
+
 - **Rejected-value tombstones (#1597, schema v23)** - forgetting a memory with
   `--reason wrong` (or `wrong: <note>`; also `supersede --reason wrong`,
   `DELETE /forget?id=..&reason=..` and the MCP `uteke_forget` `reason`) records a

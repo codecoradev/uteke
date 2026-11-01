@@ -3,6 +3,7 @@
 mod aging;
 mod anchor;
 pub(crate) mod bench;
+mod capture;
 mod contradictions;
 mod doc;
 mod dream;
@@ -229,6 +230,25 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         ),
 
         Commands::Stats => list::run_stats(cli, uteke, ns),
+
+        Commands::Capture {
+            session,
+            role,
+            source,
+            text,
+        } => capture::run_capture(
+            cli,
+            uteke,
+            config,
+            session,
+            role,
+            source.as_deref(),
+            text.as_deref(),
+        ),
+
+        Commands::ExtractQueue { command } => {
+            capture::run_extract_queue(cli, uteke, config, command)
+        }
 
         Commands::Guide => {
             println!("{}", uteke_core::guide::default_guide());

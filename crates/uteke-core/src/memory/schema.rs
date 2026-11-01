@@ -478,6 +478,8 @@ impl super::Store {
                 // v23: rejected_values — tombstones of values forgotten as
                 // wrong (#1597)
                 23 => self.migrate_v22_to_v23()?,
+                // v24: observations — the raw capture queue (#1466)
+                24 => self.migrate_v23_to_v24()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1184,6 +1186,32 @@ impl super::Store {
                 CREATE INDEX IF NOT EXISTS idx_rejected_values_memory ON rejected_values(memory_id);",
             )
             .map_err(|e| Error::db("schema migration v22 to v23", e))?;
+        Ok(())
+    }
+
+    /// v24: the `observations` capture queue (#1466). `SCHEMA` already creates
+    /// it on every open (IF NOT EXISTS); the step records the version.
+    fn migrate_v23_to_v24(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v23 to v24: observations table");
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS observations (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE,
+    source       TEXT,
+    captured_at  TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    claimed_at   TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    finished_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);",
+            )
+            .map_err(|e| Error::db("schema migration v23 to v24", e))?;
         Ok(())
     }
 

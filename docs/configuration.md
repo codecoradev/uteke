@@ -223,6 +223,22 @@ max_facts = 0                # cap facts per document. 0 = built-in default
 Resolution order per field: CLI flag (`--extract-*`) > `UTEKE_EXTRACTION_*` env
 var > `[extraction]` config > built-in default.
 
+## Raw Capture (#1466)
+
+`uteke capture` queues conversation turns; `uteke extract-queue run` turns them into
+memories later ([CLI reference](cli-reference.md#uteke-capture--extract-queue)).
+Global file only: a project `.uteke/uteke.toml` cannot set this section.
+
+```toml
+[capture]
+enabled = false          # opt-in: capture refuses turns until this is true
+budget_per_run = 10      # sessions (extractor calls) per `extract-queue run`
+retention_days = 30      # done turns are deleted after this many days
+max_attempts = 3         # a session that keeps failing is marked failed
+lease_minutes = 15       # a session left `extracting` by a crash is requeued
+interval_minutes = 60    # for the scheduled server run (coming with the server part)
+```
+
 ## Recall Threshold
 
 The `[recall]`, `[tier]`, `[dream]`, `[lifecycle]` and `[embed_fallback]` sections are read the same way by the CLI, `uteke-serve` and `uteke-mcp` (the global `uteke.toml`, then the project file with its untrusted keys stripped, then the `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` variables). `uteke_recall` over MCP, and MCP over HTTP, use `[recall] min_score` / `min_score_strict` as the floor and `default_strategy` as the strategy when a call gives none, exactly like `POST /recall`. With no `[recall]` section the defaults equal the built-ins, so nothing changes.
