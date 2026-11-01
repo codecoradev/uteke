@@ -10,7 +10,8 @@ Checks, from the repository root:
    summary and a scope file that exist, and a dataset sha256; and each of its
    `headline_claims` equals the value found in its summary.
 2. The README benchmark section links to every receipts directory.
-3. The README headline (`NN.N% LongMemEval-S recall@5`) equals the
+3. The README headline (`NN.N% LongMemEval-S recall@5` or
+   `NN.N% recall@5 on LongMemEval-S`) equals the
    `recall_any@5_full500` claim of a receipt: changing the number without a
    receipt fails here.
 
@@ -79,7 +80,9 @@ def check_receipt(manifest_path, problems):
 
 
 def benchmark_section(readme):
-    start = readme.find("## 📊 Benchmarks")
+    # The heading may carry an emoji or not (`## 📊 Benchmarks`, `## Benchmarks`).
+    heading = re.search(r"^## (?:📊 )?Benchmarks$", readme, re.M)
+    start = heading.start() if heading else -1
     if start < 0:
         return None
     end = readme.find("\n## ", start + 1)
@@ -101,14 +104,14 @@ def main():
     readme = (ROOT / "README.md").read_text()
     section = benchmark_section(readme)
     if section is None:
-        problems.append("README.md has no '## 📊 Benchmarks' section")
+        problems.append("README.md has no '## Benchmarks' section")
     else:
         for name in receipts:
             if name not in section:
                 problems.append(f"README.md benchmark section does not link {name}/")
-    headline = re.search(r"(\d+\.\d)% LongMemEval-S recall@5", readme)
+    headline = re.search(r"(\d+\.\d)% (?:LongMemEval-S recall@5|recall@5 on LongMemEval-S)", readme)
     if headline is None:
-        problems.append("README.md has no 'NN.N% LongMemEval-S recall@5' headline to check")
+        problems.append("README.md has no 'NN.N% (LongMemEval-S recall@5|recall@5 on LongMemEval-S)' headline to check")
     else:
         shown = headline.group(1)
         backed = {f"{c['recall_any@5_full500'] * 100:.1f}" for c in receipts.values() if "recall_any@5_full500" in c}
