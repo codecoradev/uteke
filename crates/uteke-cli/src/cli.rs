@@ -124,14 +124,14 @@ pub enum Commands {
         /// `[recall].default_strategy` (fusion).
         #[arg(long)]
         strategy: Option<String>,
-        /// Enable salience boost (how much each result matters) (#352).
-        /// Uses the configured `[recall].salience_weight` (default 0.15).
-        /// When absent, salience uses the default weight (0.1). Use --no-salience to disable (#721).
+        /// Salience boost (how much each result matters) (#352, #721).
+        /// Absent: weight 0.1. `--salience true`: the configured
+        /// `[recall].salience_weight` (default 0.15). `--salience false`: off.
         #[arg(long)]
         salience: Option<bool>,
-        /// Enable recency boost (how fresh each result is) (#352).
-        /// Uses the configured `[recall].recency_weight` (default 0.15).
-        /// When absent, recency uses the default weight (0.1). Use --no-recency to disable (#721).
+        /// Recency boost (how fresh each result is) (#352, #721).
+        /// Absent: weight 0.1. `--recency true`: the configured
+        /// `[recall].recency_weight` (default 0.15). `--recency false`: off.
         #[arg(long)]
         recency: Option<bool>,
         /// Explain each result: show the ranking signals behind it (#1160)

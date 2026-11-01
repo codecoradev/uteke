@@ -25,7 +25,7 @@ uteke onboard
 Non-interactive mode (use defaults, skip prompts):
 
 ```bash
-uteke onboard --yes --agent hermes --namespace default
+uteke onboard --yes --agent hermes
 ```
 
 The wizard covers:
@@ -33,7 +33,7 @@ The wizard covers:
 1. **Install detection** — checks if `uteke` is on PATH and if a store exists
 2. **Agent selection** — Hermes, Claude, Cursor, Pi, or OpenCode
 3. **Integration mode** — manual tool (explicit calls) vs memory-provider (auto recall + extraction)
-4. **Namespace** — for multi-agent isolation
+4. **Namespace** — keep `default`; namespaces are deprecated in favour of rooms, tags and author
 5. **Extraction configuration** — choose offline (rule-based, zero API), external LLM (OpenAI-compatible), or manual-only
 6. **Feature toggles** — Aging, Auto-maintenance, Graph rerank, Salience/Recency boost, Server mode
 7. **Config write** — generates `~/.codecora/uteke/uteke.toml` with your choices
@@ -79,21 +79,25 @@ uteke tags rename old-name new-name
 uteke tags delete unused-tag
 ```
 
-## Multi-Agent Isolation
+## Multiple Agents
 
-Each agent gets its own namespace. Memories never leak between agents:
+Give agents a shared room and record who wrote each memory with `--author`.
+(Namespaces still work but are deprecated and will be removed in a future 0.x
+release.)
 
 ```bash
-# Agent "architect" stores its context
-uteke --namespace architect remember "We chose PostgreSQL for ACID compliance"
+uteke room create backend --title "Backend decisions"
 
-# Agent "dev" has its own separate memory
-uteke --namespace dev remember "Database connection string: postgres://localhost:5432/app"
+# Each agent writes with its own name
+uteke remember "We chose PostgreSQL for ACID compliance" --room backend --author architect
+uteke remember "Local database runs on port 5432" --room backend --author dev
 
-# Each only sees its own memories
-uteke --namespace architect recall "database"
-uteke --namespace dev recall "database"
+# Search the room, or only one agent's memories in it
+uteke room recall backend "database"
+uteke room recall backend "database" --author architect
 ```
+
+See [Rooms](rooms.md) for linking documents and moving memories between rooms.
 
 ## Recall Cache
 

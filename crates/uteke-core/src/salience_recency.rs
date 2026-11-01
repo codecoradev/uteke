@@ -19,8 +19,8 @@
 //!
 //! ## Default behavior (#721)
 //!
-//! Both weights default to `0.1` (enabled by default). Use `--no-salience`
-//! / `--no-recency` CLI flags or pass weight 0.0 via API to opt out.
+//! Both weights default to `0.1` (enabled by default). Use `--salience false`
+//! / `--recency false` on the CLI or pass weight 0.0 via API to opt out.
 
 use crate::memory::types::Memory;
 

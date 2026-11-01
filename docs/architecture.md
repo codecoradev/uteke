@@ -44,13 +44,13 @@ title: Architecture
 | Component | Technology | Detail |
 |-----------|-----------|--------|
 | Language | Rust (no unsafe) | Memory-safe, fast, single binary |
-| Vector Index | usearch + RwLock | Persistent HNSW, concurrent reads via RwLock |
+| Vector Index | usearch or vecq + RwLock | usearch (default): persistent HNSW. vecq: 4-bit quantized, pure Rust. Picked at runtime via `UTEKE_VECTOR_BACKEND` or `[vector] backend` (#1168) |
 | Full-Text Search | SQLite FTS5 | Built-in, auto-created, phrase + token-OR fallback |
 | Hybrid Search | RRF (k=60) | Merges vector + FTS5 via Reciprocal Rank Fusion |
 | Fusion (default) | weighted RRF | Since 0.16.0: fuses the vector and hybrid rankings (#1123) |
 | Storage | SQLite (rusqlite) | Embedded, zero-config, battle-tested |
 | Embedding | EmbeddingGemma Q4 ONNX | 768d vectors, multilingual, downloaded on first run |
-| Namespaces | SQLite column | Multi-agent isolation, zero overhead |
+| Namespaces | SQLite column | Deprecated; use rooms, tags and `author` instead |
 | Tiered Memory | Access tracking | Hot/Warm/Cold scoring boost |
 | CLI | clap | Standard Rust CLI |
 
@@ -194,7 +194,7 @@ All critical file I/O uses the `.tmp` + `rename` pattern. On POSIX filesystems, 
 
 ### Schema Versioning
 
-Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v20. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant), v13 global documents (namespace deprecated, author column, slug uniqueness), v14 `memory_type` added to FTS5 index (#662), v15 `room_documents` junction table for room↔document linking (#689), v16 `author_type` column (human|agent) (#1083), v17 `deprecated_at` column — time-travel deprecation predicate (#1086), v18 provenance chain — `source_hash`, actor, `evidence_json` (#1172), v19 `rooms.description` for room rename/update (#1202), v20 audit-grade timeline — FK CASCADE dropped from `timeline_events` so history survives forget/deprecation, plus `created`-event backfill (#1280). Zero data loss guaranteed.
+Integer counter in `schema_version` table. Migrations run automatically on upgrade. Currently at v22. Schema history: v4 rooms, v5 memory_tags junction, v6 content_type column, v7 knowledge graph, v8 `memory_edges` + `slug` (#346), v9 `timeline_events` table (#347), v10 `source` + `source_type` (#348), v11 documents + document_chunks (#406), v12 hierarchy (parent_id on documents, room tables added to SCHEMA constant), v13 global documents (namespace deprecated, author column, slug uniqueness), v14 `memory_type` added to FTS5 index (#662), v15 `room_documents` junction table for room↔document linking (#689), v16 `author_type` column (human|agent) (#1083), v17 `deprecated_at` column — time-travel deprecation predicate (#1086), v18 provenance chain — `source_hash`, actor, `evidence_json` (#1172), v19 `rooms.description` for room rename/update (#1202), v20 audit-grade timeline — FK CASCADE dropped from `timeline_events` so history survives forget/deprecation, plus `created`-event backfill (#1280), v21 `recall_count` — recall/search hits counted apart from `access_count` (#1337), v22 `author` on memories, backfilled from the room link when a memory is in exactly one room (#1427). Zero data loss guaranteed.
 
 ### Rooms
 
@@ -216,7 +216,7 @@ Dual-axis recall boost applied after the RRF merge:
 - **Salience**: higher-scored by type weight (decision > insight > fact > note)
 - **Recency**: exponential decay `exp(-age/τ)` where τ is a per-type time constant
 
-Both are enabled by default (weight 0.1). Use `--no-salience` / `--no-recency` to disable. Previously opt-in (v0.7.3), now opt-out (#721). Config leaks are prevented by setting/resetting config around each query.
+Both are enabled by default (weight 0.1). Use `--salience false` / `--recency false` to disable. Previously opt-in (v0.7.3), now opt-out (#721). Config leaks are prevented by setting/resetting config around each query.
 
 ### Dream Cycle (#353)
 
@@ -267,7 +267,8 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
 ```
 ~/.codecora/uteke/
 ├── uteke.db                    # SQLite (memories + metadata + FTS5)
-├── uteke_index.usearch         # Persistent HNSW vector index
+├── uteke_index.usearch         # Persistent HNSW vector index (default engine)
+├── uteke_index.vecq            # Quantized index (only with the vecq engine)
 ├── uteke_index.keys            # Index key mapping (atomic save)
 ├── embeddinggemma-q4/           # Local ONNX embedding model (~200MB)
 │   └── onnx/                    # model_q4.onnx + model_q4.onnx_data
@@ -291,7 +292,7 @@ In Docker, the data directory defaults to `/data` (set via `UTEKE_HOME`). The im
 
 Full markdown content → SQLite (`documents` table), chunked summaries → embeddings (`document_chunks`).
 
-### Schema (v11)
+### Schema (added in v11)
 
 ```sql
 -- Full documents with unlimited content
