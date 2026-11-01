@@ -18,7 +18,7 @@
   <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
-  <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
+  <a href="https://hub.docker.com/r/codecoradev/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
   <a href="#-benchmark-982-recall-di-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
@@ -32,7 +32,7 @@
 ## ⚡ Mulai dalam 30 Detik
 
 ```bash
-# Install (macOS, Linux, Windows)
+# Install (macOS Apple Silicon, Linux; Windows: lihat di bawah)
 curl -sSL codecora.dev/uteke/install | sh
 
 # Simpan ingatan
@@ -62,7 +62,7 @@ uteke remember "Deploy v2.1 ke staging" \
 |--------|---------|
 | **Homebrew** | `brew install codecoradev/tap/uteke` (macOS Apple Silicon & Linux) |
 | **Cargo** | `cargo install uteke-cli` |
-| **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest` |
+| **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:latest --host 0.0.0.0` |
 | **Binary** | [GitHub Releases](https://github.com/codecoradev/uteke/releases) (macOS, Linux, Windows) |
 | **Windows (PowerShell)** | `powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/codecoradev/uteke/main/install.ps1 | iex"` |
 
@@ -178,7 +178,7 @@ Memory layer lain cuma single-player: setiap fakta disimpan di `user_id` yang fl
 
 ```bash
 # Bikin room shared
-uteke room create "engineering" --description "Keputusan tim"
+uteke room create engineering --title "Keputusan tim"
 
 # Agent Alice simpan keputusan
 uteke remember "Kita pilih Redis buat caching, bukan Memcached" \
@@ -189,7 +189,7 @@ uteke remember "Redis cluster: 3 node, 2 replica tiap node" \
   --room engineering --author bob
 
 # Agent manapun bisa recall history shared
-uteke recall "caching decision" --room engineering
+uteke room recall engineering "caching decision"
 ```
 
 **Kenapa ini penting:**
@@ -213,11 +213,12 @@ uteke recall "caching decision" --room engineering
 |-------|---------------|
 | 🧠 **Hybrid + Fusion Search** | Cari berdasarkan makna (vector) + kata kunci exact (FTS5). Digabung dengan Reciprocal Rank Fusion (RRF). Sejak v0.16.0, `fusion` (weighted RRF dari ranking vector dan hybrid) jadi default recall strategy. |
 | 🏠 **Rooms** | **Shared memory multi-agent.** Kelompokkan memori berdasarkan konteks (meeting, project, klien). Multiple agent baca/tulis ke room yang sama dengan atribusi author. Cross-agent recall tanpa sync manual. |
-| ⏳ **Time-travel** | Recall memori seperti adanya di titik waktu manapun. `uteke recall "deploy" --at 2025-01-15` |
+| ⏳ **Time-travel** | Recall memori seperti adanya di titik waktu manapun. `uteke recall "deploy" --at 2025-01-15T00:00:00Z` |
 | 🏷️ **Metadata Kaya** | Tag, entity, kategori, key:value di setiap memori. |
 | 🧩 **Tipe Memori** | Kategori bertipe (fact, procedure, decision, dll.) dengan auto-inferensi. |
-| ✏️ **Partial Updates** | Ubah isi, tags, metadata, importance, atau type tanpa rewrite penuh. |
+| ✏️ **Partial Updates** | `uteke update <id>` mengubah isi, tags, importance, pin, atau type di tempat. |
 | 📎 **Citations** | Atribusi sumber di setiap memori (URL, file, user, batch import). |
+| 👤 **Author** | Siapa yang menulis memori, dengan atau tanpa room (`--author`), plus tipe `human` vs `agent`. |
 
 ### Search & Intelligence
 
@@ -240,21 +241,22 @@ uteke recall "caching decision" --room engineering
 | 🖥️ **Mode Server** | Daemon persisten: eliminates cold-start embedding load di setiap call. |
 | 📂 **Batch Import** | Import seluruh direktori dengan routing strategi otomatis (dokumen vs. memori). |
 | 📝 **Document Engine** | Wiki/knowledge base dengan `uteke doc create/get/list` + auto-chunking. |
-| 📥 **Import/Export** | Backup dan restore berbasis JSONL. |
+| 📥 **Import/Export** | Backup dan restore berbasis JSONL; `export --full` / `import --full` juga membawa dokumen, room, graph, dan vector. |
 | 🔑 **View-Only API Keys** | Token read-only untuk akses GET saja ke server. |
-| 👤 **Tipe Author** | Atribusi `human` vs `agent` di setiap memori, konsisten di CLI, HTTP, dan MCP. |
 
 ### Performa & Privasi
 
 | Fitur | Apa fungsinya |
 |-------|---------------|
 | 📦 **Single Binary** | Zero dependency. Tanpa Python, tanpa API key. Local-first secara default. |
-| 🐳 **Docker Ready** | Image resmi di GHCR. Jalankan sebagai shared service untuk tim atau deployment cloud. |
-| 🔒 **Fully Offline** | Embedding ONNX lokal (EmbeddingGemma Q4, 768d). Tanpa telemetri, tanpa cloud. |
+| 🐳 **Docker Ready** | Image resmi multi-arch di [Docker Hub](https://hub.docker.com/r/codecoradev/uteke). Jalankan sebagai shared service untuk tim atau deployment cloud. |
+| 🔒 **Fully Offline** | Embedding ONNX lokal (EmbeddingGemma Q4, 768d). Tanpa telemetri, tanpa cloud. Satu-satunya akses network adalah cek rilis harian, bisa dimatikan dengan `UTEKE_NO_UPDATE_CHECK=1`. |
+| 🛡️ **Privacy Filter** | Secret (API key, token, nilai `.env`) di-mask sebelum memori di-embed atau disimpan; `[privacy] mode = "strict"` menolak penulisan. |
+| ✍️ **Upgrade Bertanda Tangan** | `uteke upgrade` memverifikasi tanda tangan cosign (Sigstore keyless) rilis sebelum menginstal. |
 | ⚡ **Recall Cache** | Cache LRU yang eliminate redundant embedding untuk query berulang. |
 | 🔥 **Tiered Memory** | Tracking Hot/Warm/Cold dengan auto-cleanup memori basi. |
+| 🧮 **Dua Vector Engine** | `usearch` (HNSW, default) atau `vecq` (kuantisasi 4-bit, pure Rust, index ~3x lebih kecil), dipilih saat runtime. |
 | 🔄 **Embed Fallback** | Degrade ke no-op embedder kalau local model gagal (nggak pernah crash). |
-| 👥 **Namespace Multi-Agent** | Memori terisolasi penuh per agent, tanpa overhead. |
 | 📊 **Benchmark** | `uteke bench` bawaan untuk perf testing. [Lihat hasil](docs/benchmarks.md). |
 
 ---
@@ -264,21 +266,27 @@ uteke recall "caching decision" --room engineering
 ```mermaid
 graph LR
     Input[Query User] --> Embed[Embedder ONNX Lokal<br/>768d, EmbeddingGemma Q4]
-    Embed --> HNSW[HNSW Vector Index<br/>usearch]
-    Embed --> FTS5[FTS5 Full-Text<br/>SQLite]
-    HNSW --> RRF[Reciprocal Rank Fusion<br/>k=60]
-    FTS5 --> RRF
-    RRF --> Results[Hasil Ranked]
+    Input --> FTS5[FTS5 Full-Text<br/>SQLite]
+    Embed --> Vec[Vector Index<br/>usearch atau vecq]
+    Vec --> Hybrid[Ranking hybrid<br/>vector + FTS5, RRF k=60]
+    FTS5 --> Hybrid
+    Vec --> Fusion[Fusion<br/>weighted RRF<br/>vector x1.7 + hybrid x1]
+    Hybrid --> Fusion
+    Fusion --> Boost[Boost salience + recency]
+    Boost --> Results[Hasil Ranked]
 
     style Input fill:#4a9eff,color:#fff
     style Results fill:#4aff9e,color:#000
-    style RRF fill:#ff9e4a,color:#fff
+    style Fusion fill:#ff9e4a,color:#fff
 ```
 
-**Cara kerja hybrid search:**
-1. **HNSW** (usearch): cari berdasarkan makna ("deploy" cocok dengan "rollout")
+**Cara kerja recall `fusion` (default):**
+1. **Vector index** (usearch HNSW atau vecq): cari berdasarkan makna ("deploy" cocok dengan "rollout")
 2. **FTS5** (SQLite): cari berdasarkan kata exact ("deploy" cocok dengan "deploy")
-3. **RRF** (k=60): gabungkan dua ranked lists → terbaik dari keduanya
+3. **Hybrid**: gabungkan list vector dan FTS5 dengan Reciprocal Rank Fusion (k=60)
+4. **Fusion**: gabungkan ranking vector (bobot 1.7) dengan ranking hybrid (bobot 1), lalu tambah boost kecil salience dan recency
+
+`--strategy vector | fts5 | hybrid | graph` memakai satu tahap saja.
 
 Semua jalan in-process. Tanpa network. Tanpa cloud. Tanpa server (kecuali mau pakai mode server).
 
@@ -297,8 +305,8 @@ Data kamu tersimpan di `~/.codecora/uteke/`.
 **Docker / mode server**: untuk tim atau agent remote.
 
 ```bash
-docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest
-# atau: uteke serve --host 0.0.0.0 --port 8767
+docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:latest --host 0.0.0.0
+# atau, tanpa Docker: uteke-serve --port 8767
 ```
 
 📖 [Panduan Docker](docs/docker.md) · [Dokumentasi server mode](docs/configuration.md#server-mode)
@@ -309,7 +317,7 @@ docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/ute
 
 ```bash
 # Bikin room shared
-uteke room create "engineering" --description "Keputusan tim"
+uteke room create engineering --title "Keputusan tim"
 
 # Agent Alice simpan keputusan
 uteke remember "Kita pilih Redis buat caching, bukan Memcached" \
@@ -320,7 +328,7 @@ uteke remember "Redis cluster: 3 node, 2 replica tiap node" \
   --room engineering --author bob
 
 # Agent manapun bisa recall history shared
-uteke recall "caching decision" --room engineering
+uteke room recall engineering "caching decision"
 ```
 
 Atribusi author di setiap memori; cross-agent recall tanpa sync manual.
@@ -345,8 +353,10 @@ Untuk Claude Desktop, Hermes, dan HTTP transport, lihat [MCP docs](docs/mcp.md).
 | | |
 |---|---|
 | **Mulai** | [Installation](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
-| **Referensi** | [CLI reference](docs/cli-reference.md) · [Konfigurasi](docs/configuration.md) · [Docker](docs/docker.md) |
-| **Integrasi** | [Setup MCP](docs/mcp.md) · Claude Code · Cursor · Hermes |
+| **Referensi** | [CLI reference](docs/cli-reference.md) · [Konfigurasi](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
+| **Konsep** | [Rooms](docs/rooms.md) · [Mengorganisasi memori](docs/organizing-memories.md) · [Arsitektur](docs/architecture.md) |
+| **Integrasi** | [Setup MCP](docs/mcp.md) (Claude Code, Cursor) · [Hermes](docs/integrations/hermes.md) |
+| **Keamanan** | [SECURITY.md](SECURITY.md) (laporan kerentanan, penandatanganan rilis) |
 | **Benchmark** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Reproduksi sendiri](benchmarks/longmemeval/REPRODUCING.md) |
 
 ---
@@ -374,7 +384,7 @@ Beberapa single-binary tool share filosofi kami: satu binary, zero deps, MCP ser
 <details>
 <summary><strong>Beneran bisa offline?</strong></summary>
 
-Ya. Embedding model (EmbeddingGemma Q4, 768d) download sekali (~200MB) saat first run. Setelah itu, zero network call. Tanpa telemetri. Kalau local model gagal, Uteke degrade ke no-op embedder, jadi nggak pernah crash dan nggak pernah manggil cloud API.
+Ya. Embedding model (EmbeddingGemma Q4, 768d) download sekali (~200MB) saat first run. Setelah itu, operasi memori tidak memakai network dan tidak ada telemetri. Binary mengecek rilis baru di GitHub sekali sehari; set `UTEKE_NO_UPDATE_CHECK=1` untuk mematikannya. Kalau local model gagal, Uteke degrade ke no-op embedder, jadi nggak pernah crash dan nggak pernah manggil cloud API.
 </details>
 
 <details>
@@ -392,7 +402,7 @@ Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan
 <details>
 <summary><strong>Sudah production-ready?</strong></summary>
 
-Uteke sekarang v0.22.1 dengan 200+ test, CI/CD di setiap commit, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke sekarang v0.22.1 dengan 1.300+ test, mutation testing sebelum setiap rilis, CI di setiap pull request, rilis bertanda tangan cosign, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
 </details>
 
 ---
@@ -415,10 +425,10 @@ Engine open-source tetap full-capability. Tidak ada bagian dari hasil benchmark 
 ## 🤝 Kontribusi
 
 ```bash
-cargo build --workspace        # Build
-cargo test --workspace         # Test (200+ test)
-cargo clippy -- -D warnings    # Lint
-cargo fmt                      # Format
+cargo build --workspace                                # Build
+cargo test --workspace                                 # Test
+cargo clippy --workspace --all-targets -- -D warnings  # Lint
+cargo fmt --all                                        # Format
 ```
 
 Kontribusi diterima! Baca [CONTRIBUTING.md](CONTRIBUTING.md) untuk panduan lengkap.

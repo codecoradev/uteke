@@ -296,7 +296,7 @@ docker run -d --name uteke \
   -p 8767:8767 \
   -e UTEKE_AUTH_TOKEN=your-secret \
   -v uteke-data:/data \
-  ghcr.io/codecoradev/uteke:latest
+  codecoradev/uteke:latest --host 0.0.0.0
 ```
 
 Point your MCP client at `http://YOUR_VPS_IP:8767/mcp` (or use a domain with TLS — see below).

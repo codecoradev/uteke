@@ -22,7 +22,7 @@
   <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
-  <a href="https://github.com/codecoradev/uteke/pkgs/container/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
+  <a href="https://hub.docker.com/r/codecoradev/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
   <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
   <a href="#-benchmarks-982-recall-on-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
@@ -36,7 +36,7 @@
 ## ⚡ 30-Second Quick Start
 
 ```bash
-# Install (macOS, Linux, Windows)
+# Install (macOS Apple Silicon, Linux; Windows: see below)
 curl -sSL codecora.dev/uteke/install | sh
 
 # Store a memory
@@ -62,7 +62,7 @@ Want your agent (Claude Code, Cursor, Hermes) to use it? One line:
 |--------|---------|
 | **Homebrew** | `brew install codecoradev/tap/uteke` (macOS Apple Silicon & Linux) |
 | **Cargo** | `cargo install uteke-cli` |
-| **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest` |
+| **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:latest --host 0.0.0.0` |
 | **Binary** | [GitHub Releases](https://github.com/codecoradev/uteke/releases) (macOS, Linux, Windows) |
 | **Windows (PowerShell)** | `powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/codecoradev/uteke/main/install.ps1 | iex"` |
 
@@ -180,11 +180,12 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 |---------|-------------|
 | 🧠 **Hybrid + Fusion Search** | Vector similarity + FTS5 full-text search, merged by Reciprocal Rank Fusion (RRF). Since v0.16.0, `fusion` (a weighted RRF of the vector and hybrid rankings) is the default recall strategy. Finds by meaning AND exact keywords. |
 | 🏠 **Rooms** | **Multi-agent shared memory.** Group memories by context (meetings, projects, clients). Multiple agents read/write to the same room with author attribution. Cross-agent recall without manual sync. |
-| ⏳ **Time-travel** | Recall memories as they existed at any point in time. `uteke recall "deploy" --at 2025-01-15` |
+| ⏳ **Time-travel** | Recall memories as they existed at any point in time. `uteke recall "deploy" --at 2025-01-15T00:00:00Z` |
 | 🏷️ **Rich Metadata** | Tags, entities, categories, key:value pairs on every memory. |
 | 🧩 **Memory Types** | Typed categories (fact, procedure, decision, etc.) with auto-inference. |
-| ✏️ **Partial Updates** | Update content, tags, metadata, importance, or type without full rewrite. |
+| ✏️ **Partial Updates** | `uteke update <id>` changes content, tags, importance, pin or type in place. |
 | 📎 **Citations** | Source attribution on every memory (URL, file, user, import batch). |
+| 👤 **Author** | Who wrote a memory, with or without a room (`--author`), plus `human` vs `agent` type. |
 
 ### Search & Intelligence
 
@@ -207,21 +208,22 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | 🖥️ **Server Mode** | Persistent daemon: eliminates cold-start embedding load on every call. |
 | 📂 **Batch Import** | Import entire directories with auto-strategy routing (document vs. memory extraction). |
 | 📝 **Document Engine** | Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking. |
-| 📥 **Import/Export** | JSONL-based backup and restore. |
+| 📥 **Import/Export** | JSONL backup and restore; `export --full` / `import --full` also carry documents, rooms, the graph and vectors. |
 | 🔑 **View-Only API Keys** | Read-only tokens for safe GET-only access to the server. |
-| 👤 **Author Types** | `human` vs `agent` attribution on every memory, across CLI, HTTP, and MCP. |
 
 ### Performance & Privacy
 
 | Feature | What it does |
 |---------|-------------|
 | 📦 **Single Binary** | Zero dependencies. No Python, no API keys. Local-first by default. |
-| 🐳 **Docker Ready** | Official image on GHCR. Run as a shared service for teams or cloud deployments. |
-| 🔒 **Fully Offline** | Local ONNX embeddings (EmbeddingGemma Q4, 768d). No telemetry, no cloud. |
+| 🐳 **Docker Ready** | Official multi-arch image on [Docker Hub](https://hub.docker.com/r/codecoradev/uteke). Run as a shared service for teams or cloud deployments. |
+| 🔒 **Fully Offline** | Local ONNX embeddings (EmbeddingGemma Q4, 768d). No telemetry, no cloud. The only network call is a daily release check, off with `UTEKE_NO_UPDATE_CHECK=1`. |
+| 🛡️ **Privacy Filter** | Secrets (API keys, tokens, `.env` values) are masked before a memory is embedded or stored; `[privacy] mode = "strict"` refuses the write instead. |
+| ✍️ **Signed Upgrades** | `uteke upgrade` verifies the release's cosign (Sigstore keyless) signature before installing. |
 | ⚡ **Recall Cache** | LRU cache eliminates redundant embedding for repeated queries. |
 | 🔥 **Tiered Memory** | Hot/Warm/Cold tracking with auto-cleanup of stale memories. |
+| 🧮 **Two Vector Engines** | `usearch` (HNSW, default) or `vecq` (4-bit quantized, pure Rust, ~3x smaller index), chosen at runtime. |
 | 🔄 **Embed Fallback** | Gracefully degrades to no-op embedder if local model fails (never crashes). |
-| 👥 **Multi-Agent Namespaces** | Fully isolated memory per agent, zero overhead. |
 | 📊 **Benchmarks** | Built-in `uteke bench` for perf testing. [See results](docs/benchmarks.md). |
 
 ---
@@ -231,21 +233,27 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 ```mermaid
 graph LR
     Input[User Query] --> Embed[Local ONNX Embedder<br/>768d, EmbeddingGemma Q4]
-    Embed --> HNSW[HNSW Vector Index<br/>usearch]
-    Embed --> FTS5[FTS5 Full-Text<br/>SQLite]
-    HNSW --> RRF[Reciprocal Rank Fusion<br/>k=60]
-    FTS5 --> RRF
-    RRF --> Results[Ranked Results]
+    Input --> FTS5[FTS5 Full-Text<br/>SQLite]
+    Embed --> Vec[Vector Index<br/>usearch or vecq]
+    Vec --> Hybrid[Hybrid ranking<br/>vector + FTS5, RRF k=60]
+    FTS5 --> Hybrid
+    Vec --> Fusion[Fusion<br/>weighted RRF<br/>vector x1.7 + hybrid x1]
+    Hybrid --> Fusion
+    Fusion --> Boost[Salience + recency boosts]
+    Boost --> Results[Ranked Results]
 
     style Input fill:#4a9eff,color:#fff
     style Results fill:#4aff9e,color:#000
-    style RRF fill:#ff9e4a,color:#fff
+    style Fusion fill:#ff9e4a,color:#fff
 ```
 
-**How hybrid search works:**
-1. **HNSW** (usearch): finds by meaning ("deploy" matches "rollout")
+**How the default `fusion` recall works:**
+1. **Vector index** (usearch HNSW or vecq): finds by meaning ("deploy" matches "rollout")
 2. **FTS5** (SQLite): finds by exact terms ("deploy" matches "deploy")
-3. **RRF** (k=60): merges both ranked lists → best of both worlds
+3. **Hybrid**: merges the vector and FTS5 lists with Reciprocal Rank Fusion (k=60)
+4. **Fusion**: merges the vector ranking (weight 1.7) with the hybrid ranking (weight 1), then adds small salience and recency boosts
+
+`--strategy vector | fts5 | hybrid | graph` picks a single stage instead.
 
 Everything runs in-process. No network. No cloud. No server required (unless you want server mode).
 
@@ -264,8 +272,8 @@ Your data stays in `~/.codecora/uteke/`.
 **Docker / server mode**: for teams or remote agents.
 
 ```bash
-docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/uteke:latest
-# or: uteke serve --host 0.0.0.0 --port 8767
+docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:latest --host 0.0.0.0
+# or, without Docker: uteke-serve --port 8767
 ```
 
 📖 [Docker setup guide](docs/docker.md) · [Server mode docs](docs/configuration.md#server-mode)
@@ -276,7 +284,7 @@ docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data ghcr.io/codecoradev/ute
 
 ```bash
 # Create a shared room
-uteke room create "engineering" --description "Team decisions"
+uteke room create engineering --title "Team decisions"
 
 # Alice's agent stores a decision
 uteke remember "We chose Redis for caching over Memcached" \
@@ -287,7 +295,7 @@ uteke remember "Redis cluster: 3 nodes, 2 replicas each" \
   --room engineering --author bob
 
 # Any agent can recall the shared history
-uteke recall "caching decision" --room engineering
+uteke room recall engineering "caching decision"
 ```
 
 Author attribution on every memory; cross-agent recall without manual sync.
@@ -312,8 +320,10 @@ For Claude Desktop, Hermes, and HTTP transport, see [MCP docs](docs/mcp.md).
 | | |
 |---|---|
 | **Getting started** | [Installation](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
-| **Reference** | [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md) · [Docker](docs/docker.md) |
-| **Integrations** | [MCP setup](docs/mcp.md) · Claude Code · Cursor · Hermes |
+| **Reference** | [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
+| **Concepts** | [Rooms](docs/rooms.md) · [Organizing memories](docs/organizing-memories.md) · [Architecture](docs/architecture.md) |
+| **Integrations** | [MCP setup](docs/mcp.md) (Claude Code, Cursor) · [Hermes](docs/integrations/hermes.md) |
+| **Security** | [SECURITY.md](SECURITY.md) (vulnerability reports, release signing) |
 | **Benchmarks** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Reproduce it yourself](benchmarks/longmemeval/REPRODUCING.md) |
 
 ---
@@ -341,7 +351,7 @@ Some single-binary tools share our philosophy: one binary, zero deps, MCP server
 <details>
 <summary><strong>Does it really work offline?</strong></summary>
 
-Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~200MB) on first run. After that, zero network calls. No telemetry. If the local model fails, Uteke degrades gracefully to a no-op embedder. It never crashes and never calls a cloud API.
+Yes. The embedding model (EmbeddingGemma Q4, 768d) downloads once (~200MB) on first run. After that, memory operations make no network calls and there is no telemetry. The binaries check GitHub for a new release once a day; set `UTEKE_NO_UPDATE_CHECK=1` to turn that off. If the local model fails, Uteke degrades gracefully to a no-op embedder. It never crashes and never calls a cloud API.
 </details>
 
 <details>
@@ -359,7 +369,7 @@ Yes. Uteke ships with an MCP server that works with Claude Code, Cursor, and Her
 <details>
 <summary><strong>Is it production-ready?</strong></summary>
 
-Uteke is at v0.22.1 with 200+ tests, CI/CD on every commit, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
+Uteke is at v0.22.1 with 1,300+ tests, mutation testing before each release, CI on every pull request, cosign-signed releases, and a benchmark harness. It's used in production by the CodeCora team and other early adopters. Still in 0.x, so expect rough edges, but the core is stable.
 </details>
 
 ---
@@ -382,10 +392,10 @@ results above is paywalled. Cloud adds hosted convenience on top.
 ## 🤝 Contributing
 
 ```bash
-cargo build --workspace        # Build
-cargo test --workspace         # Test (200+ tests)
-cargo clippy -- -D warnings    # Lint
-cargo fmt                      # Format
+cargo build --workspace                                # Build
+cargo test --workspace                                 # Test
+cargo clippy --workspace --all-targets -- -D warnings  # Lint
+cargo fmt --all                                        # Format
 ```
 
 Contributions welcome! Read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.

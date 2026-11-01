@@ -62,7 +62,7 @@ uteke upgrade --yes
 |------|-------------|
 | `--yes` | Skip confirmation prompt |
 
-> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies the cosign (Sigstore, keyless) signature of `checksums-sha256.txt` against roots built into the binary and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade, as does a release older than the installed version or a non-stable (pre-release) one; `uteke upgrade` installs only stable releases (see SECURITY.md). Only `uteke upgrade` checks the signature; `install.sh`, `install.ps1` and Homebrew do not. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
+> **Note:** Before v0.7.0 this command was called `uteke update`; that name now edits a memory in place. Verifies the cosign (Sigstore, keyless) signature of `checksums-sha256.txt` against roots built into the binary and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade, as does a release older than the installed version or a non-stable (pre-release) one; `uteke upgrade` installs only stable releases (see SECURITY.md). Only `uteke upgrade` checks the signature; `install.sh`, `install.ps1` and Homebrew do not. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
 
 ## uteke remember
 
@@ -420,16 +420,16 @@ uteke recall "api design" --context
 
 | Flag | Description |
 |------|-------------|
-| `--min <score>` | Minimum similarity score (0.0-1.0). `--min-score` is accepted as an alias (#1593) |
+| `--min <score>` | Minimum score (default 0.0 since 0.17.x, #1223: fusion scores are rank-based, not cosine). `--min-score` is accepted as an alias (#1593) |
 | `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
-| `--min <score>` | Minimum similarity score threshold (default 0.0 since 0.17.x, #1223 — fusion scores are rank-based, not cosine) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339) |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |
-| `--salience` | Salience boost is on by default with weight 0.1; passing `--salience` uses the configured `[recall] salience_weight` (default 0.15) instead. `--no-salience` disables it |
-| `--recency` | Recency boost is on by default with weight 0.1; passing `--recency` uses the configured `[recall] recency_weight` (default 0.15) instead. `--no-recency` disables it |
-| `--jaccard` | Enable Jaccard token reranking signal (default: off, requires `jaccard_weight` > 0 in config) |
+| `--salience <true\|false>` | Without the flag the salience boost is on with weight 0.1. `--salience true` uses the configured `[recall] salience_weight` (default 0.15); `--salience false` turns it off |
+| `--recency <true\|false>` | Without the flag the recency boost is on with weight 0.1. `--recency true` uses the configured `[recall] recency_weight` (default 0.15); `--recency false` turns it off |
+
+The Jaccard reranking signal has no flag: set `[recall] jaccard_weight` above 0 to enable it.
 
 ### Reading recall scores (#1405)
 
@@ -510,6 +510,16 @@ uteke room stats "project-kickoff"
 
 # Recall within a room (semantic)
 uteke room recall "project-kickoff" --query "database decision"
+
+# Change the title or description, or rename the room (#1202)
+uteke room update "project-kickoff" --description "Kickoff decisions"
+uteke room rename "project-kickoff" "kickoff"
+
+# Add an existing memory to a room without copying it (#1589)
+uteke room link <memory-id> "project-kickoff" --author alice
+
+# Move a memory from one room to another (#1202)
+uteke room move-memory <memory-id> --from "project-kickoff" --to "kickoff"
 
 # Generate structured document from room
 uteke room document "project-kickoff"
@@ -878,8 +888,8 @@ Find orphan memories — disconnected nodes with low importance and few accesses
 # Find orphans with default thresholds
 uteke orphans
 
-# Custom thresholds
-uteke orphans --min-age-days 14 --max-access-count 3
+# Custom threshold and result count
+uteke orphans --threshold 0.2 --limit 100
 
 # JSON output for scripting
 uteke orphans --json
@@ -887,9 +897,8 @@ uteke orphans --json
 
 | Flag | Description |
 |------|-------------|
-| `--min-age-days <n>` | Minimum age in days (default: 7) |
-| `--max-access-count <n>` | Maximum access count (default: 2) |
-| `--limit <n>` | Max results (default: 50) |
+| `--threshold <n>` | Importance below which a memory is a candidate (default: 0.3) |
+| `--limit <n>` | Max results, 0 = all (default: 50) |
 | `--namespace <ns>` | Scope to namespace |
 | `--json` | JSON output |
 
@@ -913,7 +922,7 @@ uteke timeline <memory-id> --json
 
 | Flag | Description |
 |------|-------------|
-| `--limit <n>` | Max events (default: 50) |
+| `--limit <n>` | Max events, 0 = all (default: 20) |
 | `--json` | JSON output |
 
 ## Other Commands
@@ -1035,14 +1044,12 @@ List all documents (global — not namespace-scoped, v0.7.0).
 ```bash
 uteke doc list --limit 20
 uteke doc list --tree          # Indented tree view
-uteke doc list --roots-only   # Root documents only
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--limit <n>` | Max results (default: 20) |
 | `--tree` | Show as indented tree (recursive children) |
-| `--roots-only` | Show only root documents (no parent) |
 
 ### `uteke doc search`
 
@@ -1163,22 +1170,20 @@ curl -H "Authorization: Bearer viewer-key" http://127.0.0.1:8767/stats
 curl -X POST -H "Authorization: Bearer viewer-key" ...  # 403 Forbidden
 ```
 
-## Configurable Limits (#404)
+## Limits
 
-All limits can be overridden via env vars or `[limits]` config section:
+The input limits are fixed in this release:
 
-| Env Var | Config Key | Default | Description |
-|---------|-----------|---------|-------------|
-| `UTEKE_MAX_CONTENT_LENGTH` | `max_content_length` | 100000 | Max memory content (chars, 0=disable) |
-| `UTEKE_MAX_TAGS_COUNT` | `max_tags_count` | 20 | Max tags per memory |
-| `UTEKE_MAX_TAG_LENGTH` | `max_tag_length` | 50 | Max single tag length (chars) |
-| `UTEKE_MAX_PAYLOAD_SIZE` | `max_payload_size` | 10485760 | Max server payload (bytes) |
-| `UTEKE_DEFAULT_RECALL_LIMIT` | `default_recall_limit` | 5 | Default recall limit |
+| Limit | Value |
+|---------|-------|
+| Memory content | 100,000 characters |
+| Tags per memory | 20 |
+| Tag length | 50 characters |
+| Server request body | 10,485,760 bytes (10 MB) |
 
-## Changelog
+A `[limits]` section and the `UTEKE_MAX_*` variables are parsed but not applied
+yet, so changing them has no effect. The default `--limit` for recall, search and
+list is 10 on every surface.
 
-### v0.6.5
-- Room fixes (#545/#546/#547/#549/#550): Fixed room creation race conditions, room memory list pagination, room summary edge cases, room document generation for empty rooms, and room delete cascade consistency.
-
-### v0.6.6
-- Room summary Unicode fix (#565): Summary truncation now uses char boundaries instead of byte offsets, preventing mid-character cuts in multi-byte content.
+For the history of every command, see the
+[CHANGELOG](https://github.com/codecoradev/uteke/blob/main/CHANGELOG.md).

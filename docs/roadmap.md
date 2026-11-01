@@ -23,7 +23,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 
 ## v0.16.0 — Fusion Default `✓ Released 2026-08-29`
 
-- **`fusion` is now the default recall strategy (#1123)** — weighted RRF of the vector and hybrid rankings; LongMemEval 500Q R@5 0.946 vs 0.854 hybrid (+9.2 pts), zero config needed
+- **`fusion` is now the default recall strategy (#1123)** — weighted RRF of the vector and hybrid rankings; LongMemEval 500Q R@5 0.946 vs 0.854 vector-only (+9.2 pts), zero config needed
 - Public benchmark page: dual-metric view (recall_any + strict recall_all) with comparison chart (#1141)
 - Full-release validation: 500Q pure-default run, binary built from the exact release SHA
 - Post-release fixes: `repair --reembed` handles NULL-embedding rows (#1146), CLA check bot allowlist (#1132), repair report reflects final index state (#1149)

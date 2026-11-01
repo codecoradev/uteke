@@ -276,13 +276,7 @@ Benchmarked on Oracle Cloud ARM (Ampere Altra), CPU-only, no GPU.
     └── uteke.log.YYYY-MM-DD    # Rotated logs
 ```
 
-In Docker, the data directory defaults to `/data` (set via `UTEKE_HOME`). The `slim` image variant does not bundle the embedding model — mount the model directory separately:
-```bash
-docker run -d --name uteke \
-  -v uteke-data:/data \
-  -v ./models/embeddinggemma-q4:/data/embeddinggemma-q4 \
-  ghcr.io/codecoradev/uteke:slim
-```
+In Docker, the data directory defaults to `/data` (set via `UTEKE_HOME`). The image does not bundle the embedding model: the entrypoint downloads it into `/data/models/` on the first start, or skips it when an external embedder is configured (see [Docker](docker.md#using-an-external-embedder-openai-compatible-or-ollama)).
 
 ## Known Limitations
 

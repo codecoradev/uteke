@@ -33,7 +33,7 @@ This guide gives you a **practical evaluation framework**, not a brand shoot-out
 | **Search** | Hybrid (Vector + FTS5 + RRF) | Finds by meaning AND exact keywords. Reciprocal Rank Fusion (k=60) merges both. |
 | **Recall speed** | ~45ms P50 at 10K memories | Local execution, no network round-trip. |
 | **Multi-agent** | Rooms | Shared memory spaces with author attribution and cross-agent recall. |
-| **Time-travel** | Native point-in-time | `uteke recall "deploy" --at 2025-01-15` — queries historical state. |
+| **Time-travel** | Native point-in-time | `uteke recall "deploy" --at 2025-01-15T00:00:00Z` — queries historical state. |
 | **Extraction** | Offline (default) + LLM (optional) | Rule-based extraction works zero-config. Upgrade to LLM if desired. |
 | **Integration** | MCP + CLI + HTTP API | JSON-RPC (stdio + HTTP), full CLI, REST API with view-only API keys. |
 | **Dependencies** | Zero runtime deps | No Docker, Postgres, Neo4j, Python, or cloud account needed. |
@@ -132,7 +132,7 @@ Fill in this matrix for any memory tool you evaluate. Here's how Uteke scores:
 | **Search** | Hybrid (Vector HNSW + FTS5 + RRF fusion) | Is it vector-only? FTS-only? Or hybrid? |
 | **Recall speed** | ~45ms P50 at 10K memories | What's the latency? Is it network round-trip or local? |
 | **Multi-agent** | Rooms: shared memory, author attribution, cross-agent recall | Can multiple agents share context? Is there author attribution? |
-| **Time-travel** | Native point-in-time queries (`--at 2025-01-15`) | Can you query past states? Is it native or bolted on? |
+| **Time-travel** | Native point-in-time queries (`--at 2025-01-15T00:00:00Z`) | Can you query past states? Is it native or bolted on? |
 | **Extraction** | Default: offline rule-based (zero API). Optional: LLM extraction. | Does it require an LLM API key to extract facts? Is there an offline option? |
 | **Integration** | MCP server (stdio + HTTP), CLI, HTTP API | Does it speak MCP? Is there a CLI for debugging? |
 | **Dependencies** | Zero runtime deps. No Docker, no Python, no database server. | Count the dependencies. Each one is operational overhead. |
@@ -224,7 +224,7 @@ Most memory layers are single-player. They store facts under a flat user ID and 
 
 ```bash
 # Create a shared room
-uteke room create "engineering" --description "Team decisions"
+uteke room create engineering --title "Team decisions"
 
 # Alice's agent stores a decision
 uteke remember "We chose Redis for caching over Memcached" \
@@ -235,7 +235,7 @@ uteke remember "Redis cluster: 3 nodes, 2 replicas each" \
   --room engineering --author bob
 
 # Any agent can recall the shared history
-uteke recall "caching decision" --room engineering
+uteke room recall engineering "caching decision"
 ```
 
 Every memory in a room carries **author attribution**: you always know who said what. And any agent with access to the room can recall across all entries.

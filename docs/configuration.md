@@ -232,7 +232,7 @@ Control minimum similarity score for recall results:
 ```toml
 [recall]
 # Minimum similarity score (0.0-1.0). Memories below this score are excluded.
-# Default: 0.3 (balanced). Use 0.0 to disable filtering.
+# Default: 0.0 (no filtering; fusion scores are rank-based, see below).
 min_score = 0.0
 
 # Strict-mode threshold (used with `--strict` flag)
@@ -241,7 +241,7 @@ min_score_strict = 0.5
 # Default recall strategy for `uteke recall` when --strategy is not given.
 # One of: fusion | vector | fts5 | hybrid | graph.
 #   fusion — weighted RRF of the vector and hybrid rankings (default since 0.16.0;
-#            LongMemEval 500Q R@5 0.946 vs 0.854 hybrid, #1123)
+#            LongMemEval 500Q R@5 0.946 vs 0.854 vector-only, #1123)
 #   vector — vector similarity only (original behavior)
 #   fts5   — full-text search only
 #   hybrid — vector + FTS5 fused via Reciprocal Rank Fusion (k=60)
@@ -258,26 +258,19 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `min_score` | 0.0 | Minimum similarity score (0.0-1.0). **CLI only.** |
-| `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`). **CLI only.** |
+| `min_score` | 0.0 | Minimum score; results below it are dropped |
+| `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`) |
 | `default_strategy` | `fusion` | Default recall strategy (`vector\|fts5\|hybrid\|graph\|fusion`). Since 0.16.0 `fusion` (weighted RRF: vector×1.7 + hybrid×1, #1123) is the default — LongMemEval fast50 R@5 0.98 vs 0.9267 hybrid |
 | `graph_density_weight` | 0.1 | Edge-density boost weight (graph strategy only) |
 | `graph_authority_weight` | 0.1 | Incoming-edge authority boost weight (graph strategy only) |
 | `graph_rerank_enabled` | true | Master switch for graph reranking |
 
-> **⚠️ Threshold defaults differ across interfaces (#995)**
->
-> | Interface | Default `min_score` | Notes |
-> |-----------|---------------------|-------|
-> | **CLI** | `0.0` (from `[recall] min_score`) | Reads from `uteke.toml`. Set `--min` or `[recall] min_score` to enable. |
-> | **HTTP API / Server** | `0.0` (`DEFAULT_MIN_SCORE`) | Server has its own constant, ignores `[recall] min_score`. |
->
-> **Note (since 0.17.x, #1223):** default recall scores under the fusion strategy are rank-based (RRF contribution + salience/recency boosts, typically ~0.0-0.2), not raw cosine similarity. A legacy cosine-era default threshold of 0.3 silently filtered out nearly all results, so the default is now 0.0 across every surface. Set a threshold explicitly (config `min_score`, `--min`, `--strict`, or HTTP `min_score`) only when you know the score scale of the active strategy.
-> | **MCP** | `0.0` | MCP server hardcodes 0.0. |
->
-> This means a score of 0.25 is returned by API/MCP but **filtered out** by CLI.
-> For benchmark/retrieval evaluation, always pass `--min 0.0` explicitly to
-> evaluate raw ranking quality without UX threshold filtering.
+> **Score scale (since 0.17.x, #1223):** under the default fusion strategy a
+> recall score is rank-based (RRF contribution plus salience/recency boosts,
+> typically about 0.0 to 0.2), not a cosine similarity. That is why the default
+> `min_score` is 0.0 on every surface. Set a threshold (config `min_score`,
+> `--min`, `--strict`, or HTTP/MCP `min_score`) only when you know the score scale
+> of the active strategy. For benchmark evaluation pass `--min 0.0` explicitly.
 
 ### Salience + Recency Boost (#352)
 
@@ -286,15 +279,14 @@ Dual-axis recall ranking boost. Applied **after** the RRF merge and recall cache
 - **Salience** — higher score for high-value memory types (decision > insight > fact > note). Per-type decay rates are hardcoded in `type_half_life_days()`.
 - **Recency** — exponential decay `exp(-age/τ)` where τ is a per-type time constant.
 
-Opt-in per query via `--salience` / `--recency` CLI flags. The `dream` cycle's `compact` phase can use these for smarter pruning.
+Both boosts are on by default with weight 0.1. On the CLI, `--salience true` / `--recency true` switch to the configured weights below, and `--salience false` / `--recency false` turn a boost off. The `dream` cycle's `compact` phase can use these for smarter pruning.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `salience_weight` | 0.15 | Salience boost weight (0 = disable) |
-| `recency_weight` | 0.15 | Recency boost weight (0 = disable) |
+| `salience_weight` | 0.15 | Weight used with `--salience true` (0 = disable) |
+| `recency_weight` | 0.15 | Weight used with `--recency true` (0 = disable) |
 | `jaccard_weight` | 0.0 | Jaccard token-overlap reranking weight (0 = disable) |
 
-Enabled by default (0.15). Override per-query with `--strict`, `--min <score>`, or `--strategy <name>`.
 
 ## Environment Variables
 
@@ -343,7 +335,7 @@ docker run -d --name uteke \
   -v uteke-data:/data \
   -e UTEKE_LOG_LEVEL=info \
   -e UTEKE_RECALL_MIN_SCORE=0.5 \
-  ghcr.io/codecoradev/uteke:latest
+  codecoradev/uteke:latest --host 0.0.0.0
 ```
 
 ## Config Migration
@@ -459,28 +451,15 @@ Logs are written to `~/.codecora/uteke/logs/uteke.log` with daily rotation:
 
 Non-blocking async writer — logging never blocks memory operations. Rotated files are kept until manually deleted.
 
-## Configurable Limits (#404)
+## Limits
 
-All hardcoded limits can be overridden via env vars or the `[limits]` section:
+The input limits are fixed in this release: 100,000 characters of content, 20
+tags per memory, 50 characters per tag, and a 10 MB server request body. The
+default `--limit` for recall, search and list is 10 on every surface.
 
-```toml
-[limits]
-max_content_length = 100000   # Max memory content (chars). 0 = disable
-max_tags_count = 20           # Max tags per memory
-max_tag_length = 50           # Max single tag length (chars)
-max_payload_size = 10485760   # Max server payload (bytes, default 10MB)
-default_recall_limit = 5      # Default recall limit
-```
-
-Environment variables override config values:
-
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `UTEKE_MAX_CONTENT_LENGTH` | 100000 | Max memory content length |
-| `UTEKE_MAX_TAGS_COUNT` | 20 | Max tags per memory |
-| `UTEKE_MAX_TAG_LENGTH` | 50 | Max tag length |
-| `UTEKE_MAX_PAYLOAD_SIZE` | 10485760 | Max server payload |
-| `UTEKE_DEFAULT_RECALL_LIMIT` | 5 | Default recall limit |
+A `[limits]` section and the `UTEKE_MAX_CONTENT_LENGTH`, `UTEKE_MAX_TAGS_COUNT`,
+`UTEKE_MAX_TAG_LENGTH`, `UTEKE_MAX_PAYLOAD_SIZE` and `UTEKE_DEFAULT_RECALL_LIMIT`
+variables are parsed but not applied yet, so setting them has no effect.
 
 ## View-Only API Token (#409)
 
