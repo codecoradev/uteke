@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Security
+
+- **MCP tools fence stored text as data (#1599)** - the MCP tools that return
+  memories, documents or room summaries (`uteke_recall`, `uteke_search`,
+  `uteke_list`, `uteke_get`, `uteke_context`, the doc and room read tools and a few
+  more) wrap their result in a `<uteke-stored-data>` block that says the content is
+  data, not instructions, so a memory that reads like a command is not taken as
+  one. A closing tag inside the stored text is escaped. The tool descriptions, the
+  `initialize` instructions and `uteke guide` say the same. Write tools, errors and
+  the HTTP JSON API are unchanged. A client that parses the MCP text can turn it
+  off with `UTEKE_MCP_FENCE=0`.
+
 ### Removed
 
 - The `uteke hook <shell>` script. It exported `UTEKE_PROJECT_STORE` on `cd`, but
