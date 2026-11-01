@@ -189,7 +189,6 @@ Copy the entire folder to back up or transfer to another machine.
 - [Smart Decay](/smart-decay) — pinning, importance scoring, aging
 - [Relationship Graph](/relationship-graph) — link and traverse memories
 - [Benchmarks](/benchmarks) — performance numbers
-- [Shell Hooks](/shell-hooks) — auto-load project context
 - [MCP Server](/mcp) — AI agent integration
 - [CLI Reference](/cli-reference) — complete command reference
 - [Configuration](/configuration) — config file and options

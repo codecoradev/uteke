@@ -36,7 +36,7 @@ pub struct Cli {
     pub command: Commands,
 }
 
-/// Supported shell types for completions and hooks.
+/// Shell names accepted by the removed `hook` command.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum SupportedShell {
     Bash,
@@ -385,7 +385,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgingCommands,
     },
-    /// Output shell hook script for auto-context loading
+    /// Removed: prints a no-op so an existing `eval "$(uteke hook zsh)"` in a
+    /// shell config keeps working; a project store is set with `.uteke/uteke.toml`.
+    #[command(hide = true)]
     Hook {
         /// Shell type: bash, zsh, fish
         shell: SupportedShell,
@@ -1035,7 +1037,8 @@ mod skill_coverage {
         let mut missing = Vec::new();
         for cmd in root.get_subcommands() {
             let name = cmd.get_name();
-            if EXEMPT.contains(&name) {
+            // Hidden commands (e.g. the removed `hook`) are not offered to agents.
+            if EXEMPT.contains(&name) || cmd.is_hide_set() {
                 continue;
             }
             if !skill.contains(&format!("uteke {name}")) {

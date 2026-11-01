@@ -147,5 +147,5 @@ This is intentional: documents represent shared knowledge (wiki, architecture gu
 
 - **One namespace per agent role**: Use descriptive names like "planner", "coder", "reviewer" instead of "agent-1", "agent-2".
 - **Use config files for defaults**: Set `default_namespace` in `uteke.toml` per project so agents don't need `--namespace` on every call.
-- **Shell hooks for project isolation**: Install shell hooks (`uteke hook install`) to auto-discover `.uteke/` in parent directories. Each project gets isolated memory.
+- **One store per project**: put `[store] path = "./.uteke"` in the project's `.uteke/uteke.toml` (see [Configuration](configuration.md)); running `uteke` from that root uses the project's store.
 - **Export for backup**: `uteke export --namespace my-agent > backup.jsonl`. Backup per-agent memory independently.

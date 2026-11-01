@@ -334,14 +334,15 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Aging { command } => aging::run(cli, uteke, ns, command),
 
-        Commands::Hook { shell } => {
-            use crate::cli::SupportedShell;
-            let script = match shell {
-                SupportedShell::Bash => include_str!("../../assets/shell/uteke-hook.bash"),
-                SupportedShell::Zsh => include_str!("../../assets/shell/uteke-hook.zsh"),
-                SupportedShell::Fish => include_str!("../../assets/shell/uteke-hook.fish"),
-            };
-            print!("{script}");
+        Commands::Hook { .. } => {
+            // The hook only exported UTEKE_PROJECT_STORE, which nothing read.
+            // Print a comment (a no-op under eval or `| source`) and tell the
+            // user once per shell to drop the line.
+            println!("# uteke hook was removed; delete this line from your shell config");
+            eprintln!(
+                "uteke: `uteke hook` was removed and does nothing; remove it from your shell config. \
+                 For a per-project store, put `[store] path = \"./.uteke\"` in .uteke/uteke.toml."
+            );
             Ok(())
         }
 

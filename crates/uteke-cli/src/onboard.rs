@@ -825,7 +825,6 @@ fn showcase() {
                     "init --memory-provider",
                     "Auto recall + extraction (no manual calls)",
                 ),
-                ("hook bash/zsh/fish", "Shell hook for auto-context on cd"),
             ],
         ),
     ];
