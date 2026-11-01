@@ -122,7 +122,7 @@ pub(crate) fn run_repair(
             }
             if reembed_report.remaining > 0 {
                 println!(
-                    "{} rows still have no vector (--limit reached) — run `uteke repair --reembed` again to continue.",
+                    "{} rows were not tried (--limit reached) — run `uteke repair --reembed` again to continue.",
                     reembed_report.remaining
                 );
             }

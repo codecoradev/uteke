@@ -139,7 +139,7 @@ impl crate::Uteke {
         // Exact-content duplicates for a deferred import: hash -> stored id,
         // extended with every row this import stores.
         let mut known_hashes = if options.defer_embedding {
-            self.store.active_source_hashes(namespace)?
+            self.store.active_content_hashes(namespace)?
         } else {
             std::collections::HashMap::new()
         };
@@ -716,5 +716,123 @@ mod defer_embedding_tests {
             .unwrap();
         assert_eq!((r.reembedded, r.remaining), (0, 1));
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_duplicate_row_links_its_rooms_to_the_stored_memory() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let id = u.remember("shared fact", &[], None, None).unwrap();
+        u.create_room("r1", None, "default").unwrap();
+        let r = u
+            .import_with(
+                "{\"content\":\"shared fact\",\"rooms\":[\"r1\"]}\n",
+                None,
+                DEFER,
+            )
+            .unwrap();
+        assert_eq!((r.imported, r.room_links), (0, 1));
+        let linked: i64 = u
+            .graph_store()
+            .query_row(
+                "SELECT COUNT(*) FROM room_memories WHERE room_id = 'r1' AND memory_id = ?1",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, 1);
+    }
+
+    #[test]
+    fn duplicates_follow_the_current_content_not_the_insert_time_hash() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let id = u.remember("old text", &[], None, None).unwrap();
+        // an update rewrites the content but keeps source_hash (tamper audit)
+        u.graph_store()
+            .execute(
+                "UPDATE memories SET content = 'new text' WHERE id = ?1",
+                [&id],
+            )
+            .unwrap();
+        let old = u
+            .import_with("{\"content\":\"old text\"}\n", None, DEFER)
+            .unwrap();
+        assert_eq!(old.imported, 1, "the old text is no longer stored");
+        let new = u
+            .import_with("{\"content\":\"new text\"}\n", None, DEFER)
+            .unwrap();
+        assert_eq!(new.imported, 0, "the current text is a duplicate");
+    }
+
+    #[test]
+    fn rows_that_fail_do_not_use_up_the_limit() {
+        let (emb, _) = RecordingEmbedder::failing_first(2);
+        let u = open_with_embedder(Box::new(emb));
+        let input: String = (0..3)
+            .map(|i| format!("{{\"content\":\"row {i}\"}}\n"))
+            .collect();
+        u.import_with(&input, None, DEFER).unwrap();
+        let one = ReembedOptions {
+            limit: Some(1),
+            pause: std::time::Duration::ZERO,
+        };
+        let r = u.reembed_missing_with(one).unwrap();
+        assert_eq!((r.failed, r.reembedded, r.remaining), (2, 1, 0));
+        assert_eq!(vectors(&u), 1);
+    }
+
+    #[test]
+    fn chunks_left_by_the_limit_are_counted_as_remaining() {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        u.doc_upsert("guide", "Guide", "first part of the guide", &[], None)
+            .unwrap();
+        let chunks: i64 = u
+            .graph_store()
+            .execute("UPDATE document_chunks SET embedding = NULL", [])
+            .unwrap() as i64;
+        assert!(chunks > 0);
+        u.import_with("{\"content\":\"a deferred memory\"}\n", None, DEFER)
+            .unwrap();
+        let r = u
+            .reembed_missing_with(ReembedOptions {
+                limit: Some(1),
+                pause: std::time::Duration::ZERO,
+            })
+            .unwrap();
+        assert_eq!((r.reembedded, r.chunks_reembedded), (1, 0));
+        assert_eq!(r.remaining as i64, chunks);
+        let rest = u.reembed_missing_with(ReembedOptions::default()).unwrap();
+        assert_eq!((rest.chunks_reembedded as i64, rest.remaining), (chunks, 0));
+    }
+
+    #[test]
+    fn reembedded_rows_get_the_cosine_links_remember_makes() {
+        let texts = [
+            "the quokka lives on rottnest island in western australia",
+            "the quokka lives on rottnest island near perth in western australia",
+        ];
+        // control: `remember` links these two
+        let (emb, _) = RecordingEmbedder::new();
+        let control = open_with_embedder(Box::new(emb));
+        for t in texts {
+            control.remember(t, &[], None, None).unwrap();
+        }
+        assert!(
+            control.count_edges().unwrap() > 0,
+            "fixture texts must link"
+        );
+
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let input: String = texts
+            .iter()
+            .map(|t| format!("{{\"content\":\"{t}\"}}\n"))
+            .collect();
+        u.import_with(&input, None, DEFER).unwrap();
+        assert_eq!(u.count_edges().unwrap(), 0);
+        u.reembed_missing_with(ReembedOptions::default()).unwrap();
+        assert!(u.count_edges().unwrap() > 0);
     }
 }

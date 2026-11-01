@@ -291,9 +291,9 @@ pub enum Commands {
         #[arg(long)]
         reembed: bool,
 
-        /// With --reembed: embed at most N rows this run (memories first, then
-        /// document chunks). Run it again to continue; the report says how
-        /// many are left (#1608).
+        /// With --reembed: stop after N rows were embedded (memories first, then
+        /// document chunks; a row that fails does not count). Run it again to
+        /// continue; the report says how many were not tried (#1608).
         #[arg(long, requires = "reembed")]
         limit: Option<usize>,
 

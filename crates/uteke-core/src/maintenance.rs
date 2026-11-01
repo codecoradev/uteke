@@ -274,11 +274,13 @@ impl crate::Uteke {
         self.reembed_missing_with(ReembedOptions::default())
     }
 
-    /// [`Self::reembed_missing`] in a controlled way (#1608): at most
-    /// `options.limit` rows (memories first, then document chunks) with
-    /// `options.pause` between rows. Only rows without a vector are picked, so
-    /// running it again continues where the last run stopped;
-    /// `ReembedReport::remaining` says how many are left.
+    /// [`Self::reembed_missing`] in a controlled way (#1608): it stops after
+    /// `options.limit` rows were embedded (memories first, then document
+    /// chunks), with `options.pause` between rows. A row that fails does not
+    /// count toward the limit, so rows that always fail cannot hold back the
+    /// rest. Only rows without a vector are picked, so running it again
+    /// continues where the last run stopped; `ReembedReport::remaining` counts
+    /// the rows not tried this run.
     pub fn reembed_missing_with(&self, options: ReembedOptions) -> Result<ReembedReport, Error> {
         let mut budget = options.limit.unwrap_or(usize::MAX);
         let mut report = self.reembed_missing_memories(&mut budget, options.pause)?;
@@ -301,9 +303,9 @@ impl crate::Uteke {
         Ok((missing, reembedded, failed))
     }
 
-    /// Chunks without a vector, at most `budget` of them (the budget is
-    /// reduced by the number attempted). Returns `(missing, reembedded,
-    /// failed, attempted)`.
+    /// Chunks without a vector, until `budget` of them were embedded (the
+    /// budget is reduced by that number; failures do not count). Returns
+    /// `(missing, reembedded, failed, attempted)`.
     fn reembed_chunks(
         &self,
         budget: &mut usize,
@@ -315,14 +317,16 @@ impl crate::Uteke {
         }
         // An embedder that cannot start is an error, not one failed chunk each.
         self.ensure_embedder()?;
-        let attempt = &missing[..missing.len().min(*budget)];
-        *budget -= attempt.len();
-        let (mut reembedded, mut failed) = (0usize, 0usize);
+        let (mut reembedded, mut failed, mut attempted) = (0usize, 0usize, 0usize);
         let mut new_items: Vec<(String, Vec<f32>)> = Vec::new();
-        for (i, (id, content)) in attempt.iter().enumerate() {
-            if i > 0 && !pause.is_zero() {
+        for (id, content) in &missing {
+            if reembedded == *budget {
+                break;
+            }
+            if attempted > 0 && !pause.is_zero() {
                 std::thread::sleep(pause);
             }
+            attempted += 1;
             match self.embed_once(content) {
                 Ok(vec) => match self.store.set_chunk_embedding(id, &vec) {
                     Ok(_) => {
@@ -356,7 +360,8 @@ impl crate::Uteke {
                 tracing::warn!(error = %e, "Failed to save index after chunk reembed");
             }
         }
-        Ok((missing.len(), reembedded, failed, attempt.len()))
+        *budget -= reembedded;
+        Ok((missing.len(), reembedded, failed, attempted))
     }
 
     fn reembed_missing_memories(
@@ -372,8 +377,6 @@ impl crate::Uteke {
         let total_scanned = self.store.load_all(None)?.len();
 
         let missing_count = missing.len();
-        let attempt = &missing[..missing_count.min(*budget)];
-        *budget -= attempt.len();
         let mut report = ReembedReport {
             total_scanned,
             missing_count,
@@ -382,16 +385,15 @@ impl crate::Uteke {
             chunks_missing: 0,
             chunks_reembedded: 0,
             chunks_failed: 0,
-            remaining: missing_count - attempt.len(),
+            remaining: missing_count,
         };
-        if attempt.is_empty() {
+        if missing.is_empty() || *budget == 0 {
             return Ok(report);
         }
 
         tracing::info!(
             total = total_scanned,
             missing = missing_count,
-            attempt = attempt.len(),
             "Re-embedding memories with missing vectors"
         );
 
@@ -403,10 +405,14 @@ impl crate::Uteke {
         // One attempt per row, and the embedder lock is taken per row: a repair
         // over a dead backend reports each failed row instead of waiting on a
         // retry for every one, and does not block recall for the whole loop.
-        for (i, mem) in attempt.iter().enumerate() {
+        for (i, mem) in missing.iter().enumerate() {
+            if report.reembedded == *budget {
+                break;
+            }
             if i > 0 && !pause.is_zero() {
                 std::thread::sleep(pause);
             }
+            report.remaining -= 1;
             match self.embed_once(&mem.content) {
                 Ok(vec) => {
                     // Update memory in database.
@@ -427,9 +433,10 @@ impl crate::Uteke {
                 }
             }
             if (i + 1) % 100 == 0 {
-                tracing::info!(done = i + 1, of = attempt.len(), "Re-embed progress");
+                tracing::info!(done = i + 1, of = missing_count, "Re-embed progress");
             }
         }
+        *budget -= report.reembedded;
 
         // Add newly-embedded memories to the index.
         if !new_items.is_empty() {

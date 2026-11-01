@@ -8,10 +8,12 @@
   import can store its rows without a vector, so it does not wait on the
   embedder (a CPU-heavy local model, a backend that is down or rate-limited).
   The rows are keyword-searchable at once; exact copies of a stored memory or of
-  an earlier row are skipped (the cosine duplicate check needs a vector).
-  `uteke repair --reembed` adds the vectors later, now with `--limit N` (at most
-  N rows per run, memories first, then document chunks; run again to continue,
-  the report says how many are left) and `--pause-ms MS` (sleep between rows).
+  an earlier row are skipped by the hash of the current content (the cosine
+  duplicate check needs a vector). `uteke repair --reembed` adds the vectors
+  later, now with `--limit N` (stop after N rows were embedded, memories first,
+  then document chunks; a failing row does not count; run again to continue,
+  the report says how many were not tried) and `--pause-ms MS` (sleep between
+  rows).
   Rows it embeds also get the cosine links `remember` makes. The Rust API gains
   `Uteke::import_with` / `ImportOptions` and `Uteke::reembed_missing_with` /
   `ReembedOptions`. `POST /import` and `POST /repair` are unchanged.
