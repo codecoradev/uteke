@@ -44,7 +44,7 @@
   <text x="1224" y="300" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#7ED8C9">Apache 2.0 · offline-first · CPU-only</text>
 
   <!-- footer line -->
-  <text x="56" y="590" font-family="Inter" font-weight="400" font-size="17" fill="#8D95A9">Mobile: <tspan fill="#94E2D5">https://uteke.app</tspan> · local-first · your data never leaves your device</text>
+  <text x="56" y="590" font-family="Inter" font-weight="400" font-size="17" fill="#8D95A9">Self-host free · or hosted on Uteke Cloud: <tspan fill="#94E2D5">uteke.app</tspan></text>
 
   <!-- features row -->
   <text x="1224" y="348" text-anchor="end" font-family="Inter" font-weight="400" font-size="19" fill="#98A2B8">HNSW + FTS5 + RRF(k=60) · ONNX EmbeddingGemma · MCP server</text>

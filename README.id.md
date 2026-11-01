@@ -1,428 +1,314 @@
 <p align="center">
-  <img src="docs/assets/uteke-banner.png" alt="Uteke: Satu memori. Semua agent. Tanpa cloud." width="640" />
+  <img src="docs/assets/uteke-icon.png" alt="Logo burung hantu Uteke" width="88" />
 </p>
 
 <h1 align="center">Uteke</h1>
-<p align="center"><strong>Satu memori. Semua agent. Tanpa cloud.</strong></p>
-<p align="center">
-  Beri AI kamu memori yang nggak pernah keluar dari laptop kamu. Mendukung Claude, Cursor, Copilot, dan semua agent yang kompatibel MCP.
-</p>
 
 <p align="center">
-  <strong>98.2% LongMemEval-S recall@5</strong> · query hangat ~45 ms · <strong>0 LLM token</strong> per query · CPU-only · fully offline
+  <strong>Memori jangka panjang untuk semua agent AI.</strong><br />
+  Satu binary Rust, jalan offline, tanpa API key. Self-host gratis, atau biar kami yang host di <a href="https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall">Uteke Cloud</a>.
 </p>
 
 <p align="center">
   <a href="https://github.com/codecoradev/uteke/actions/workflows/ci.yml?branch=develop"><img src="https://github.com/codecoradev/uteke/actions/workflows/ci.yml/badge.svg?branch=develop" alt="CI" /></a>
   <a href="https://github.com/codecoradev/uteke/releases"><img src="https://img.shields.io/github/v/release/codecoradev/uteke?style=flat-square&color=green" alt="Latest Release" /></a>
-  <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
-  <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg?style=flat-square" alt="Rust 1.85+" />
-  <a href="https://hub.docker.com/r/codecoradev/uteke"><img src="https://img.shields.io/badge/Docker-ready-blue.svg?style=flat-square" alt="Docker" /></a>
-  <img src="https://img.shields.io/badge/recall-~45ms-brightgreen.svg?style=flat-square" alt="Recall ~45ms" />
-  <a href="#-benchmark-982-recall-di-longmemeval-s"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-crimson.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
+  <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
+  <a href="#benchmark"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-1F908C.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
 
 <p align="center">
-  <a href="README.md">🇬🇧 English</a> · <strong>🇮🇩 Bahasa Indonesia</strong>
+  <a href="#mulai-cepat">Mulai cepat</a> ·
+  <a href="#benchmark">Benchmark</a> ·
+  <a href="docs/mcp.md">Sambungkan agent</a> ·
+  <a href="#dokumentasi">Dokumentasi</a> ·
+  <a href="https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall">Uteke Cloud</a> ·
+  <a href="README.md">English</a>
+</p>
+
+<p align="center">
+  <a href="benchmarks/longmemeval/RESULTS.md">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-breakdown-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-breakdown-light.png" />
+      <img src="docs/assets/longmemeval-breakdown-light.png" width="880" alt="LongMemEval-S, 500 pertanyaan, Uteke v0.20.0: recall_any@5 98,2%, strict recall_all@10 95,2%, coverage@5 94,4%, strict recall_all@5 88,0% (maksimum 99,4%). Pencarian kata kunci saja 91,4% vs default Uteke 98,2%." />
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <i>Semua 500 pertanyaan LongMemEval-S, tanpa panggilan LLM di retrieval. Raw output-nya ada di repo: <a href="benchmarks/longmemeval/REPRODUCING.md">cek dalam semenit, atau jalankan ulang semuanya dengan sekitar $10</a>.</i>
 </p>
 
 ---
 
-## ⚡ Mulai dalam 30 Detik
+## Kenapa Uteke
+
+Hari Senin kamu kasih tahu agent cara kamu deploy. Hari Kamis dia sudah lupa. Tiap sesi mulai dari nol, dan tiap agent cuma punya setengah ingatan masing-masing.
+
+Uteke kasih mereka semua satu memori jangka panjang yang jalan di mesin kamu sendiri:
+
+- **Recall yang bisa dicek.** [98,2% recall@5 di LongMemEval-S](#benchmark), angka yang lebih ketat ditampilkan di sebelahnya, dan raw output-nya ada di repo ini.
+- **Cepat dan murah.** Recall hangat ~45 ms, 0 token LLM per query, cukup CPU.
+- **Satu binary.** Tanpa Python, tanpa Docker, tanpa vector database, tanpa API key. Model embedding (~200 MB) diunduh sekali.
+- **Satu memori, semua agent.** Claude Code, Claude Desktop, Cursor, Hermes, dan klien MCP lain berbagi store yang sama. [Rooms](docs/rooms.md) mencatat agent atau orang mana yang menulis apa.
+- **Cari berdasarkan makna dan kata kunci.** Vector lokal dan full-text search SQLite, digabung jadi satu ranking ([cara kerjanya](#cara-kerja)).
+- **Ingat lintas waktu.** Recall per titik waktu (`--at`), relationship graph, document engine, dan decay untuk memori basi.
+- **Privat dari awal.** Tanpa telemetry. Secret seperti API key disamarkan sebelum memori disimpan.
+- **Open source.** Apache-2.0, rilis ditandatangani cosign.
+
+---
+
+## Mulai cepat
 
 ```bash
 # Install (macOS Apple Silicon, Linux; Windows: lihat di bawah)
 curl -sSL codecora.dev/uteke/install | sh
 
-# Simpan ingatan
+# Simpan memori
 uteke remember "Deploy v2.1 ke staging jam 3 sore"
 
 # Cari lagi: berdasarkan makna DAN kata kunci
-uteke recall "kapan deploy?"
+uteke recall "kapan kita deploy?"
 ```
 
-**Selesai.** Tanpa API key, tanpa Python, tanpa cloud.
+Tanpa API key, tanpa Python, tanpa akun cloud. Run pertama mengunduh model embedding (~200 MB, sekali saja).
 
-First run otomatis download embedding model (~200MB, sekali doang) dan langsung jalan.
+Kasih agent kamu (Claude Code, Cursor, Hermes) memori yang sama dengan satu baris:
 
-Mau simpan dengan metadata lengkap?
-
-```bash
-uteke remember "Deploy v2.1 ke staging" \
-  --tags deploy,staging \
-  --entity staging-server \
-  --category infrastructure
+```jsonc
+// .mcp.json
+{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
 ```
+
+Baru pakai Uteke, atau kamu *adalah* agent AI? Jalankan `uteke onboard`. Dia mendeteksi setup kamu, menanyakan agent yang kamu pakai, lalu menyambungkan semuanya. 📖 [Onboarding](docs/getting-started.md#interactive-onboarding)
+
+Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)** menjalankan mesin yang sama untuk kamu: tambahkan satu URL di Claude, login, selesai. Gratis selama open beta.
 
 <details>
-<summary>📦 Opsi install lainnya</summary>
+<summary>📦 Opsi install lain & Docker</summary>
 
-| Metode | Command |
+| Metode | Perintah |
 |--------|---------|
 | **Homebrew** | `brew install codecoradev/tap/uteke` (macOS Apple Silicon & Linux) |
 | **Cargo** | `cargo install uteke-cli` |
 | **Docker** | `docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:latest --host 0.0.0.0` |
 | **Binary** | [GitHub Releases](https://github.com/codecoradev/uteke/releases) (macOS, Linux, Windows) |
-| **Windows (PowerShell)** | `powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/codecoradev/uteke/main/install.ps1 | iex"` |
+| **Windows (PowerShell)** | `powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/codecoradev/uteke/main/install.ps1 \| iex"` |
 
-📖 [Panduan install lengkap](INSTALL.md) · [Docker docs](docs/docker.md)
+📖 [Panduan install lengkap](INSTALL.md) · [Docs Docker](docs/docker.md)
 </details>
-
-Baru kenal uteke (atau kamu *memang* AI agent)? Jalankan `uteke onboard`. Wizard-nya
-mendeteksi setup, nanya agent apa yang kamu pakai, dan nyambungin semuanya. 📖 [Dokumentasi onboarding](docs/getting-started.md#interactive-onboarding)
 
 ---
 
-## 📊 Benchmark: 98.2% recall di LongMemEval-S
+## Self-host atau Cloud
 
-[LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) nyembunyiin fakta yang
-dibutuhkan agent di ~115 sesi chat per pertanyaan, lalu ngecek apakah retrieval
-menemukan buktinya. 500 pertanyaan hand-curated, lima kemampuan memori. Uteke
-menjalankan suite penuh dengan **nol panggilan LLM di jalur retrieval**: embedding
-lokal, satu CPU, deterministik.
+Mesinnya sama, dua cara menjalankannya.
 
-| Metrik | Uteke **v0.19.0** | agentmemory¹ | BM25-only¹ |
+| | **Self-host** (repo ini) | **[Uteke Cloud](https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)** |
+|---|---|---|
+| Mesin dan recall | Lengkap, tanpa paywall | Mesin yang sama |
+| Jalan di | Laptop atau server kamu | Kami yang host |
+| Sambungkan agent | `uteke-mcp` di `.mcp.json` | Tambahkan `https://uteke.app/mcp` di Claude, login |
+| Data kamu | Nggak pernah keluar dari mesin kamu | Disimpan oleh kami; bisa diekspor kapan saja |
+| Harga | Gratis, Apache-2.0 | Gratis selama open beta ([batas](https://uteke.app/pricing?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)) |
+
+**Pilih self-host** kalau data kamu harus tetap di mesin sendiri, atau kamu mau menjalankan Uteke di infrastruktur sendiri.
+**Pilih Cloud** kalau kamu mau satu memori di beberapa perangkat dan agent tanpa mengurus server.
+
+---
+
+## Benchmark
+
+[LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) menyembunyikan fakta yang dibutuhkan agent di antara ~115 sesi chat per pertanyaan, lalu mengecek apakah retrieval bisa menemukannya. 500 pertanyaan yang dikurasi manual, lima kemampuan memori. Uteke menjalankan semuanya dengan **nol panggilan LLM di jalur retrieval**: embedding lokal, satu CPU, deterministik.
+
+| Metrik | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
-| **recall_any@5** (bukti di top-5) | **98.2%** | 95.2% | 86.2% |
-| recall_any@10 | 98.8% | 98.6% | 94.6% |
-| **recall_all@5** (semua bukti, strict) | **88.0%**² | 88.2% MRR³ | n/a |
-| LLM token / query | **0** | 0 | 0 |
-
-**Stabilitas antar-rilis** (500 pertanyaan penuh, diskor dari raw yang di-commit —
-[RESULTS.md](benchmarks/longmemeval/RESULTS.md#three-release-stability-full-500-question-basis-scored-from-committed-raw)):
-
-| Rilis | v0.16.0 | v0.17.0 | v0.19.0 |
-|---|---|---|---|
-| recall_any@5 | 98.2% | 98.4% | **98.2%** |
-| strict recall_all@5 | 88.0% | 88.0% | **88.0%** |
-
-<sub>¹ Angka publikasi agentmemory, benchmark yang sama, split 500 pertanyaan yang sama (basis recall_any@5 mereka; terverifikasi apples-to-apples di [head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)). ² Strict = *semua* sesi gold harus masuk top-5; 65% pertanyaan butuh beberapa sesi. Ceiling matematis 99.4%. ³ MRR, bukan recall_all (tidak bisa dibandingkan langsung; ditampilkan untuk kelengkapan).</sub>
+| **recall_any@5** (bukti di top 5) | **98,2%** | 96,6% | 95,2% |
+| recall_any@10 | 98,8% | — | 98,6% |
+| **strict recall_all@5** (semua bukti di top 5) | <b>88,0%</b>² | tidak dipublikasikan | tidak dipublikasikan³ |
+| Panggilan LLM di retrieval | **0** | — | 0 |
 
 <p align="center">
-  <img src="docs/assets/longmemeval-recall-v019.png" alt="LongMemEval-S recall@5: uteke 98.2% (v0.19.0) vs MemPalace 96.6% dan agentmemory 95.2% (hasil raw ketiga rilis di-commit di repo)" width="880" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-comparison-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-comparison-light.png" />
+    <img src="docs/assets/longmemeval-comparison-light.png" width="760" alt="LongMemEval-S recall_any@5, 500 pertanyaan: Uteke 98,2%, MemPalace 96,6%, agentmemory 95,2%. Sumbu mulai dari 0." />
+  </picture>
 </p>
 
-**Per kategori pertanyaan** (recall_any@5: cerita per kategori yang jarang ditampilkan tool lain):
+<sub>¹ Angka yang mereka publikasikan di benchmark dan split 500 pertanyaan yang sama, dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory mempublikasikan MRR 88,2%, metrik yang berbeda.</sub>
+
+**Stabil antar rilis** (500 pertanyaan penuh, dihitung dari raw yang di-commit, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#four-release-stability-full-500-question-basis-scored-from-committed-raw)):
+
+| Rilis | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
+|---|---|---|---|---|
+| recall_any@5 | 98,2% | 98,4% | 98,2% | 98,2% |
+| strict recall_all@5 | 88,0% | 88,0% | 88,0% | 88,0% |
+
+**Per jenis pertanyaan** (recall_any@5, v0.20.0):
 
 | knowledge-update | single-session | temporal | multi-session |
 |:---:|:---:|:---:|:---:|
-| **100%** | 96.7–98.2% | **98.4%** | 98.3% |
+| **100%** | 96,7–98,2% | 98,4% | 98,3% |
 
-Bagian sulit itu bukan menemukan *sebuah* jarum; bukti setiap pertanyaan ada di
-top-50 (**nol meleset**). Sisa gap-nya: *urutan*, saat satu pertanyaan butuh
-beberapa sesi sekaligus: strict recall_all@5 di angka 88.0% dengan ceiling 99.4%.
+Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang tersisa adalah urutan, saat satu pertanyaan butuh beberapa sesi sekaligus: strict recall_all@5 88,0% dari batas 99,4%, dan sebagian besar kegagalan hanya kehilangan satu sesi.
 
-> **🎯 Jangan percaya benchmark kami. Jalankan sendiri.** Harness lengkapnya ada di
-> repo ini: dataset publik, output raw di-commit untuk ketiga rilis (v0.16/v0.17/v0.19),
-> scoring deterministik yang bisa kamu hitung ulang dalam ~20 baris Python. Tanpa perlu
-> embedder untuk verifikasi, ~$10 untuk menjalankan 500 pertanyaan sendiri.
-> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)**
+> **🎯 Jangan percaya benchmark kami. Jalankan sendiri.** Dataset publik, raw output untuk setiap rilis yang divalidasi, dan skor yang bisa kamu hitung ulang dengan ~20 baris Python. Mengecek hasil yang di-commit cuma butuh semenit tanpa embedder; menjalankan ulang 500 pertanyaan sekitar $10.
+> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipt untuk angka utama (run v0.19.0)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
 
-Juga tersedia: `uteke bench --counts 100,1000,10000` untuk latency/throughput di
-mesin kamu sendiri. 📖 [Dokumentasi benchmark lengkap](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md)
+`uteke bench --counts 100,1000,10000` mengukur latency dan throughput di mesin kamu sendiri. 📖 [Docs benchmark](docs/benchmarks.md)
 
 ---
 
-## 💡 Buat Apa Uteke?
+## Sambungkan agent kamu
 
-**🤖 Lagi bangun AI agent?** Kasih memori persisten tanpa dependency cloud. Agent kamu ingat preferensi user, keputusan sebelumnya, dan konteks, antar sesi, fully offline.
+| Klien | Caranya |
+|---|---|
+| **Claude Code** | `.mcp.json`: `{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }` · [detail](docs/mcp.md#claude-code) |
+| **Claude Desktop** | [contoh config](docs/mcp.md#claude-desktop) |
+| **Cursor** | `.mcp.json` yang sama dengan Claude Code · [detail](docs/mcp.md#cursor) |
+| **Hermes** | stdio atau HTTP · [detail](docs/mcp.md#hermes) |
+| **Klien MCP lain** | stdio (`uteke-mcp`) atau Streamable HTTP (`uteke-serve`) · [transport](docs/mcp.md#transport-comparison) |
+| **Claude di web, desktop, atau mobile** | tambahkan `https://uteke.app/mcp` sebagai connector, login ([Uteke Cloud](https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)) |
+| **Tanpa MCP?** | agent apa pun yang bisa menjalankan perintah shell bisa memanggil CLI `uteke` |
 
-**👥 Kerja tim?** Pakai [Rooms](docs/rooms.md) buat share knowledge. Meeting notes, keputusan project, pilihan arsitektur: bisa dicari semua orang, dengan atribusi author.
-
-**🔒 Bangun app buat domain sensitif?** Kesehatan, keuangan, legal: data tetap di mesin kamu. Nggak ada API call, nggak ada telemetri, nggak ada cloud. Embedding lokal (ONNX, 768d).
-
-**⌨️ Power user yang hidup di terminal?** Uteke itu personal knowledge graph kamu. Simpan apapun, cari berdasarkan makna, hubungkan pikiran yang related. Semua dari command line.
-
----
-
-## 🔥 Kenapa Uteke?
-
-Bayangin: kamu baru habis 2 jam jelasin codebase ke ChatGPT. Sesi berikutnya? Kosong. Ulang dari nol. Lagi.
-
-Setiap AI tool lupa. Context window penuh, sesi berakhir, dan AI kamu start over setiap kali. Uteke kasih memori persisten, dan semuanya tetap di mesin kamu.
-
-| | **Uteke** | **Tool A** | **Tool B** | **Tool C** | **Tool D** | **Tool E** | **Tool F** | **Tool G** |
-|---|---|---|---|---|---|---|---|---|
-| **Bahasa** | Rust (satu binary) | Python (pip) | Python | TypeScript | TypeScript | Python | TypeScript | Go (satu binary) |
-| **Setup** | Satu binary (`curl \| sh`) | pip install + venv | pip + Docker + Qdrant | npm + iii-engine | npm (Node.js) | pip + Docker + Neo4j | Cloud atau binary lokal | Satu binary |
-| **API key** | ❌ Nggak perlu | ⚠️ Untuk embedding remote | ✅ OpenAI/LLM | ✅ LLM key | ✅ LLM key | ✅ LLM key | ⚠️ Cloud saja | ❌ Nggak perlu |
-| **Bisa offline** | ✅ Full | ⚠️ Opsional | ❌ Cloud embedding | ❌ Butuh LLM | ❌ Butuh LLM | ❌ Butuh LLM + vector DB | ✅ Binary lokal + Ollama | ✅ Full |
-| **Search** | **Fusion** (weighted RRF vector + hybrid; hybrid = HNSW + FTS5 RRF) | sqlite-vec + FTS5 | Vector + Graph | Vector + Graph | Vector | Hybrid (semantic + keyword + graph) | Vector + rerank | **FTS5 doang** |
-| **Kecepatan recall** | ~45ms | ~50ms+ | Network round-trip | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Cepat (lokal) |
-| **Multi-agent** | ✅ **Rooms** (shared memory, cross-agent recall, atribusi author) | ✅ Multi-agent surface | ❌ | ✅ Shared server | ✅ Multi-agent groups | ❌ | ❌ | ⚠️ Share via MCP |
-| **Time-travel** | ✅ Native point-in-time | ⚠️ Temporal triples | ❌ | ❌ | ❌ | ✅ Temporal graphs | ❌ | ❌ |
-| **MCP server** | ✅ JSON-RPC + HTTP | ✅ stdio + SSE | ❌ | ✅ 54 MCP tools | ❌ | ✅ Graphiti MCP | ✅ MCP open-source | ✅ stdio MCP |
-| **Data kamu** | ✅ Nggak pernah keluar dari mesin | ✅ Local-first | ⚠️ Dikirim ke cloud LLM | ✅ Lokal (iii-engine) | ⚠️ Dikirim ke cloud LLM | ⚠️ Dikirim ke cloud LLM | ⚠️ Di-host Cloudflare | ✅ Lokal |
-| **Lisensi** | Apache 2.0 | MIT | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | MIT | MIT |
-
-> **Catatan:** Label Tool (A–G) merepresentasikan kategori umum AI memory layer per
-> Agustus 2026. Kemampuan dinilai dari dokumentasi publik dan bisa berubah. Tabel ini
-> titik awal evaluasi kamu sendiri, bukan ranking definitif.
-
-> **Uteke vs Tool A (Python local-first):** Dua-duanya local-first dengan semantic + FTS5 search. Keunggulan Uteke: **satu binary** (tanpa runtime Python), **time-travel native** (bukan temporal triples), **rooms**, dan **zero runtime dependency**.
-
-> **Uteke vs Tool G (Go single binary):** Dua-duanya single-binary, offline, tanpa API key, dua-duanya punya MCP server. Tool G itu **FTS5-only** (keyword search doang). Uteke nambah **vector semantic search + RRF fusion + rooms + time-travel + graph relationships + smart decay + document engine + batch import**. Filosofi kesederhanaan yang sama, lebih banyak kemampuan.
-
-> **Uteke vs Tool F (TypeScript mode lokal):** Tool F sekarang punya mode binary lokal dengan dukungan Ollama. Langkah solid ke arah offline-first. Tapi di baliknya tetap TypeScript/Node.js. Uteke itu Rust: footprint lebih kecil, startup lebih cepat, zero runtime. Uteke juga punya **hybrid search dengan FTS5** (mode lokal Tool F vector-only, tanpa fallback keyword).
-
-> **Uteke vs Tool B/D/E:** Mereka powerful, tapi semua butuh cloud LLM API key + Docker infra. Data kamu dikirim ke provider LLM eksternal. Uteke jalan fully offline dengan embedding ONNX lokal. Tanpa Docker, tanpa Python, tanpa API key.
-
-> **Uteke vs Tool C:** Tool C punya 54 MCP tools dan multi-agent shared memory via local engine. Keunggulan Uteke: **zero dependency** (tanpa npm, tanpa engine tambahan), **hybrid search** (Tool C tidak punya FTS5), dan **time-travel queries**.
-
----
-
-## 🏠 Rooms: Shared Memory Multi-Agent
-
-Memory layer lain cuma single-player: setiap fakta disimpan di `user_id` yang flat, nggak kelihatan sama agent lain. **Uteke Rooms** bikin multiple AI agent bisa share memory space dengan atribusi author.
+<details>
+<summary>🏠 Rooms: beberapa agent, satu memori bersama (contoh)</summary>
 
 ```bash
-# Bikin room shared
+# Buat room bersama
 uteke room create engineering --title "Keputusan tim"
 
-# Agent Alice simpan keputusan
-uteke remember "Kita pilih Redis buat caching, bukan Memcached" \
+# Agent milik Alice menyimpan keputusan
+uteke remember "Kita pilih Redis untuk caching, bukan Memcached" \
   --room engineering --author alice
 
-# Agent Bob tambah konteks
-uteke remember "Redis cluster: 3 node, 2 replica tiap node" \
+# Agent milik Bob menambah konteks
+uteke remember "Cluster Redis: 3 node, masing-masing 2 replica" \
   --room engineering --author bob
 
-# Agent manapun bisa recall history shared
-uteke room recall engineering "caching decision"
+# Agent mana pun bisa recall riwayat bersama
+uteke room recall engineering "keputusan caching"
 ```
 
-**Kenapa ini penting:**
-
-| Masalah tanpa Rooms | Solusi dengan Rooms |
-|---|---|
-| Agent A nggak lihat memori Agent B | Shared space, cross-agent recall |
-| Knowledge tim silo per user | Satu room, multiple author |
-| Nggak ada cara tau siapa bilang apa | Author di setiap memori |
-| Workflow multi-agent butuh sync manual | Agent share context otomatis |
-
-📖 **[Dokumentasi Rooms lengkap →](docs/rooms.md)**
+Setiap memori tercatat penulisnya; recall lintas agent tanpa sinkronisasi manual. 📖 [Rooms](docs/rooms.md)
+</details>
 
 ---
 
-## ✨ Fitur
+## Fitur
 
-### Memori Inti
+| Memori | Pencarian | Integrasi | Privasi & operasional |
+|---|---|---|---|
+| Rooms dengan atribusi penulis | Fusion vector + full-text (default) | MCP lewat stdio dan Streamable HTTP | Fully offline, tanpa telemetry |
+| Recall per titik waktu (`--at`) | Relationship graph dan auto-link | Server mode dan image Docker | Secret disamarkan sebelum disimpan |
+| Tag, entity, tipe memori | Boost salience dan recency | Document engine (`uteke doc`) | Upgrade bertanda tangan (cosign) |
+| Partial update dan sitasi | Dream cycle: dedup, backlink, orphan | Batch import, export/import penuh | Dua vector engine (`usearch`, `vecq`) |
 
-| Fitur | Apa fungsinya |
-|-------|---------------|
-| 🧠 **Hybrid + Fusion Search** | Cari berdasarkan makna (vector) + kata kunci exact (FTS5). Digabung dengan Reciprocal Rank Fusion (RRF). Sejak v0.16.0, `fusion` (weighted RRF dari ranking vector dan hybrid) jadi default recall strategy. |
-| 🏠 **Rooms** | **Shared memory multi-agent.** Kelompokkan memori berdasarkan konteks (meeting, project, klien). Multiple agent baca/tulis ke room yang sama dengan atribusi author. Cross-agent recall tanpa sync manual. |
-| ⏳ **Time-travel** | Recall memori seperti adanya di titik waktu manapun. `uteke recall "deploy" --at 2025-01-15T00:00:00Z` |
-| 🏷️ **Metadata Kaya** | Tag, entity, kategori, key:value di setiap memori. |
-| 🧩 **Tipe Memori** | Kategori bertipe (fact, procedure, decision, dll.) dengan auto-inferensi. |
-| ✏️ **Partial Updates** | `uteke update <id>` mengubah isi, tags, importance, pin, atau type di tempat. |
-| 📎 **Citations** | Atribusi sumber di setiap memori (URL, file, user, batch import). |
-| 👤 **Author** | Siapa yang menulis memori, dengan atau tanpa room (`--author`), plus tipe `human` vs `agent`. |
-
-### Search & Intelligence
-
-| Fitur | Apa fungsinya |
-|-------|---------------|
-| 🔗 **Relationship Graph** | Hubungkan memori dengan edge bertipe (supersedes, contradicts, references). Auto-backlink. |
-| 🔗 **Cross-Entity Linking** | Referensi dua arah memori↔dokumen via wikilink `[[doc-slug]]`. |
-| 🤖 **Cosine Auto-Linking** | Otomatis bikin edge `similar_to` antar memori yang related. |
-| 📉 **Smart Decay** | Skor importance komposit. Pin yang penting, biarkan yang basi memudar. |
-| 📈 **Salience + Recency** | Boost recall dual-axis berdasarkan tipe dan usia memori. |
-| 🔍 **Orphan Detection** | Cari memori terputus dengan importance rendah untuk dibersihkan. |
-| 🌙 **Dream Cycle** | Maintenance satu perintah: lint → backlinks → dedup → orphans. |
-| 🧬 **Consolidation** | Gabungkan memori room yang mirip jadi lebih sedikit dan lebih padat: planner level-segmen, kebijakan trust provenance, kontrol per-pasangan. |
-
-### Integrasi
-
-| Fitur | Apa fungsinya |
-|-------|---------------|
-| 🔌 **MCP Server** | JSON-RPC via stdio + Streamable HTTP. Langsung pakai dengan Claude Code, Cursor, Hermes. |
-| 🖥️ **Mode Server** | Daemon persisten: eliminates cold-start embedding load di setiap call. |
-| 📂 **Batch Import** | Import seluruh direktori dengan routing strategi otomatis (dokumen vs. memori). |
-| 📝 **Document Engine** | Wiki/knowledge base dengan `uteke doc create/get/list` + auto-chunking. |
-| 📥 **Import/Export** | Backup dan restore berbasis JSONL; `export --full` / `import --full` memindahkan seluruh store: dokumen, room, graph, serta author dan provenance tiap memory (vector dibangun ulang di target). |
-| 🔑 **View-Only API Keys** | Token read-only untuk akses GET saja ke server. |
-
-### Performa & Privasi
-
-| Fitur | Apa fungsinya |
-|-------|---------------|
-| 📦 **Single Binary** | Zero dependency. Tanpa Python, tanpa API key. Local-first secara default. |
-| 🐳 **Docker Ready** | Image resmi multi-arch di [Docker Hub](https://hub.docker.com/r/codecoradev/uteke). Jalankan sebagai shared service untuk tim atau deployment cloud. |
-| 🔒 **Fully Offline** | Embedding ONNX lokal (EmbeddingGemma Q4, 768d). Tanpa telemetri, tanpa cloud. Satu-satunya akses network adalah cek rilis harian, bisa dimatikan dengan `UTEKE_NO_UPDATE_CHECK=1`. |
-| 🛡️ **Privacy Filter** | Secret (API key, token, nilai `.env`) di-mask sebelum memori di-embed atau disimpan; `[privacy] mode = "strict"` menolak penulisan. |
-| ✍️ **Upgrade Bertanda Tangan** | `uteke upgrade` memverifikasi tanda tangan cosign (Sigstore keyless) rilis sebelum menginstal. |
-| ⚡ **Recall Cache** | Cache LRU yang eliminate redundant embedding untuk query berulang. |
-| 🔥 **Tiered Memory** | Tracking Hot/Warm/Cold dengan auto-cleanup memori basi. |
-| 🧮 **Dua Vector Engine** | `usearch` (HNSW, default) atau `vecq` (kuantisasi 4-bit, pure Rust, index ~3x lebih kecil), dipilih saat runtime. |
-| 🔄 **Embed Fallback** | Degrade ke no-op embedder kalau local model gagal (nggak pernah crash). |
-| 📊 **Benchmark** | `uteke bench` bawaan untuk perf testing. [Lihat hasil](docs/benchmarks.md). |
+Penjelasan lengkap setiap fitur ada di [README bahasa Inggris](README.md#features) dan [dokumentasi](#dokumentasi).
 
 ---
 
-## 🚀 Cara Kerja
+## Cara kerja
 
 ```mermaid
 graph LR
-    Input[Query User] --> Embed[Embedder ONNX Lokal<br/>768d, EmbeddingGemma Q4]
-    Input --> FTS5[FTS5 Full-Text<br/>SQLite]
-    Embed --> Vec[Vector Index<br/>usearch atau vecq]
-    Vec --> Hybrid[Ranking hybrid<br/>vector + FTS5, RRF k=60]
+    Input[Query] --> Embed[Embedder lokal<br/>EmbeddingGemma Q4, 768d]
+    Input --> FTS5[Full-text search<br/>SQLite FTS5]
+    Embed --> Vec[Vector index<br/>usearch atau vecq]
+    Vec --> Hybrid[Hybrid<br/>vector + FTS5, RRF k=60]
     FTS5 --> Hybrid
-    Vec --> Fusion[Fusion<br/>weighted RRF<br/>vector x1.7 + hybrid x1]
+    Vec --> Fusion[Fusion<br/>vector x1.7 + hybrid x1]
     Hybrid --> Fusion
-    Fusion --> Boost[Boost salience + recency]
-    Boost --> Results[Hasil Ranked]
+    Fusion --> Boost[Salience + recency]
+    Boost --> Results[Hasil berperingkat]
 
-    style Input fill:#4a9eff,color:#fff
-    style Results fill:#4aff9e,color:#000
-    style Fusion fill:#ff9e4a,color:#fff
+    style Input fill:#131A15,color:#F3F8F4
+    style Fusion fill:#1F908C,color:#fff
+    style Results fill:#0B6667,color:#fff
 ```
 
-**Cara kerja recall `fusion` (default):**
-1. **Vector index** (usearch HNSW atau vecq): cari berdasarkan makna ("deploy" cocok dengan "rollout")
-2. **FTS5** (SQLite): cari berdasarkan kata exact ("deploy" cocok dengan "deploy")
-3. **Hybrid**: gabungkan list vector dan FTS5 dengan Reciprocal Rank Fusion (k=60)
-4. **Fusion**: gabungkan ranking vector (bobot 1.7) dengan ranking hybrid (bobot 1), lalu tambah boost kecil salience dan recency
+1. **Vector index** mencari berdasarkan makna ("deploy" cocok dengan "rollout").
+2. **FTS5** mencari kata yang persis ("deploy" cocok dengan "deploy").
+3. **Hybrid** menggabungkan dua daftar itu dengan Reciprocal Rank Fusion (k=60).
+4. **Fusion** menggabungkan ranking vector (bobot 1,7) dengan ranking hybrid (bobot 1), lalu menambah sedikit boost salience dan recency.
 
-`--strategy vector | fts5 | hybrid | graph` memakai satu tahap saja.
-
-Semua jalan in-process. Tanpa network. Tanpa cloud. Tanpa server (kecuali mau pakai mode server).
+Semuanya jalan di dalam proses: tanpa jaringan, tanpa server. `--strategy vector | fts5 | hybrid | graph` memilih satu tahap saja.
 
 <details>
-<summary>🐳 Mode deployment (local-first secara default, Docker/server kalau perlu)</summary>
+<summary>🐳 Mode deployment</summary>
 
-**Local-first (default)**: satu binary, zero infrastruktur.
+**Local-first (default)**: satu binary, tanpa infrastruktur. Data kamu tetap di `~/.codecora/uteke/`.
 
-```bash
-curl -sSL codecora.dev/uteke/install | sh
-uteke remember "memori pertama"
-```
-
-Data kamu tersimpan di `~/.codecora/uteke/`.
-
-**Docker / mode server**: untuk tim atau agent remote.
+**Docker / server mode**: untuk tim atau agent jarak jauh.
 
 ```bash
 docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:latest --host 0.0.0.0
-# atau, tanpa Docker: uteke-serve --port 8767
+# atau tanpa Docker: uteke-serve --port 8767
 ```
 
-📖 [Panduan Docker](docs/docker.md) · [Dokumentasi server mode](docs/configuration.md#server-mode)
-</details>
-
-<details>
-<summary>🏠 Rooms: contoh shared memory multi-agent</summary>
-
-```bash
-# Bikin room shared
-uteke room create engineering --title "Keputusan tim"
-
-# Agent Alice simpan keputusan
-uteke remember "Kita pilih Redis buat caching, bukan Memcached" \
-  --room engineering --author alice
-
-# Agent Bob tambah konteks
-uteke remember "Redis cluster: 3 node, 2 replica tiap node" \
-  --room engineering --author bob
-
-# Agent manapun bisa recall history shared
-uteke room recall engineering "caching decision"
-```
-
-Atribusi author di setiap memori; cross-agent recall tanpa sync manual.
-📖 [Dokumentasi Rooms lengkap →](docs/rooms.md)
-</details>
-
-<details>
-<summary>🔌 Konfigurasi MCP: connect ke Claude Code, Cursor, Hermes</summary>
-
-```jsonc
-// .mcp.json (Claude Code, Cursor)
-{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }
-```
-
-Untuk Claude Desktop, Hermes, dan HTTP transport, lihat [MCP docs](docs/mcp.md).
+📖 [Setup Docker](docs/docker.md) · [Server mode](docs/configuration.md#server-mode) · [Akses jarak jauh](docs/mcp.md#remote-access-vps--server--domain)
 </details>
 
 ---
 
-## 📚 Dokumentasi
+## Dokumentasi
 
 | | |
 |---|---|
-| **Mulai** | [Installation](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
-| **Referensi** | [CLI reference](docs/cli-reference.md) · [Konfigurasi](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
-| **Konsep** | [Rooms](docs/rooms.md) · [Mengorganisasi memori](docs/organizing-memories.md) · [Arsitektur](docs/architecture.md) |
-| **Integrasi** | [Setup MCP](docs/mcp.md) (Claude Code, Cursor) · [Hermes](docs/integrations/hermes.md) |
-| **Keamanan** | [SECURITY.md](SECURITY.md) (laporan kerentanan, penandatanganan rilis) |
-| **Benchmark** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Reproduksi sendiri](benchmarks/longmemeval/REPRODUCING.md) |
+| **Mulai** | [Instalasi](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
+| **Referensi** | [CLI](docs/cli-reference.md) · [Konfigurasi](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
+| **Konsep** | [Rooms](docs/rooms.md) · [Mengatur memori](docs/organizing-memories.md) · [Arsitektur](docs/architecture.md) |
+| **Integrasi** | [Setup MCP](docs/mcp.md) (Claude Code, Claude Desktop, Cursor, Hermes) · [Hermes](docs/integrations/hermes.md) |
+| **Keamanan** | [SECURITY.md](SECURITY.md) (laporan kerentanan, tanda tangan rilis) |
+| **Benchmark** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Jalankan sendiri](benchmarks/longmemeval/REPRODUCING.md) |
+
+Dokumentasi di `docs/` dalam bahasa Inggris.
 
 ---
 
-## ❓ FAQ
+## FAQ
 
 <details>
-<summary><strong>Bedanya Uteke sama memory tool yang cloud-dependent apa?</strong></summary>
+<summary><strong>"Fully offline", tapi kok ada Uteke Cloud?</strong></summary>
 
-Banyak memory layer (basis Python atau TypeScript) butuh API key cloud (OpenAI/LLM) dan infrastruktur eksternal (Docker, Postgres, Qdrant). Data kamu dikirim ke cloud LLM provider. Uteke itu satu binary tanpa API key sama sekali. Semua embedding jalan lokal via ONNX. Data kamu nggak pernah keluar dari mesin kamu. [Lihat tabel perbandingan](#-kenapa-uteke).
+Mesin di repo ini lengkap dan jalan sepenuhnya offline; tidak ada bagian yang memanggil Cloud. Uteke Cloud adalah layanan hosted terpisah dan opsional, menjalankan mesin yang sama untuk orang yang nggak mau menjalankan apa pun di mesinnya, dan datanya bisa diekspor kapan saja. Mesin open source tetap lengkap, dan semua hasil benchmark di atas tidak bergantung pada Cloud.
 </details>
 
 <details>
-<summary><strong>Bedanya sama platform MCP multi-tool?</strong></summary>
+<summary><strong>Kenapa nggak pakai catatan di file Markdown saja?</strong></summary>
 
-Beberapa platform menawarkan lusinan MCP tools dan multi-agent shared memory via local engine. Kaya integrasi, tapi butuh npm, runtime terpisah, dan LLM API key untuk embedding. Uteke itu Rust, zero dependency, dan jalan fully offline dengan embedding ONNX lokal. Mau integrasi maksimum → platform itu. Mau privasi, kecepatan, zero setup, dan hybrid search → Uteke.
+File cukup sampai kamu perlu mencari berdasarkan makna: "rilis aplikasinya" nggak akan cocok dengan "deploy v2.1" kalau pakai grep. Uteke mencari berdasarkan makna dan kata kunci sekaligus, mencatat siapa penulis tiap memori, dan bekerja sama untuk semua agent yang kamu pakai, bukan satu file per tool.
 </details>
 
 <details>
-<summary><strong>Bedanya sama single-binary memory tool lain?</strong></summary>
+<summary><strong>Apa bedanya Uteke dengan memory tool yang butuh cloud?</strong></summary>
 
-Beberapa single-binary tool share filosofi kami: satu binary, zero deps, MCP server, local-first. Beda kuncinya di **search**: kebanyakan **FTS5-only** (keyword matching). Uteke pakai **hybrid search** (HNSW vector similarity + FTS5 + Reciprocal Rank Fusion), jadi kamu bisa cari berdasarkan *makna*, bukan cuma kata exact. Uteke juga punya rooms, time-travel, graph relationships, smart decay, document engine, dan batch import.
+Banyak memory layer butuh API key cloud (OpenAI atau LLM lain) dan infrastruktur tambahan (Docker, Postgres, Qdrant), dan data kamu dikirim ke penyedia LLM. Uteke satu binary tanpa API key; embedding jalan lokal lewat ONNX.
 </details>
 
 <details>
-<summary><strong>Beneran bisa offline?</strong></summary>
+<summary><strong>Beneran jalan offline?</strong></summary>
 
-Ya. Embedding model (EmbeddingGemma Q4, 768d) download sekali (~200MB) saat first run. Setelah itu, operasi memori tidak memakai network dan tidak ada telemetri. Binary mengecek rilis baru di GitHub sekali sehari; set `UTEKE_NO_UPDATE_CHECK=1` untuk mematikannya. Kalau local model gagal, Uteke degrade ke no-op embedder, jadi nggak pernah crash dan nggak pernah manggil cloud API.
+Ya. Model embedding (EmbeddingGemma Q4, 768d) diunduh sekali (~200 MB) di run pertama. Setelah itu operasi memori tidak memakai jaringan dan tidak ada telemetry. Binary mengecek rilis baru di GitHub sekali sehari; matikan dengan `UTEKE_NO_UPDATE_CHECK=1`. Kalau model lokal gagal, Uteke turun ke no-op embedder; tidak pernah memanggil API cloud.
 </details>
 
 <details>
-<summary><strong>Cepetan recall-nya?</strong></summary>
+<summary><strong>Seberapa cepat recall-nya?</strong></summary>
 
-~45ms sebagai CLI (pengukuran: rata-rata 31ms @10K di bench host yang dipublikasikan) (diukur di 100–10K memori, flat mengikuti ukuran store). Nggak ada network round-trip karena semuanya lokal. Recall cache LRU menghilangkan komputasi embedding berulang untuk query yang sama.
+~45 ms sebagai CLI (rata-rata 31 ms di 10K memori pada host benchmark yang dipublikasikan; stabil dari 100 sampai 10K memori). Tanpa round-trip jaringan, dan cache LRU melewati embedding ulang untuk query yang berulang.
 </details>
 
 <details>
-<summary><strong>Bisa dipakai sama AI tool yang udah ada?</strong></summary>
+<summary><strong>Sudah siap production?</strong></summary>
 
-Bisa. Uteke punya MCP server yang langsung pakai dengan Claude Code, Cursor, dan Hermes. Bisa juga pakai HTTP API langsung di bahasa pemrograman apapun. [Lihat setup MCP →](docs/mcp.md)
-</details>
-
-<details>
-<summary><strong>Sudah production-ready?</strong></summary>
-
-Uteke sekarang v0.22.1 dengan 1.300+ test, mutation testing sebelum setiap rilis, CI di setiap pull request, rilis bertanda tangan cosign, dan benchmark harness. Dipakai production oleh tim CodeCora dan early adopter lain. Masih di versi 0.x, jadi mungkin ada rough edges, tapi core-nya udah stabil.
+Uteke punya 1.300+ test, mutation testing sebelum setiap rilis, CI di setiap pull request, rilis bertanda tangan cosign, dan benchmark harness. Dipakai di production oleh tim CodeCora dan early adopter lain. Masih 0.x (lihat badge rilis), jadi mungkin masih ada yang kasar, tapi intinya stabil.
 </details>
 
 ---
 
-## 🗺️ Roadmap & Editions
-
-| | **Uteke OSS** (repo ini) | **Uteke Cloud** |
-|---|---|---|
-| Kualitas retrieval | ✅ Full (engine identik) | ✅ Identik (parity-benchmarked) |
-| Lisensi | Apache-2.0, self-host | Layanan managed |
-| Jawaban berbasis LLM (resolusi fakta recency-aware, abstention) | BYOK | Termasuk |
-| Multi-workspace, dashboard, backup | DIY | ✅ Termasuk |
-| Harga | Gratis | *Segera* |
-
-Engine open-source tetap full-capability. Tidak ada bagian dari hasil benchmark di
- atas yang dipagari paywall. Cloud menambahkan kenyamanan hosted di atasnya.
-
----
-
-## 🤝 Kontribusi
+## Kontribusi
 
 ```bash
 cargo build --workspace                                # Build
@@ -431,35 +317,24 @@ cargo clippy --workspace --all-targets -- -D warnings  # Lint
 cargo fmt --all                                        # Format
 ```
 
-Kontribusi diterima! Baca [CONTRIBUTING.md](CONTRIBUTING.md) untuk panduan lengkap.
+Kontribusi sangat diterima. Baca [CONTRIBUTING.md](CONTRIBUTING.md), atau sapa kami di [Discussions](https://github.com/codecoradev/uteke/discussions).
+
+## Lisensi
+
+[Apache License 2.0](LICENSE). Pakai, fork, kirim.
 
 ---
-
-## 📄 Lisensi
-
-[Apache License 2.0](LICENSE). Pakai, fork, ship.
-
----
-
-## ⭐ Star History
 
 <p align="center">
   <a href="https://www.star-history.com/?repos=codecoradev%2Futeke&type=timeline&legend=top-left">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&theme=dark&legend=top-left" />
       <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&theme=light&legend=top-left" />
-      <img alt="Uteke Star History Chart" src="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&legend=top-left" />
+      <img alt="Star history Uteke" src="https://api.star-history.com/chart?repos=codecoradev/uteke&type=timeline&legend=top-left" width="600" />
     </picture>
   </a>
 </p>
 
----
-
 <p align="center">
-  <strong>Berguna?</strong> ⭐ Star repo ini. Bantu orang lain nemuin Uteke.
-</p>
-<p align="center">
-  <a href="https://github.com/codecoradev/uteke/stargazers">
-    <img src="https://img.shields.io/github/stars/codecoradev/uteke?style=social" alt="Star repo ini" />
-  </a>
+  Kalau Uteke membantu agent kamu mengingat, satu ⭐ membantu orang lain menemukannya.
 </p>
