@@ -475,6 +475,9 @@ impl super::Store {
                 // v22: memories.author — who wrote it, with or without a room
                 // (#1427 phase 2)
                 22 => self.migrate_v21_to_v22()?,
+                // v23: rejected_values — tombstones of values forgotten as
+                // wrong (#1597)
+                23 => self.migrate_v22_to_v23()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1162,6 +1165,25 @@ impl super::Store {
         tracing::info!(
             "Migration v21 to v22 complete: author column added, {backfilled} backfilled"
         );
+        Ok(())
+    }
+
+    /// v23: the `rejected_values` table (#1597). `SCHEMA` already creates it
+    /// on every open (IF NOT EXISTS); the step records the version.
+    fn migrate_v22_to_v23(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v22 to v23: rejected_values table");
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS rejected_values (
+                    hash       TEXT PRIMARY KEY,
+                    memory_id  TEXT,
+                    reason     TEXT NOT NULL,
+                    preview    TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_rejected_values_memory ON rejected_values(memory_id);",
+            )
+            .map_err(|e| Error::db("schema migration v22 to v23", e))?;
         Ok(())
     }
 

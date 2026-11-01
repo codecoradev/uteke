@@ -53,6 +53,21 @@ impl crate::Uteke {
         sync.into_delete_result(&format!("forget id={id}"))
     }
 
+    /// Forget a memory with an optional reason (#1597). The reason `wrong` (or
+    /// `wrong: <note>`) also records a rejected-value tombstone, so the same
+    /// text cannot be written again; any other reason is kept on the
+    /// deprecation. Without a reason this is [`Self::forget`].
+    pub fn forget_with_reason(&self, id: &str, reason: Option<&str>) -> Result<(), Error> {
+        let reason = reason.map(str::trim).filter(|r| !r.is_empty());
+        if let Some(r) = reason.filter(|r| crate::tombstone::is_wrong_reason(r)) {
+            self.record_tombstone(id, r)?;
+        }
+        match reason {
+            Some(r) if self.lifecycle_config.soft_delete_only => self.soft_forget(id, r),
+            _ => self.forget(id),
+        }
+    }
+
     /// Soft-delete (deprecate) a memory with reason (#929).
     ///
     /// When `soft_delete_only` is enabled (default), this replaces `forget()`.
@@ -87,6 +102,10 @@ impl crate::Uteke {
         let restored = self.store.undeprecate(id)?;
         if !restored {
             return Ok(false);
+        }
+        // Restoring a value says it is not wrong: drop its tombstone (#1597).
+        if let Err(e) = self.remove_tombstone(id) {
+            tracing::warn!("Failed to remove the tombstone of {id} on promote: {e}");
         }
         // Re-add to vector index.
         if let Some(memory) = self.store.get_by_id(id).ok().flatten() {

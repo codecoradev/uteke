@@ -44,6 +44,19 @@ pub enum SupportedShell {
     Fish,
 }
 
+/// `uteke tombstone` subcommands (#1597).
+#[derive(Subcommand)]
+pub enum TombstoneCommands {
+    /// List the rejected values, newest first
+    List,
+    /// Allow a rejected value again: give a hash prefix (8+ characters) or
+    /// the id of the forgotten memory
+    Remove {
+        /// Hash prefix or memory id
+        key: String,
+    },
+}
+
 /// All top-level CLI subcommands.
 #[derive(Subcommand)]
 pub enum Commands {
@@ -259,6 +272,16 @@ pub enum Commands {
         /// the y/N prompt; scripts and cron jobs must pass this)
         #[arg(long)]
         confirm: bool,
+        /// Why the memory is forgotten (with an ID). `wrong` or `wrong: <note>`
+        /// also records the value as rejected, so it cannot be stored again
+        /// (#1597; see `uteke tombstone`). Other text is kept on the memory.
+        #[arg(long, requires = "id", conflicts_with_all = ["tag", "cold", "all"])]
+        reason: Option<String>,
+    },
+    /// Values forgotten as wrong, which writes refuse (#1597)
+    Tombstone {
+        #[command(subcommand)]
+        command: TombstoneCommands,
     },
     /// Show memory store statistics
     Stats,

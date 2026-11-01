@@ -42,7 +42,9 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke context` | Project context summary (counts, top tags, recent activity) | `--namespace` |
 | `uteke guide` | Print the agent-facing memory tools guide for system-prompt injection | |
 | `uteke feedback <ID> <helpful\|unhelpful>` | Record usefulness (importance +0.05 / −0.10) | |
-| `uteke forget <ID>` | Delete memory by ID, tag, tier, or all | `--tag`, `--cold`, `--all`, `--confirm` |
+| `uteke forget <ID>` | Delete memory by ID, tag, tier, or all | `--tag`, `--cold`, `--all`, `--confirm`, `--reason wrong` (the value can never be stored again) |
+| `uteke tombstone list` | Values forgotten as wrong, which every write refuses | |
+| `uteke tombstone remove <HASH\|ID>` | Allow a rejected value again | |
 
 ### Documents (Wiki / Knowledge Base)
 

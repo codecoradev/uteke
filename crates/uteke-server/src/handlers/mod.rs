@@ -3000,3 +3000,111 @@ mod forget_route_tests {
         );
     }
 }
+
+/// Rejected-value tombstones over HTTP (#1597): `reason=wrong` on
+/// `DELETE /forget`, 409 `rejected_value` on CORE writes, and the import count.
+#[cfg(test)]
+mod rejected_value_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    fn call(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        url: &str,
+        body: &str,
+    ) -> (u16, serde_json::Value) {
+        let leaked: &'static str = Box::leak(body.to_string().into_boxed_str());
+        let mut req: Request = TestRequest::new()
+            .with_method(method)
+            .with_path(url)
+            .with_body(leaked)
+            .into();
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+            store_id: String::new(),
+            embed_warmer: Default::default(),
+        };
+        let resp = route(uteke, &ctx, &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    fn app() -> Mutex<Uteke> {
+        Mutex::new(Uteke::open_with_backend(":memory:", None).expect("open without embedder"))
+    }
+
+    #[test]
+    fn a_value_forgotten_as_wrong_is_refused_with_409() {
+        let u = app();
+        let text = "The server port is 9999";
+        let (s, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": text}).to_string(),
+        );
+        assert_eq!(s, 200, "{body}");
+        let id = body["id"].as_str().unwrap().to_string();
+
+        let (s, body) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={id}&reason=wrong%3A+it+is+8767"),
+            "",
+        );
+        assert_eq!(s, 200, "{body}");
+
+        // case and spacing do not matter
+        let again = serde_json::json!({"content": "the  SERVER port is 9999"}).to_string();
+        let (s, body) = call(&u, Method::Post, "/remember", &again);
+        assert_eq!(s, 409, "{body}");
+        assert_eq!(body["error"], "rejected_value");
+        assert_eq!(body["reason"], "wrong: it is 8767");
+        assert!(
+            !body.to_string().contains("9999"),
+            "the value is not echoed: {body}"
+        );
+
+        let import = serde_json::json!({"content": format!("{{\"content\":\"{text}\"}}\n{{\"content\":\"a new fact\"}}\n")}).to_string();
+        let (s, body) = call(&u, Method::Post, "/import", &import);
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(
+            (
+                body["imported"].as_u64(),
+                body["rejected_tombstone"].as_u64()
+            ),
+            (Some(1), Some(1))
+        );
+    }
+
+    #[test]
+    fn an_ordinary_forget_leaves_the_value_writable_and_import_unchanged() {
+        let u = app();
+        let text = serde_json::json!({"content": "temporary note"}).to_string();
+        let (_, body) = call(&u, Method::Post, "/remember", &text);
+        let id = body["id"].as_str().unwrap().to_string();
+        let (s, _) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={id}&reason=outdated"),
+            "",
+        );
+        assert_eq!(s, 200);
+        let (s, body) = call(&u, Method::Post, "/remember", &text);
+        assert_eq!(s, 200, "{body}");
+
+        let import = serde_json::json!({"content": "{\"content\":\"plain\"}\n"}).to_string();
+        let (_, body) = call(&u, Method::Post, "/import", &import);
+        assert!(body.get("rejected_tombstone").is_none(), "{body}");
+    }
+}

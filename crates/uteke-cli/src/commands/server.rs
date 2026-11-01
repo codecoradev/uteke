@@ -430,6 +430,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             cold,
             all,
             confirm,
+            reason,
         } => {
             // `DELETE /forget` takes an id or a tag only. `--cold` and `--all`
             // are local operations: say so instead of dropping them, and do
@@ -462,6 +463,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 id: id.clone(),
                 tag: tag.clone(),
                 namespace: Some(ns.to_string()),
+                reason: reason.clone(),
             };
             let Some(path) = input.to_http_path(|v| urlencoding::encode(v).into_owned()) else {
                 return Err("Provide an ID, --tag, --cold, or --all".into());
@@ -503,6 +505,7 @@ mod tests {
             id: Some("ab cd/1".into()),
             tag: Some("t".into()),
             namespace: Some("default".into()),
+            reason: None,
         };
         assert_eq!(
             by_id.to_http_path(enc).as_deref(),
@@ -512,6 +515,7 @@ mod tests {
             id: None,
             tag: Some("my tag&x".into()),
             namespace: Some("work space".into()),
+            reason: None,
         };
         assert_eq!(
             by_tag.to_http_path(enc).as_deref(),

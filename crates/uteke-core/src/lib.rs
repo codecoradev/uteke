@@ -94,6 +94,7 @@ pub mod structural_export;
 #[doc(hidden)]
 pub mod test_support;
 mod timeline;
+pub mod tombstone;
 mod types;
 pub mod update_check;
 
@@ -127,6 +128,7 @@ pub use salience_recency::{
     SalienceRecencyConfig, apply_boosts, recency_score, salience_score, type_half_life_days,
 };
 pub use timeline::{TimelineEvent, TimelineEventType};
+pub use tombstone::Tombstone;
 
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]

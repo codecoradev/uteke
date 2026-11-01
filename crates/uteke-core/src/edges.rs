@@ -2107,6 +2107,12 @@ impl crate::Uteke {
         }
         self.recall_cache.invalidate_namespace(&old.namespace);
 
+        // Superseded because it was wrong: the old value may not come back
+        // (#1597). The new memory is already stored and is not affected.
+        if let Some(r) = reason.filter(|r| crate::tombstone::is_wrong_reason(r)) {
+            self.record_tombstone(&old.id, r)?;
+        }
+
         Ok((old.id, new.id))
     }
 

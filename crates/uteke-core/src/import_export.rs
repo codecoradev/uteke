@@ -134,6 +134,7 @@ impl crate::Uteke {
         let mut deduped = 0;
         let mut redacted = 0;
         let mut rejected_secret = 0;
+        let mut rejected_tombstone = 0;
         let mut deferred_embedding = 0;
         let mut room_links = RoomLinks::default();
         // Exact-content duplicates for a deferred import: hash -> stored id,
@@ -191,6 +192,15 @@ impl crate::Uteke {
                 entry.metadata = m;
             }
             let redactions = prepared.redactions;
+
+            // A value forgotten as wrong is skipped and counted (#1597),
+            // before any embedding work. `commit_memory` checks again.
+            if let Err(e) = self.check_not_rejected(&entry.content) {
+                tracing::warn!("Skipping import entry: {e}");
+                rejected_tombstone += 1;
+                skipped += 1;
+                continue;
+            }
 
             // Re-embed the content with retry (consistent with remember path, #1005).
             // A store with no embedding backend (#1166) imports FTS5-only, as
@@ -315,6 +325,7 @@ impl crate::Uteke {
             skipped,
             redacted,
             rejected_secret,
+            rejected_tombstone,
             room_links: room_links.linked,
             rooms_missing: room_links.missing.into_iter().collect(),
             deferred_embedding,

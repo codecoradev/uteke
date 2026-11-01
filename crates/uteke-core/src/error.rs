@@ -32,6 +32,14 @@ pub enum Error {
     #[error("Secret detected in content ({}); strict privacy mode rejects the write", .kinds.join(", "))]
     SecretDetected { kinds: Vec<String> },
 
+    /// The content matches a rejected-value tombstone (#1597): this value was
+    /// forgotten as wrong and may not be written again. `reason` is the
+    /// reason recorded with the tombstone (never the value).
+    #[error(
+        "This value was rejected as wrong and cannot be stored again ({reason}); remove the tombstone with `uteke tombstone remove` to allow it"
+    )]
+    RejectedValue { reason: String },
+
     #[error("Lock error: {context}")]
     Lock { context: String },
 
@@ -49,6 +57,8 @@ pub enum ErrorClass {
     NotFound,
     /// Strict privacy mode refused the write: HTTP 400 `secret_detected`.
     SecretDetected,
+    /// The value has a rejected-value tombstone: HTTP 409 `rejected_value`.
+    RejectedValue,
     /// Anything else: HTTP 500.
     Internal,
 }
@@ -108,6 +118,7 @@ impl Error {
             Error::Validation(_) => ErrorClass::BadRequest,
             Error::NotFound(_) => ErrorClass::NotFound,
             Error::SecretDetected { .. } => ErrorClass::SecretDetected,
+            Error::RejectedValue { .. } => ErrorClass::RejectedValue,
             Error::Io(_)
             | Error::Database { .. }
             | Error::Embedding { .. }
