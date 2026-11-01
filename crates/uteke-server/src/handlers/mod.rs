@@ -3088,6 +3088,53 @@ mod rejected_value_tests {
     }
 
     #[test]
+    fn update_and_room_remember_answer_409_too() {
+        let u = app();
+        let (_, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": "Max upload is 1 MB"}).to_string(),
+        );
+        let wrong = body["id"].as_str().unwrap().to_string();
+        call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={wrong}&reason=wrong"),
+            "",
+        );
+        let (_, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": "other"}).to_string(),
+        );
+        let other = body["id"].as_str().unwrap().to_string();
+
+        let put = serde_json::json!({"id": other, "content": "max upload is 1 mb"}).to_string();
+        let (s, body) = call(&u, Method::Put, "/memory", &put);
+        assert_eq!(
+            (s, body["error"].as_str()),
+            (409, Some("rejected_value")),
+            "{body}"
+        );
+
+        call(
+            &u,
+            Method::Post,
+            "/room/create",
+            &serde_json::json!({"room_id": "r1"}).to_string(),
+        );
+        let rr = serde_json::json!({"room_id": "r1", "content": "Max upload is 1 MB"}).to_string();
+        let (s, body) = call(&u, Method::Post, "/room/remember", &rr);
+        assert_eq!(
+            (s, body["error"].as_str()),
+            (409, Some("rejected_value")),
+            "{body}"
+        );
+    }
+
+    #[test]
     fn an_ordinary_forget_leaves_the_value_writable_and_import_unchanged() {
         let u = app();
         let text = serde_json::json!({"content": "temporary note"}).to_string();

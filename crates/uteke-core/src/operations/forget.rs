@@ -103,8 +103,11 @@ impl crate::Uteke {
         if !restored {
             return Ok(false);
         }
-        // Restoring a value says it is not wrong: drop its tombstone (#1597).
-        if let Err(e) = self.remove_tombstone(id) {
+        // Restoring a value says it is not wrong: drop its tombstone (#1597),
+        // by its text, so a tombstone recorded by a duplicate goes too.
+        if let Some(m) = self.store.get_by_id(id).ok().flatten()
+            && let Err(e) = self.remove_tombstone_of(&m.content)
+        {
             tracing::warn!("Failed to remove the tombstone of {id} on promote: {e}");
         }
         // Re-add to vector index.

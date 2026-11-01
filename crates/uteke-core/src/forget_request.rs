@@ -282,6 +282,17 @@ mod tests {
     }
 
     #[test]
+    fn the_reason_is_percent_decoded_and_the_rest_is_not() {
+        let i = ForgetInput::from_http_query("id=ab%20c&reason=wrong%3A+it+is+%C3%A9t%C3%A9");
+        assert_eq!(i.id.as_deref(), Some("ab%20c"), "ids keep the old rule");
+        assert_eq!(i.reason.as_deref(), Some("wrong: it is \u{e9}t\u{e9}"));
+        assert_eq!(super::percent_decode("50%"), "50%");
+        assert_eq!(super::percent_decode("a%zzb"), "a%zzb");
+        assert_eq!(super::percent_decode("%4"), "%4");
+        assert_eq!(super::percent_decode("caf\u{e9}%21"), "caf\u{e9}!");
+    }
+
+    #[test]
     fn query_parsing_keeps_the_old_handler_rules() {
         assert_eq!(
             ForgetInput::from_http_query("id=abc"),

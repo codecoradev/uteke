@@ -141,7 +141,7 @@ pub(crate) fn run_tombstone(
                 for t in &list {
                     println!(
                         "  {}  {}  {}\n      {}",
-                        &t.hash[..12],
+                        t.hash.get(..12).unwrap_or(&t.hash),
                         t.created_at.get(..10).unwrap_or(&t.created_at),
                         t.reason,
                         t.preview

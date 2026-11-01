@@ -52,8 +52,9 @@ fn is_invisible(c: char) -> bool {
         c,
         '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
             | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{3164}' | '\u{FEFF}'
-            | '\u{FFA0}'
+            | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}' | '\u{3164}'
+            | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}' | '\u{FFA0}'
+            | '\u{E0000}'..='\u{E007F}' | '\u{E0100}'..='\u{E01EF}'
     )
 }
 
@@ -78,11 +79,38 @@ pub(crate) fn check(conn: &rusqlite::Connection, content: &str) -> Result<(), Er
     }
 }
 
+/// Record a tombstone for `memory` through `conn` (an open transaction when
+/// the caller has one). A value rejected twice keeps its first tombstone.
+pub(crate) fn record(
+    conn: &rusqlite::Connection,
+    memory: &crate::Memory,
+    reason: &str,
+) -> Result<(), Error> {
+    let preview: String = memory.content.chars().take(PREVIEW_CHARS).collect();
+    conn.execute(
+        "INSERT OR IGNORE INTO rejected_values (hash, memory_id, reason, preview, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            tombstone_hash(&memory.content),
+            memory.id,
+            reason.trim(),
+            preview,
+            chrono::Utc::now().to_rfc3339()
+        ],
+    )
+    .map_err(|e| Error::db("record tombstone", e))?;
+    Ok(())
+}
+
 /// Restore tombstones (structural import). Existing ones win. Returns the
 /// number added.
 pub(crate) fn insert_all(conn: &rusqlite::Connection, items: &[Tombstone]) -> Result<usize, Error> {
     let mut n = 0;
-    for t in items {
+    // A hash that is not a SHA-256 can never match a write: drop it.
+    for t in items
+        .iter()
+        .filter(|t| t.hash.len() == 64 && t.hash.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
         n += conn
             .execute(
                 "INSERT OR IGNORE INTO rejected_values (hash, memory_id, reason, preview, created_at)
@@ -107,21 +135,18 @@ impl crate::Uteke {
             .store
             .get_by_id(id)?
             .ok_or_else(|| Error::not_found(format!("Memory not found: {id}")))?;
-        let preview: String = memory.content.chars().take(PREVIEW_CHARS).collect();
+        record(self.graph_store(), &memory, reason)
+    }
+
+    /// Remove the tombstone of `content`, whichever memory recorded it.
+    /// Returns the number removed (0 or 1).
+    pub(crate) fn remove_tombstone_of(&self, content: &str) -> Result<usize, Error> {
         self.graph_store()
             .execute(
-                "INSERT OR IGNORE INTO rejected_values (hash, memory_id, reason, preview, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    tombstone_hash(&memory.content),
-                    memory.id,
-                    reason.trim(),
-                    preview,
-                    chrono::Utc::now().to_rfc3339()
-                ],
+                "DELETE FROM rejected_values WHERE hash = ?1",
+                params![tombstone_hash(content)],
             )
-            .map_err(|e| Error::db("record tombstone", e))?;
-        Ok(())
+            .map_err(|e| Error::db("remove tombstone", e))
     }
 
     /// Every tombstone, newest first.
@@ -150,7 +175,7 @@ impl crate::Uteke {
 
     /// Remove the tombstone named by `key`: a hash prefix (at least 8 hex
     /// characters, unambiguous) or the id of the rejected memory. Returns the
-    /// number removed (0 or 1).
+    /// number removed.
     pub fn remove_tombstone(&self, key: &str) -> Result<usize, Error> {
         let key = key.trim();
         if key.is_empty() {
@@ -216,6 +241,8 @@ mod tests {
             "the port is \u{FF18}\u{FF17}\u{FF16}\u{FF17}", // full-width digits
             "\u{FEFF}the port is 8767",
             "the port\u{00A0}is 8767",
+            "the port is 8767\u{FE0F}",  // variation selector
+            "the port\u{E0020} is 8767", // tag character
         ] {
             assert_eq!(normalise(variant), base, "{variant:?}");
             assert_eq!(tombstone_hash(variant), tombstone_hash("The port is 8767"));
@@ -373,5 +400,73 @@ mod write_path_tests {
         assert_eq!(dst.tombstones().unwrap().len(), 1);
         rejected(dst.remember("The deploy target is staging-2", &[], None, None));
         assert_eq!(dst.count(None).unwrap(), 1, "only the kept fact");
+    }
+
+    #[test]
+    fn a_full_import_skips_the_room_links_edges_and_events_of_a_rejected_row() {
+        let src = open_keyword();
+        src.create_room("ops", None, "default").unwrap();
+        let x = src
+            .remember_in_room(
+                "The deploy target is staging-2",
+                &[],
+                None,
+                None,
+                "fact",
+                "ops",
+                "bot",
+            )
+            .unwrap()
+            .id;
+        let y = src
+            .remember("deploys run on fridays", &[], None, None)
+            .unwrap();
+        src.link_memories(&x, &y, "related").unwrap();
+        let bundle = src.export_full().unwrap();
+
+        let dst = open_keyword();
+        wrong_value(&dst);
+        let report = dst.import_full(&bundle).expect("the import does not abort");
+        assert_eq!(report["imported"]["rejected_tombstone"], 1, "{report}");
+        assert!(dst.get_by_id(&x).unwrap().is_none());
+        assert!(dst.get_by_id(&y).unwrap().is_some());
+        let orphans: i64 = dst
+            .graph_store()
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM room_memories WHERE memory_id = ?1)
+                      + (SELECT COUNT(*) FROM memory_edges WHERE source_id = ?1 OR target_id = ?1)
+                      + (SELECT COUNT(*) FROM timeline_events WHERE memory_id = ?1)",
+                [&x],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn promote_lifts_a_tombstone_recorded_by_a_duplicate() {
+        let u = open_keyword();
+        let a = u.remember("Queue size is 64", &[], None, None).unwrap();
+        // a copy that existed before any tombstone (e.g. from an old import)
+        let mut copy = u.get_by_id(&a).unwrap().unwrap();
+        copy.id = uuid::Uuid::now_v7().to_string();
+        u.store().insert(&copy).unwrap();
+        let b = copy.id;
+        u.forget_with_reason(&a, Some("wrong")).unwrap();
+        u.forget_with_reason(&b, Some("wrong")).unwrap();
+        assert_eq!(u.tombstones().unwrap().len(), 1);
+        assert!(u.promote(&b).unwrap());
+        assert!(u.tombstones().unwrap().is_empty());
+        u.remember("Queue size is 64", &[], None, None).unwrap();
+    }
+
+    #[test]
+    fn supersede_records_the_tombstone_with_the_supersession() {
+        let u = open_keyword();
+        let old = u.remember("Timeout is 3s", &[], None, None).unwrap();
+        let new = u.remember("Timeout is 30s", &[], None, None).unwrap();
+        u.supersede(&old, &new, Some("wrong: typo")).unwrap();
+        assert!(u.get_by_id(&old).unwrap().unwrap().deprecated);
+        assert_eq!(u.tombstones().unwrap()[0].reason, "wrong: typo");
     }
 }

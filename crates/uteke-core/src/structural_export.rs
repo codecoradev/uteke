@@ -432,12 +432,21 @@ impl crate::Uteke {
         if restored > 0 {
             *counts.entry("rejected_values".into()).or_default() += restored;
         }
+        // Ids of skipped rows: their room links, edges and timeline events are
+        // skipped too (the junctions have a foreign key on memories), and a
+        // graph node keeps its entity but loses the link to the memory.
+        let mut skipped: std::collections::HashSet<String> = std::collections::HashSet::new();
         // memories (sentinel embeddings; repair --reembed regenerates).
         {
             for m in &pending_memories {
-                if crate::tombstone::check(conn, m["content"].as_str().unwrap_or("")).is_err() {
-                    *counts.entry("rejected_tombstone".into()).or_default() += 1;
-                    continue;
+                match crate::tombstone::check(conn, m["content"].as_str().unwrap_or("")) {
+                    Ok(()) => {}
+                    Err(Error::RejectedValue { .. }) => {
+                        *counts.entry("rejected_tombstone".into()).or_default() += 1;
+                        skipped.insert(m["id"].as_str().unwrap_or("").to_string());
+                        continue;
+                    }
+                    Err(e) => return Err(e),
                 }
                 let tags = serde_json::to_string(&m["tags"]).unwrap_or_else(|_| "[]".into());
                 let metadata =
@@ -486,6 +495,18 @@ impl crate::Uteke {
         // rooms + junctions + memory_edges + timeline (all FK-safe now).
         for v in &rest {
             let tag = v["type"].as_str().unwrap_or("");
+            let refs_skipped = |cols: &[usize]| {
+                cols.iter()
+                    .any(|&i| v["row"][i].as_str().is_some_and(|id| skipped.contains(id)))
+            };
+            let dependent = match tag {
+                "room_memory" | "timeline_event" => refs_skipped(&[1]),
+                "memory_edge" => refs_skipped(&[0, 1]),
+                _ => false,
+            };
+            if dependent {
+                continue;
+            }
             match tag {
                 "room" => {
                     let r = &v["row"];
@@ -653,7 +674,7 @@ impl crate::Uteke {
                         r[1].as_str().unwrap_or(""),
                         r[2].as_str(),
                         props,
-                        r[4].as_str(),
+                        r[4].as_str().filter(|id| !skipped.contains(*id)),
                         r[5].as_str().unwrap_or(""),
                     ],
                 )
