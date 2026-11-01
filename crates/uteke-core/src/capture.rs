@@ -457,9 +457,19 @@ impl crate::Uteke {
                         match self.store_captured_fact(fact, &source, namespace.as_deref()) {
                             Ok(Some(id)) => stored.push(id),
                             Ok(None) => {}
-                            Err(Error::RejectedValue { .. } | Error::SecretDetected { .. }) => {
+                            // A refusal of this one fact: a tombstone, strict
+                            // privacy, or a fact the write rejects as invalid.
+                            // Retrying would give the same answer.
+                            Err(
+                                e @ (Error::RejectedValue { .. }
+                                | Error::SecretDetected { .. }
+                                | Error::Validation(_)),
+                            ) => {
+                                tracing::debug!("Captured fact refused: {e}");
                                 report.facts_refused += 1
                             }
+                            // Database, embedder or lock: may pass next time,
+                            // so the batch is retried whole.
                             Err(e) => {
                                 failure = Some(format!("storing a fact failed: {e}"));
                                 break;
@@ -537,6 +547,9 @@ impl crate::Uteke {
         // The session text labels each turn ("user: ..."); a rule-based
         // extractor copies the label into the fact.
         let content = strip_role_label(&fact.content);
+        if content.trim().is_empty() {
+            return Ok(None);
+        }
         let fact = &ExtractedFact {
             content: content.to_string(),
             ..fact.clone()
@@ -955,8 +968,8 @@ mod tests {
         assert_ne!(m.source_type, "capture");
     }
 
-    /// Returns a good fact, then one that `remember` rejects as invalid
-    /// (not a refusal), until `fixed`.
+    /// Returns a good fact, then one whose insert fails with a database
+    /// error (a trigger stands in for a full disk), until `fixed`.
     struct HalfBroken {
         fixed: Mutex<bool>,
     }
@@ -965,7 +978,7 @@ mod tests {
         fn extract(&self, _text: &str) -> Result<Vec<ExtractedFact>, Error> {
             let mut facts = vec![ExtractedFact::flat("the build uses cargo")];
             if !*self.fixed.lock().unwrap() {
-                facts.push(ExtractedFact::flat(""));
+                facts.push(ExtractedFact::flat("boom fact"));
             }
             Ok(facts)
         }
@@ -975,6 +988,12 @@ mod tests {
     fn a_failed_store_withdraws_the_batch_and_the_retry_stores_it_whole() {
         let u = open_keyword();
         u.capture("s", Role::User, "how do we build", None, None)
+            .unwrap();
+        u.graph_store()
+            .execute_batch(
+                "CREATE TEMP TRIGGER boom BEFORE INSERT ON memories WHEN NEW.content = 'boom fact'
+                 BEGIN SELECT RAISE(ABORT, 'disk is busy'); END;",
+            )
             .unwrap();
         let src = HalfBroken {
             fixed: Mutex::new(false),
@@ -995,6 +1014,7 @@ mod tests {
         assert_eq!(u.capture_status().unwrap().pending, 1);
 
         *src.fixed.lock().unwrap() = true;
+        u.graph_store().execute_batch("DROP TRIGGER boom;").unwrap();
         let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
         assert_eq!((r.sessions_done, r.facts_stored), (1, 1));
         assert_eq!(u.search("cargo", 5, None, None).unwrap().len(), 1);
@@ -1015,6 +1035,30 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    /// Facts the write can never accept.
+    struct Junk;
+
+    impl FactSource for Junk {
+        fn extract(&self, _text: &str) -> Result<Vec<ExtractedFact>, Error> {
+            Ok(vec![
+                ExtractedFact::flat("user:"),
+                ExtractedFact::flat("   "),
+                ExtractedFact::flat("x".repeat(200_000)),
+                ExtractedFact::flat("the cache is redis"),
+            ])
+        }
+    }
+
+    #[test]
+    fn empty_and_invalid_facts_do_not_fail_the_batch() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "anything", None, None).unwrap();
+        let r = u.run_capture_extraction(&Junk, 5, &settings()).unwrap();
+        assert_eq!(r.stopped, None);
+        assert_eq!((r.sessions_done, r.facts_stored), (1, 1));
+        assert!(r.facts_refused >= 1, "the oversized fact is refused");
     }
 
     #[test]
