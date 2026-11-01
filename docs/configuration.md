@@ -385,7 +385,7 @@ namespace = "my-project"
 level = "warn"
 ```
 
-Combined with shell hooks, this enables automatic project-scoped memory — each project gets its own isolated memory store.
+Run `uteke` from that project root and it uses the project's store, so each project gets its own isolated memory. Only the current directory is checked, not its parents; from a subdirectory, pass `--store` or set `UTEKE_HOME`.
 
 ### Trust: what a project file may not set
 

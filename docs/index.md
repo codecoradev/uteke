@@ -29,9 +29,9 @@ features:
   - icon: 🕰️
     title: Memory Aging
     details: Hot/Warm/Cold tier tracking. Auto-cleanup stale memories.
-  - icon: 🐚
-    title: Shell Hooks
-    details: Auto-load project context. bash/zsh/fish support.
+  - icon: 📁
+    title: Project Stores
+    details: A .uteke/uteke.toml in a project root gives that project its own memory store.
   - icon: 🔒
     title: Fully Offline
     details: Local ONNX embeddings. No telemetry, no cloud, no API calls.

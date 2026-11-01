@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Removed
+
+- The `uteke hook <shell>` script. It exported `UTEKE_PROJECT_STORE` on `cd`, but
+  no uteke binary ever read that variable, so it never switched stores. For a
+  per-project store, put `[store] path = "./.uteke"` in the project's
+  `.uteke/uteke.toml` (read from the current directory), or use `--store` /
+  `UTEKE_HOME`. The command stays as a hidden no-op so an existing
+  `eval "$(uteke hook zsh)"` line does not fail; it prints a note to remove it.
+
 ### Fixed
 
 - `export --full` / `import --full` dropped the columns added since the format was

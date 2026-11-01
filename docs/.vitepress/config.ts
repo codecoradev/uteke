@@ -35,7 +35,6 @@ export default createConfig({
         { text: 'Memory Lifecycle', link: '/memory-lifecycle' },
         { text: 'Relationship Graph', link: '/relationship-graph' },
         { text: 'Benchmarks', link: '/benchmarks' },
-        { text: 'Shell Hooks', link: '/shell-hooks' },
         { text: 'MCP Server', link: '/mcp' },
       ],
     },

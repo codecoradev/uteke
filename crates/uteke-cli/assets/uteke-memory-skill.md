@@ -198,7 +198,6 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | Command | Description |
 |---------|-------------|
 | `uteke init --agent <TYPE>` | Initialize integration (pi/claude/cursor/opencode/hermes) |
-| `uteke hook install <SHELL>` | Install shell hook (bash/zsh/fish) |
 | `uteke completions <SHELL>` | Generate shell completions (bash/zsh/fish/powershell) |
 | `uteke upgrade` | Check for updates and upgrade | `-y` (skip confirmation) |
 | `uteke onboard` | Interactive setup wizard: detect install, pick agent, toggle features, write config | `--yes --agent <TYPE>` |
