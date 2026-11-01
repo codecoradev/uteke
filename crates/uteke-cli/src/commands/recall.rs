@@ -87,7 +87,7 @@ pub(crate) fn run_recall(
     // When unified (default), use existing recall path for backward compat with
     // --strategy, --at, --related, --entity, --category, --where flags
     // which only apply to memory recall.
-    // --salience/--recency/--no-salience/--no-recency work on both paths (#721).
+    // --salience/--recency <true|false> work on both paths (#721).
     let use_unified = match resolved_search_type {
         SearchType::All => {
             // Use unified only when no memory-only flags are active.
@@ -134,16 +134,16 @@ pub(crate) fn run_recall(
 
     // #352/#721: dual-axis salience/recency boost.
     // Tri-state via Option<bool>: None (absent) = use default (0.1),
-    // Some(true) = use config weight (0.15), Some(false) / --no-* = 0.0.
+    // Some(true) = use config weight (0.15), Some(false) = 0.0.
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
         salience_weight: match salience {
             Some(true) => config.engine.recall.salience_weight, // explicit --salience
-            Some(false) => 0.0,                                 // explicit --no-salience
+            Some(false) => 0.0,                                 // explicit --salience false
             None => uteke_core::SalienceRecencyConfig::default().salience_weight, // default 0.1
         },
         recency_weight: match recency {
             Some(true) => config.engine.recall.recency_weight, // explicit --recency
-            Some(false) => 0.0,                                // explicit --no-recency
+            Some(false) => 0.0,                                // explicit --recency false
             None => uteke_core::SalienceRecencyConfig::default().recency_weight, // default 0.1
         },
     });
