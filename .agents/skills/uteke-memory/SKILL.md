@@ -162,7 +162,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doctor` | Full health check: DB, index, embedding model, consistency |
 | `uteke verify` | Compare DB count vs vector index count |
 | `uteke verify-checksums` | Verify binary integrity against SHA256 checksums |
-| `uteke repair` | Rebuild vector index from SQLite (`--rebuild` deletes corrupt index files first, `--reembed` regenerates missing embeddings) |
+| `uteke repair` | Rebuild vector index from SQLite (`--rebuild` deletes corrupt index files first, `--reembed` regenerates missing embeddings, in portions with `--limit N` and `--pause-ms MS`) |
 
 > **Stale-index symptom:** a memory is recallable via
 > `--strategy fts5` but missing under the default fusion/hybrid — that is a
@@ -192,10 +192,10 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 
 ### Import / Export / Bench
 
-| Command | Description |
-|---------|-------------|
-| `uteke export [FILE]` | Export to JSONL (no embeddings). Default: stdout |
-| `uteke import [FILE]` | Import from JSONL/Markdown/text. Default: stdin |
+| Command | Description | Key Options |
+|---------|-------------|-------------|
+| `uteke export [FILE]` | Export to JSONL (no embeddings). Default: stdout | `--full` (whole store) |
+| `uteke import [FILE]` | Import from JSONL/Markdown/text. Default: stdin | `--defer-embed` (store now, embed later with `repair --reembed`) |
 | `uteke bench` | Performance benchmarks | `--counts`, `--json` |
 
 ### Setup & Upgrade
