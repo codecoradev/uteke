@@ -632,8 +632,12 @@ uteke export --full bundle.ndjson          # on the source: memories, rooms, gra
 uteke import --full bundle.ndjson          # on the target
 ```
 
-The bundle restores documents with their slug, title, parent (hierarchy) and content, plus
-rooms, edges and the graph, keeping the original ids. It carries no vectors: `import`
+The bundle restores documents with their slug, title, parent (hierarchy), path and content,
+plus rooms (with each member's role), edges, the graph and the timeline, keeping the original
+ids. Memories keep their author, author type, provenance hash and recall count, and timeline
+events keep their actor and evidence. Deprecated memories are left out. A bundle written by
+0.22.1 or earlier lacks these fields: import applies the defaults and rebuilds document paths
+from the parent chain. It carries no vectors: `import`
 regenerates them (memories are marked for `uteke repair --reembed`, document chunks are
 re-embedded right away). `--full` makes any other file an error instead of a plain import. The
 bundle is a file, so a large document does not pass through a tool response; `POST /import`

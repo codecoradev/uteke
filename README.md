@@ -208,7 +208,7 @@ Every AI tool forgets. Context windows fill up, sessions end, and your AI starts
 | 🖥️ **Server Mode** | Persistent daemon: eliminates cold-start embedding load on every call. |
 | 📂 **Batch Import** | Import entire directories with auto-strategy routing (document vs. memory extraction). |
 | 📝 **Document Engine** | Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking. |
-| 📥 **Import/Export** | JSONL backup and restore; `export --full` / `import --full` also carry documents, rooms, the graph and vectors. |
+| 📥 **Import/Export** | JSONL backup and restore; `export --full` / `import --full` move the whole store: documents, rooms, the graph and each memory's author and provenance (vectors are rebuilt on the target). |
 | 🔑 **View-Only API Keys** | Read-only tokens for safe GET-only access to the server. |
 
 ### Performance & Privacy

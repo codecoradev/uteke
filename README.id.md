@@ -241,7 +241,7 @@ uteke room recall engineering "caching decision"
 | 🖥️ **Mode Server** | Daemon persisten: eliminates cold-start embedding load di setiap call. |
 | 📂 **Batch Import** | Import seluruh direktori dengan routing strategi otomatis (dokumen vs. memori). |
 | 📝 **Document Engine** | Wiki/knowledge base dengan `uteke doc create/get/list` + auto-chunking. |
-| 📥 **Import/Export** | Backup dan restore berbasis JSONL; `export --full` / `import --full` juga membawa dokumen, room, graph, dan vector. |
+| 📥 **Import/Export** | Backup dan restore berbasis JSONL; `export --full` / `import --full` memindahkan seluruh store: dokumen, room, graph, serta author dan provenance tiap memory (vector dibangun ulang di target). |
 | 🔑 **View-Only API Keys** | Token read-only untuk akses GET saja ke server. |
 
 ### Performa & Privasi
