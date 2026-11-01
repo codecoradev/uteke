@@ -158,7 +158,12 @@ impl FactSource for OfflineFacts {
 fn strip_role_label(text: &str) -> &str {
     let t = text.trim_start();
     for label in ["user:", "assistant:", "tool:"] {
-        if t.len() >= label.len() && t[..label.len()].eq_ignore_ascii_case(label) {
+        // Compare bytes: slicing `t` at the label length could split a
+        // multibyte character. A matched ASCII label ends on a boundary.
+        if t.as_bytes()
+            .get(..label.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(label.as_bytes()))
+        {
             return t[label.len()..].trim_start();
         }
     }
@@ -426,7 +431,7 @@ impl crate::Uteke {
         let source = format!("capture:{session}:{}", &batch[..batch.len().min(16)]);
         let already: bool = conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM memories WHERE source = ?1)",
+                "SELECT EXISTS(SELECT 1 FROM memories WHERE source = ?1 AND deprecated = 0)",
                 params![source],
                 |r| r.get(0),
             )
@@ -438,47 +443,70 @@ impl crate::Uteke {
                 .map(|(role, content)| format!("{role}: {content}"))
                 .collect::<Vec<_>>()
                 .join("\n");
-            match facts.extract(&text) {
+            let outcome = match facts.extract(&text) {
                 Ok(found) => {
+                    let mut stored = Vec::new();
+                    let mut failure = None;
                     for fact in &found {
                         match self.store_captured_fact(fact, &source) {
-                            Ok(()) => report.facts_stored += 1,
+                            Ok(Some(id)) => stored.push(id),
+                            Ok(None) => {}
                             Err(Error::RejectedValue { .. } | Error::SecretDetected { .. }) => {
                                 report.facts_refused += 1
                             }
                             Err(e) => {
-                                tracing::warn!("Failed to store a captured fact: {e}");
-                                report.facts_refused += 1;
+                                failure = Some(format!("storing a fact failed: {e}"));
+                                break;
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    // Per turn: a turn that joined this batch later has
-                    // fewer attempts and goes back to pending.
-                    let failed = conn
-                        .execute(
-                            "UPDATE observations
-                             SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
-                                 claimed_at = NULL,
-                                 finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
-                             WHERE batch_id = ?1 AND status = 'extracting'",
-                            params![batch, settings.max_attempts, chrono::Utc::now().to_rfc3339()],
-                        )
-                        .map_err(|e| Error::db("capture release", e))
-                        .and_then(|_| {
-                            conn.query_row(
-                                "SELECT COUNT(*) FROM observations WHERE batch_id = ?1 AND status = 'failed'",
-                                params![batch],
-                                |r| r.get::<_, i64>(0),
-                            )
-                            .map_err(|e| Error::db("capture release", e))
-                        })?;
-                    if failed > 0 {
-                        report.sessions_failed += 1;
+                    match failure {
+                        None => {
+                            report.facts_stored += stored.len();
+                            Ok(())
+                        }
+                        // Take back what this attempt stored, so the retry
+                        // extracts the batch whole (the rerun check only
+                        // counts live facts).
+                        Some(why) => {
+                            for id in &stored {
+                                if let Err(e) = self.soft_forget(id, "capture batch retried") {
+                                    tracing::warn!("Failed to withdraw captured fact {id}: {e}");
+                                }
+                            }
+                            Err(why)
+                        }
                     }
-                    return Ok(Err(e.to_string()));
                 }
+                Err(e) => Err(e.to_string()),
+            };
+            if let Err(why) = outcome {
+                // Per turn: a turn that joined this batch later has fewer
+                // attempts and goes back to pending.
+                conn.execute(
+                    "UPDATE observations
+                     SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
+                         claimed_at = NULL,
+                         finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
+                     WHERE batch_id = ?1 AND status = 'extracting'",
+                    params![
+                        batch,
+                        settings.max_attempts,
+                        chrono::Utc::now().to_rfc3339()
+                    ],
+                )
+                .map_err(|e| Error::db("capture release", e))?;
+                let failed: i64 = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM observations WHERE batch_id = ?1 AND status = 'failed'",
+                        params![batch],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| Error::db("capture release", e))?;
+                if failed > 0 {
+                    report.sessions_failed += 1;
+                }
+                return Ok(Err(why));
             }
         }
         conn.execute(
@@ -493,7 +521,12 @@ impl crate::Uteke {
 
     /// Store one extracted fact like `import --extract` does: its type,
     /// scene tag and priority when the extractor gave them, and the source.
-    fn store_captured_fact(&self, fact: &ExtractedFact, source: &str) -> Result<(), Error> {
+    /// `None` when the fact matched a stored memory (left as it is).
+    fn store_captured_fact(
+        &self,
+        fact: &ExtractedFact,
+        source: &str,
+    ) -> Result<Option<String>, Error> {
         // The session text labels each turn ("user: ..."); a rule-based
         // extractor copies the label into the fact.
         let content = strip_role_label(&fact.content);
@@ -517,13 +550,13 @@ impl crate::Uteke {
         // leave that memory as it is.
         let created = self.store.get_by_id(&id)?.map(|m| m.created_at);
         if created.is_none_or(|c| c < started) {
-            return Ok(());
+            return Ok(None);
         }
         if let Some(p) = fact.priority.filter(|p| (0.0..=1.0).contains(p)) {
             self.set_importance(&id, p)?;
         }
         self.set_source(&id, Some(source), "capture")?;
-        Ok(())
+        Ok(Some(id))
     }
 }
 
@@ -905,8 +938,56 @@ mod tests {
         assert_ne!(m.source_type, "capture");
     }
 
+    /// Returns a good fact, then one that `remember` rejects as invalid
+    /// (not a refusal), until `fixed`.
+    struct HalfBroken {
+        fixed: Mutex<bool>,
+    }
+
+    impl FactSource for HalfBroken {
+        fn extract(&self, _text: &str) -> Result<Vec<ExtractedFact>, Error> {
+            let mut facts = vec![ExtractedFact::flat("the build uses cargo")];
+            if !*self.fixed.lock().unwrap() {
+                facts.push(ExtractedFact::flat(""));
+            }
+            Ok(facts)
+        }
+    }
+
+    #[test]
+    fn a_failed_store_withdraws_the_batch_and_the_retry_stores_it_whole() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "how do we build", None).unwrap();
+        let src = HalfBroken {
+            fixed: Mutex::new(false),
+        };
+        let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
+        assert!(
+            r.stopped
+                .as_deref()
+                .unwrap()
+                .contains("storing a fact failed")
+        );
+        assert_eq!((r.sessions_done, r.facts_stored), (0, 0));
+        assert_eq!(
+            u.search("cargo", 5, None, None).unwrap().len(),
+            0,
+            "withdrawn"
+        );
+        assert_eq!(u.capture_status().unwrap().pending, 1);
+
+        *src.fixed.lock().unwrap() = true;
+        let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
+        assert_eq!((r.sessions_done, r.facts_stored), (1, 1));
+        assert_eq!(u.search("cargo", 5, None, None).unwrap().len(), 1);
+    }
+
     #[test]
     fn the_role_label_is_not_part_of_a_fact() {
+        // a multibyte character where the label would end must not panic
+        assert_eq!(strip_role_label("userпривет"), "userпривет");
+        assert_eq!(strip_role_label("meetïng notes"), "meetïng notes");
+        assert_eq!(strip_role_label("assistant:é"), "é");
         assert_eq!(
             strip_role_label("user: the db is postgres"),
             "the db is postgres"
