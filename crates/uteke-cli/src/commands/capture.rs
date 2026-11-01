@@ -67,12 +67,14 @@ fn fact_source(config: &Config) -> Result<Box<dyn FactSource>, String> {
     }
 }
 
-/// Mode `llm`, or no mode and an API key: the same rule as `import --extract`.
+/// Captured conversations go to an LLM only when the user chose one: mode
+/// `llm`, or no mode at all with an API key. Any other mode (`offline`, the
+/// `none` that onboarding writes, an unknown value) keeps them local.
 fn uses_llm(cfg: &crate::config::ExtractionConfig) -> bool {
     match cfg.mode.as_str() {
         "llm" => true,
-        "offline" => false,
-        _ => !cfg.api_key.is_empty(),
+        "" => !cfg.api_key.is_empty(),
+        _ => false,
     }
 }
 
@@ -153,5 +155,10 @@ mod tests {
         assert!(uses_llm(&cfg("", "sk-test")));
         assert!(uses_llm(&cfg("llm", "")));
         assert!(!uses_llm(&cfg("offline", "sk-test")));
+        assert!(
+            !uses_llm(&cfg("none", "sk-test")),
+            "onboarding's none stays local"
+        );
+        assert!(!uses_llm(&cfg("typo", "sk-test")));
     }
 }

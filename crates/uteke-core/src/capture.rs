@@ -294,10 +294,11 @@ impl crate::Uteke {
     /// Each claim is a batch: its id is written on the turns, which keep it
     /// until they are done. A crashed batch is claimed again as the same
     /// batch, without turns that arrived since, and its facts carry the source
-    /// `capture:<session>:<batch>`. A run that finds facts with that source
-    /// (a crash after storing, before marking done) only marks the turns done,
-    /// so facts are never stored twice. The claim is one conditional UPDATE,
-    /// so two runs never work on the same batch.
+    /// `capture:<session>:<batch>`. A run that finds live facts with that
+    /// source (a crash after storing some or all of them, before marking
+    /// done) withdraws them and extracts the batch again, so its facts are
+    /// stored whole and never twice. The claim is one conditional UPDATE, so
+    /// two runs never work on the same batch.
     pub fn run_capture_extraction(
         &self,
         facts: &dyn FactSource,
@@ -433,15 +434,24 @@ impl crate::Uteke {
                 .map_err(|e| Error::db("capture turns", e))?
         };
         let source = format!("capture:{session}:{}", &batch[..batch.len().min(16)]);
-        let already: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM memories WHERE source = ?1 AND deprecated = 0)",
-                params![source],
-                |r| r.get(0),
-            )
-            .map_err(|e| Error::db("capture batch check", e))?;
+        // Facts of this batch still live from an earlier attempt that never
+        // reached "done" (a crash, possibly halfway through storing): take
+        // them back, so the batch is extracted and stored whole, once.
+        let leftovers: Vec<String> = {
+            let mut stmt = conn
+                .prepare("SELECT id FROM memories WHERE source = ?1 AND deprecated = 0")
+                .map_err(|e| Error::db("capture batch check", e))?;
+            let rows = stmt
+                .query_map(params![source], |r| r.get(0))
+                .map_err(|e| Error::db("capture batch check", e))?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|e| Error::db("capture batch check", e))?
+        };
+        for id in &leftovers {
+            self.soft_forget(id, "capture batch rerun")?;
+        }
 
-        if !already {
+        {
             let text = turns
                 .iter()
                 .map(|(role, content, _)| format!("{role}: {content}"))
@@ -482,8 +492,7 @@ impl crate::Uteke {
                             Ok(())
                         }
                         // Take back what this attempt stored, so the retry
-                        // extracts the batch whole (the rerun check only
-                        // counts live facts).
+                        // extracts the batch whole.
                         Some(why) => {
                             for id in &stored {
                                 if let Err(e) = self.soft_forget(id, "capture batch retried") {
@@ -802,20 +811,39 @@ mod tests {
         let u = open_keyword();
         u.capture("s", Role::User, "the region is eu-west-1", None, None)
             .unwrap();
+        u.capture("s", Role::User, "the zone is c", None, None)
+            .unwrap();
         let fake = Fake::new(0);
         u.run_capture_extraction(&fake, 5, &settings()).unwrap();
-        // crash after storing, before "done": the turns are still extracting
+        // crash halfway: one of the two facts was stored, then the process died
+        let second: String = u
+            .graph_store()
+            .query_row(
+                "SELECT id FROM memories WHERE content LIKE '%zone%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        u.graph_store()
+            .execute("DELETE FROM memories WHERE id = ?1", [&second])
+            .unwrap();
         u.graph_store()
             .execute(
                 "UPDATE observations SET status = 'extracting', claimed_at = ?1, finished_at = NULL",
                 [ago(60)],
             )
             .unwrap();
-        let before = u.count(None).unwrap();
         let r = u.run_capture_extraction(&fake, 5, &settings()).unwrap();
-        assert_eq!((r.sessions_done, r.facts_stored), (1, 0));
-        assert_eq!(fake.calls(), 1, "the extractor is not called again");
-        assert_eq!(u.count(None).unwrap(), before);
+        assert_eq!(
+            (r.sessions_done, r.facts_stored),
+            (1, 2),
+            "extracted whole again"
+        );
+        let live: i64 = rows(
+            &u,
+            "SELECT COUNT(*) FROM memories WHERE source LIKE 'capture:%' AND deprecated = 0",
+        );
+        assert_eq!(live, 2, "each fact once");
     }
 
     #[test]
@@ -885,13 +913,15 @@ mod tests {
             .unwrap();
         let before = u.count(None).unwrap();
         let r = u.run_capture_extraction(&fake, 5, &settings()).unwrap();
-        assert_eq!((r.reclaimed, r.sessions_done, r.facts_stored), (1, 1, 0));
-        assert_eq!(fake.calls(), 1, "the old batch is not extracted again");
+        // the old batch alone is extracted again; its fact is replaced, not doubled
+        assert_eq!((r.reclaimed, r.sessions_done, r.facts_stored), (1, 1, 1));
+        assert_eq!(fake.calls(), 2);
+        assert!(!fake.calls.lock().unwrap()[1].contains("zone"));
         assert_eq!(u.count(None).unwrap(), before);
         // the new turn is its own batch on the next run
         let r = u.run_capture_extraction(&fake, 5, &settings()).unwrap();
         assert_eq!((r.sessions_done, r.facts_stored), (1, 1));
-        assert!(fake.calls.lock().unwrap()[1].starts_with("user: the zone is b"));
+        assert!(fake.calls.lock().unwrap()[2].starts_with("user: the zone is b"));
     }
 
     #[test]
