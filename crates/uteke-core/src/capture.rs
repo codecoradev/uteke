@@ -207,41 +207,35 @@ impl crate::Uteke {
         let hash = turn_hash(session_id, role, &text);
 
         let conn = self.graph_store();
-        let existing: Option<String> = conn
+        // INSERT OR IGNORE: two hooks capturing the same turn at once both
+        // succeed, one of them as the duplicate.
+        let inserted = conn
+            .execute(
+                "INSERT OR IGNORE INTO observations (id, session_id, seq, role, content, content_hash, source, captured_at)
+                 VALUES (?1, ?2,
+                         (SELECT COALESCE(MAX(seq), 0) + 1 FROM observations WHERE session_id = ?2),
+                         ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    uuid::Uuid::now_v7().to_string(),
+                    session_id,
+                    role.as_str(),
+                    text,
+                    hash,
+                    source,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )
+            .map_err(|e| Error::db("capture insert", e))?;
+        let id: String = conn
             .query_row(
                 "SELECT id FROM observations WHERE content_hash = ?1",
                 params![hash],
                 |r| r.get(0),
             )
-            .optional()
             .map_err(|e| Error::db("capture lookup", e))?;
-        if let Some(id) = existing {
-            return Ok(CaptureOutcome {
-                id,
-                duplicate: true,
-                redacted,
-            });
-        }
-        let id = uuid::Uuid::now_v7().to_string();
-        conn.execute(
-            "INSERT INTO observations (id, session_id, seq, role, content, content_hash, source, captured_at)
-             VALUES (?1, ?2,
-                     (SELECT COALESCE(MAX(seq), 0) + 1 FROM observations WHERE session_id = ?2),
-                     ?3, ?4, ?5, ?6, ?7)",
-            params![
-                id,
-                session_id,
-                role.as_str(),
-                text,
-                hash,
-                source,
-                chrono::Utc::now().to_rfc3339()
-            ],
-        )
-        .map_err(|e| Error::db("capture insert", e))?;
         Ok(CaptureOutcome {
             id,
-            duplicate: false,
+            duplicate: inserted == 0,
             redacted,
         })
     }
@@ -282,17 +276,19 @@ impl crate::Uteke {
             .map_err(|e| Error::db("count pending sessions", e))
     }
 
-    /// One extraction run (#1466): delete done turns past the retention,
-    /// hand back sessions whose lease expired, then extract up to `budget`
-    /// sessions, oldest first, one extractor call each. An extractor error
-    /// (rate limit, provider down) stops the run: the session goes back to
-    /// the queue, or is marked failed after `max_attempts`.
+    /// One extraction run (#1466): delete done and failed turns past the
+    /// retention, hand back batches whose lease expired, then extract up to
+    /// `budget` sessions, oldest first, one extractor call each. An extractor
+    /// error (rate limit, provider down) stops the run: the turns go back to
+    /// the queue, or are marked failed after `max_attempts`.
     ///
-    /// The facts of a session carry the source `capture:<session>:<batch>`,
-    /// where the batch key names the claimed turns. A run that finds facts
-    /// with that source already stored (a crash after storing, before
-    /// marking done) only marks the turns done, so a re-run never stores
-    /// the facts twice.
+    /// Each claim is a batch: its id is written on the turns, which keep it
+    /// until they are done. A crashed batch is claimed again as the same
+    /// batch, without turns that arrived since, and its facts carry the source
+    /// `capture:<session>:<batch>`. A run that finds facts with that source
+    /// (a crash after storing, before marking done) only marks the turns done,
+    /// so facts are never stored twice. The claim is one conditional UPDATE,
+    /// so two runs never work on the same batch.
     pub fn run_capture_extraction(
         &self,
         facts: &dyn FactSource,
@@ -303,24 +299,34 @@ impl crate::Uteke {
         let mut report = ExtractionRunReport {
             pruned: conn
                 .execute(
-                    "DELETE FROM observations WHERE status = 'done' AND finished_at < ?1",
+                    "DELETE FROM observations WHERE status IN ('done', 'failed') AND finished_at < ?1",
                     params![ago(i64::from(settings.retention_days) * 24 * 60)],
                 )
                 .map_err(|e| Error::db("capture retention", e))?,
             ..Default::default()
         };
+        let lease = ago(settings.lease_minutes as i64);
         report.reclaimed = conn
             .query_row(
-                "SELECT COUNT(DISTINCT session_id) FROM observations
+                "SELECT COUNT(DISTINCT batch_id) FROM observations
                  WHERE status = 'extracting' AND claimed_at < ?1",
-                params![ago(settings.lease_minutes as i64)],
+                params![lease],
                 |r| r.get::<_, i64>(0),
             )
             .map_err(|e| Error::db("capture reclaim", e))? as usize;
+        // A batch that keeps crashing the run (it never reaches the error
+        // path) fails like one that keeps erroring.
         conn.execute(
-            "UPDATE observations SET status = 'pending', claimed_at = NULL
+            "UPDATE observations
+             SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
+                 claimed_at = NULL,
+                 finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
              WHERE status = 'extracting' AND claimed_at < ?1",
-            params![ago(settings.lease_minutes as i64)],
+            params![
+                lease,
+                settings.max_attempts,
+                chrono::Utc::now().to_rfc3339()
+            ],
         )
         .map_err(|e| Error::db("capture reclaim", e))?;
 
@@ -348,8 +354,51 @@ impl crate::Uteke {
         Ok(report)
     }
 
-    /// Extract one session. The outer `Result` is a database failure; the
-    /// inner `Err` is an extractor failure that stops the run.
+    /// Claim the next batch of `session`: the pending turns of an unfinished
+    /// batch when there is one (a crash or an extractor error left it), else
+    /// every pending turn under a new batch id. `None` when another run
+    /// claimed it first.
+    fn claim_batch(&self, session: &str) -> Result<Option<String>, Error> {
+        let conn = self.graph_store();
+        let old: Option<String> = conn
+            .query_row(
+                "SELECT batch_id FROM observations
+                 WHERE session_id = ?1 AND status = 'pending' AND batch_id IS NOT NULL
+                 ORDER BY seq LIMIT 1",
+                params![session],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("capture claim", e))?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let (batch, claimed) = match old {
+            Some(b) => {
+                let n = conn
+                    .execute(
+                        "UPDATE observations SET status = 'extracting', claimed_at = ?2, attempts = attempts + 1
+                         WHERE batch_id = ?1 AND status = 'pending'",
+                        params![b, now],
+                    )
+                    .map_err(|e| Error::db("capture claim", e))?;
+                (b, n)
+            }
+            None => {
+                let b = uuid::Uuid::now_v7().simple().to_string();
+                let n = conn
+                    .execute(
+                        "UPDATE observations SET status = 'extracting', claimed_at = ?3, attempts = attempts + 1, batch_id = ?2
+                         WHERE session_id = ?1 AND status = 'pending' AND batch_id IS NULL",
+                        params![session, b, now],
+                    )
+                    .map_err(|e| Error::db("capture claim", e))?;
+                (b, n)
+            }
+        };
+        Ok((claimed > 0).then_some(batch))
+    }
+
+    /// Extract one batch of a session. The outer `Result` is a database
+    /// failure; the inner `Err` is an extractor failure that stops the run.
     fn extract_session(
         &self,
         facts: &dyn FactSource,
@@ -357,42 +406,24 @@ impl crate::Uteke {
         settings: &CaptureSettings,
         report: &mut ExtractionRunReport,
     ) -> Result<Result<(), String>, Error> {
+        let Some(batch) = self.claim_batch(session)? else {
+            return Ok(Ok(()));
+        };
         let conn = self.graph_store();
-        conn.execute(
-            "UPDATE observations SET status = 'extracting', claimed_at = ?2, attempts = attempts + 1
-             WHERE session_id = ?1 AND status = 'pending'",
-            params![session, chrono::Utc::now().to_rfc3339()],
-        )
-        .map_err(|e| Error::db("capture claim", e))?;
-        let turns: Vec<(String, String, String, u32)> = {
+        let turns: Vec<(String, String)> = {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, role, content, attempts FROM observations
-                     WHERE session_id = ?1 AND status = 'extracting' ORDER BY seq",
+                    "SELECT role, content FROM observations
+                     WHERE batch_id = ?1 AND status = 'extracting' ORDER BY seq",
                 )
                 .map_err(|e| Error::db("capture turns", e))?;
             let rows = stmt
-                .query_map(params![session], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-                })
+                .query_map(params![batch], |r| Ok((r.get(0)?, r.get(1)?)))
                 .map_err(|e| Error::db("capture turns", e))?;
             rows.collect::<Result<_, _>>()
                 .map_err(|e| Error::db("capture turns", e))?
         };
-        if turns.is_empty() {
-            return Ok(Ok(()));
-        }
-        let batch: String = crate::provenance::content_hash(
-            &turns
-                .iter()
-                .map(|t| t.0.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-        )
-        .chars()
-        .take(16)
-        .collect();
-        let source = format!("capture:{session}:{batch}");
+        let source = format!("capture:{session}:{}", &batch[..batch.len().min(16)]);
         let already: bool = conn
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM memories WHERE source = ?1)",
@@ -404,7 +435,7 @@ impl crate::Uteke {
         if !already {
             let text = turns
                 .iter()
-                .map(|(_, role, content, _)| format!("{role}: {content}"))
+                .map(|(role, content)| format!("{role}: {content}"))
                 .collect::<Vec<_>>()
                 .join("\n");
             match facts.extract(&text) {
@@ -423,27 +454,37 @@ impl crate::Uteke {
                     }
                 }
                 Err(e) => {
-                    let attempts = turns.iter().map(|t| t.3).max().unwrap_or(0);
-                    let next = if attempts >= settings.max_attempts {
+                    // Per turn: a turn that joined this batch later has
+                    // fewer attempts and goes back to pending.
+                    let failed = conn
+                        .execute(
+                            "UPDATE observations
+                             SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
+                                 claimed_at = NULL,
+                                 finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
+                             WHERE batch_id = ?1 AND status = 'extracting'",
+                            params![batch, settings.max_attempts, chrono::Utc::now().to_rfc3339()],
+                        )
+                        .map_err(|e| Error::db("capture release", e))
+                        .and_then(|_| {
+                            conn.query_row(
+                                "SELECT COUNT(*) FROM observations WHERE batch_id = ?1 AND status = 'failed'",
+                                params![batch],
+                                |r| r.get::<_, i64>(0),
+                            )
+                            .map_err(|e| Error::db("capture release", e))
+                        })?;
+                    if failed > 0 {
                         report.sessions_failed += 1;
-                        "failed"
-                    } else {
-                        "pending"
-                    };
-                    conn.execute(
-                        "UPDATE observations SET status = ?2, claimed_at = NULL
-                         WHERE session_id = ?1 AND status = 'extracting'",
-                        params![session, next],
-                    )
-                    .map_err(|e| Error::db("capture release", e))?;
+                    }
                     return Ok(Err(e.to_string()));
                 }
             }
         }
         conn.execute(
             "UPDATE observations SET status = 'done', finished_at = ?2
-             WHERE session_id = ?1 AND status = 'extracting'",
-            params![session, chrono::Utc::now().to_rfc3339()],
+             WHERE batch_id = ?1 AND status = 'extracting'",
+            params![batch, chrono::Utc::now().to_rfc3339()],
         )
         .map_err(|e| Error::db("capture done", e))?;
         report.sessions_done += 1;
@@ -465,15 +506,17 @@ impl crate::Uteke {
             tags.push(format!("scene:{scene}"));
         }
         let tag_refs: Vec<&str> = tags.iter().map(String::as_str).collect();
-        let before = self.store.count(None)?;
+        let started = chrono::Utc::now();
         let id = match fact.fact_type.as_deref() {
             Some(t) if crate::memory::types::MemoryType::from_str_opt(t).is_some() => {
                 self.remember_typed(&fact.content, &tag_refs, None, None, t)?
             }
             _ => self.remember(&fact.content, &tag_refs, None, None)?,
         };
-        // A duplicate of a stored memory: leave that memory as it is.
-        if self.store.count(None)? == before {
+        // A duplicate of a stored memory (the write returned an older row):
+        // leave that memory as it is.
+        let created = self.store.get_by_id(&id)?.map(|m| m.created_at);
+        if created.is_none_or(|c| c < started) {
             return Ok(());
         }
         if let Some(p) = fact.priority.filter(|p| (0.0..=1.0).contains(p)) {
@@ -671,13 +714,13 @@ mod tests {
         u.capture("running", Role::User, "y", None).unwrap();
         u.graph_store()
             .execute(
-                "UPDATE observations SET status = 'extracting', claimed_at = ?1, attempts = 1 WHERE session_id = 'crashed'",
+                "UPDATE observations SET status = 'extracting', claimed_at = ?1, attempts = 1, batch_id = 'b1' WHERE session_id = 'crashed'",
                 [ago(60)],
             )
             .unwrap();
         u.graph_store()
             .execute(
-                "UPDATE observations SET status = 'extracting', claimed_at = ?1, attempts = 1 WHERE session_id = 'running'",
+                "UPDATE observations SET status = 'extracting', claimed_at = ?1, attempts = 1, batch_id = 'b2' WHERE session_id = 'running'",
                 [ago(1)],
             )
             .unwrap();
@@ -747,6 +790,119 @@ mod tests {
             (r.facts_stored, r.facts_refused, r.sessions_done),
             (0, 1, 1)
         );
+    }
+
+    #[test]
+    fn a_batch_is_claimed_once() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "x", None).unwrap();
+        let first = u.claim_batch("s").unwrap();
+        assert!(first.is_some());
+        assert_eq!(
+            u.claim_batch("s").unwrap(),
+            None,
+            "a second run gets nothing"
+        );
+    }
+
+    #[test]
+    fn a_crashed_batch_is_rerun_without_new_turns_and_without_storing_twice() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "the region is eu-west-1", None)
+            .unwrap();
+        let fake = Fake::new(0);
+        u.run_capture_extraction(&fake, 5, &settings()).unwrap();
+        // crash after storing, before "done", then a new turn arrives
+        u.graph_store()
+            .execute(
+                "UPDATE observations SET status = 'extracting', claimed_at = ?1, finished_at = NULL",
+                [ago(60)],
+            )
+            .unwrap();
+        u.capture("s", Role::User, "the zone is b", None).unwrap();
+        let before = u.count(None).unwrap();
+        let r = u.run_capture_extraction(&fake, 5, &settings()).unwrap();
+        assert_eq!((r.reclaimed, r.sessions_done, r.facts_stored), (1, 1, 0));
+        assert_eq!(fake.calls(), 1, "the old batch is not extracted again");
+        assert_eq!(u.count(None).unwrap(), before);
+        // the new turn is its own batch on the next run
+        let r = u.run_capture_extraction(&fake, 5, &settings()).unwrap();
+        assert_eq!((r.sessions_done, r.facts_stored), (1, 1));
+        assert!(fake.calls.lock().unwrap()[1].starts_with("user: the zone is b"));
+    }
+
+    #[test]
+    fn a_batch_that_keeps_crashing_the_run_is_failed_at_max_attempts() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "poison", None).unwrap();
+        let s = CaptureSettings {
+            max_attempts: 2,
+            ..settings()
+        };
+        for _ in 0..2 {
+            u.claim_batch("s").unwrap().unwrap();
+            // the run dies: the lease expires
+            u.graph_store()
+                .execute("UPDATE observations SET claimed_at = ?1", [ago(60)])
+                .unwrap();
+            u.run_capture_extraction(&Fake::new(0), 0, &s).unwrap();
+        }
+        assert_eq!(u.capture_status().unwrap().failed, 1);
+    }
+
+    #[test]
+    fn attempts_are_counted_per_turn() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "old", None).unwrap();
+        let s = CaptureSettings {
+            max_attempts: 2,
+            ..settings()
+        };
+        u.run_capture_extraction(&Fake::new(1), 5, &s).unwrap(); // old: 1 attempt
+        u.capture("s", Role::User, "new", None).unwrap();
+        u.run_capture_extraction(&Fake::new(1), 5, &s).unwrap(); // old batch again: failed
+        let failed: i64 = rows(
+            &u,
+            "SELECT COUNT(*) FROM observations WHERE status = 'failed'",
+        );
+        let new_pending: i64 = rows(
+            &u,
+            "SELECT COUNT(*) FROM observations WHERE content = 'new' AND status = 'pending' AND attempts = 0",
+        );
+        assert_eq!((failed, new_pending), (1, 1));
+    }
+
+    #[test]
+    fn failed_turns_are_deleted_after_the_retention_too() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "x", None).unwrap();
+        let s = CaptureSettings {
+            max_attempts: 1,
+            ..settings()
+        };
+        u.run_capture_extraction(&Fake::new(1), 5, &s).unwrap();
+        assert_eq!(u.capture_status().unwrap().failed, 1);
+        u.graph_store()
+            .execute(
+                "UPDATE observations SET finished_at = ?1",
+                [ago(31 * 24 * 60)],
+            )
+            .unwrap();
+        let r = u.run_capture_extraction(&Fake::new(0), 5, &s).unwrap();
+        assert_eq!(r.pruned, 1);
+    }
+
+    #[test]
+    fn a_fact_that_matches_a_stored_memory_does_not_retag_it() {
+        // an embedder, so the duplicate gate returns the stored memory
+        let (emb, _) = crate::test_support::RecordingEmbedder::new();
+        let u = crate::test_support::open_with_embedder(Box::new(emb));
+        let id = u.remember("fact: shared", &[], None, None).unwrap();
+        u.capture("s", Role::User, "shared", None).unwrap();
+        u.run_capture_extraction(&Fake::new(0), 5, &settings())
+            .unwrap();
+        let m = u.get_by_id(&id).unwrap().unwrap();
+        assert_ne!(m.source_type, "capture");
     }
 
     #[test]

@@ -1207,9 +1207,11 @@ impl super::Store {
     status       TEXT NOT NULL DEFAULT 'pending',
     claimed_at   TEXT,
     attempts     INTEGER NOT NULL DEFAULT 0,
-    finished_at  TEXT
+    finished_at  TEXT,
+    batch_id     TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);",
+CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);
+CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
             )
             .map_err(|e| Error::db("schema migration v23 to v24", e))?;
         Ok(())

@@ -52,12 +52,7 @@ pub(crate) fn run_capture(
 /// one (mode `llm`, or an API key with no mode), else the offline rules.
 fn fact_source(config: &Config) -> Result<Box<dyn FactSource>, String> {
     let cfg = &config.extraction;
-    let use_llm = match cfg.mode.as_str() {
-        "llm" => true,
-        "offline" => false,
-        _ => !cfg.api_key.is_empty(),
-    };
-    if use_llm {
+    if uses_llm(cfg) {
         let mut llm = cfg.clone();
         llm.mode = "llm".to_string();
         let extractor = uteke_core::extraction::Extractor::new(&llm)
@@ -67,6 +62,15 @@ fn fact_source(config: &Config) -> Result<Box<dyn FactSource>, String> {
         Ok(Box::new(OfflineFacts {
             max_facts: cfg.max_facts,
         }))
+    }
+}
+
+/// Mode `llm`, or no mode and an API key: the same rule as `import --extract`.
+fn uses_llm(cfg: &crate::config::ExtractionConfig) -> bool {
+    match cfg.mode.as_str() {
+        "llm" => true,
+        "offline" => false,
+        _ => !cfg.api_key.is_empty(),
     }
 }
 
@@ -129,4 +133,23 @@ pub(crate) fn run_extract_queue(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uses_llm;
+    use crate::config::ExtractionConfig;
+
+    #[test]
+    fn the_llm_is_used_only_when_extraction_names_one() {
+        let cfg = |mode: &str, key: &str| ExtractionConfig {
+            mode: mode.into(),
+            api_key: key.into(),
+            ..Default::default()
+        };
+        assert!(!uses_llm(&cfg("", "")), "unconfigured: offline rules");
+        assert!(uses_llm(&cfg("", "sk-test")));
+        assert!(uses_llm(&cfg("llm", "")));
+        assert!(!uses_llm(&cfg("offline", "sk-test")));
+    }
 }
