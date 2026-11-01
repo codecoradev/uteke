@@ -183,12 +183,15 @@ impl crate::Uteke {
     /// Append one turn to the capture queue (#1466). The privacy filter runs
     /// first, so a secret never sits in the queue in clear text. Capturing
     /// the same turn again is a no-op (`duplicate`). No embedder, no network.
+    /// The facts extracted from the turn are stored in `namespace` (the
+    /// caller's, recorded now so a later run does not depend on its own).
     pub fn capture(
         &self,
         session_id: &str,
         role: Role,
         content: &str,
         source: Option<&str>,
+        namespace: Option<&str>,
     ) -> Result<CaptureOutcome, Error> {
         let session_id = session_id.trim();
         if session_id.is_empty() || session_id.chars().count() > MAX_SESSION_ID {
@@ -216,10 +219,10 @@ impl crate::Uteke {
         // succeed, one of them as the duplicate.
         let inserted = conn
             .execute(
-                "INSERT OR IGNORE INTO observations (id, session_id, seq, role, content, content_hash, source, captured_at)
+                "INSERT OR IGNORE INTO observations (id, session_id, seq, role, content, content_hash, source, captured_at, namespace)
                  VALUES (?1, ?2,
                          (SELECT COALESCE(MAX(seq), 0) + 1 FROM observations WHERE session_id = ?2),
-                         ?3, ?4, ?5, ?6, ?7)",
+                         ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     uuid::Uuid::now_v7().to_string(),
                     session_id,
@@ -227,7 +230,8 @@ impl crate::Uteke {
                     text,
                     hash,
                     source,
-                    chrono::Utc::now().to_rfc3339()
+                    chrono::Utc::now().to_rfc3339(),
+                    namespace
                 ],
             )
             .map_err(|e| Error::db("capture insert", e))?;
@@ -415,15 +419,15 @@ impl crate::Uteke {
             return Ok(Ok(()));
         };
         let conn = self.graph_store();
-        let turns: Vec<(String, String)> = {
+        let turns: Vec<(String, String, Option<String>)> = {
             let mut stmt = conn
                 .prepare(
-                    "SELECT role, content FROM observations
+                    "SELECT role, content, namespace FROM observations
                      WHERE batch_id = ?1 AND status = 'extracting' ORDER BY seq",
                 )
                 .map_err(|e| Error::db("capture turns", e))?;
             let rows = stmt
-                .query_map(params![batch], |r| Ok((r.get(0)?, r.get(1)?)))
+                .query_map(params![batch], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
                 .map_err(|e| Error::db("capture turns", e))?;
             rows.collect::<Result<_, _>>()
                 .map_err(|e| Error::db("capture turns", e))?
@@ -440,15 +444,17 @@ impl crate::Uteke {
         if !already {
             let text = turns
                 .iter()
-                .map(|(role, content)| format!("{role}: {content}"))
+                .map(|(role, content, _)| format!("{role}: {content}"))
                 .collect::<Vec<_>>()
                 .join("\n");
+            // The namespace the session was captured in (its first turn).
+            let namespace = turns.first().and_then(|t| t.2.clone());
             let outcome = match facts.extract(&text) {
                 Ok(found) => {
                     let mut stored = Vec::new();
                     let mut failure = None;
                     for fact in &found {
-                        match self.store_captured_fact(fact, &source) {
+                        match self.store_captured_fact(fact, &source, namespace.as_deref()) {
                             Ok(Some(id)) => stored.push(id),
                             Ok(None) => {}
                             Err(Error::RejectedValue { .. } | Error::SecretDetected { .. }) => {
@@ -526,6 +532,7 @@ impl crate::Uteke {
         &self,
         fact: &ExtractedFact,
         source: &str,
+        namespace: Option<&str>,
     ) -> Result<Option<String>, Error> {
         // The session text labels each turn ("user: ..."); a rule-based
         // extractor copies the label into the fact.
@@ -542,9 +549,9 @@ impl crate::Uteke {
         let started = chrono::Utc::now();
         let id = match fact.fact_type.as_deref() {
             Some(t) if crate::memory::types::MemoryType::from_str_opt(t).is_some() => {
-                self.remember_typed(&fact.content, &tag_refs, None, None, t)?
+                self.remember_typed(&fact.content, &tag_refs, None, namespace, t)?
             }
-            _ => self.remember(&fact.content, &tag_refs, None, None)?,
+            _ => self.remember(&fact.content, &tag_refs, None, namespace)?,
         };
         // A duplicate of a stored memory (the write returned an older row):
         // leave that memory as it is.
@@ -616,21 +623,21 @@ mod tests {
     fn the_same_turn_twice_is_one_row_and_tool_output_is_summarised() {
         let u = open_keyword();
         let a = u
-            .capture("s1", Role::User, "deploy to staging", None)
+            .capture("s1", Role::User, "deploy to staging", None, None)
             .unwrap();
         let b = u
-            .capture("s1", Role::User, "deploy to staging", None)
+            .capture("s1", Role::User, "deploy to staging", None, None)
             .unwrap();
         assert!(!a.duplicate && b.duplicate);
         assert_eq!(a.id, b.id);
         // same text from another role or session is a new turn
         assert!(
-            !u.capture("s1", Role::Assistant, "deploy to staging", None)
+            !u.capture("s1", Role::Assistant, "deploy to staging", None, None)
                 .unwrap()
                 .duplicate
         );
         assert!(
-            !u.capture("s2", Role::User, "deploy to staging", None)
+            !u.capture("s2", Role::User, "deploy to staging", None, None)
                 .unwrap()
                 .duplicate
         );
@@ -639,6 +646,7 @@ mod tests {
             "s1",
             Role::Tool,
             &"x".repeat(TOOL_SUMMARY_CHARS + 500),
+            None,
             None,
         )
         .unwrap();
@@ -655,8 +663,8 @@ mod tests {
             3
         );
 
-        assert!(u.capture(" ", Role::User, "x", None).is_err());
-        assert!(u.capture("s1", Role::User, "   ", None).is_err());
+        assert!(u.capture(" ", Role::User, "x", None, None).is_err());
+        assert!(u.capture("s1", Role::User, "   ", None, None).is_err());
         assert!("bot".parse::<Role>().is_err());
     }
 
@@ -665,7 +673,13 @@ mod tests {
         let u = open_keyword();
         let token = format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5");
         let out = u
-            .capture("s1", Role::User, &format!("my token is {token}"), None)
+            .capture(
+                "s1",
+                Role::User,
+                &format!("my token is {token}"),
+                None,
+                None,
+            )
             .unwrap();
         assert!(out.redacted);
         let stored: String = u
@@ -678,10 +692,11 @@ mod tests {
     #[test]
     fn a_run_extracts_up_to_the_budget_oldest_session_first() {
         let u = open_keyword();
-        u.capture("old", Role::User, "the db is postgres", None)
+        u.capture("old", Role::User, "the db is postgres", None, None)
             .unwrap();
-        u.capture("old", Role::Assistant, "noted", None).unwrap();
-        u.capture("new", Role::User, "the cache is redis", None)
+        u.capture("old", Role::Assistant, "noted", None, None)
+            .unwrap();
+        u.capture("new", Role::User, "the cache is redis", None, None)
             .unwrap();
         let fake = Fake::new(0);
         let r = u.run_capture_extraction(&fake, 1, &settings()).unwrap();
@@ -714,8 +729,8 @@ mod tests {
     #[test]
     fn an_extractor_error_stops_the_run_and_the_session_is_retried_then_failed() {
         let u = open_keyword();
-        u.capture("a", Role::User, "first", None).unwrap();
-        u.capture("b", Role::User, "second", None).unwrap();
+        u.capture("a", Role::User, "first", None, None).unwrap();
+        u.capture("b", Role::User, "second", None, None).unwrap();
         let fake = Fake::new(3);
         let s = CaptureSettings {
             max_attempts: 2,
@@ -743,8 +758,8 @@ mod tests {
     #[test]
     fn an_expired_lease_is_reclaimed_and_a_live_one_is_not() {
         let u = open_keyword();
-        u.capture("crashed", Role::User, "x", None).unwrap();
-        u.capture("running", Role::User, "y", None).unwrap();
+        u.capture("crashed", Role::User, "x", None, None).unwrap();
+        u.capture("running", Role::User, "y", None, None).unwrap();
         u.graph_store()
             .execute(
                 "UPDATE observations SET status = 'extracting', claimed_at = ?1, attempts = 1, batch_id = 'b1' WHERE session_id = 'crashed'",
@@ -772,7 +787,7 @@ mod tests {
     #[test]
     fn a_rerun_after_a_crash_does_not_store_the_facts_twice() {
         let u = open_keyword();
-        u.capture("s", Role::User, "the region is eu-west-1", None)
+        u.capture("s", Role::User, "the region is eu-west-1", None, None)
             .unwrap();
         let fake = Fake::new(0);
         u.run_capture_extraction(&fake, 5, &settings()).unwrap();
@@ -793,7 +808,8 @@ mod tests {
     #[test]
     fn done_turns_past_the_retention_are_deleted() {
         let u = open_keyword();
-        u.capture("s", Role::User, "keep me short", None).unwrap();
+        u.capture("s", Role::User, "keep me short", None, None)
+            .unwrap();
         let fake = Fake::new(0);
         u.run_capture_extraction(&fake, 5, &settings()).unwrap();
         u.graph_store()
@@ -814,7 +830,7 @@ mod tests {
             .remember("fact: the port is 9999", &[], None, None)
             .unwrap();
         u.forget_with_reason(&id, Some("wrong")).unwrap();
-        u.capture("s", Role::User, "the port is 9999", None)
+        u.capture("s", Role::User, "the port is 9999", None, None)
             .unwrap();
         let r = u
             .run_capture_extraction(&Fake::new(0), 5, &settings())
@@ -828,7 +844,7 @@ mod tests {
     #[test]
     fn a_batch_is_claimed_once() {
         let u = open_keyword();
-        u.capture("s", Role::User, "x", None).unwrap();
+        u.capture("s", Role::User, "x", None, None).unwrap();
         let first = u.claim_batch("s").unwrap();
         assert!(first.is_some());
         assert_eq!(
@@ -841,7 +857,7 @@ mod tests {
     #[test]
     fn a_crashed_batch_is_rerun_without_new_turns_and_without_storing_twice() {
         let u = open_keyword();
-        u.capture("s", Role::User, "the region is eu-west-1", None)
+        u.capture("s", Role::User, "the region is eu-west-1", None, None)
             .unwrap();
         let fake = Fake::new(0);
         u.run_capture_extraction(&fake, 5, &settings()).unwrap();
@@ -852,7 +868,8 @@ mod tests {
                 [ago(60)],
             )
             .unwrap();
-        u.capture("s", Role::User, "the zone is b", None).unwrap();
+        u.capture("s", Role::User, "the zone is b", None, None)
+            .unwrap();
         let before = u.count(None).unwrap();
         let r = u.run_capture_extraction(&fake, 5, &settings()).unwrap();
         assert_eq!((r.reclaimed, r.sessions_done, r.facts_stored), (1, 1, 0));
@@ -867,7 +884,7 @@ mod tests {
     #[test]
     fn a_batch_that_keeps_crashing_the_run_is_failed_at_max_attempts() {
         let u = open_keyword();
-        u.capture("s", Role::User, "poison", None).unwrap();
+        u.capture("s", Role::User, "poison", None, None).unwrap();
         let s = CaptureSettings {
             max_attempts: 2,
             ..settings()
@@ -886,13 +903,13 @@ mod tests {
     #[test]
     fn attempts_are_counted_per_turn() {
         let u = open_keyword();
-        u.capture("s", Role::User, "old", None).unwrap();
+        u.capture("s", Role::User, "old", None, None).unwrap();
         let s = CaptureSettings {
             max_attempts: 2,
             ..settings()
         };
         u.run_capture_extraction(&Fake::new(1), 5, &s).unwrap(); // old: 1 attempt
-        u.capture("s", Role::User, "new", None).unwrap();
+        u.capture("s", Role::User, "new", None, None).unwrap();
         u.run_capture_extraction(&Fake::new(1), 5, &s).unwrap(); // old batch again: failed
         let failed: i64 = rows(
             &u,
@@ -908,7 +925,7 @@ mod tests {
     #[test]
     fn failed_turns_are_deleted_after_the_retention_too() {
         let u = open_keyword();
-        u.capture("s", Role::User, "x", None).unwrap();
+        u.capture("s", Role::User, "x", None, None).unwrap();
         let s = CaptureSettings {
             max_attempts: 1,
             ..settings()
@@ -931,7 +948,7 @@ mod tests {
         let (emb, _) = crate::test_support::RecordingEmbedder::new();
         let u = crate::test_support::open_with_embedder(Box::new(emb));
         let id = u.remember("fact: shared", &[], None, None).unwrap();
-        u.capture("s", Role::User, "shared", None).unwrap();
+        u.capture("s", Role::User, "shared", None, None).unwrap();
         u.run_capture_extraction(&Fake::new(0), 5, &settings())
             .unwrap();
         let m = u.get_by_id(&id).unwrap().unwrap();
@@ -957,7 +974,8 @@ mod tests {
     #[test]
     fn a_failed_store_withdraws_the_batch_and_the_retry_stores_it_whole() {
         let u = open_keyword();
-        u.capture("s", Role::User, "how do we build", None).unwrap();
+        u.capture("s", Role::User, "how do we build", None, None)
+            .unwrap();
         let src = HalfBroken {
             fixed: Mutex::new(false),
         };
@@ -980,6 +998,23 @@ mod tests {
         let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
         assert_eq!((r.sessions_done, r.facts_stored), (1, 1));
         assert_eq!(u.search("cargo", 5, None, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn facts_land_in_the_namespace_the_session_was_captured_in() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "the queue is kafka", None, Some("team-a"))
+            .unwrap();
+        u.run_capture_extraction(&Fake::new(0), 5, &settings())
+            .unwrap();
+        let hits = u.search("kafka", 5, None, Some("team-a")).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memory.namespace, "team-a");
+        assert!(
+            u.search("kafka", 5, None, Some("default"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

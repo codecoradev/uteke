@@ -8,10 +8,12 @@ use uteke_core::Uteke;
 use uteke_core::capture::{FactSource, OfflineFacts, Role};
 
 /// Queue one turn. Refused while `[capture] enabled` is off (opt-in).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_capture(
     cli: &Cli,
     uteke: &Uteke,
     config: &Config,
+    ns: Option<&str>,
     session: &str,
     role: &str,
     source: Option<&str>,
@@ -36,7 +38,7 @@ pub(crate) fn run_capture(
         }
     };
     let out = uteke
-        .capture(session, role, &content, source)
+        .capture(session, role, &content, source, ns)
         .map_err(|e| format!("Failed to capture: {e}"))?;
     if cli.json {
         output::print_json(&out);

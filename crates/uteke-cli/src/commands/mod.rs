@@ -240,6 +240,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             cli,
             uteke,
             config,
+            ns,
             session,
             role,
             source.as_deref(),

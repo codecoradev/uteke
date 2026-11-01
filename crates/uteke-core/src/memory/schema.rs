@@ -1208,7 +1208,8 @@ impl super::Store {
     claimed_at   TEXT,
     attempts     INTEGER NOT NULL DEFAULT 0,
     finished_at  TEXT,
-    batch_id     TEXT
+    batch_id     TEXT,
+    namespace    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);
 CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
