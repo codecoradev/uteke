@@ -341,9 +341,9 @@ impl Store {
     /// The hash of the CURRENT content of every active memory, mapped to its
     /// id, optionally in one namespace (#1608). An import that defers
     /// embedding has no vector for the cosine duplicate check, so it skips
-    /// exact copies with this map. Not `source_hash`: that is the content at
-    /// insert time (kept for the tamper audit) and is not refreshed by an
-    /// update.
+    /// exact copies with this map. Hashed from the content rather than read
+    /// from `source_hash`, so a row edited outside the API still matches
+    /// what it holds now.
     pub fn active_content_hashes(
         &self,
         namespace: Option<&str>,

@@ -77,6 +77,19 @@
 
 ### Fixed
 
+- **Timeline gaps and the stale provenance hash (#1595)** - a content update
+  through the API (`update`, `PUT /memory`, MCP `uteke_update`) now refreshes
+  `source_hash` and records an `updated` event `{"fields":["content"],
+  "previous_hash":…,"source_hash":…}` with the memory as `subject` evidence, in
+  the same transaction as the write (as uteke-cloud does since #354). `uteke
+  provenance` no longer reports every edited memory as `✗ MISMATCH`; a mismatch now
+  means the content changed outside the API. Bulk deprecations (aging, lifecycle
+  cycle, bulk forget) record a `deprecated` event per memory with the reason, in
+  the same transaction, and a contradiction on write deprecates the old memory
+  with the reason `contradiction: replaced by <id>`, which records the event too.
+  A prune keeps the history of the memories it deletes (schema v20, #1280); a test
+  now covers it. `/provenance` fields are unchanged.
+
 - `export --full` / `import --full` dropped the columns added since the format was
   introduced: a memory's `author`, `author_type`, `source_hash` and `recall_count`,
   the room member `role`, the timeline `actor` and `evidence_json`, and the
