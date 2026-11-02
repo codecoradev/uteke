@@ -295,7 +295,10 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             // Merge request tags into the JSONL entries.
             // The core import method handles re-embedding.
             let import_ns = ns(&req_data.namespace);
-            match uteke.import(&req_data.content, import_ns) {
+            let options = uteke_core::ImportOptions {
+                defer_embedding: req_data.defer_embedding,
+            };
+            match uteke.import_with(&req_data.content, import_ns, options) {
                 Ok(result) => {
                     let mut body = serde_json::json!({
                         "imported": result.imported,
@@ -308,6 +311,11 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "id_conflicts_skipped": result.id_conflicts_skipped,
                         "soft_deleted_skipped": result.soft_deleted_skipped,
                     });
+                    // Rows waiting for a vector (#1634): only when the caller
+                    // deferred embedding, so a default import is unchanged.
+                    if req_data.defer_embedding {
+                        body["deferred_embedding"] = result.deferred_embedding.into();
+                    }
                     // Rows forgotten as wrong (#1597): only when there were any,
                     // so the response is unchanged for every other import.
                     if result.rejected_tombstone > 0 {

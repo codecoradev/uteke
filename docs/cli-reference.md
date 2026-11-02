@@ -752,7 +752,13 @@ the cosine links `remember` makes. Without vectors the cosine duplicate check
 (similarity of 0.95 or more) cannot run during the import, so only exact copies of
 a stored memory, or of an earlier row in the same file, are skipped; near-duplicates
 stay. `--defer-embed` works with JSON/JSONL input (not `--full`, `--extract` or
-`--batch-dir`), and `POST /import` is unchanged.
+`--batch-dir`).
+
+Over HTTP the same switch is `"defer_embedding": true` in the `POST /import` body; the
+response then adds `deferred_embedding`. That is the bulk-import runbook for a server: send
+the file with `defer_embedding` (each call returns in seconds because no row is embedded in
+the request, so a file larger than the body limit can be split into several calls), then run
+`uteke repair --reembed --limit N` on the server until nothing is left.
 
 ### LLM fact extraction (`--extract`)
 

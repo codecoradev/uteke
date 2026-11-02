@@ -772,6 +772,15 @@ pub struct ImportRequest {
     #[serde(default)]
     #[allow(dead_code)] // not yet merged into JSONL entries on import
     pub tags: Vec<String>,
+    /// Store the rows without a vector and return at once (#1634, default
+    /// false). The rows are keyword-searchable (`/search`) immediately and
+    /// found by `/recall` after `uteke repair --reembed` adds the vectors.
+    /// Duplicates are caught by exact content only, not by the cosine check.
+    /// The response then carries `deferred_embedding`: the rows waiting for
+    /// a vector. Use it for bulk imports, which otherwise embed every row
+    /// before the request returns.
+    #[serde(default)]
+    pub defer_embedding: bool,
 }
 
 // ── Room Remember Types (#762) ────────────────────────────────────────

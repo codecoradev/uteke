@@ -761,7 +761,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
         path: "/import",
         tier: Tier::Core,
         writes: true,
-        description: "Import memories from a JSON array.",
+        description: "Import memories from JSONL (or a JSON array) in `content`. Each row keeps its `id`, type, importance, pinned flag and slug; the response counts `imported`, `skipped`, `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped`. Bulk runbook: send `defer_embedding: true` (rows are stored without a vector and the call returns in seconds; split a large file into several calls under the body limit), then run `uteke repair --reembed` (add `--limit N` to spread the work) so `/recall` finds them.",
         request_type: Some("ImportRequest"),
         response_type: None,
         excludes_deprecated: false,
