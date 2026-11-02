@@ -130,6 +130,13 @@
 
 ### Fixed
 
+- **`uteke upgrade` says when connected agent hooks are out of date (#1641)** -
+  After installing, `upgrade` runs the new binary's check (the one `uteke doctor`
+  reports as `agent_hooks`, through the hidden `uteke hook-status`) and prints
+  one line per agent that is `stale` or `missing`, with the `uteke connect
+  <agent>` command that refreshes it. Nothing is printed when every agent is up
+  to date or none is connected.
+
 - **`uteke recall --context` works without a memory-only flag (#1642)** - The
   default (unified) path printed the normal listing and ignored `--context`. It
   now prints the `[Relevant Memories (...)]` layout (a document hit adds

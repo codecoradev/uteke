@@ -495,6 +495,11 @@ pub enum Commands {
         #[arg(long, default_value = "claude")]
         agent: String,
     },
+    /// Print the state of every connected agent's hooks as JSON (what `uteke
+    /// doctor` reports under `agent_hooks`). Run by `uteke upgrade` on the new
+    /// binary; needs no store.
+    #[command(hide = true)]
+    HookStatus,
     /// Namespace management: list, stats
     Namespace {
         #[command(subcommand)]

@@ -100,6 +100,7 @@ fn main() {
             | Commands::Connect { .. }
             | Commands::Disconnect { .. }
             | Commands::HookRun { .. }
+            | Commands::HookStatus
     );
     // Skip update check in subprocess/batch mode (e.g. benchmarks calling
     // `uteke recall` 1000× via subprocess). Env var set by benchmark scripts
@@ -145,6 +146,13 @@ fn main() {
         Commands::HookRun { event, agent } => {
             // Never fails the agent: errors are logged, the exit code is 0.
             hook_run::run(event, agent);
+            std::process::exit(0);
+        }
+        Commands::HookStatus => {
+            let hooks = connect::home_dir()
+                .map(|h| connect::hook_status(&h))
+                .unwrap_or_default();
+            output::print_json(&hooks);
             std::process::exit(0);
         }
         Commands::Connect { agent, dry_run } | Commands::Disconnect { agent, dry_run } => {

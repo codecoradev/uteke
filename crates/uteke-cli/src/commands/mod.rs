@@ -370,7 +370,10 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Aging { command } => aging::run(cli, uteke, ns, command),
 
-        Commands::Connect { .. } | Commands::Disconnect { .. } | Commands::HookRun { .. } => {
+        Commands::Connect { .. }
+        | Commands::Disconnect { .. }
+        | Commands::HookRun { .. }
+        | Commands::HookStatus => {
             // Handled in main() before the store opens.
             Ok(())
         }
