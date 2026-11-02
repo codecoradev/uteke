@@ -130,6 +130,13 @@
 
 ### Fixed
 
+- **`uteke recall --context` works without a memory-only flag (#1642)** - The
+  default (unified) path printed the normal listing and ignored `--context`. It
+  now prints the `[Relevant Memories (...)]` layout (a document hit adds
+  `(doc: <title>)`) and `[No relevant memories found for: <query>]` when nothing
+  matches. Through the server, `--context` still runs on the local store, so both
+  give the same output.
+
 - **Timeline gaps and the stale provenance hash (#1595)** - a content update
   through the API (`update`, `PUT /memory`, MCP `uteke_update`) now refreshes
   `source_hash` and records an `updated` event `{"fields":["content"],
