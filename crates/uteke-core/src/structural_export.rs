@@ -451,14 +451,18 @@ impl crate::Uteke {
                 let tags = serde_json::to_string(&m["tags"]).unwrap_or_else(|_| "[]".into());
                 let metadata =
                     serde_json::to_string(&m["metadata"]).unwrap_or_else(|_| "{}".into());
+                let deprecated = m["deprecated"]
+                    .as_bool()
+                    .or_else(|| m["deprecated"].as_i64().map(|n| n != 0))
+                    .unwrap_or(false);
                 // Embedding is deliberately NULL: load_all() filters NULL
                 // embeddings out of index builds (#992), and repair --reembed
                 // scans for exactly these rows. A sentinel blob would leak
                 // into index.build() and crash on dimension mismatch.
                 let n = conn
                     .execute(
-                        "INSERT OR IGNORE INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, recall_count, author, author_type, source_hash) \
-                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,0,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+                        "INSERT OR IGNORE INTO memories (id, content, embedding, tags, metadata, created_at, updated_at, namespace, access_count, last_accessed, deprecated, valid_from, valid_until, memory_type, importance, pinned, content_type, slug, source, source_type, recall_count, author, author_type, source_hash, deprecated_at) \
+                         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?24,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?25)",
                         rusqlite::params![
                             m["id"].as_str().unwrap_or(""),
                             m["content"].as_str().unwrap_or(""),
@@ -485,6 +489,11 @@ impl crate::Uteke {
                             m["author"].as_str(),
                             m["author_type"].as_str().unwrap_or("agent"),
                             m["source_hash"].as_str(),
+                            // #1633: a soft-deleted row stays soft-deleted
+                            // (bool, or 0/1); absent in every bundle written
+                            // so far, which export live rows only.
+                            deprecated,
+                            deprecated.then(|| m["deprecated_at"].as_str()).flatten(),
                         ],
                     )
                     .map_err(|e| Error::db_msg(format!("import memory: {e}")))?;
@@ -1279,5 +1288,40 @@ mod column_roundtrip_tests {
                 ("d2".to_string(), "/d1/d2/".to_string())
             ]
         );
+    }
+
+    /// #1633: a bundle row that is deprecated stays deprecated; a row without
+    /// the key (every bundle written so far) is live.
+    #[test]
+    fn a_deprecated_bundle_row_is_not_restored_live() {
+        let row = |id: &str, extra: &str| {
+            format!(
+                r#"{{"type":"memory","id":"{id}","content":"text {id}","tags":[],"metadata":{{}},"created_at":"t","updated_at":"t","namespace":"default","access_count":0,"memory_type":"fact","importance":0.5,"pinned":false,"content_type":"text","source_type":"user"{extra}}}"#
+            )
+        };
+        let bundle = [
+            r#"{"uteke_export":{"format_version":1,"sections":{}}}"#.to_string(),
+            row("live", ""),
+            row(
+                "gone",
+                r#","deprecated":true,"deprecated_at":"2026-10-01T00:00:00Z""#,
+            ),
+            row("gone-int", r#","deprecated":1"#),
+        ]
+        .join("\n");
+        let dst = open_keyword();
+        dst.import_full(&bundle).unwrap();
+        let state = |id: &str| -> (i64, Option<String>) {
+            dst.graph_store()
+                .query_row(
+                    "SELECT deprecated, deprecated_at FROM memories WHERE id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap()
+        };
+        assert_eq!(state("live"), (0, None));
+        assert_eq!(state("gone"), (1, Some("2026-10-01T00:00:00Z".to_string())));
+        assert_eq!(state("gone-int").0, 1);
     }
 }

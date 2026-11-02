@@ -221,6 +221,10 @@ pub struct Store {
     pub conn: Connection,
 }
 
+/// `(namespace, content hash)` -> `(id, deprecated)` of the stored memories
+/// (#1633, [`Store::content_hashes_with_state`]).
+pub type ContentHashes = std::collections::HashMap<(String, String), (String, bool)>;
+
 impl Store {
     /// Open or create a store at the given path.
     /// Pass `:memory:` for an in-memory database (testing).
@@ -365,6 +369,54 @@ impl Store {
             .map_err(|e| Error::db("query active content hashes", e))?;
         rows.collect::<Result<_, _>>()
             .map_err(|e| Error::db("read active content hashes", e))
+    }
+
+    /// The hash of the current content of every memory, live or soft-deleted,
+    /// keyed by `(namespace, hash)` and mapped to `(id, deprecated)`,
+    /// optionally in one namespace (#1633). Where a live and a deprecated row
+    /// share a key, the live one wins. Import uses it to skip exact copies of
+    /// rows that carry an id, and to leave soft-deleted content forgotten.
+    pub fn content_hashes_with_state(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<ContentHashes, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT namespace, content, id, deprecated FROM memories
+                 WHERE (?1 IS NULL OR namespace = ?1)
+                 ORDER BY deprecated DESC",
+            )
+            .map_err(|e| Error::db("prepare content hashes", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |row| {
+                Ok((
+                    (
+                        row.get::<_, String>(0)?,
+                        crate::provenance::content_hash(&row.get::<_, String>(1)?),
+                    ),
+                    (row.get::<_, String>(2)?, row.get::<_, i64>(3)? != 0),
+                ))
+            })
+            .map_err(|e| Error::db("query content hashes", e))?;
+        // Deprecated rows come first, so a live row with the same key
+        // overwrites them.
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read content hashes", e))
+    }
+
+    /// The namespace, content and soft-delete state of the memory with this
+    /// id, live or not (#1633).
+    pub fn content_and_state(&self, id: &str) -> Result<Option<(String, String, bool)>, Error> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row(
+                "SELECT namespace, content, deprecated FROM memories WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
+            )
+            .optional()
+            .map_err(|e| Error::db("get content and state", e))
     }
 
     /// Set author type on a memory (#1083): "human" or "agent".

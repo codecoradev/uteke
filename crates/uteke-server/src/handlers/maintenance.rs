@@ -302,6 +302,11 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "skipped": result.skipped,
                         "redacted": result.redacted,
                         "rejected_secret": result.rejected_secret,
+                        // Per-category skips (#1633), so a caller can audit
+                        // what an import kept.
+                        "duplicates_skipped": result.duplicates_skipped,
+                        "id_conflicts_skipped": result.id_conflicts_skipped,
+                        "soft_deleted_skipped": result.soft_deleted_skipped,
                     });
                     // Rows forgotten as wrong (#1597): only when there were any,
                     // so the response is unchanged for every other import.

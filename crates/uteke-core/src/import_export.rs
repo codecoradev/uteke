@@ -40,6 +40,32 @@ impl RoomLinks {
     }
 }
 
+/// The id of an imported row (#1633): a UUID, stored in the canonical
+/// lowercase hyphenated form. Anything else is dropped and the row gets a
+/// new id, as rows from older export files do.
+fn import_id(raw: &str) -> Option<String> {
+    uuid::Uuid::parse_str(raw.trim())
+        .ok()
+        .map(|u| u.hyphenated().to_string())
+}
+
+/// A content type from a file is kept when it looks like one (`text`,
+/// `json`, `markdown`, a MIME type); otherwise the row is `text` (#1633).
+fn import_content_type(t: &str) -> bool {
+    (1..=64).contains(&t.len())
+        && t.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'/' | b'+' | b'.' | b'-')
+        })
+}
+
+/// A memory slug from a file (#1633): trimmed, 1 to 256 bytes, no control
+/// characters; otherwise the row has none.
+fn import_slug(raw: &str) -> Option<String> {
+    let slug = raw.trim();
+    ((1..=256).contains(&slug.len()) && !slug.chars().any(char::is_control))
+        .then(|| slug.to_string())
+}
+
 impl crate::Uteke {
     /// Export all memories to JSONL format (one JSON object per line).
     ///
@@ -64,6 +90,15 @@ impl crate::Uteke {
                 source: m.source,
                 namespace: m.namespace,
                 author: m.author,
+                // Identity and fields survive a round-trip (#1633).
+                id: Some(m.id),
+                memory_type: Some(m.memory_type),
+                importance: Some(m.importance),
+                pinned: Some(m.pinned),
+                content_type: Some(m.content_type),
+                slug: m.slug,
+                deprecated: false,
+                deprecated_at: None,
             })
             .collect();
 
@@ -132,6 +167,8 @@ impl crate::Uteke {
 
         let mut imported = 0;
         let mut deduped = 0;
+        let mut id_conflicts = 0;
+        let mut soft_deleted = 0;
         let mut redacted = 0;
         let mut rejected_secret = 0;
         let mut rejected_tombstone = 0;
@@ -144,6 +181,9 @@ impl crate::Uteke {
         } else {
             std::collections::HashMap::new()
         };
+        // The exact content of every stored row, live or soft-deleted, per
+        // namespace (#1633), extended with every row this import stores.
+        let mut stored_content = self.store.content_hashes_with_state(namespace)?;
 
         for mut entry in entries {
             if entry.content.is_empty() {
@@ -202,36 +242,6 @@ impl crate::Uteke {
                 continue;
             }
 
-            // Re-embed the content with retry (consistent with remember path, #1005).
-            // A store with no embedding backend (#1166) imports FTS5-only, as
-            // `remember` stores there: no vector, so no duplicate check either.
-            let embedding = if self.embedder_backend.is_empty() || options.defer_embedding {
-                Vec::new()
-            } else {
-                self.embed(&entry.content)?
-            };
-            let content_hash = options
-                .defer_embedding
-                .then(|| crate::provenance::content_hash(&entry.content));
-            if let Some(existing_id) = content_hash.as_ref().and_then(|h| known_hashes.get(h)) {
-                deduped += 1;
-                room_links.apply(self, existing_id, &rooms, &link_author);
-                continue;
-            }
-
-            // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
-            if !embedding.is_empty()
-                && let Some(existing_id) = self.check_duplicate(&embedding, namespace)?
-            {
-                deduped += 1;
-                // The stored memory is the one that belongs in the rooms (#1588).
-                room_links.apply(self, &existing_id, &rooms, &link_author);
-                continue;
-            }
-
-            let id = uuid::Uuid::now_v7().to_string();
-            let now = chrono::Utc::now();
-
             // Namespace resolution (#1036): a caller-SUPPLIED namespace is an
             // explicit override — every row lands there (e.g. CLI --namespace
             // bulk import). Without an override, the per-row namespace from
@@ -241,6 +251,92 @@ impl crate::Uteke {
             let target_ns = namespace
                 .map(str::to_string)
                 .unwrap_or_else(|| entry.namespace.clone());
+            let mut row_id = entry.id.as_deref().and_then(import_id);
+            let row_deprecated = entry.deprecated;
+
+            // Identity first (#1633): a stored id is never overwritten. The
+            // same content is a duplicate, other content an id conflict, and
+            // a live row whose stored copy was forgotten stays forgotten.
+            // Ids are unique across namespaces, so an id stored in another
+            // namespace is not this row's identity in the target (a copy into
+            // another namespace, `--namespace`): the row gets a new id and
+            // the content checks of the target namespace below.
+            if let Some(id) = row_id.clone()
+                && let Some((stored_ns, stored, stored_deprecated)) =
+                    self.store.content_and_state(&id)?
+            {
+                if stored_ns != target_ns {
+                    row_id = None;
+                } else {
+                    if stored != entry.content {
+                        id_conflicts += 1;
+                    } else if stored_deprecated && !row_deprecated {
+                        soft_deleted += 1;
+                    } else {
+                        deduped += 1;
+                        if !stored_deprecated {
+                            room_links.apply(self, &id, &rooms, &link_author);
+                        }
+                    }
+                    continue;
+                }
+            }
+            // The exact content in the target namespace, live or forgotten.
+            let content_key = (
+                target_ns.clone(),
+                crate::provenance::content_hash(&entry.content),
+            );
+            match stored_content.get(&content_key) {
+                Some((existing_id, false)) => {
+                    deduped += 1;
+                    if !row_deprecated {
+                        room_links.apply(self, existing_id, &rooms, &link_author);
+                    }
+                    continue;
+                }
+                Some((_, true)) if row_deprecated => {
+                    deduped += 1;
+                    continue;
+                }
+                Some((_, true)) => {
+                    soft_deleted += 1;
+                    continue;
+                }
+                None => {}
+            }
+
+            // Re-embed the content with retry (consistent with remember path, #1005).
+            // A store with no embedding backend (#1166) imports FTS5-only, as
+            // `remember` stores there: no vector, so no duplicate check either.
+            // A deprecated row gets no vector: nothing recalls it.
+            let embedding =
+                if self.embedder_backend.is_empty() || options.defer_embedding || row_deprecated {
+                    Vec::new()
+                } else {
+                    self.embed(&entry.content)?
+                };
+            let content_hash = (options.defer_embedding && !row_deprecated)
+                .then(|| crate::provenance::content_hash(&entry.content));
+            if let Some(existing_id) = content_hash.as_ref().and_then(|h| known_hashes.get(h)) {
+                deduped += 1;
+                room_links.apply(self, existing_id, &rooms, &link_author);
+                continue;
+            }
+
+            // Dedup check: skip if cosine >= 0.95 to existing memory (#1005).
+            // A row with an id is matched on its id and exact content only.
+            if row_id.is_none()
+                && !embedding.is_empty()
+                && let Some(existing_id) = self.check_duplicate(&embedding, namespace)?
+            {
+                deduped += 1;
+                // The stored memory is the one that belongs in the rooms (#1588).
+                room_links.apply(self, &existing_id, &rooms, &link_author);
+                continue;
+            }
+
+            let id = row_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+            let now = chrono::Utc::now();
 
             let memory = Memory {
                 id: id.clone(),
@@ -254,15 +350,27 @@ impl crate::Uteke {
                 access_count: 0,
                 recall_count: 0,
                 last_accessed: None,
-                deprecated: false,
-                deprecated_at: None,
+                deprecated: row_deprecated,
+                deprecated_at: row_deprecated.then(|| entry.deprecated_at.unwrap_or(now)),
                 valid_from: Some(entry.created_at),
                 valid_until: None,
-                memory_type: "fact".to_string(),
-                importance: 0.5,
-                pinned: false,
-                content_type: "text".to_string(),
-                slug: None,
+                // A missing or bad value falls back to the default (#1633).
+                memory_type: entry
+                    .memory_type
+                    .as_deref()
+                    .and_then(crate::memory::types::MemoryType::from_str_opt)
+                    .map_or("fact", |t| t.as_str())
+                    .to_string(),
+                importance: entry
+                    .importance
+                    .filter(|i| (0.0..=1.0).contains(i))
+                    .unwrap_or(0.5),
+                pinned: entry.pinned.unwrap_or(false),
+                content_type: entry
+                    .content_type
+                    .filter(|t| import_content_type(t))
+                    .unwrap_or_else(|| "text".to_string()),
+                slug: entry.slug.as_deref().and_then(import_slug),
                 source: Some(format!("import:{}", entry.source.unwrap_or_default())),
                 source_type: "import".to_string(),
                 author_type: "agent".to_string(),
@@ -296,7 +404,14 @@ impl crate::Uteke {
             if !redactions.is_empty() {
                 redacted += 1;
             }
-            room_links.apply(self, &id, &rooms, &link_author);
+            if row_deprecated {
+                stored_content
+                    .entry(content_key)
+                    .or_insert((id.clone(), true));
+            } else {
+                room_links.apply(self, &id, &rooms, &link_author);
+                stored_content.insert(content_key, (id.clone(), false));
+            }
 
             if let Some(hash) = content_hash {
                 known_hashes.insert(hash, id.clone());
@@ -314,15 +429,18 @@ impl crate::Uteke {
             index_sync::persist(&mut *index, &SyncPolicy::STANDARD)?;
         }
 
-        if skipped > 0 || deduped > 0 {
+        if skipped > 0 || deduped > 0 || id_conflicts > 0 || soft_deleted > 0 {
             tracing::info!(
-                "Import completed: {imported} imported, {deduped} duplicates skipped, {skipped} errored entries."
+                "Import completed: {imported} imported, {deduped} duplicates skipped, {id_conflicts} id conflicts skipped, {soft_deleted} soft-deleted skipped, {skipped} errored entries."
             );
         }
 
         Ok(ImportResult {
             imported,
             skipped,
+            duplicates_skipped: deduped,
+            id_conflicts_skipped: id_conflicts,
+            soft_deleted_skipped: soft_deleted,
             redacted,
             rejected_secret,
             rejected_tombstone,
@@ -368,6 +486,14 @@ mod tests {
             namespace: "default".to_string(),
             author: None,
             rooms: Vec::new(),
+            id: None,
+            memory_type: None,
+            importance: None,
+            pinned: None,
+            content_type: None,
+            slug: None,
+            deprecated: false,
+            deprecated_at: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(
@@ -845,5 +971,246 @@ mod defer_embedding_tests {
         assert_eq!(u.count_edges().unwrap(), 0);
         u.reembed_missing_with(ReembedOptions::default()).unwrap();
         assert!(u.count_edges().unwrap() > 0);
+    }
+}
+
+/// Round-trip fidelity (#1633): a row's id, type, importance, pinned flag,
+/// content type, slug and deprecated state survive an import, and a row that
+/// is soft-deleted in the target is not brought back.
+#[cfg(test)]
+mod fidelity_tests {
+    use crate::test_support::open_keyword;
+
+    const ID_A: &str = "0b9a4f3e-6a52-4c1f-9d1e-3f1d2c4b5a61";
+    const ID_B: &str = "1c8b5e4f-7b63-4d2a-8e2f-4a2e3d5c6b72";
+    const ID_C: &str = "2d7c6f50-8c74-4e3b-9f30-5b3f4e6d7c83";
+
+    fn fixture() -> String {
+        [
+            format!(
+                r#"{{"id":"{ID_A}","content":"we chose sqlite for the local store","memory_type":"decision","importance":0.9,"pinned":true,"slug":"store-choice"}}"#
+            ),
+            format!(
+                r#"{{"id":"{ID_B}","content":"run cargo fmt before every commit","memory_type":"procedure","importance":0.7,"content_type":"text"}}"#
+            ),
+            format!(
+                r#"{{"id":"{ID_C}","content":"{{\"editor\":\"helix\"}}","memory_type":"preference","importance":0.2,"content_type":"json"}}"#
+            ),
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn ids_types_importance_and_pinned_survive_and_a_reimport_adds_nothing() {
+        let u = open_keyword();
+        let r = u.import(&fixture(), None).unwrap();
+        assert_eq!(
+            (
+                r.imported,
+                r.skipped,
+                r.duplicates_skipped,
+                r.id_conflicts_skipped
+            ),
+            (3, 0, 0, 0),
+            "{r:?}"
+        );
+        let a = u.get_by_id(ID_A).unwrap().expect("id A kept");
+        assert_eq!(a.memory_type, "decision");
+        assert!((a.importance - 0.9).abs() < 1e-9, "{}", a.importance);
+        assert!(a.pinned);
+        assert_eq!(a.slug.as_deref(), Some("store-choice"));
+        let b = u.get_by_id(ID_B).unwrap().expect("id B kept");
+        assert_eq!(
+            (b.memory_type.as_str(), b.pinned, b.content_type.as_str()),
+            ("procedure", false, "text")
+        );
+        let c = u.get_by_id(ID_C).unwrap().expect("id C kept");
+        assert_eq!(
+            (c.memory_type.as_str(), c.content_type.as_str()),
+            ("preference", "json")
+        );
+
+        let again = u.import(&fixture(), None).unwrap();
+        assert_eq!(
+            (
+                again.imported,
+                again.duplicates_skipped,
+                again.id_conflicts_skipped
+            ),
+            (0, 3, 0),
+            "{again:?}"
+        );
+        assert_eq!(u.count(None).unwrap(), 3, "no new rows");
+        let json = serde_json::to_value(&again).unwrap();
+        assert_eq!(json["duplicates_skipped"], 3, "{json}");
+        assert_eq!(json["id_conflicts_skipped"], 0, "{json}");
+    }
+
+    #[test]
+    fn a_plain_export_without_ids_still_imports_with_generated_ids() {
+        let u = open_keyword();
+        let r = u
+            .import(r#"{"content":"an old export row without id"}"#, None)
+            .unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        let m = &u.list(None, 10, 0, None).unwrap()[0];
+        assert!(uuid::Uuid::parse_str(&m.id).is_ok(), "{}", m.id);
+        assert_eq!(
+            (m.memory_type.as_str(), m.pinned, m.content_type.as_str()),
+            ("fact", false, "text")
+        );
+        assert!((m.importance - 0.5).abs() < 1e-9);
+        assert_eq!(m.slug, None);
+    }
+
+    #[test]
+    fn an_existing_id_with_other_content_is_an_id_conflict_not_a_merge() {
+        let u = open_keyword();
+        u.import(&fixture(), None).unwrap();
+        let file = format!(r#"{{"id":"{ID_A}","content":"a different text under the same id"}}"#);
+        let r = u.import(&file, None).unwrap();
+        assert_eq!(
+            (r.imported, r.duplicates_skipped, r.id_conflicts_skipped),
+            (0, 0, 1),
+            "{r:?}"
+        );
+        let a = u.get_by_id(ID_A).unwrap().unwrap();
+        assert_eq!(a.content, "we chose sqlite for the local store");
+    }
+
+    #[test]
+    fn a_row_with_an_id_skips_the_exact_copy_stored_under_another_id() {
+        let u = open_keyword();
+        let old = u
+            .remember("an exact copy already stored", &[], None, None)
+            .unwrap();
+        let file = format!(r#"{{"id":"{ID_A}","content":"an exact copy already stored"}}"#);
+        let r = u.import(&file, None).unwrap();
+        assert_eq!((r.imported, r.duplicates_skipped), (0, 1), "{r:?}");
+        assert!(u.get_by_id(ID_A).unwrap().is_none());
+        assert!(u.get_by_id(&old).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_row_soft_deleted_in_the_target_is_not_resurrected() {
+        let u = open_keyword();
+        // without an id: matched on exact content
+        let gone = u
+            .remember("deliberately forgotten text", &[], None, None)
+            .unwrap();
+        u.forget(&gone).unwrap();
+        let r = u
+            .import(r#"{"content":"deliberately forgotten text"}"#, None)
+            .unwrap();
+        assert_eq!((r.imported, r.soft_deleted_skipped), (0, 1), "{r:?}");
+        assert_eq!(u.count(None).unwrap(), 0, "nothing came back to life");
+
+        // with the same id: matched on the id
+        u.import(&fixture(), None).unwrap();
+        u.forget(ID_B).unwrap();
+        let r = u.import(&fixture(), None).unwrap();
+        assert_eq!(
+            (r.imported, r.duplicates_skipped, r.soft_deleted_skipped),
+            (0, 2, 1),
+            "{r:?}"
+        );
+        assert!(u.get_by_id(ID_B).unwrap().unwrap().deprecated);
+    }
+
+    #[test]
+    fn a_deprecated_row_is_imported_deprecated() {
+        let u = open_keyword();
+        let file = format!(
+            r#"{{"id":"{ID_A}","content":"a memory that was forgotten at the source","deprecated":true,"deprecated_at":"2026-10-01T00:00:00Z"}}"#
+        );
+        let r = u.import(&file, None).unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        let m = u.get_by_id(ID_A).unwrap().unwrap();
+        assert!(m.deprecated);
+        assert_eq!(
+            m.deprecated_at.map(|t| t.to_rfc3339()),
+            Some("2026-10-01T00:00:00+00:00".to_string())
+        );
+        assert_eq!(u.count(None).unwrap(), 0, "not live");
+        let again = u.import(&file, None).unwrap();
+        assert_eq!(
+            (again.imported, again.duplicates_skipped),
+            (0, 1),
+            "{again:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_field_values_fall_back_to_the_defaults() {
+        let u = open_keyword();
+        let file = r#"{"id":"not-a-uuid","content":"a row with bad fields","memory_type":"bogus","importance":7.5,"content_type":"no spaces allowed","slug":"   "}"#;
+        let r = u.import(file, None).unwrap();
+        assert_eq!(r.imported, 1, "{r:?}");
+        let m = &u.list(None, 10, 0, None).unwrap()[0];
+        assert_ne!(m.id, "not-a-uuid");
+        assert_eq!(
+            (m.memory_type.as_str(), m.content_type.as_str()),
+            ("fact", "text")
+        );
+        assert!((m.importance - 0.5).abs() < 1e-9);
+        assert_eq!(m.slug, None);
+    }
+
+    #[test]
+    fn an_oss_export_round_trips_ids_and_fields() {
+        let src = open_keyword();
+        src.import(&fixture(), None).unwrap();
+        let file = src.export(None).unwrap();
+        let dst = open_keyword();
+        let r = dst.import(&file, None).unwrap();
+        assert_eq!(r.imported, 3, "{r:?}");
+        let a = dst.get_by_id(ID_A).unwrap().expect("id survives export");
+        assert_eq!(
+            (a.memory_type.as_str(), a.pinned, a.slug.as_deref()),
+            ("decision", true, Some("store-choice"))
+        );
+        assert!((a.importance - 0.9).abs() < 1e-9);
+    }
+
+    /// Copying a store's own export into another namespace copies the rows:
+    /// an id stored in another namespace is not this row's identity there.
+    #[test]
+    fn an_import_into_another_namespace_copies_the_rows_under_new_ids() {
+        let u = open_keyword();
+        u.create_room("team", None, "default").unwrap();
+        let file = format!(
+            r#"{{"id":"{ID_A}","content":"copy me into another namespace","memory_type":"decision","rooms":["team"]}}"#
+        );
+        assert_eq!(u.import(&file, None).unwrap().imported, 1);
+        let r = u.import(&file, Some("other")).unwrap();
+        assert_eq!(
+            (r.imported, r.duplicates_skipped, r.id_conflicts_skipped),
+            (1, 0, 0),
+            "{r:?}"
+        );
+        let copy = &u.list(None, 10, 0, Some("other")).unwrap()[0];
+        assert_ne!(copy.id, ID_A, "a new id in the other namespace");
+        assert_eq!(copy.memory_type, "decision");
+        assert_eq!(u.get_by_id(ID_A).unwrap().unwrap().namespace, "default");
+        // the copy is linked, the original keeps its one link
+        assert_eq!(u.recall_room("team", None, 0).unwrap().len(), 2);
+        // and a second copy is a duplicate in that namespace
+        let again = u.import(&file, Some("other")).unwrap();
+        assert_eq!(
+            (again.imported, again.duplicates_skipped),
+            (0, 1),
+            "{again:?}"
+        );
+    }
+
+    #[test]
+    fn rows_without_an_id_keep_the_cosine_duplicate_check() {
+        let u = open_keyword();
+        u.remember("alpha beta gamma delta epsilon", &[], None, None)
+            .unwrap();
+        let r = u
+            .import(r#"{"content":"alpha beta gamma delta epsilon"}"#, None)
+            .unwrap();
+        assert_eq!((r.imported, r.duplicates_skipped), (0, 1), "{r:?}");
     }
 }
