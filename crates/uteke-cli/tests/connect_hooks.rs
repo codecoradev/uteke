@@ -43,7 +43,9 @@ impl Env {
                 "PATH",
                 format!("{}:/usr/bin:/bin", self.dir.join(path_dir).display()),
             )
-            .env_remove("UTEKE_AUTH_TOKEN");
+            .env_remove("UTEKE_AUTH_TOKEN")
+            // Keep `connect codex` inside the temp HOME.
+            .env_remove("CODEX_HOME");
         cmd
     }
 
@@ -240,4 +242,111 @@ fn session_start_exits_0_and_prints_nothing_when_nothing_matches() {
     );
     assert!(ok(&out).trim().is_empty(), "{out:?}");
     assert!(env.log().is_empty(), "{}", env.log());
+}
+
+/// Every command installed for an agent, read from its config file.
+fn installed_commands(env: &Env, agent: &str) -> Vec<(String, String)> {
+    let (file, nested) = match agent {
+        "codex" => (".codex/hooks.json", true),
+        "cursor" => (".cursor/hooks.json", false),
+        _ => (".claude/settings.json", true),
+    };
+    let text = std::fs::read_to_string(env.home().join(file)).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut out = Vec::new();
+    for (event, entries) in v["hooks"].as_object().unwrap() {
+        for e in entries.as_array().unwrap() {
+            let command = if nested {
+                &e["hooks"][0]["command"]
+            } else {
+                &e["command"]
+            };
+            out.push((event.clone(), command.as_str().unwrap().to_string()));
+        }
+    }
+    out
+}
+
+#[test]
+fn codex_and_cursor_hooks_exit_0_without_uteke_and_cursor_prompts_continue() {
+    let env = Env::new("wave1_no_path", true);
+    let payload = serde_json::json!({
+        "session_id": "s", "conversation_id": "c", "cwd": "/w/p", "prompt": "hi", "text": "ok"
+    });
+    for agent in ["codex", "cursor"] {
+        let out = ok(&env.uteke(&["connect", agent]));
+        if agent == "codex" {
+            assert!(out.contains("/hooks"), "{out}");
+        }
+        let commands = installed_commands(&env, agent);
+        assert_eq!(commands.len(), 3, "{agent}: {commands:?}");
+        for (event, command) in commands {
+            for path in ["empty-bin", "bin"] {
+                let out = env.hook(&command, &payload, path);
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "{agent} {event} {path}: {out:?}"
+                );
+                let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if event == "beforeSubmitPrompt" {
+                    assert_eq!(stdout, r#"{"continue":true}"#, "{path}");
+                } else {
+                    assert!(stdout.is_empty(), "{agent} {event} {path}: {stdout}");
+                }
+            }
+        }
+        ok(&env.uteke(&["disconnect", agent]));
+    }
+    assert!(env.log().is_empty(), "{}", env.log());
+}
+
+#[test]
+fn cursor_reply_and_prompt_are_queued_under_the_conversation() {
+    let env = Env::new("cursor_capture", true);
+    let prompt = serde_json::json!({"conversation_id": "conv-9", "session_id": "other", "prompt": "use port 8080"});
+    let reply = serde_json::json!({"conversation_id": "conv-9", "text": "Port 8080 it is."});
+    env.hook("uteke hook-run prompt --agent cursor", &prompt, "bin");
+    env.hook("uteke hook-run stop --agent cursor", &reply, "bin");
+    let status: serde_json::Value =
+        serde_json::from_str(&ok(&env.uteke(&["--json", "extract-queue", "status"]))).unwrap();
+    assert_eq!(status["pending"], 2, "{status}");
+    assert_eq!(status["sessions_pending"], 1, "{status}");
+}
+
+#[test]
+fn connect_pi_installs_the_memory_provider_and_disconnect_removes_it() {
+    let env = Env::new("pi", false);
+    let dry = ok(&env.uteke(&["connect", "pi", "--dry-run"]));
+    assert!(dry.contains("index.ts"), "{dry}");
+    let dir = env
+        .home()
+        .join(".pi/agent/extensions/uteke-memory-provider");
+    assert!(!dir.exists());
+    ok(&env.uteke(&["connect", "pi"]));
+    assert!(dir.join("index.ts").exists());
+
+    // A file the user changed stays.
+    std::fs::write(dir.join("package.json"), "{}").unwrap();
+    let out = ok(&env.uteke(&["disconnect", "pi"]));
+    assert!(out.contains("left alone"), "{out}");
+    assert!(!dir.join("index.ts").exists());
+    assert!(dir.join("package.json").exists());
+
+    std::fs::remove_file(dir.join("package.json")).unwrap();
+
+    // connect over a file the user changed keeps it as a backup.
+    ok(&env.uteke(&["connect", "pi"]));
+    std::fs::write(dir.join("index.ts"), "// mine").unwrap();
+    let out = ok(&env.uteke(&["connect", "pi"]));
+    assert!(out.contains("index.ts.uteke-bak"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("index.ts.uteke-bak")).unwrap(),
+        "// mine"
+    );
+    ok(&env.uteke(&["disconnect", "pi"]));
+
+    ok(&env.uteke(&["connect", "hermes"]));
+    ok(&env.uteke(&["disconnect", "hermes"]));
+    assert!(!env.home().join(".hermes/plugins/uteke").exists());
 }

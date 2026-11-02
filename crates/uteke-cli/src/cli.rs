@@ -467,9 +467,10 @@ pub enum Commands {
         shell: SupportedShell,
     },
     /// Install the capture and recall hooks of an agent app (#1465):
-    /// claude. Run again to refresh them; `disconnect` removes exactly them.
+    /// claude, codex, cursor; pi and hermes get their memory-provider plugin.
+    /// Run again to refresh them; `disconnect` removes exactly them.
     Connect {
-        /// Agent app: claude
+        /// Agent app: claude, codex, cursor, pi, hermes
         agent: String,
         /// Show what would change and write nothing
         #[arg(long)]
@@ -477,7 +478,7 @@ pub enum Commands {
     },
     /// Remove the hooks `uteke connect` installed, leaving everything else
     Disconnect {
-        /// Agent app: claude
+        /// Agent app: claude, codex, cursor, pi, hermes
         agent: String,
         /// Show what would change and write nothing
         #[arg(long)]

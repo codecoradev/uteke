@@ -9,7 +9,11 @@
 //! Design: `docs/plans/2026-10-29-hook-adapters-1465.md`.
 
 mod claude;
+mod codex;
+mod cursor;
+pub(crate) use cursor::CONTINUE as CURSOR_CONTINUE;
 pub(crate) mod ojson;
+mod provider;
 
 use ojson::OJson;
 use serde::{Deserialize, Serialize};
@@ -164,19 +168,42 @@ fn push_unique(list: &mut Vec<String>, item: &str) {
 pub(crate) fn adapter_for(agent: &str) -> Option<Box<dyn Adapter>> {
     match agent {
         "claude" | "claude-code" => Some(Box::new(claude::ClaudeCode)),
+        "codex" => Some(Box::new(codex::Codex::from_env())),
+        "cursor" => Some(Box::new(cursor::Cursor)),
         _ => None,
     }
 }
 
-/// The agents `connect` supports, for messages and the `init` hint.
-pub(crate) const SUPPORTED: &[&str] = &["claude"];
+/// The agents `connect` installs shell hooks for, for messages, `doctor` and
+/// the `init` hint.
+pub(crate) const SUPPORTED: &[&str] = &["claude", "codex", "cursor"];
 
 /// The command a hook entry runs. Guarded: a missing `uteke` binary is a
 /// no-op with exit 0 instead of the shell's 127, so the agent never sees a
 /// failing hook. The string is the same on every machine.
 pub(crate) fn guarded_command(event: &str, agent: &str) -> String {
+    guarded_command_or(event, agent, None)
+}
+
+/// [`guarded_command`] that prints `fallback` when `uteke` is missing, for an
+/// event whose agent expects an answer on stdout (Cursor's
+/// `beforeSubmitPrompt`). `fallback` is fixed JSON without single quotes or
+/// backslashes; it is double-quoted inside the single-quoted `sh -c` script.
+pub(crate) fn guarded_command_or(event: &str, agent: &str, fallback: Option<&str>) -> String {
+    let otherwise = match fallback {
+        Some(f) => format!("echo \"{}\"", f.replace('"', "\\\"")),
+        None => "true".to_string(),
+    };
     format!(
-        "sh -c 'command -v uteke >/dev/null 2>&1 && uteke hook-run {event} --agent {agent} || true'"
+        "sh -c 'command -v uteke >/dev/null 2>&1 && uteke hook-run {event} --agent {agent} || {otherwise}'"
+    )
+}
+
+/// The same guard for PowerShell, for an agent with a Windows command field
+/// (Codex's `commandWindows`).
+pub(crate) fn guarded_command_windows(event: &str, agent: &str) -> String {
+    format!(
+        "powershell -NoProfile -Command \"if (Get-Command uteke -ErrorAction SilentlyContinue) {{ uteke hook-run {event} --agent {agent} }}; exit 0\""
     )
 }
 
@@ -558,8 +585,9 @@ pub(crate) fn print_hook_status(statuses: &[HookStatus]) {
 
 fn unsupported(agent: &str) -> String {
     format!(
-        "`uteke connect` does not support '{agent}' yet. Supported: {}",
-        SUPPORTED.join(", ")
+        "`uteke connect` does not support '{agent}' yet. Supported: {}, {}",
+        SUPPORTED.join(", "),
+        provider::PROVIDER_AGENTS.join(", ")
     )
 }
 
@@ -598,6 +626,9 @@ fn print_report(verb: &str, name: &str, report: &Report, json: bool) {
 
 /// `uteke connect <agent> [--dry-run]`.
 pub(crate) fn run_connect(agent: &str, dry_run: bool, json: bool) -> Result<(), String> {
+    if provider::PROVIDER_AGENTS.contains(&agent) {
+        return provider::connect(agent, dry_run, json);
+    }
     let adapter = adapter_for(agent).ok_or_else(|| unsupported(agent))?;
     let home = home_dir()?;
     let mut report = connect(adapter.as_ref(), &home, dry_run)?;
@@ -614,6 +645,9 @@ pub(crate) fn run_connect(agent: &str, dry_run: bool, json: bool) -> Result<(), 
 
 /// `uteke disconnect <agent> [--dry-run]`.
 pub(crate) fn run_disconnect(agent: &str, dry_run: bool, json: bool) -> Result<(), String> {
+    if provider::PROVIDER_AGENTS.contains(&agent) {
+        return provider::disconnect(agent, dry_run, json);
+    }
     let adapter = adapter_for(agent).ok_or_else(|| unsupported(agent))?;
     let home = home_dir()?;
     let report = disconnect(adapter.as_ref(), &home, dry_run)?;

@@ -4,6 +4,18 @@
 
 ### Added
 
+- **`uteke connect codex|cursor|pi|hermes` (#1465)** - Codex: hooks in
+  `~/.codex/hooks.json` (`$CODEX_HOME`), the Claude Code shape plus a PowerShell
+  `commandWindows`; `connect` prints the one-time `/hooks` trust step. Cursor:
+  `~/.cursor/hooks.json` (`version: 1`); `sessionStart` returns the recalled pack
+  as `additional_context`, and capture uses `beforeSubmitPrompt` and
+  `afterAgentResponse` (Cursor's `stop`/`sessionEnd` carry no text), grouped by
+  `conversation_id`; the prompt hook always answers `{"continue": true}`, also
+  without `uteke` on `PATH`. `connect pi|hermes` installs the memory-provider
+  plugin (`init <agent> --memory-provider`; a plugin file you changed is kept as
+  `<file>.uteke-bak` first), and `disconnect` removes its files while unchanged. Docs: `docs/integrations/codex.md`, `docs/integrations/cursor.md`
+  (with the Cursor 3.2.7 `additional_context` bug).
+
 - **`uteke connect` / `disconnect`: agent lifecycle hooks, Claude Code first
   (#1465)** - `uteke connect claude` adds `SessionStart`, `UserPromptSubmit` and
   `Stop` hooks to `~/.claude/settings.json`: the session starts with the project's
