@@ -350,3 +350,50 @@ fn connect_pi_installs_the_memory_provider_and_disconnect_removes_it() {
     ok(&env.uteke(&["disconnect", "hermes"]));
     assert!(!env.home().join(".hermes/plugins/uteke").exists());
 }
+
+/// `uteke hook-status` (#1641), what `uteke upgrade` runs on the new binary:
+/// `ok` after connect, `stale` when the manifest records other entries than
+/// this version renders, `missing` when installed entries left the file.
+#[test]
+fn hook_status_reports_ok_stale_and_missing() {
+    let env = Env::new("hook_status", false);
+    let state = |env: &Env| -> Vec<(String, String)> {
+        let v: serde_json::Value = serde_json::from_str(&ok(&env.uteke(&["hook-status"]))).unwrap();
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|a| {
+                (
+                    a["agent"].as_str().unwrap().to_string(),
+                    a["state"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    assert!(state(&env).is_empty(), "nothing connected yet");
+    ok(&env.uteke(&["connect", "claude"]));
+    assert_eq!(state(&env), [("claude".into(), "ok".into())]);
+
+    // An older uteke installed a different Stop timeout, in both files.
+    let manifest_path = env.home().join(".codecora/uteke/connect/claude.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let stop = manifest["entries"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|e| e["event"] == "Stop")
+        .unwrap();
+    stop["entry"]["hooks"][0]["timeout"] = 99.into();
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    let mut settings = env.settings();
+    settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 99.into();
+    let settings_path = env.home().join(".claude/settings.json");
+    std::fs::write(&settings_path, settings.to_string()).unwrap();
+    assert_eq!(state(&env), [("claude".into(), "stale".into())]);
+
+    // The user removed the Stop hook from settings.json.
+    settings["hooks"].as_object_mut().unwrap().remove("Stop");
+    std::fs::write(&settings_path, settings.to_string()).unwrap();
+    assert_eq!(state(&env), [("claude".into(), "missing".into())]);
+}
