@@ -234,7 +234,13 @@ jobs:
             failed=0
             for n in $BACKFILL; do
               case "$n" in *[!0-9]*) echo "::error::Not an issue number: $n"; failed=1; continue ;; esac
-              node=$(gh api "repos/$REPO/issues/$n" --jq .node_id)
+              # Guarded: under set -e a failed lookup would end the whole loop.
+              node=$(gh api "repos/$REPO/issues/$n" --jq .node_id) || node=""
+              if [ -z "$node" ]; then
+                echo "::error::Issue #$n not found"
+                failed=1
+                continue
+              fi
               item_id=$(get_item_id "$node")
               if [ -z "$item_id" ]; then
                 item_id=$(add_to_project "$node") || true
