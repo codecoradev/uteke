@@ -137,11 +137,14 @@ pub(crate) trait Adapter {
         {
             existing.remove("hooks");
         }
-        // Keys like Cursor's `version` go only when nothing else is left.
-        let only_created = match existing {
-            OJson::Object(e) => e.iter().all(|(k, _)| manifest.created_keys.contains(k)),
-            _ => false,
-        };
+        // Keys like Cursor's `version` go only when nothing else is left: no
+        // `hooks` (a non-empty one holds the user's own hooks) and no key the
+        // user wrote.
+        let only_created = existing.get("hooks").is_none()
+            && match existing {
+                OJson::Object(e) => e.iter().all(|(k, _)| manifest.created_keys.contains(k)),
+                _ => false,
+            };
         if only_created {
             for k in &manifest.created_keys {
                 existing.remove(k);
@@ -401,6 +404,14 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
     if dry_run {
         return Ok(report);
     }
+    // The manifest goes first: if the config write then fails, `disconnect`
+    // reports the recorded entries as not found and changes nothing, while
+    // entries written without a manifest would be untracked.
+    let manifest_text = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+    let mpath = manifest_path(home, adapter.agent());
+    if std::fs::read_to_string(&mpath).ok().as_deref() != Some(manifest_text.as_str()) {
+        write_atomic(&mpath, &manifest_text)?;
+    }
     if report.changed {
         if file.existed {
             let bak = backup_path(&path);
@@ -411,11 +422,6 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
             }
         }
         write_atomic(&path, &new_text)?;
-    }
-    let manifest_text = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
-    let mpath = manifest_path(home, adapter.agent());
-    if std::fs::read_to_string(&mpath).ok().as_deref() != Some(manifest_text.as_str()) {
-        write_atomic(&mpath, &manifest_text)?;
     }
     report.notes = adapter.notes();
     Ok(report)

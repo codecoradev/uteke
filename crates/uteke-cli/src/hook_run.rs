@@ -175,7 +175,9 @@ fn fence(text: &str) -> String {
 /// stdout of `SessionStart` to the context.
 fn print_context(_agent: &str, _event: &str, context: Option<&str>) {
     if let Some(c) = context {
-        println!("{c}");
+        // Not `println!`: it panics when the agent has closed the pipe, and
+        // hook-run must exit 0.
+        let _ = writeln!(std::io::stdout(), "{c}");
     }
 }
 

@@ -309,3 +309,21 @@ fn a_moved_config_is_refused_while_the_old_one_is_recorded() {
     let err = connect(&claude::ClaudeCode, h.path(), false).unwrap_err();
     assert!(err.contains("disconnect"), "{err}");
 }
+
+#[test]
+fn a_user_hook_added_to_a_file_connect_created_survives_disconnect() {
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    connect(&claude::ClaudeCode, h.path(), false).unwrap();
+    let mut v = json(&path);
+    v["hooks"]["PreToolUse"] =
+        serde_json::json!([{"hooks": [{"type": "command", "command": "mine"}]}]);
+    write(&path, &serde_json::to_string_pretty(&v).unwrap());
+
+    disconnect(&claude::ClaudeCode, h.path(), false).unwrap();
+    assert!(path.exists());
+    assert_eq!(
+        json(&path),
+        serde_json::json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "mine"}]}]}})
+    );
+}
