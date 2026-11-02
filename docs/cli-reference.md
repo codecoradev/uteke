@@ -263,6 +263,25 @@ uteke extract-queue run --budget 5  # extract up to 5 sessions now
   the `uteke_capture` tool. Queueing is refused while capture is off (HTTP 409);
   the status always answers.
 
+## uteke connect / disconnect
+
+Install the lifecycle hooks of an agent app (#1465): recall at session start,
+capture of each prompt and reply. Supported: `claude` (Claude Code).
+
+```bash
+uteke connect claude --dry-run   # what would be added; writes nothing
+uteke connect claude             # install or refresh
+uteke disconnect claude          # remove exactly what connect added
+```
+
+Each hook runs `uteke hook-run <event>` (hidden) through a guard that is a no-op
+when `uteke` is not on `PATH`; `hook-run` always exits 0 and logs errors to
+`~/.codecora/uteke/hook.log`. What was added is recorded in
+`~/.codecora/uteke/connect/<agent>.json`; the original file is backed up once to
+`<file>.uteke-bak`. `uteke doctor` reports hooks that a newer uteke would install
+differently, or that were removed. Capture hooks need `[capture] enabled = true`.
+Details: [Claude Code hooks](integrations/claude-code.md).
+
 ## uteke tombstone
 
 ```bash

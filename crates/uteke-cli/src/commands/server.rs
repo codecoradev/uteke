@@ -351,6 +351,52 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 output::print_recall_human(&results);
             }
         }
+        Commands::Capture {
+            session,
+            role,
+            source,
+            text,
+        } => {
+            // Queued by the server, which holds the store (#1465: a local
+            // open would wait on its lock). It refuses while capture is off.
+            let content = match text {
+                Some(t) => t.clone(),
+                None => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+                    buf
+                }
+            };
+            let body = serde_json::json!({
+                "session_id": session,
+                "role": role,
+                "content": content,
+                "source": source,
+                "namespace": ns,
+            });
+            let resp = client
+                .post(format!("{server_url}/capture"))
+                .json(&body)
+                .send()
+                .map_err(|e| format!("Server error: {e}"))?;
+            let data = parse_json_value(resp)?;
+            if cli.json {
+                println!("{data}");
+            } else if data["duplicate"].as_bool() == Some(true) {
+                println!(
+                    "Already captured: {}",
+                    data["id"].as_str().unwrap_or_default()
+                );
+            } else {
+                println!(
+                    "\u{2713} Captured: {}",
+                    data["id"].as_str().unwrap_or_default()
+                );
+            }
+        }
         Commands::Search {
             query, limit, tags, ..
         } => {

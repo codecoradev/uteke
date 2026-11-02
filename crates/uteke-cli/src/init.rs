@@ -17,6 +17,16 @@ pub(crate) fn run_init_command(cli: &Cli) -> Result<(), String> {
 
 /// Dispatch init to the appropriate agent type.
 pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
+    run_init_agent(agent, memory_provider, json)?;
+    // `init` sets up MCP, the skill or a provider; the lifecycle hooks are
+    // `connect`'s (#1465), a separate command with an exact `disconnect`.
+    if !json && crate::connect::SUPPORTED.contains(&agent) {
+        println!("\n  For automatic recall and capture hooks, run: uteke connect {agent}");
+    }
+    Ok(())
+}
+
+fn run_init_agent(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
     match agent {
         "pi" => {
             if memory_provider {

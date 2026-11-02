@@ -4,6 +4,23 @@
 
 ### Added
 
+- **`uteke connect` / `disconnect`: agent lifecycle hooks, Claude Code first
+  (#1465)** - `uteke connect claude` adds `SessionStart`, `UserPromptSubmit` and
+  `Stop` hooks to `~/.claude/settings.json`: the session starts with the project's
+  memories as context (a budgeted recall pack), and each prompt and reply is queued
+  with `uteke capture` (needs `[capture] enabled = true`). Each hook runs the hidden
+  `uteke hook-run <event>` through a guard that does nothing when `uteke` is not
+  on `PATH`; `hook-run` always exits 0 and logs errors to
+  `~/.codecora/uteke/hook.log`. What was added is recorded in
+  `~/.codecora/uteke/connect/<agent>.json`, so a re-run changes nothing and
+  `uteke disconnect claude` removes exactly those entries (an entry you edited is
+  left alone and reported). The user's keys keep their order, the original is
+  backed up once to `settings.json.uteke-bak`, and `--dry-run` writes nothing.
+  `uteke doctor` reports hooks that are stale or were removed; `uteke init
+  claude` now ends with a hint to run `connect`. `uteke capture` goes through a
+  running `uteke-serve` (`POST /capture`) instead of opening its store. Docs:
+  `docs/integrations/claude-code.md`.
+
 - **A Uteke Cloud export imports with its documents and rooms (#1632)** - `uteke import`
   and `POST /import` store `type: "document"` rows as documents (slug, title, content, tags,
   parent by slug or id in any row order; a changed document is updated in place, an
