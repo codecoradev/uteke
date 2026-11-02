@@ -4,6 +4,16 @@
 
 ### Added
 
+- **`uteke namespace migrate --map <file>` (#1427 phase 3)** - moves whole
+  namespaces into `default` from a TOML map (`[map."<ns>"]` with `room`, `tag`,
+  `author` and/or `source`, or `drop = true`). Dry run by default with a
+  per-namespace report (counts, a room that will be created, kept authors or
+  sources, soft-deleted rows left in place, unmapped namespaces); `--apply`
+  writes a full export next to the database first, then migrates one
+  transaction per namespace. `drop` soft-deletes and needs `--allow-drop`;
+  `default` cannot be mapped; a re-run is a no-op. Logic in
+  `uteke_core::namespace_migrate`.
+
 - **`uteke connect codex|cursor|pi|hermes` (#1465)** - Codex: hooks in
   `~/.codex/hooks.json` (`$CODEX_HOME`), the Claude Code shape plus a PowerShell
   `commandWindows`; `connect` prints the one-time `/hooks` trust step. Cursor:

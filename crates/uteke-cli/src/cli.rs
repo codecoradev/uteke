@@ -912,6 +912,20 @@ pub enum NamespaceCommands {
         #[arg(long)]
         confirm: bool,
     },
+    /// Move namespaces into rooms, tags, author or source from a TOML map (#1427).
+    /// Dry run by default; --apply writes a full export next to the store first.
+    Migrate {
+        /// TOML map file: one `[map."<namespace>"]` table per namespace with
+        /// room, tag, author and/or source, or `drop = true`
+        #[arg(long)]
+        map: std::path::PathBuf,
+        /// Apply the map (default: dry run, nothing is written)
+        #[arg(long)]
+        apply: bool,
+        /// Allow `drop = true` entries to soft-delete their memories
+        #[arg(long)]
+        allow_drop: bool,
+    },
 }
 
 /// Feedback actions for trust scoring (#718).

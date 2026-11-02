@@ -435,6 +435,43 @@ name), `merge` (move all memories to `--target`, the name vanishes), or
 `deprecate` (soft-delete — restorable via `uteke lifecycle`/promote, never
 hard-deleted). `--confirm` is required for `delete`.
 
+### uteke namespace migrate (#1427)
+
+Moves whole namespaces into `default`, carrying each namespace's meaning over to
+a room, a tag, an author and/or a source (namespaces are deprecated, see
+[Namespaces are deprecated](/multi-agent#namespaces-are-deprecated)).
+
+```toml
+# map.toml: one table per namespace
+[map."research-x"]
+room = "research-x"      # created when it does not exist
+author = "agent-a"       # targets compose: room, tag, author, source
+
+[map."hermes"]
+tag = "agent:hermes"
+
+[map."scratch"]
+drop = true              # soft-delete; needs --allow-drop
+```
+
+```bash
+uteke namespace migrate --map map.toml                  # dry run: report only
+uteke namespace migrate --map map.toml --apply          # export first, then migrate
+uteke namespace migrate --map map.toml --apply --allow-drop
+```
+
+- The dry run writes nothing. `--apply` first writes a full export
+  (`namespace-migrate-<UTC time>.ndjson` next to the database) and only then
+  migrates, one transaction per namespace. Restore it with
+  `uteke import --full` into a fresh store. Run it on a copy of the database first.
+- `default` cannot be named in the map. Namespaces the map does not name are
+  listed and left alone; a mapped namespace with no live memories is reported
+  and skipped, so re-running the same map changes nothing.
+- Only live memories move. Soft-deleted ones stay in their namespace (an export
+  does not carry them).
+- A memory that already has a different `author` or `source` keeps it; the
+  report counts it as a conflict. A tag already present is not added twice.
+
 Namespace resolution order: `--namespace flag` → `UTEKE_NAMESPACE` env → `uteke.toml` → `"default"`
 
 ## uteke tags
