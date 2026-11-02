@@ -304,13 +304,29 @@ pub(crate) fn run_recall(
             } else if min_score > 0.0 {
                 println!("No matching results found.");
                 println!("(min_score threshold: {:.2})", min_score);
+            } else if context {
+                println!("{}", format_context(query, &[]));
             } else {
                 println!("No matching results found.");
             }
             return Ok(());
         }
 
-        if cli.json {
+        if context {
+            // The same layout as the memory-only path below (#1642).
+            let rows: Vec<ContextRow<'_>> = unified_results
+                .iter()
+                .map(|r| ContextRow {
+                    score: r.score,
+                    content: &r.content,
+                    tags: &r.tags,
+                    pinned: r.pinned == Some(true),
+                    importance: r.importance.unwrap_or(0.0),
+                    doc_title: r.doc_title.as_deref(),
+                })
+                .collect();
+            println!("{}", format_context(query, &rows));
+        } else if cli.json {
             output::print_json(&unified_results);
         } else {
             output::print_unified_human(&unified_results);
@@ -436,7 +452,7 @@ pub(crate) fn run_recall(
             println!("No matching memories found.");
             println!("(min_score threshold: {:.2})", min_score);
         } else if context {
-            println!("[No relevant memories found for: {query}]");
+            println!("{}", format_context(query, &[]));
         } else {
             println!("No matching memories found.");
         }
@@ -445,34 +461,18 @@ pub(crate) fn run_recall(
 
     if context {
         // Context mode: formatted for AI prompt injection
-        let avg_score: f32 = filtered.iter().map(|r| r.score).sum::<f32>() / filtered.len() as f32;
-        println!(
-            "[Relevant Memories ({} results, {:.2} avg score)]",
-            filtered.len(),
-            avg_score
-        );
-        for (i, sr) in filtered.iter().enumerate() {
-            let tags = if sr.memory.tags.is_empty() {
-                String::new()
-            } else {
-                format!(" [{}]", sr.memory.tags.join(", "))
-            };
-            let importance = if sr.memory.pinned {
-                " \u{2605}".to_string() // ★
-            } else if sr.memory.importance > 0.7 {
-                " \u{2191}".to_string() // ↑
-            } else {
-                String::new()
-            };
-            println!(
-                "{}. [{:.2}] {}{}{}",
-                i + 1,
-                sr.score,
-                sr.memory.content,
-                tags,
-                importance
-            );
-        }
+        let rows: Vec<ContextRow<'_>> = filtered
+            .iter()
+            .map(|sr| ContextRow {
+                score: sr.score,
+                content: &sr.memory.content,
+                tags: &sr.memory.tags,
+                pinned: sr.memory.pinned,
+                importance: sr.memory.importance,
+                doc_title: None,
+            })
+            .collect();
+        println!("{}", format_context(query, &rows));
     } else if cli.json {
         // Apply content_format: pretty-print JSON content when requested
         if content_format == "json" {
@@ -493,6 +493,56 @@ pub(crate) fn run_recall(
         output::print_recall_human(&filtered);
     }
     Ok(())
+}
+
+/// One recall hit as `--context` prints it, from either the memory-only or the
+/// unified path.
+struct ContextRow<'a> {
+    score: f32,
+    content: &'a str,
+    tags: &'a [String],
+    pinned: bool,
+    importance: f64,
+    /// Set for a document hit, printed after the excerpt.
+    doc_title: Option<&'a str>,
+}
+
+/// The `--context` layout for AI prompt injection, or its empty-result line.
+fn format_context(query: &str, rows: &[ContextRow<'_>]) -> String {
+    if rows.is_empty() {
+        return format!("[No relevant memories found for: {query}]");
+    }
+    let avg_score: f32 = rows.iter().map(|r| r.score).sum::<f32>() / rows.len() as f32;
+    let mut lines = vec![format!(
+        "[Relevant Memories ({} results, {:.2} avg score)]",
+        rows.len(),
+        avg_score
+    )];
+    for (i, r) in rows.iter().enumerate() {
+        let tags = if r.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", r.tags.join(", "))
+        };
+        let doc = r
+            .doc_title
+            .map(|t| format!(" (doc: {t})"))
+            .unwrap_or_default();
+        let importance = if r.pinned {
+            " \u{2605}" // ★
+        } else if r.importance > 0.7 {
+            " \u{2191}" // ↑
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "{}. [{:.2}] {}{doc}{tags}{importance}",
+            i + 1,
+            r.score,
+            r.content
+        ));
+    }
+    lines.join("\n")
 }
 
 pub(crate) fn run_search(
@@ -561,5 +611,56 @@ mod decode_tests {
         let e = decode_local("q", 5, &[], Some("yesterday")).unwrap_err();
         assert!(e.starts_with("Invalid 'at' timestamp: yesterday"), "{e}");
         assert!(decode_local("q", 5, &[], Some("2026-06-01T12:00:00Z")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::{ContextRow, format_context};
+
+    #[test]
+    fn no_rows_print_the_empty_line() {
+        assert_eq!(
+            format_context("q", &[]),
+            "[No relevant memories found for: q]"
+        );
+    }
+
+    #[test]
+    fn rows_print_score_content_doc_tags_and_marker() {
+        let tags = vec!["a".to_string(), "b".to_string()];
+        let rows = [
+            ContextRow {
+                score: 0.9,
+                content: "pinned fact",
+                tags: &tags,
+                pinned: true,
+                importance: 0.1,
+                doc_title: None,
+            },
+            ContextRow {
+                score: 0.5,
+                content: "an excerpt",
+                tags: &[],
+                pinned: false,
+                importance: 0.8,
+                doc_title: Some("Guide"),
+            },
+            ContextRow {
+                score: 0.4,
+                content: "plain",
+                tags: &[],
+                pinned: false,
+                importance: 0.7,
+                doc_title: None,
+            },
+        ];
+        assert_eq!(
+            format_context("q", &rows),
+            "[Relevant Memories (3 results, 0.60 avg score)]\n\
+             1. [0.90] pinned fact [a, b] \u{2605}\n\
+             2. [0.50] an excerpt (doc: Guide) \u{2191}\n\
+             3. [0.40] plain"
+        );
     }
 }
