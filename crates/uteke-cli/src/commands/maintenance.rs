@@ -437,6 +437,24 @@ pub(crate) fn run_import(
             "\u{2713} Imported {} memories ({} skipped) as {detected_format}",
             result.imported, result.skipped
         );
+        if result.duplicates_skipped > 0 {
+            println!(
+                "  {} entries already stored (duplicates skipped)",
+                result.duplicates_skipped
+            );
+        }
+        if result.id_conflicts_skipped > 0 {
+            println!(
+                "  \u{26a0} {} entries skipped: their id is stored with other content",
+                result.id_conflicts_skipped
+            );
+        }
+        if result.soft_deleted_skipped > 0 {
+            println!(
+                "  {} entries skipped: they were deleted in this store",
+                result.soft_deleted_skipped
+            );
+        }
         if result.redacted > 0 {
             println!("  \u{26a0} Secrets masked in {} memories", result.redacted);
         }

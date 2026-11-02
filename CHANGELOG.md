@@ -77,6 +77,19 @@
 
 ### Fixed
 
+- **A JSONL import keeps each row's identity and does not bring deleted memories back
+  (#1633)** - `uteke import` and `POST /import` store a row under its `id` and keep its
+  `memory_type`, `importance`, `pinned`, `content_type` and `slug` (a missing or invalid
+  value falls back to the old default, so older files import as before); `uteke export`
+  now writes these fields. A stored id is never overwritten: the same content is a
+  duplicate, other content an id conflict. A row whose content (or id) is deleted in the
+  target is skipped instead of coming back live, and a row marked `deprecated` (a Uteke
+  Cloud export) is stored deleted without a vector. Rows without an id keep the cosine
+  duplicate check (#1005). The result and the `POST /import` response add
+  `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped` (additive; the
+  names follow the Cloud importer). `import --full` restores a bundle row marked
+  `deprecated` deleted instead of always live.
+
 - `export --full` / `import --full` dropped the columns added since the format was
   introduced: a memory's `author`, `author_type`, `source_hash` and `recall_count`,
   the room member `role`, the timeline `actor` and `evidence_json`, and the

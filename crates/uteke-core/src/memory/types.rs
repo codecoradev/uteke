@@ -449,6 +449,34 @@ pub struct ExportEntry {
     /// to each room that exists in the target store.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rooms: Vec<String>,
+    /// The memory's id (#1633). Import keeps it, and skips the row when the
+    /// id is already stored. Absent on rows from older export files (a new id
+    /// is generated); a value that is not a UUID is dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Memory type (#1633). Absent or unknown: `fact`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    /// Importance 0.0 to 1.0 (#1633). Absent or out of range: 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<f64>,
+    /// Pinned flag (#1633). Absent: false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
+    /// Content type (#1633). Absent or malformed: `text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    /// Memory slug (#1633). Absent or blank: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    /// Soft-deleted at the source (#1633, rows of a Uteke Cloud export).
+    /// Import stores the row deprecated, without a vector. The OSS export
+    /// never writes it: it exports live rows only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deprecated: bool,
+    /// When the row was soft-deleted (#1633). Only read with `deprecated`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn default_metadata() -> serde_json::Value {
@@ -464,9 +492,24 @@ fn default_created_at() -> chrono::DateTime<chrono::Utc> {
 pub struct ImportResult {
     /// Number of memories imported.
     pub imported: usize,
-    /// Number of entries skipped (duplicate, invalid or rejected by the
-    /// privacy filter in strict mode).
+    /// Number of entries skipped because they were invalid, could not be
+    /// stored or were rejected (privacy filter in strict mode, tombstone).
+    /// Duplicates are counted apart, in the `*_skipped` fields below.
     pub skipped: usize,
+    /// Entries already stored (#1633): the same id with the same content,
+    /// the exact content, or for a row without an id a near-identical one
+    /// (cosine >= 0.95, #1005). The rooms of the entry are linked to the
+    /// stored memory.
+    #[serde(default)]
+    pub duplicates_skipped: usize,
+    /// Entries whose id is already stored with other content (#1633): not
+    /// merged, the stored memory is left unchanged.
+    #[serde(default)]
+    pub id_conflicts_skipped: usize,
+    /// Entries whose content (or id) is soft-deleted in this store (#1633):
+    /// a forgotten memory is not brought back by importing an old file.
+    #[serde(default)]
+    pub soft_deleted_skipped: usize,
     /// Imported memories in which the privacy filter masked a secret (#1464).
     #[serde(default)]
     pub redacted: usize,

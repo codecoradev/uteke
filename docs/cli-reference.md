@@ -698,7 +698,8 @@ uteke import --full bundle.ndjson          # on the target
 The bundle restores documents with their slug, title, parent (hierarchy), path and content,
 plus rooms (with each member's role), edges, the graph and the timeline, keeping the original
 ids. Memories keep their author, author type, provenance hash and recall count, and timeline
-events keep their actor and evidence. Deprecated memories are left out. A bundle written by
+events keep their actor and evidence. Deprecated memories are left out of the bundle, and a
+bundle row marked `deprecated` is restored deleted, never live. A bundle written by
 0.22.1 or earlier lacks these fields: import applies the defaults and rebuilds document paths
 from the parent chain. It carries no vectors: `import`
 regenerates them (memories are marked for `uteke repair --reembed`, document chunks are
@@ -711,6 +712,23 @@ exists in the target store, also for a duplicate of a stored memory, and reports
 links (`room_links`) and the rooms the target lacks (`rooms_missing`). Create the missing
 rooms (`uteke room create <ID>`) and import the file again to finish the links; nothing is
 copied.
+
+A JSONL row keeps its identity: import stores it under its `id` and keeps its
+`memory_type`, `importance`, `pinned`, `content_type` and `slug`. A missing or invalid value
+falls back to the old default (a new id, `fact`, `0.5`, not pinned, `text`, no slug), so files
+from older versions import as before. Importing the same file again adds nothing. The result
+counts what was left out, apart from `skipped` (invalid or rejected rows):
+
+- `duplicates_skipped`: the row is already stored (same id and content, the same content in
+  the namespace, or for a row without an id a near-identical memory). Its rooms are linked to
+  the stored memory.
+- `id_conflicts_skipped`: the id is stored with other content. The stored memory is not
+  changed.
+- `soft_deleted_skipped`: the content (or id) was deleted in this store. Importing an old
+  export does not bring it back.
+
+A row marked `"deprecated": true` (a Uteke Cloud export carries deleted memories) is stored
+deleted, without a vector.
 
 ### Store now, embed later (`--defer-embed`)
 
