@@ -266,7 +266,10 @@ uteke extract-queue run --budget 5  # extract up to 5 sessions now
 ## uteke connect / disconnect
 
 Install the lifecycle hooks of an agent app (#1465): recall at session start,
-capture of each prompt and reply. Supported: `claude` (Claude Code).
+capture of each prompt and reply. Supported: `claude` (Claude Code), `codex`,
+`cursor`. For `pi` and `hermes`, whose hooks are a plugin, `connect` installs the
+memory-provider plugin (`uteke init <agent> --memory-provider`) and `disconnect`
+removes its files while they are unchanged.
 
 ```bash
 uteke connect claude --dry-run   # what would be added; writes nothing
@@ -280,7 +283,8 @@ when `uteke` is not on `PATH`; `hook-run` always exits 0 and logs errors to
 `~/.codecora/uteke/connect/<agent>.json`; the original file is backed up once to
 `<file>.uteke-bak`. `uteke doctor` reports hooks that a newer uteke would install
 differently, or that were removed. Capture hooks need `[capture] enabled = true`.
-Details: [Claude Code hooks](integrations/claude-code.md).
+Details: [Claude Code](integrations/claude-code.md), [Codex](integrations/codex.md),
+[Cursor](integrations/cursor.md).
 
 ## uteke tombstone
 

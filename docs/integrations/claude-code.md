@@ -19,7 +19,7 @@ Three entries in `~/.claude/settings.json` under `hooks`:
 
 | Claude Code event | Runs | Does |
 |---|---|---|
-| `SessionStart` | `uteke hook-run session-start` | Recalls memories for the project (the last part of the session's `cwd`) as a budgeted context pack and prints them; Claude Code adds that output to the context. Prints nothing when nothing matches. |
+| `SessionStart` | `uteke hook-run session-start` | Recalls memories for the project (the last part of the session's `cwd`) as a budgeted context pack and prints them inside a `<uteke-stored-data>` block, marked as reference data; Claude Code adds that output to the context. Prints nothing when nothing matches. |
 | `UserPromptSubmit` | `uteke hook-run prompt` | Queues the prompt as a `user` turn (`uteke capture`). |
 | `Stop` | `uteke hook-run stop` | Queues `last_assistant_message` as an `assistant` turn. |
 

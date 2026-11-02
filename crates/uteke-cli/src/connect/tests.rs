@@ -327,3 +327,108 @@ fn a_user_hook_added_to_a_file_connect_created_survives_disconnect() {
         serde_json::json!({"hooks": {"PreToolUse": [{"hooks": [{"type": "command", "command": "mine"}]}]}})
     );
 }
+
+const CODEX_FIXTURE: &str = include_str!("../../tests/fixtures/connect/codex-hooks.json");
+const CURSOR_FIXTURE: &str = include_str!("../../tests/fixtures/connect/cursor-hooks.json");
+
+/// Every adapter with the fixture of its config file.
+fn adapters() -> Vec<(Box<dyn Adapter>, &'static str)> {
+    vec![
+        (Box::new(claude::ClaudeCode), CLAUDE_FIXTURE),
+        (Box::new(codex::Codex), CODEX_FIXTURE),
+        (Box::new(cursor::Cursor), CURSOR_FIXTURE),
+    ]
+}
+
+#[test]
+fn every_adapter_is_idempotent_and_disconnect_restores_the_fixture() {
+    for (adapter, fixture) in adapters() {
+        let h = home();
+        let path = adapter.config_path(h.path());
+        write(&path, fixture);
+        let report = connect(adapter.as_ref(), h.path(), false).unwrap();
+        assert_eq!(report.added.len(), 3, "{}: {report:?}", adapter.agent());
+        let first = read(&path);
+        assert!(!connect(adapter.as_ref(), h.path(), false).unwrap().changed);
+        assert_eq!(read(&path), first, "{}", adapter.agent());
+        assert_eq!(hook_status(h.path())[0].state, "ok");
+        disconnect(adapter.as_ref(), h.path(), false).unwrap();
+        assert_eq!(read(&path), fixture, "{}", adapter.agent());
+    }
+}
+
+#[test]
+fn every_adapter_creates_and_deletes_a_missing_file() {
+    for (adapter, _) in adapters() {
+        let h = home();
+        let path = adapter.config_path(h.path());
+        connect(adapter.as_ref(), h.path(), false).unwrap();
+        assert!(path.exists(), "{}", adapter.agent());
+        disconnect(adapter.as_ref(), h.path(), false).unwrap();
+        assert!(!path.exists(), "{}", adapter.agent());
+    }
+}
+
+#[test]
+fn codex_entries_carry_a_windows_command_and_the_trust_step() {
+    let h = home();
+    let path = codex::Codex.config_path(h.path());
+    write(&path, CODEX_FIXTURE);
+    let report = connect(&codex::Codex, h.path(), false).unwrap();
+    let v = json(&path);
+    assert_eq!(v["description"], "my codex hooks");
+    assert_eq!(
+        v["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+        "./check.sh"
+    );
+    let start = &v["hooks"]["SessionStart"][0]["hooks"][0];
+    assert_eq!(start["type"], "command");
+    assert!(
+        start["command"]
+            .as_str()
+            .unwrap()
+            .contains("uteke hook-run session-start --agent codex")
+    );
+    assert!(
+        start["commandWindows"]
+            .as_str()
+            .unwrap()
+            .contains("Get-Command uteke")
+    );
+    assert!(
+        report.notes.iter().any(|n| n.contains("/hooks")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn cursor_uses_its_own_shape_and_keeps_the_version() {
+    let h = home();
+    let path = cursor::Cursor.config_path(h.path());
+    write(&path, CURSOR_FIXTURE);
+    connect(&cursor::Cursor, h.path(), false).unwrap();
+    let v = json(&path);
+    assert_eq!(v["version"], 1);
+    let starts = v["hooks"]["sessionStart"].as_array().unwrap();
+    assert_eq!(starts[0]["command"], "./hooks/mine.sh");
+    assert!(
+        starts[1]["command"]
+            .as_str()
+            .unwrap()
+            .contains("uteke hook-run session-start --agent cursor")
+    );
+    let prompt = v["hooks"]["beforeSubmitPrompt"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(
+        prompt.ends_with(r#"|| echo "{\"continue\":true}"'"#),
+        "{prompt}"
+    );
+    assert!(v["hooks"]["afterAgentResponse"][0]["command"].is_string());
+    // A file connect created gets `version: 1`, and loses it on disconnect.
+    let h = home();
+    connect(&cursor::Cursor, h.path(), false).unwrap();
+    let path = cursor::Cursor.config_path(h.path());
+    assert_eq!(json(&path)["version"], 1);
+    assert!(read(&path).find("\"version\"").unwrap() < read(&path).find("\"hooks\"").unwrap());
+}

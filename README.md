@@ -243,7 +243,7 @@ Author attribution on every memory; cross-agent recall without manual sync. 📖
 | 🔌 **MCP Server** | JSON-RPC over stdio + Streamable HTTP. Works with Claude Code, Cursor, Hermes. |
 | 🖥️ **Server Mode** | Persistent daemon: eliminates cold-start embedding load on every call. |
 | 📂 **Batch Import** | Import entire directories with auto-strategy routing (document vs. memory extraction). `--defer-embed` stores a JSONL file first and embeds later in portions (`repair --reembed --limit`). |
-| 🪝 **Agent Hooks** | `uteke connect claude` installs recall and capture hooks in Claude Code; `uteke disconnect` removes exactly them. See [Claude Code hooks](docs/integrations/claude-code.md). |
+| 🪝 **Agent Hooks** | `uteke connect claude\|codex\|cursor` installs recall and capture hooks in the agent app (`pi`/`hermes`: the memory-provider plugin); `uteke disconnect` removes exactly them. See [Claude Code](docs/integrations/claude-code.md), [Codex](docs/integrations/codex.md), [Cursor](docs/integrations/cursor.md). |
 | 🎙️ **Raw Capture** | Queue conversation turns with no LLM call (`uteke capture`, `POST /capture`, MCP `uteke_capture`); `extract-queue run` or the server's schedule turns them into memories later, on a budget. Opt-in. |
 | 📝 **Document Engine** | Wiki/knowledge base with `uteke doc create/get/list` and auto-chunking. |
 | 📥 **Import/Export** | JSONL backup and restore; `export --full` / `import --full` move the whole store: documents, rooms, the graph and each memory's author and provenance (vectors are rebuilt on the target). |
@@ -343,7 +343,7 @@ Tool labels (A–G) stand for common categories of AI memory layers as of August
 | **Getting started** | [Installation](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
 | **Reference** | [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
 | **Concepts** | [Rooms](docs/rooms.md) · [Organizing memories](docs/organizing-memories.md) · [Architecture](docs/architecture.md) |
-| **Integrations** | [MCP setup](docs/mcp.md) (Claude Code, Claude Desktop, Cursor, Hermes) · [Hermes](docs/integrations/hermes.md) · [Claude Code hooks](docs/integrations/claude-code.md) |
+| **Integrations** | [MCP setup](docs/mcp.md) (Claude Code, Claude Desktop, Cursor, Hermes) · [Hermes](docs/integrations/hermes.md) · [Claude Code](docs/integrations/claude-code.md) / [Codex](docs/integrations/codex.md) / [Cursor](docs/integrations/cursor.md) hooks |
 | **Security** | [SECURITY.md](SECURITY.md) (vulnerability reports, release signing) |
 | **Benchmarks** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Reproduce it yourself](benchmarks/longmemeval/REPRODUCING.md) |
 

@@ -15,6 +15,32 @@ pub(crate) fn run_init_command(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
+/// The pi memory-provider extension, embedded from
+/// `extensions/pi-memory-provider/` at build time: (file name, contents).
+pub(crate) const PI_PROVIDER_FILES: [(&str, &str); 2] = [
+    (
+        "index.ts",
+        include_str!("../assets/pi-memory-provider/index.ts"),
+    ),
+    (
+        "package.json",
+        include_str!("../assets/pi-memory-provider/package.json"),
+    ),
+];
+
+/// The Hermes memory-provider plugin, embedded from
+/// `extensions/hermes-uteke-memory/` at build time: (file name, contents).
+pub(crate) const HERMES_PROVIDER_FILES: [(&str, &str); 2] = [
+    (
+        "__init__.py",
+        include_str!("../assets/hermes-uteke-memory/__init__.py.tmpl"),
+    ),
+    (
+        "plugin.yaml",
+        include_str!("../assets/hermes-uteke-memory/plugin.yaml.tmpl"),
+    ),
+];
+
 /// Dispatch init to the appropriate agent type.
 pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
     run_init_agent(agent, memory_provider, json)?;
@@ -26,7 +52,7 @@ pub(crate) fn run_init(agent: &str, memory_provider: bool, json: bool) -> Result
     Ok(())
 }
 
-fn run_init_agent(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
+pub(crate) fn run_init_agent(agent: &str, memory_provider: bool, json: bool) -> Result<(), String> {
     match agent {
         "pi" => {
             if memory_provider {
@@ -241,14 +267,10 @@ fn init_pi_memory_provider(json: bool) -> Result<(), String> {
     std::fs::create_dir_all(&ext_dir)
         .map_err(|e| format!("Failed to create extension dir: {e}"))?;
 
-    // Templates embedded from extensions/pi-memory-provider/ at build time.
-    let index_ts = include_str!("../assets/pi-memory-provider/index.ts");
-    let package_json = include_str!("../assets/pi-memory-provider/package.json");
-
-    std::fs::write(ext_dir.join("index.ts"), index_ts)
-        .map_err(|e| format!("Failed to write index.ts: {e}"))?;
-    std::fs::write(ext_dir.join("package.json"), package_json)
-        .map_err(|e| format!("Failed to write package.json: {e}"))?;
+    for (name, text) in PI_PROVIDER_FILES {
+        std::fs::write(ext_dir.join(name), text)
+            .map_err(|e| format!("Failed to write {name}: {e}"))?;
+    }
 
     if json {
         let obj = serde_json::json!({
@@ -661,14 +683,10 @@ fn init_hermes_memory_provider(json: bool) -> Result<(), String> {
     std::fs::create_dir_all(&plugin_dir)
         .map_err(|e| format!("Failed to create plugin dir: {e}"))?;
 
-    // Templates embedded from extensions/hermes-uteke-memory/ at build time.
-    let init_py = include_str!("../assets/hermes-uteke-memory/__init__.py.tmpl");
-    let plugin_yaml = include_str!("../assets/hermes-uteke-memory/plugin.yaml.tmpl");
-
-    std::fs::write(plugin_dir.join("__init__.py"), init_py)
-        .map_err(|e| format!("Failed to write __init__.py: {e}"))?;
-    std::fs::write(plugin_dir.join("plugin.yaml"), plugin_yaml)
-        .map_err(|e| format!("Failed to write plugin.yaml: {e}"))?;
+    for (name, text) in HERMES_PROVIDER_FILES {
+        std::fs::write(plugin_dir.join(name), text)
+            .map_err(|e| format!("Failed to write {name}: {e}"))?;
+    }
 
     if json {
         let obj = serde_json::json!({

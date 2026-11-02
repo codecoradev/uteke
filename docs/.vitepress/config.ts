@@ -46,6 +46,8 @@ export default createConfig({
         { text: 'Comparison', link: '/comparison' },
         { text: 'Architecture', link: '/architecture' },
         { text: 'Claude Code Hooks', link: '/integrations/claude-code' },
+        { text: 'Codex Hooks', link: '/integrations/codex' },
+        { text: 'Cursor Hooks', link: '/integrations/cursor' },
         { text: 'Hermes Integration', link: '/integrations/hermes' },
         { text: 'Pi Extension', link: '/extensions' },
         { text: 'TLS & Reverse Proxy', link: '/tls' },

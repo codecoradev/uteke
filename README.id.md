@@ -260,7 +260,7 @@ docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:lates
 | **Mulai** | [Instalasi](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
 | **Referensi** | [CLI](docs/cli-reference.md) · [Konfigurasi](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
 | **Konsep** | [Rooms](docs/rooms.md) · [Mengatur memori](docs/organizing-memories.md) · [Arsitektur](docs/architecture.md) |
-| **Integrasi** | [Setup MCP](docs/mcp.md) (Claude Code, Claude Desktop, Cursor, Hermes) · [Hermes](docs/integrations/hermes.md) · [Hook Claude Code](docs/integrations/claude-code.md) |
+| **Integrasi** | [Setup MCP](docs/mcp.md) (Claude Code, Claude Desktop, Cursor, Hermes) · [Hermes](docs/integrations/hermes.md) · Hook [Claude Code](docs/integrations/claude-code.md) / [Codex](docs/integrations/codex.md) / [Cursor](docs/integrations/cursor.md) |
 | **Keamanan** | [SECURITY.md](SECURITY.md) (laporan kerentanan, tanda tangan rilis) |
 | **Benchmark** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Jalankan sendiri](benchmarks/longmemeval/REPRODUCING.md) |
 

@@ -28,6 +28,10 @@ pub(crate) fn run(event: &str, agent: &str) {
     if let Err(e) = handle(event, agent, &payload) {
         log(agent, event, &e);
     }
+    // Cursor's `beforeSubmitPrompt` waits for an answer: always let it through.
+    if agent == "cursor" && event == "prompt" {
+        out(crate::connect::CURSOR_CONTINUE);
+    }
 }
 
 fn read_payload() -> serde_json::Value {
@@ -47,7 +51,7 @@ fn handle(event: &str, agent: &str, payload: &serde_json::Value) -> Result<(), S
     match event {
         "session-start" => {
             let context = recall(&project_name(payload))?;
-            print_context(agent, event, context.as_deref());
+            print_context(agent, context.as_deref());
             Ok(())
         }
         "prompt" => {
@@ -55,8 +59,11 @@ fn handle(event: &str, agent: &str, payload: &serde_json::Value) -> Result<(), S
             capture(agent, payload, "user", text)
         }
         "stop" => {
+            // Claude Code and Codex send `last_assistant_message` on `Stop`;
+            // Cursor's `afterAgentResponse` sends the reply as `text`.
             let text = payload["last_assistant_message"]
                 .as_str()
+                .or_else(|| payload["text"].as_str())
                 .unwrap_or_default();
             capture(agent, payload, "assistant", text)
         }
@@ -65,13 +72,14 @@ fn handle(event: &str, agent: &str, payload: &serde_json::Value) -> Result<(), S
 }
 
 /// The project to recall for: the last component of the session's working
-/// directory (`cwd`, else the first workspace root, else this process's).
+/// directory (`cwd`, else the first workspace root). Empty without either:
+/// this process's own directory is the agent's (`~/.cursor` for a Cursor user
+/// hook), not the project's.
 fn project_name(payload: &serde_json::Value) -> String {
     let dir = payload["cwd"]
         .as_str()
         .or_else(|| payload["workspace_roots"][0].as_str())
         .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
     dir.file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -171,14 +179,24 @@ fn fence(text: &str) -> String {
     )
 }
 
-/// Print recalled context the way the agent reads it. Claude Code adds plain
-/// stdout of `SessionStart` to the context.
-fn print_context(_agent: &str, _event: &str, context: Option<&str>) {
-    if let Some(c) = context {
-        // Not `println!`: it panics when the agent has closed the pipe, and
-        // hook-run must exit 0.
-        let _ = writeln!(std::io::stdout(), "{c}");
+/// Print recalled context the way the agent reads it: Claude Code and Codex
+/// add plain stdout of their session-start event to the context; Cursor reads
+/// `additional_context` from a JSON object.
+fn print_context(agent: &str, context: Option<&str>) {
+    let Some(c) = context else {
+        return;
+    };
+    if agent == "cursor" {
+        out(&serde_json::json!({ "additional_context": c }).to_string());
+    } else {
+        out(c);
     }
+}
+
+/// Write a line to stdout. Not `println!`: it panics when the agent has
+/// closed the pipe, and hook-run must exit 0.
+fn out(line: &str) {
+    let _ = writeln!(std::io::stdout(), "{line}");
 }
 
 /// Queue one turn with `uteke capture`. Skipped while capture is off.
@@ -189,9 +207,16 @@ fn capture(agent: &str, payload: &serde_json::Value, role: &str, text: &str) -> 
     if !crate::config::Config::load().engine.capture.enabled {
         return Ok(());
     }
-    let session = payload["session_id"]
+    // Cursor sends `conversation_id` on every event (its `session_id` is not
+    // on all of them); the others send `session_id`.
+    let (first, second) = if agent == "cursor" {
+        ("conversation_id", "session_id")
+    } else {
+        ("session_id", "conversation_id")
+    };
+    let session = payload[first]
         .as_str()
-        .or_else(|| payload["conversation_id"].as_str())
+        .or_else(|| payload[second].as_str())
         .ok_or("the payload has no session id")?;
     let mut child = uteke()?
         // `--opt=value`: a session id that starts with `-` stays a value.
@@ -265,6 +290,10 @@ mod tests {
         assert_eq!(
             project_name(&serde_json::json!({"workspace_roots": ["/w/muran"]})),
             "muran"
+        );
+        assert_eq!(
+            project_name(&serde_json::json!({"workspace_roots": []})),
+            ""
         );
     }
 
