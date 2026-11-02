@@ -218,16 +218,42 @@ impl super::Store {
         // json_each(): no dynamic SQL and no bound-parameter limit.
         let ids_json =
             serde_json::to_string(ids).map_err(|e| Error::db("database operation", e))?;
-        let count = self
+        // Each memory this call deprecates gets a `deprecated` event with the
+        // reason (#1595: aging and bulk forget left no history). The events
+        // go in the same transaction as the flag, so a deprecation without
+        // its event never lands. Already-deprecated ids are skipped and get
+        // no duplicate event, as in `deprecate_with_reason`.
+        let tx = self
             .conn
-            .execute(
-                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, \
-                 updated_at = ?1, deprecated_at = ?1 \
-                 WHERE id IN (SELECT value FROM json_each(?3)) AND deprecated = 0",
-                params![now, reason, ids_json],
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin transaction", e))?;
+        let deprecated: Vec<String> = {
+            let mut stmt = tx
+                .prepare(
+                    "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, \
+                     updated_at = ?1, deprecated_at = ?1 \
+                     WHERE id IN (SELECT value FROM json_each(?3)) AND deprecated = 0 \
+                     RETURNING id",
+                )
+                .map_err(|e| Error::db("database operation", e))?;
+            let rows = stmt
+                .query_map(params![now, reason, ids_json], |row| row.get(0))
+                .map_err(|e| Error::db("database operation", e))?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|e| Error::db("database operation", e))?
+        };
+        let event_data = serde_json::json!({ "reason": reason }).to_string();
+        for id in &deprecated {
+            tx.execute(
+                "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![id, TimelineEventType::Deprecated.as_str(), event_data, now],
             )
-            .map_err(|e| Error::db("database operation", e))?;
-        Ok(count)
+            .map_err(|e| Error::db("record deprecated event", e))?;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit transaction", e))?;
+        Ok(deprecated.len())
     }
 
     /// Restore a deprecated memory to active state (#929).

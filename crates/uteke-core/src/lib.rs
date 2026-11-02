@@ -57,6 +57,8 @@ mod privacy_field_tests;
 mod privacy_write_tests;
 mod redaction_flags;
 #[cfg(test)]
+mod timeline_write_tests;
+#[cfg(test)]
 mod write_path_tests;
 
 pub use forget_request::{

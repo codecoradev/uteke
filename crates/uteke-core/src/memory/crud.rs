@@ -430,11 +430,59 @@ impl super::Store {
             .unchecked_transaction()
             .map_err(|e| Error::db("begin transaction", e))?;
 
+        // The hash before the write, for the `updated` event below. Read in
+        // the transaction so the chain links the row that was overwritten.
+        let previous_hash: Option<String> = if content.is_some() {
+            tx.query_row(
+                "SELECT source_hash FROM memories WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("read source hash", e))?
+            .flatten()
+        } else {
+            None
+        };
+
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params_vec.iter().map(|b| b.as_ref()).collect();
         let rows = tx
             .execute(&sql, param_refs.as_slice())
             .map_err(|e| Error::db("update memory fields", e))?;
+
+        // A content write through the API refreshes `source_hash` and records
+        // an `updated` event that links the old hash to the new one (#1595,
+        // the same shape as uteke-cloud #354). Both happen in this
+        // transaction: if either fails, the content write rolls back, so a
+        // hash mismatch only ever means the content changed outside the API.
+        if let (Some(c), true) = (content, rows > 0) {
+            let new_hash = crate::provenance::content_hash(c);
+            tx.execute(
+                "UPDATE memories SET source_hash = ?1 WHERE id = ?2",
+                params![new_hash, id],
+            )
+            .map_err(|e| Error::db("refresh source hash", e))?;
+            let event_data = serde_json::json!({
+                "fields": ["content"],
+                "previous_hash": previous_hash,
+                "source_hash": new_hash,
+            });
+            let evidence = serde_json::json!([{ "memory": id, "relation": "subject" }]);
+            tx.execute(
+                "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at, actor, evidence_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    crate::timeline::TimelineEventType::Updated.as_str(),
+                    event_data.to_string(),
+                    updated_at.to_rfc3339(),
+                    "system:edit",
+                    evidence.to_string(),
+                ],
+            )
+            .map_err(|e| Error::db("record update event", e))?;
+        }
 
         // Dual-write: sync junction table tags if tags were provided
         if tags.is_some() {
