@@ -45,6 +45,7 @@ export default createConfig({
         { text: 'HTTP API Reference', link: '/api-reference' },
         { text: 'Comparison', link: '/comparison' },
         { text: 'Architecture', link: '/architecture' },
+        { text: 'Claude Code Hooks', link: '/integrations/claude-code' },
         { text: 'Hermes Integration', link: '/integrations/hermes' },
         { text: 'Pi Extension', link: '/extensions' },
         { text: 'TLS & Reverse Proxy', link: '/tls' },

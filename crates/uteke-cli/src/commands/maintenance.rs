@@ -10,10 +10,19 @@ use uteke_core::extraction::ExtractedFact;
 pub(crate) fn run_doctor(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
     tracing::info!("Running doctor");
     let report = uteke.doctor().map_err(|e| format!("Doctor failed: {e}"))?;
+    // Agent hooks installed by `uteke connect` (#1465): stale or removed entries.
+    let hooks = crate::connect::home_dir()
+        .map(|h| crate::connect::hook_status(&h))
+        .unwrap_or_default();
     if cli.json {
-        output::print_json(&report);
+        let mut value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        if !hooks.is_empty() {
+            value["agent_hooks"] = serde_json::to_value(&hooks).map_err(|e| e.to_string())?;
+        }
+        output::print_json(&value);
     } else {
         output::print_doctor_human(&report);
+        crate::connect::print_hook_status(&hooks);
     }
     Ok(())
 }

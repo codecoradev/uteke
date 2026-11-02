@@ -466,6 +466,34 @@ pub enum Commands {
         /// Shell type: bash, zsh, fish
         shell: SupportedShell,
     },
+    /// Install the capture and recall hooks of an agent app (#1465):
+    /// claude. Run again to refresh them; `disconnect` removes exactly them.
+    Connect {
+        /// Agent app: claude
+        agent: String,
+        /// Show what would change and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Remove the hooks `uteke connect` installed, leaving everything else
+    Disconnect {
+        /// Agent app: claude
+        agent: String,
+        /// Show what would change and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Run one agent hook event (what `uteke connect` installs). Reads the
+    /// agent's payload from stdin; always exits 0 and logs errors to
+    /// ~/.codecora/uteke/hook.log.
+    #[command(hide = true)]
+    HookRun {
+        /// session-start, prompt or stop
+        event: String,
+        /// The agent the payload comes from
+        #[arg(long, default_value = "claude")]
+        agent: String,
+    },
     /// Namespace management: list, stats
     Namespace {
         #[command(subcommand)]
