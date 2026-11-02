@@ -4,6 +4,22 @@
 
 ### Added
 
+- **A Uteke Cloud export imports with its documents and rooms (#1632)** - `uteke import`
+  and `POST /import` store `type: "document"` rows as documents (slug, title, content, tags,
+  parent by slug or id in any row order; a changed document is updated in place, an
+  unchanged one left alone, an unknown parent counted in `parent_unresolved` and stored at
+  the root) and `type: "room"` rows as rooms (created when missing, an existing room left
+  unchanged, `doc_slugs` linked), both before the memories' `rooms` links, and skip the
+  manifest line without a warning. The result adds `documents_imported`,
+  `documents_updated`, `documents_unchanged`, `parent_unresolved`, `rooms_imported`,
+  `rooms_existing`, `room_documents_linked` and `room_documents_missing`, each only when
+  non-zero. With deferred embedding the document chunks are stored without vectors too.
+  `import --full` reads the Cloud room-object shape (with `doc_slugs`) and a slug `parent`,
+  and derives depth and `has_children`. `POST /import` takes bodies up to 64 MiB (the Cloud
+  `/import` limit; `UTEKE_MAX_IMPORT_SIZE` sets another, other routes keep 10 MB), refuses a
+  larger declared body before reading it, and its 413 names the limit and the ways around
+  it. Additive on a CORE endpoint.
+
 - **`POST /import` takes `defer_embedding` (#1634)** - `"defer_embedding": true` (default
   false) stores the rows without a vector, like `uteke import --defer-embed` (#1608), so a
   bulk import returns in seconds instead of embedding every row inside the request; the

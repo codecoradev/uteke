@@ -40,6 +40,113 @@ impl RoomLinks {
     }
 }
 
+/// A document row of an import file (#1632): the Uteke Cloud export shape
+/// `{"type":"document", slug, title, content, tags, parent, ...}`.
+#[derive(serde::Deserialize)]
+struct DocumentRow {
+    #[serde(default)]
+    slug: String,
+    #[serde(default)]
+    title: Option<String>,
+    content: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    /// The parent's slug (or id); `null` for a root document.
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+}
+
+impl DocumentRow {
+    fn parent_ref(&self) -> Option<&str> {
+        self.parent
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+    }
+}
+
+/// A room row of an import file (#1632): the Uteke Cloud export shape
+/// `{"type":"room", id, title, description, doc_slugs}`.
+#[derive(serde::Deserialize)]
+struct RoomRow {
+    id: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    doc_slugs: Vec<String>,
+    #[serde(default)]
+    namespace: Option<String>,
+}
+
+/// One row of an import file.
+enum Row {
+    Memory(Box<ExportEntry>),
+    Document(DocumentRow),
+    Room(RoomRow),
+    /// The first line of a Uteke Cloud export (or of a bundle): skipped
+    /// without a warning.
+    Manifest,
+}
+
+/// The rows of an import file by kind, and how many could not be read.
+#[derive(Default)]
+struct ParsedInput {
+    memories: Vec<ExportEntry>,
+    documents: Vec<DocumentRow>,
+    rooms: Vec<RoomRow>,
+    failed: usize,
+}
+
+impl ParsedInput {
+    fn push(&mut self, row: Row) {
+        match row {
+            Row::Memory(e) => self.memories.push(*e),
+            Row::Document(d) => self.documents.push(d),
+            Row::Room(r) => self.rooms.push(r),
+            Row::Manifest => {}
+        }
+    }
+}
+
+/// What a row is (#1632): `type: "document"` and `type: "room"` rows of a
+/// Uteke Cloud export, a memory (any row with `content`), or a manifest line.
+fn classify(v: serde_json::Value) -> Result<Row, String> {
+    let read_err = |e: serde_json::Error| e.to_string();
+    match v.get("type").and_then(|t| t.as_str()) {
+        Some("document") => serde_json::from_value(v)
+            .map(Row::Document)
+            .map_err(read_err),
+        Some("room") => serde_json::from_value(v).map(Row::Room).map_err(read_err),
+        _ if v.get("content").is_some() => serde_json::from_value(v)
+            .map(|e| Row::Memory(Box::new(e)))
+            .map_err(read_err),
+        _ if ["format_version", "exported_at", "uteke_export"]
+            .iter()
+            .any(|k| v.get(k).is_some()) =>
+        {
+            Ok(Row::Manifest)
+        }
+        _ => Err("missing field `content`".to_string()),
+    }
+}
+
+/// The documents and rooms one import stored (#1632).
+#[derive(Default)]
+struct StructureCounts {
+    documents_imported: usize,
+    documents_updated: usize,
+    documents_unchanged: usize,
+    parent_unresolved: usize,
+    rooms_imported: usize,
+    rooms_existing: usize,
+    room_documents_linked: usize,
+    room_documents_missing: usize,
+}
+
 /// The id of an imported row (#1633): a UUID, stored in the canonical
 /// lowercase hyphenated form. Anything else is dropped and the row gets a
 /// new id, as rows from older export files do.
@@ -137,33 +244,19 @@ impl crate::Uteke {
         namespace: Option<&str>,
         options: ImportOptions,
     ) -> Result<ImportResult, Error> {
-        let trimmed = input.trim();
+        let ParsedInput {
+            memories: entries,
+            documents,
+            rooms,
+            failed: mut skipped,
+        } = Self::parse_input(input)?;
 
-        // Detect format: JSON array, single JSON object, or JSONL.
-        // Strategy:
-        //   1. starts_with('[') → JSON array
-        //   2. starts_with('{') → try single JSON object; if that fails, fall back to JSONL
-        //      (handles both JSONL lines starting with `{` and pretty-printed objects)
-        //   3. otherwise → JSONL
-        let (entries, mut skipped): (Vec<ExportEntry>, usize) = if trimmed.starts_with('[') {
-            match serde_json::from_str::<Vec<ExportEntry>>(trimmed) {
-                Ok(arr) => (arr, 0),
-                Err(e) => {
-                    return Err(Error::validation(format!("Invalid JSON array: {e}")));
-                }
-            }
-        } else if trimmed.starts_with('{') {
-            // Try single JSON object first (covers both compact and pretty-printed)
-            match serde_json::from_str::<ExportEntry>(trimmed) {
-                Ok(entry) => (vec![entry], 0),
-                Err(_) => {
-                    // Fall back to JSONL: each line should be a self-contained JSON object
-                    Self::parse_jsonl(input)
-                }
-            }
-        } else {
-            Self::parse_jsonl(input)
-        };
+        // Documents, then rooms (their `doc_slugs` name documents), then the
+        // memories, whose `rooms` must find the rooms of the same file (#1632).
+        let mut structure = StructureCounts::default();
+        let defer_chunks = options.defer_embedding || self.embedder_backend.is_empty();
+        self.import_documents(documents, defer_chunks, &mut structure, &mut skipped);
+        self.import_rooms(rooms, namespace, &mut structure, &mut skipped);
 
         let mut imported = 0;
         let mut deduped = 0;
@@ -447,28 +540,268 @@ impl crate::Uteke {
             room_links: room_links.linked,
             rooms_missing: room_links.missing.into_iter().collect(),
             deferred_embedding,
+            documents_imported: structure.documents_imported,
+            documents_updated: structure.documents_updated,
+            documents_unchanged: structure.documents_unchanged,
+            parent_unresolved: structure.parent_unresolved,
+            rooms_imported: structure.rooms_imported,
+            rooms_existing: structure.rooms_existing,
+            room_documents_linked: structure.room_documents_linked,
+            room_documents_missing: structure.room_documents_missing,
         })
     }
 
+    /// Parse the input: a JSON array, one JSON object, or JSONL (one object
+    /// per line). A single object that does not parse falls back to JSONL,
+    /// which covers JSONL whose first line starts with `{` and pretty-printed
+    /// objects. An invalid element of an array fails the import; an invalid
+    /// JSONL line is counted in `failed`.
+    fn parse_input(input: &str) -> Result<ParsedInput, Error> {
+        let trimmed = input.trim();
+        if trimmed.starts_with('[') {
+            let invalid = |e: String| Error::validation(format!("Invalid JSON array: {e}"));
+            let rows: Vec<serde_json::Value> =
+                serde_json::from_str(trimmed).map_err(|e| invalid(e.to_string()))?;
+            let mut parsed = ParsedInput::default();
+            for row in rows {
+                parsed.push(classify(row).map_err(invalid)?);
+            }
+            return Ok(parsed);
+        }
+        if trimmed.starts_with('{')
+            && let Some(Ok(row)) = serde_json::from_str::<serde_json::Value>(trimmed)
+                .ok()
+                .map(classify)
+        {
+            let mut parsed = ParsedInput::default();
+            parsed.push(row);
+            return Ok(parsed);
+        }
+        Ok(Self::parse_jsonl(input))
+    }
+
     /// Parse JSONL input: one self-contained JSON object per line.
-    /// Lines that fail to parse are counted as skipped (not fatal).
-    fn parse_jsonl(input: &str) -> (Vec<ExportEntry>, usize) {
-        let mut entries = Vec::new();
-        let mut failed = 0;
+    /// Lines that fail to parse are counted as failed (not fatal).
+    fn parse_jsonl(input: &str) -> ParsedInput {
+        let mut parsed = ParsedInput::default();
         for line in input.lines() {
             let line = line.trim();
             if line.is_empty() {
                 continue;
             }
-            match serde_json::from_str::<ExportEntry>(line) {
-                Ok(e) => entries.push(e),
+            match serde_json::from_str::<serde_json::Value>(line)
+                .map_err(|e| e.to_string())
+                .and_then(classify)
+            {
+                Ok(row) => parsed.push(row),
                 Err(e) => {
                     tracing::warn!("Skipping invalid JSONL line: {e}");
-                    failed += 1;
+                    parsed.failed += 1;
                 }
             }
         }
-        (entries, failed)
+        parsed
+    }
+
+    /// Store the document rows of an import (#1632), parents before their
+    /// children whatever the order of the file. A document is matched on its
+    /// slug: an unchanged one is left alone (no new version), a changed one is
+    /// updated in place. A parent named by slug (or id) that is neither in
+    /// the file nor in the store is counted in `parent_unresolved` and the
+    /// document lands at the root (an existing one keeps its parent).
+    fn import_documents(
+        &self,
+        rows: Vec<DocumentRow>,
+        defer_embedding: bool,
+        counts: &mut StructureCounts,
+        skipped: &mut usize,
+    ) {
+        let mut pending: Vec<(String, DocumentRow)> = Vec::new();
+        for row in rows {
+            match import_slug(&row.slug) {
+                Some(slug) => pending.push((slug, row)),
+                None => {
+                    tracing::warn!("Skipping import document: invalid slug {:?}", row.slug);
+                    *skipped += 1;
+                }
+            }
+        }
+        let in_file: std::collections::HashSet<String> =
+            pending.iter().map(|(slug, _)| slug.clone()).collect();
+        let mut done: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        while !pending.is_empty() {
+            // Rows whose parent is stored already or is not in the file; when
+            // none is left (a cycle) the rest goes in as it is.
+            let ready = |(slug, row): &(String, DocumentRow)| match row.parent_ref() {
+                Some(p) if p != slug.as_str() && in_file.contains(p) => done.contains(p),
+                _ => true,
+            };
+            let (now, later): (Vec<_>, Vec<_>) = if pending.iter().any(ready) {
+                pending.into_iter().partition(|r| ready(r))
+            } else {
+                (std::mem::take(&mut pending), Vec::new())
+            };
+            pending = later;
+            for (slug, row) in now {
+                self.import_document(&slug, &row, defer_embedding, counts, skipped);
+                done.insert(slug);
+            }
+        }
+    }
+
+    /// One document row of [`Self::import_documents`].
+    fn import_document(
+        &self,
+        slug: &str,
+        row: &DocumentRow,
+        defer_embedding: bool,
+        counts: &mut StructureCounts,
+        skipped: &mut usize,
+    ) {
+        let existing = match self.store.get_document_by_slug(slug) {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!("Skipping import document {slug}: {e}");
+                *skipped += 1;
+                return;
+            }
+        };
+        // The parent as a stored document: by slug, or by id (a Cloud export
+        // also accepts the parent's UUID). Not itself, and only once stored.
+        let parent = row
+            .parent_ref()
+            .filter(|p| *p != slug)
+            .and_then(|p| match self.doc_get(p) {
+                Ok(Some(d)) if d.slug != slug => Some(d),
+                _ => None,
+            });
+        let parent = match (row.parent_ref(), parent) {
+            (None, _) => None,
+            (Some(_), Some(p)) => Some(p),
+            (Some(p), None) => {
+                tracing::warn!(
+                    "Import document {slug}: parent {p:?} not found, stored at the root"
+                );
+                counts.parent_unresolved += 1;
+                // An existing document keeps the parent it has.
+                existing
+                    .as_ref()
+                    .and_then(|d| d.parent_id.as_deref())
+                    .and_then(|id| self.doc_get(id).ok().flatten())
+            }
+        };
+        let title = row
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or(slug);
+        let parent_id = parent.as_ref().map(|p| p.id.clone());
+        if let Some(d) = &existing
+            && d.title == title
+            && d.content == row.content
+            && d.tags == row.tags
+            && d.parent_id == parent_id
+        {
+            counts.documents_unchanged += 1;
+            return;
+        }
+        let tags: Vec<&str> = row.tags.iter().map(String::as_str).collect();
+        let author = row
+            .author
+            .as_deref()
+            .and_then(|a| crate::memory::types::validate_author(a).ok());
+        match self.doc_upsert_inner(
+            slug,
+            title,
+            &row.content,
+            &tags,
+            author,
+            parent.as_ref().map(|p| p.slug.as_str()),
+            defer_embedding,
+        ) {
+            Ok(_) if existing.is_some() => counts.documents_updated += 1,
+            Ok(_) => counts.documents_imported += 1,
+            Err(e) => {
+                tracing::warn!("Skipping import document {slug}: {e}");
+                *skipped += 1;
+            }
+        }
+    }
+
+    /// Create the rooms of an import (#1632) and link their documents. A room
+    /// that exists is left as it is (its `doc_slugs` are still linked); a
+    /// document slug that is not stored is counted in `room_documents_missing`.
+    fn import_rooms(
+        &self,
+        rows: Vec<RoomRow>,
+        namespace: Option<&str>,
+        counts: &mut StructureCounts,
+        skipped: &mut usize,
+    ) {
+        for row in rows {
+            let Some(id) = import_slug(&row.id) else {
+                tracing::warn!("Skipping import room: invalid id {:?}", row.id);
+                *skipped += 1;
+                continue;
+            };
+            let text = |v: &Option<String>| {
+                v.as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string)
+            };
+            let (title, description) = (text(&row.title), text(&row.description));
+            match self.store.get_room(&id) {
+                Ok(Some(_)) => counts.rooms_existing += 1,
+                Ok(None) => {
+                    let ns = namespace
+                        .or(row.namespace.as_deref())
+                        .unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
+                    let created = self.create_room(&id, title.as_deref(), ns).and_then(|()| {
+                        if description.is_some() {
+                            self.update_room(&id, title.as_deref(), description.as_deref())
+                                .map(|_| ())
+                        } else {
+                            Ok(())
+                        }
+                    });
+                    if let Err(e) = created {
+                        tracing::warn!("Skipping import room {id}: {e}");
+                        *skipped += 1;
+                        continue;
+                    }
+                    counts.rooms_imported += 1;
+                }
+                Err(e) => {
+                    tracing::warn!("Skipping import room {id}: {e}");
+                    *skipped += 1;
+                    continue;
+                }
+            }
+            if row.doc_slugs.is_empty() {
+                continue;
+            }
+            let linked: std::collections::HashSet<String> = self
+                .room_list_documents(&id)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            for slug in &row.doc_slugs {
+                if linked.contains(slug) {
+                    continue;
+                }
+                if !matches!(self.store.get_document_by_slug(slug), Ok(Some(_))) {
+                    counts.room_documents_missing += 1;
+                    continue;
+                }
+                match self.room_add_document(&id, slug) {
+                    Ok(()) => counts.room_documents_linked += 1,
+                    Err(e) => tracing::warn!("Could not link document {slug} to room {id}: {e}"),
+                }
+            }
+        }
     }
 }
 
@@ -599,7 +932,8 @@ mod tests {
         // this environment has no ORT lib): verify the per-row namespace
         // mapping directly from parsed entries — the same data `import()`
         // feeds into Memory.namespace (target_ns = param ?? entry.namespace).
-        let (entries, failed) = crate::Uteke::parse_jsonl(&exported);
+        let parsed = crate::Uteke::parse_jsonl(&exported);
+        let (entries, failed) = (parsed.memories, parsed.failed);
         assert_eq!(failed, 0);
         assert_eq!(entries.len(), 6);
         for ns in ["alpha", "beta", "gamma"] {
@@ -624,7 +958,8 @@ mod tests {
     fn test_import_jsonl_multiple_lines() {
         let jsonl = r#"{"content":"first","tags":[],"metadata":{},"created_at":"2024-01-01T00:00:00Z","source":null}
 {"content":"second","tags":[],"metadata":{},"created_at":"2024-01-01T00:00:00Z","source":null}"#;
-        let (entries, failed) = crate::Uteke::parse_jsonl(jsonl);
+        let parsed = crate::Uteke::parse_jsonl(jsonl);
+        let (entries, failed) = (parsed.memories, parsed.failed);
         assert_eq!(entries.len(), 2);
         assert_eq!(failed, 0);
         assert_eq!(entries[0].content, "first");
@@ -1212,5 +1547,195 @@ mod fidelity_tests {
             .import(r#"{"content":"alpha beta gamma delta epsilon"}"#, None)
             .unwrap();
         assert_eq!((r.imported, r.duplicates_skipped), (0, 1), "{r:?}");
+    }
+}
+
+/// A Uteke Cloud export (#1632): documents become documents, room rows become
+/// rooms, both before the memories' room links, and the manifest is skipped.
+#[cfg(test)]
+mod cloud_export_tests {
+    use crate::test_support::{RecordingEmbedder, open_keyword, open_with_embedder};
+
+    /// The Cloud row order: manifest, memories, documents, rooms. The
+    /// grandchild comes before its parent.
+    fn cloud_export() -> String {
+        [
+            r#"{"format_version":1,"exported_at":"2026-11-02T00:00:00Z","workspace_id":"w1","room":null,"live_only":false,"note":"uteke-cloud export"}"#,
+            r#"{"id":"0b9a4f3e-6a52-4c1f-9d1e-3f1d2c4b5a61","namespace":"default","content":"the team ships on fridays","memory_type":"decision","importance":0.8,"rooms":["r1"],"workspace_id":"w1"}"#,
+            r#"{"id":"1c8b5e4f-7b63-4d2a-8e2f-4a2e3d5c6b72","namespace":"default","content":"a memory in no room","workspace_id":"w1"}"#,
+            r#"{"type":"document","id":"d0","namespace":"default","slug":"grandchild","title":"Grandchild","content":"the lowest page","tags":["t"],"metadata":{},"parent":"child"}"#,
+            r#"{"type":"document","id":"d1","namespace":"default","slug":"root","title":"Root","content":"the top page","tags":[],"metadata":{},"parent":null}"#,
+            r#"{"type":"document","id":"d2","namespace":"default","slug":"child","title":"Child","content":"the middle page","tags":[],"metadata":{},"parent":"root"}"#,
+            r#"{"type":"room","id":"r1","title":"Team","description":"the team room","created_at":"2026-10-01T00:00:00Z","doc_slugs":["root","not-exported"]}"#,
+            r#"{"type":"room","id":"r2","title":null,"description":null,"created_at":"2026-10-01T00:00:00Z"}"#,
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn documents_rooms_and_links_survive_and_the_manifest_is_silent() {
+        let u = open_keyword();
+        let r = u.import(&cloud_export(), None).unwrap();
+        assert_eq!((r.imported, r.skipped), (2, 0), "{r:?}");
+        assert_eq!((r.documents_imported, r.parent_unresolved), (3, 0), "{r:?}");
+        assert_eq!((r.rooms_imported, r.rooms_existing), (2, 0), "{r:?}");
+        assert_eq!(
+            (r.room_documents_linked, r.room_documents_missing),
+            (1, 1),
+            "{r:?}"
+        );
+        assert_eq!(r.room_links, 1, "{r:?}");
+        assert!(r.rooms_missing.is_empty(), "{r:?}");
+
+        assert_eq!(u.count(None).unwrap(), 2, "documents are not memories");
+        let root = u.doc_get("root").unwrap().unwrap();
+        let child = u.doc_get("child").unwrap().unwrap();
+        let grandchild = u.doc_get("grandchild").unwrap().unwrap();
+        assert_eq!(child.parent_id.as_deref(), Some(root.id.as_str()));
+        assert_eq!(grandchild.parent_id.as_deref(), Some(child.id.as_str()));
+        assert_eq!(grandchild.depth, 2);
+        assert_eq!(grandchild.title, "Grandchild");
+
+        let room = u.get_room("r1").unwrap().unwrap();
+        assert_eq!(room.title.as_deref(), Some("Team"));
+        assert_eq!(room.description.as_deref(), Some("the team room"));
+        assert_eq!(u.room_list_documents("r1").unwrap(), vec!["root"]);
+        assert_eq!(u.recall_room("r1", None, 0).unwrap().len(), 1);
+        assert!(u.get_room("r2").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_second_import_changes_nothing() {
+        let u = open_keyword();
+        u.import(&cloud_export(), None).unwrap();
+        let version = u.doc_get("root").unwrap().unwrap().version;
+        let r = u.import(&cloud_export(), None).unwrap();
+        assert_eq!((r.imported, r.duplicates_skipped), (0, 2), "{r:?}");
+        assert_eq!(
+            (
+                r.documents_imported,
+                r.documents_updated,
+                r.documents_unchanged
+            ),
+            (0, 0, 3),
+            "{r:?}"
+        );
+        assert_eq!((r.rooms_imported, r.rooms_existing), (0, 2), "{r:?}");
+        assert_eq!(r.room_documents_linked, 0, "{r:?}");
+        assert_eq!(u.doc_get("root").unwrap().unwrap().version, version);
+    }
+
+    #[test]
+    fn a_changed_document_is_updated_and_an_existing_room_is_left_alone() {
+        let u = open_keyword();
+        u.create_room("r1", Some("Mine"), "default").unwrap();
+        u.import(&cloud_export(), None).unwrap();
+        assert_eq!(
+            u.get_room("r1").unwrap().unwrap().title.as_deref(),
+            Some("Mine")
+        );
+        let changed =
+            r#"{"type":"document","slug":"root","title":"Root","content":"the top page, edited"}"#;
+        let r = u.import(changed, None).unwrap();
+        assert_eq!((r.documents_imported, r.documents_updated), (0, 1), "{r:?}");
+        assert_eq!(
+            u.doc_get("root").unwrap().unwrap().content,
+            "the top page, edited"
+        );
+        // the update keeps the document where it is in the tree
+        let child = u.doc_get("child").unwrap().unwrap();
+        assert_eq!(
+            child.parent_id,
+            Some(u.doc_get("root").unwrap().unwrap().id)
+        );
+    }
+
+    #[test]
+    fn an_unknown_parent_lands_at_the_root_and_is_counted() {
+        let u = open_keyword();
+        let r = u
+            .import(
+                r#"{"type":"document","slug":"orphan","title":"Orphan","content":"x","parent":"nowhere"}"#,
+                None,
+            )
+            .unwrap();
+        assert_eq!((r.documents_imported, r.parent_unresolved), (1, 1), "{r:?}");
+        assert_eq!(u.doc_get("orphan").unwrap().unwrap().parent_id, None);
+    }
+
+    #[test]
+    fn invalid_document_and_room_rows_are_skipped() {
+        let u = open_keyword();
+        let file = [
+            r#"{"type":"document","slug":"","content":"no slug"}"#,
+            r#"{"type":"document","slug":"no-content"}"#,
+            r#"{"type":"room","id":"   "}"#,
+            r#"{"neither":"memory nor manifest"}"#,
+        ]
+        .join("\n");
+        let r = u.import(&file, None).unwrap();
+        assert_eq!((r.imported, r.skipped), (0, 4), "{r:?}");
+        assert!(u.list_rooms(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_json_array_export_imports_documents_and_rooms_too() {
+        let u = open_keyword();
+        let rows: Vec<serde_json::Value> = cloud_export()
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let r = u
+            .import(&serde_json::to_string(&rows).unwrap(), None)
+            .unwrap();
+        assert_eq!(
+            (
+                r.imported,
+                r.documents_imported,
+                r.rooms_imported,
+                r.skipped
+            ),
+            (2, 3, 2, 0),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn a_deferred_import_stores_document_chunks_without_vectors() {
+        let (emb, seen) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        let r = u
+            .import_with(
+                &cloud_export(),
+                None,
+                crate::ImportOptions {
+                    defer_embedding: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(r.documents_imported, 3, "{r:?}");
+        assert!(seen.lock().unwrap().is_empty(), "nothing embedded");
+        assert!(!u.store.chunks_missing_embeddings().unwrap().is_empty());
+        // keyword search finds the document at once
+        assert!(!u.doc_search("middle", 5, "fts").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_plain_import_reports_no_document_or_room_counts() {
+        let u = open_keyword();
+        let r = u.import(r#"{"content":"just a memory"}"#, None).unwrap();
+        let json = serde_json::to_value(&r).unwrap();
+        for key in [
+            "documents_imported",
+            "documents_updated",
+            "documents_unchanged",
+            "parent_unresolved",
+            "rooms_imported",
+            "rooms_existing",
+            "room_documents_linked",
+            "room_documents_missing",
+        ] {
+            assert!(json.get(key).is_none(), "{key}: {json}");
+        }
     }
 }

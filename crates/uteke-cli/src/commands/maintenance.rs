@@ -437,6 +437,30 @@ pub(crate) fn run_import(
             "\u{2713} Imported {} memories ({} skipped) as {detected_format}",
             result.imported, result.skipped
         );
+        if result.documents_imported + result.documents_updated + result.documents_unchanged > 0 {
+            println!(
+                "  Documents: {} new, {} updated, {} unchanged",
+                result.documents_imported, result.documents_updated, result.documents_unchanged
+            );
+        }
+        if result.parent_unresolved > 0 {
+            println!(
+                "  \u{26a0} {} document(s) name a parent that is not there: stored at the root",
+                result.parent_unresolved
+            );
+        }
+        if result.rooms_imported + result.rooms_existing > 0 {
+            println!(
+                "  Rooms: {} created, {} already there; {} document link(s)",
+                result.rooms_imported, result.rooms_existing, result.room_documents_linked
+            );
+        }
+        if result.room_documents_missing > 0 {
+            println!(
+                "  \u{26a0} {} room document link(s) name a document that is not stored",
+                result.room_documents_missing
+            );
+        }
         if result.duplicates_skipped > 0 {
             println!(
                 "  {} entries already stored (duplicates skipped)",

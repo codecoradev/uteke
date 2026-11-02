@@ -181,7 +181,7 @@ List deprecated memories with TTL metadata.
 
 #### 🟡 `POST` `/import`
 
-Import memories from JSONL (or a JSON array) in `content`. Each row keeps its `id`, type, importance, pinned flag and slug; the response counts `imported`, `skipped`, `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped`. Bulk runbook: send `defer_embedding: true` (rows are stored without a vector and the call returns in seconds; split a large file into several calls under the body limit), then run `uteke repair --reembed` (add `--limit N` to spread the work) so `/recall` finds them.
+Import memories from JSONL (or a JSON array) in `content`. Each row keeps its `id`, type, importance, pinned flag and slug; the response counts `imported`, `skipped`, `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped`. A Uteke Cloud export imports whole: `type: "document"` rows become documents (`parent` by slug), `type: "room"` rows become rooms with their `doc_slugs` linked, both before the memories' `rooms`, and the manifest line is skipped; the response then adds `documents_imported`, `documents_updated`, `documents_unchanged`, `parent_unresolved`, `rooms_imported`, `rooms_existing`, `room_documents_linked` and `room_documents_missing` (each only when non-zero). The body limit of this route is 64 MiB (`UTEKE_MAX_IMPORT_SIZE`, bytes; other routes keep 10 MB); a larger body gets a 413 that names the limit. Bulk runbook: send `defer_embedding: true` (rows are stored without a vector and the call returns in seconds; split a large file into several calls under the body limit), then run `uteke repair --reembed` (add `--limit N` to spread the work) so `/recall` finds them.
 
 **Request body**: [`ImportRequest`](#importrequest)
 

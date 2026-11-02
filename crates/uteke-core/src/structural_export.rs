@@ -517,6 +517,36 @@ impl crate::Uteke {
                 continue;
             }
             match tag {
+                // The Uteke Cloud row shape (#1632): an object with
+                // `doc_slugs`, linked once the documents are restored.
+                "room" if !v["row"].is_array() => {
+                    let Some(id) = v["id"].as_str().filter(|id| !id.trim().is_empty()) else {
+                        continue;
+                    };
+                    let created_at = v["created_at"].as_str().unwrap_or("");
+                    let n = conn
+                        .execute(
+                            "INSERT OR IGNORE INTO rooms (id, title, namespace, created_at, updated_at, description) VALUES (?1,?2,?3,?4,?5,?6)",
+                            rusqlite::params![
+                                id,
+                                v["title"].as_str(),
+                                v["namespace"].as_str().unwrap_or("default"),
+                                created_at,
+                                v["updated_at"].as_str().unwrap_or(created_at),
+                                v["description"].as_str(),
+                            ],
+                        )
+                        .map_err(|e| Error::db_msg(format!("import room: {e}")))?;
+                    *counts.entry("rooms".into()).or_default() += n;
+                    for slug in v["doc_slugs"].as_array().into_iter().flatten() {
+                        if let Some(slug) = slug.as_str() {
+                            pending_room_documents.push(serde_json::json!({
+                                "type": "room_document",
+                                "row": [id, slug, created_at],
+                            }));
+                        }
+                    }
+                }
                 "room" => {
                     let r = &v["row"];
                     // Column-count aware: exports predating description
@@ -598,7 +628,61 @@ impl crate::Uteke {
         }
 
         // documents (before chunks — FK document_id → documents.id)
-        for v in &pending_documents {
+        // A Uteke Cloud row names its parent by slug (`parent`, #1632)
+        // instead of `parent_id`: resolve it against the bundle, then the store.
+        let bundle_ids: std::collections::HashMap<&str, &str> = pending_documents
+            .iter()
+            .filter_map(|v| Some((v["slug"].as_str()?, v["id"].as_str()?)))
+            .collect();
+        let parent_id_of = |v: &serde_json::Value| -> Option<String> {
+            if let Some(id) = v["parent_id"].as_str() {
+                return Some(id.to_string());
+            }
+            let parent = v["parent"].as_str()?;
+            if let Some(id) = bundle_ids.get(parent) {
+                return Some((*id).to_string());
+            }
+            if bundle_ids.values().any(|id| *id == parent) {
+                return Some(parent.to_string());
+            }
+            conn.query_row(
+                "SELECT id FROM documents WHERE slug = ?1 OR id = ?1",
+                [parent],
+                |r| r.get(0),
+            )
+            .ok()
+        };
+        // Parents before children (FK parent_id → documents.id): a Cloud
+        // export is ordered by creation time, not by the tree.
+        let mut ordered: Vec<(&serde_json::Value, Option<String>)> = Vec::new();
+        {
+            let mut rest: Vec<(&serde_json::Value, Option<String>)> = pending_documents
+                .iter()
+                .map(|v| (v, parent_id_of(v)))
+                .collect();
+            let mut placed: std::collections::HashSet<String> = std::collections::HashSet::new();
+            while !rest.is_empty() {
+                let waits =
+                    |parent: &Option<String>, placed: &std::collections::HashSet<String>| {
+                        parent.as_deref().is_some_and(|p| {
+                            bundle_ids.values().any(|id| *id == p) && !placed.contains(p)
+                        })
+                    };
+                let before = rest.len();
+                let (ready, later): (Vec<_>, Vec<_>) =
+                    rest.into_iter().partition(|(_, p)| !waits(p, &placed));
+                for (v, p) in ready {
+                    placed.insert(v["id"].as_str().unwrap_or("").to_string());
+                    ordered.push((v, p));
+                }
+                rest = later;
+                if rest.len() == before {
+                    // A cycle: insert as is, the foreign key decides.
+                    ordered.append(&mut rest);
+                }
+            }
+        }
+        for (v, parent_id) in ordered {
             let tags = serde_json::to_string(&v["tags"]).unwrap_or_else(|_| "[]".into());
             let metadata = serde_json::to_string(&v["metadata"]).unwrap_or_else(|_| "{}".into());
             let n = conn
@@ -618,7 +702,7 @@ impl crate::Uteke {
                         v["content_type"].as_str().unwrap_or("markdown"),
                         v["created_at"].as_str().unwrap_or(""),
                         v["updated_at"].as_str().unwrap_or(""),
-                        v["parent_id"].as_str(),
+                        parent_id,
                         v["depth"].as_i64().unwrap_or(0),
                         v["sort_order"].as_i64().unwrap_or(0),
                         v["has_children"].as_bool().unwrap_or(false),
@@ -632,15 +716,22 @@ impl crate::Uteke {
         // Bundles written before `path` was exported leave it empty, and an
         // empty path makes a later move skip the document's subtree. Derive
         // it from the parent chain (`/root/` then `/root/child/`).
+        // A Uteke Cloud row carries no path, depth or `has_children` either
+        // (#1632): the depth comes from the same chain, and a parent is
+        // marked as one.
         if !pending_documents.is_empty() {
             conn.execute_batch(
-                "WITH RECURSIVE tree(id, path) AS ( \
-                     SELECT id, '/' || id || '/' FROM documents WHERE parent_id IS NULL \
+                "WITH RECURSIVE tree(id, path, depth) AS ( \
+                     SELECT id, '/' || id || '/', 0 FROM documents WHERE parent_id IS NULL \
                      UNION ALL \
-                     SELECT d.id, tree.path || d.id || '/' FROM documents d \
+                     SELECT d.id, tree.path || d.id || '/', tree.depth + 1 FROM documents d \
                      JOIN tree ON d.parent_id = tree.id) \
-                 UPDATE documents SET path = (SELECT path FROM tree WHERE tree.id = documents.id) \
-                 WHERE path = '' AND id IN (SELECT id FROM tree);",
+                 UPDATE documents SET \
+                     path = (SELECT path FROM tree WHERE tree.id = documents.id), \
+                     depth = (SELECT depth FROM tree WHERE tree.id = documents.id) \
+                 WHERE path = '' AND id IN (SELECT id FROM tree); \
+                 UPDATE documents SET has_children = 1 WHERE has_children = 0 \
+                 AND id IN (SELECT parent_id FROM documents WHERE parent_id IS NOT NULL);",
             )
             .map_err(|e| Error::db_msg(format!("import document paths: {e}")))?;
         }
@@ -1323,5 +1414,31 @@ mod column_roundtrip_tests {
         assert_eq!(state("live"), (0, None));
         assert_eq!(state("gone"), (1, Some("2026-10-01T00:00:00Z".to_string())));
         assert_eq!(state("gone-int").0, 1);
+    }
+
+    /// #1632: a bundle may carry the Uteke Cloud row shapes: a room as an
+    /// object with `doc_slugs`, and a document whose `parent` is a slug.
+    #[test]
+    fn cloud_shaped_room_and_document_rows_are_restored() {
+        let bundle = [
+            r#"{"uteke_export":{"format_version":1,"sections":{}}}"#,
+            r#"{"type":"document","id":"c2","slug":"child","title":"Child","content":"y","tags":[],"metadata":{},"parent":"root"}"#,
+            r#"{"type":"document","id":"c1","slug":"root","title":"Root","content":"x","tags":[],"metadata":{},"parent":null}"#,
+            r#"{"type":"room","id":"r1","title":"Team","description":"the team room","created_at":"2026-10-01T00:00:00Z","doc_slugs":["root","child"]}"#,
+        ]
+        .join("\n");
+        let dst = open_keyword();
+        let r = dst.import_full(&bundle).unwrap();
+        assert_eq!(r["imported"]["rooms"], 1, "{r}");
+        assert_eq!(r["imported"]["room_documents"], 2, "{r}");
+        let room = dst.get_room("r1").unwrap().unwrap();
+        assert_eq!(room.title.as_deref(), Some("Team"));
+        assert_eq!(room.description.as_deref(), Some("the team room"));
+        assert_eq!(room.namespace, "default");
+        let child = dst.doc_get("child").unwrap().unwrap();
+        assert_eq!(child.parent_id.as_deref(), Some("c1"));
+        assert_eq!(child.path, "/c1/c2/");
+        assert_eq!(child.depth, 1);
+        assert!(dst.doc_get("root").unwrap().unwrap().has_children);
     }
 }

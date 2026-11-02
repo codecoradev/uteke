@@ -1662,6 +1662,23 @@ impl Uteke {
         author: Option<&str>,
         parent_slug: Option<&str>,
     ) -> Result<String, Error> {
+        self.doc_upsert_inner(slug, title, content, tags, author, parent_slug, false)
+    }
+
+    /// [`Self::doc_upsert_with_parent`]; with `defer_embedding` the chunks are
+    /// stored without vectors (keyword-searchable at once), and
+    /// `uteke repair --reembed` embeds them later (import, #1632).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn doc_upsert_inner(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        author: Option<&str>,
+        parent_slug: Option<&str>,
+        defer_embedding: bool,
+    ) -> Result<String, Error> {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Resolve parent if specified.
@@ -1724,7 +1741,11 @@ impl Uteke {
             .map(|existing| existing.id)
             .unwrap_or_else(|| doc.id.clone());
         let tag_strings: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        let chunks = self.embed_document_chunks(&chunk_doc_id, content, &tag_strings)?;
+        let chunks = if defer_embedding {
+            Self::unembedded_document_chunks(&chunk_doc_id, content, &tag_strings)
+        } else {
+            self.embed_document_chunks(&chunk_doc_id, content, &tag_strings)?
+        };
 
         // Old chunk ids must be read BEFORE the upsert replaces them.
         let old_chunk_ids = self
@@ -1737,6 +1758,35 @@ impl Uteke {
         tracing::info!("Document '{slug}' upserted: {} chunks", chunks.len());
 
         Ok(doc_id)
+    }
+
+    /// Chunk `content` without embedding it: every chunk has an empty vector,
+    /// which `uteke repair --reembed` fills. The chunk size is the one of the
+    /// smallest model window (512 tokens), so no chunk outgrows the model.
+    fn unembedded_document_chunks(
+        doc_id: &str,
+        content: &str,
+        tags: &[String],
+    ) -> Vec<(DocumentChunk, Vec<f32>)> {
+        crate::chunker::chunk_markdown(content, 2048)
+            .iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                (
+                    DocumentChunk {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        document_id: doc_id.to_string(),
+                        chunk_index: i as i64,
+                        heading: chunk.heading.clone(),
+                        content: chunk.content.clone(),
+                        char_start: chunk.char_start as i64,
+                        char_end: chunk.char_end as i64,
+                        tags: tags.to_vec(),
+                    },
+                    Vec::new(),
+                )
+            })
+            .collect()
     }
 
     /// Chunk `content` and embed every chunk.
@@ -1794,6 +1844,10 @@ impl Uteke {
             index_sync::remove_unsaved(&mut *index, &format!("chunk:{old_id}"));
         }
         for (chunk, embedding) in new_chunks {
+            // A deferred chunk has no vector yet (#1632).
+            if embedding.is_empty() {
+                continue;
+            }
             let key = format!("chunk:{}", chunk.id);
             if let Err(e) = index_sync::insert_unsaved(&mut *index, &key, embedding, &policy) {
                 tracing::warn!("Failed to insert chunk {} into vector index: {e}", chunk.id);
