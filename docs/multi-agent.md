@@ -21,7 +21,7 @@ Phase plan (each phase ships in a later 0.x minor):
 
 1. **Deprecation signal** (this change): warning on writes, docs and tool descriptions steer to rooms, tags and author.
 2. **Attribution**: `author` (the agent that wrote the memory) accepted with or without a room.
-3. **Migration tool**: `uteke namespace migrate --map <file>` with per-namespace targets (`room:<id>`, `tag:<x>`, `author:<x>`, `source:<x>`, or `drop`); dry-run by default, reversible via export.
+3. **Migration tool** (shipped): `uteke namespace migrate --map <file>` with per-namespace targets (room, tag, author, source, or `drop`); dry-run by default, `--apply` writes an export first. See the [CLI reference](/cli-reference).
 4. **Single-namespace mode**: every write goes to `default`, a non-default value is recorded as the tag `ns:<x>`, reads ignore the parameter and cover everything.
 5. **Cleanup**: remove the namespace `rename`/`delete` commands once the migration tool has shipped for at least one minor.
 

@@ -145,6 +145,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke namespace move <ID> <NS>` | Move a memory to another namespace |
 | `uteke namespace rename <FROM> <TO>` | Rename a namespace (merges if the target exists) |
 | `uteke namespace delete <NAME>` | Delete with `--strategy refuse\|merge\|deprecate` (`--target` for merge, `--confirm` required) |
+| `uteke namespace migrate --map <FILE>` | Move namespaces into rooms, tags, author or source (dry run; `--apply` exports first, `--allow-drop` for `drop`) |
 
 ### Memory Aging
 

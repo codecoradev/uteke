@@ -1,12 +1,19 @@
-//! Namespace subcommands — list, stats, switch.
+//! Namespace subcommands — list, stats, switch, move, rename, delete, migrate.
 
 use crate::Config;
 use crate::cli::Cli;
 use crate::cli::NamespaceCommands;
 use crate::output;
+use std::path::{Path, PathBuf};
 use uteke_core::Uteke;
+use uteke_core::namespace_migrate::{NamespaceMigrationMap, NamespaceMigrationReport};
 
-pub(crate) fn run(cli: &Cli, uteke: &Uteke, command: &NamespaceCommands) -> Result<(), String> {
+pub(crate) fn run(
+    cli: &Cli,
+    uteke: &Uteke,
+    config: &Config,
+    command: &NamespaceCommands,
+) -> Result<(), String> {
     match command {
         NamespaceCommands::List => {
             tracing::info!("Listing namespaces");
@@ -123,6 +130,124 @@ pub(crate) fn run(cli: &Cli, uteke: &Uteke, command: &NamespaceCommands) -> Resu
                 }
             }
             Ok(())
+        }
+        NamespaceCommands::Migrate {
+            map,
+            apply,
+            allow_drop,
+        } => migrate(cli, uteke, config, map, *apply, *allow_drop),
+    }
+}
+
+fn migrate(
+    cli: &Cli,
+    uteke: &Uteke,
+    config: &Config,
+    map_path: &Path,
+    apply: bool,
+    allow_drop: bool,
+) -> Result<(), String> {
+    let text = std::fs::read_to_string(map_path)
+        .map_err(|e| format!("Failed to read map {}: {e}", map_path.display()))?;
+    let map = NamespaceMigrationMap::parse(&text).map_err(|e| e.to_string())?;
+    let report = if apply {
+        let export = export_path(&crate::resolve_store_path(cli, config));
+        uteke.apply_namespace_migration(&map, &export, allow_drop)
+    } else {
+        uteke.plan_namespace_migration(&map)
+    }
+    .map_err(|e| format!("Namespace migrate failed: {e}"))?;
+    if cli.json {
+        output::print_json(&report);
+    } else {
+        print_migration(&report, allow_drop);
+    }
+    Ok(())
+}
+
+/// `<store dir>/namespace-migrate-<UTC timestamp>.ndjson`, next to the database.
+fn export_path(store: &str) -> PathBuf {
+    let store = Path::new(store);
+    let dir = if store.extension().is_some() && !store.is_dir() {
+        store.parent().unwrap_or(Path::new("."))
+    } else {
+        store
+    };
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    dir.join(format!("namespace-migrate-{stamp}.ndjson"))
+}
+
+fn print_migration(report: &NamespaceMigrationReport, allow_drop: bool) {
+    let verb = if report.applied {
+        "Migrated"
+    } else {
+        "Dry run"
+    };
+    println!("{verb}: {} mapped namespace(s)\n", report.namespaces.len());
+    for e in &report.namespaces {
+        if !e.found {
+            println!(
+                "  {}: no live memories (unknown or already migrated), skipped",
+                e.namespace
+            );
+            continue;
+        }
+        let t = &e.target;
+        let mut parts = Vec::new();
+        if t.drop {
+            parts.push("drop (soft-delete)".to_string());
+        }
+        if let Some(r) = &t.room {
+            let new = if e.room_created { ", new room" } else { "" };
+            parts.push(format!("room {r}{new}"));
+        }
+        if let Some(x) = &t.tag {
+            parts.push(format!("tag {x}"));
+        }
+        if let Some(x) = &t.author {
+            parts.push(format!("author {x}"));
+        }
+        if let Some(x) = &t.source {
+            parts.push(format!("source {x}"));
+        }
+        let dest = if t.drop { "" } else { " -> default" };
+        println!(
+            "  {}: {} memories{dest}, {}",
+            e.namespace,
+            e.memories,
+            parts.join(", ")
+        );
+        if e.author_conflicts > 0 {
+            println!("    {} keep their own author", e.author_conflicts);
+        }
+        if e.source_conflicts > 0 {
+            println!("    {} keep their own source", e.source_conflicts);
+        }
+        if e.soft_deleted > 0 {
+            println!(
+                "    {} soft-deleted memories stay in the namespace",
+                e.soft_deleted
+            );
+        }
+        if t.drop && !allow_drop && !report.applied {
+            println!("    needs --allow-drop");
+        }
+    }
+    for u in &report.unmapped {
+        println!(
+            "  {}: {} memories, not in the map, left alone",
+            u.namespace, u.memories
+        );
+    }
+    match (&report.export_path, report.applied) {
+        (Some(p), _) => {
+            println!(
+                "\nExport written first: {p} (restore it with `uteke import --full` into a fresh store)"
+            )
+        }
+        (None, true) => println!("\nNothing to change."),
+        (None, false) => {
+            println!("\nNothing was written. Run with --apply (on a copy first) to migrate.")
         }
     }
 }

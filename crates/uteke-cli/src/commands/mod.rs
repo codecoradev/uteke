@@ -366,7 +366,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             memory_provider,
         } => crate::init::run_init(agent, *memory_provider, cli.json),
 
-        Commands::Namespace { command } => namespace::run(cli, uteke, command),
+        Commands::Namespace { command } => namespace::run(cli, uteke, config, command),
 
         Commands::Aging { command } => aging::run(cli, uteke, ns, command),
 
