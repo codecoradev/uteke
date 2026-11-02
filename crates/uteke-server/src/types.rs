@@ -501,6 +501,55 @@ fn read_body_text(reader: &mut dyn IoRead) -> Result<String, String> {
     Ok(body)
 }
 
+/// Body limit of `POST /import` when `UTEKE_MAX_IMPORT_SIZE` is not set
+/// (#1632): 64 MiB, the `/import` limit of Uteke Cloud, so a Cloud export
+/// fits in one call. Every other route keeps `MAX_PAYLOAD_SIZE` (10 MB).
+pub const DEFAULT_MAX_IMPORT_SIZE: usize = 64 * 1024 * 1024;
+
+/// The body limit of `POST /import`: `UTEKE_MAX_IMPORT_SIZE` (bytes), read
+/// once, or [`DEFAULT_MAX_IMPORT_SIZE`].
+pub fn max_import_size() -> usize {
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| import_limit_from(std::env::var("UTEKE_MAX_IMPORT_SIZE").ok().as_deref()))
+}
+
+/// `UTEKE_MAX_IMPORT_SIZE` as a limit: a positive byte count, anything else
+/// is the default.
+pub fn import_limit_from(value: Option<&str>) -> usize {
+    value
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_MAX_IMPORT_SIZE)
+}
+
+/// Why an import body could not be read.
+pub enum ImportBodyError {
+    /// Longer than the limit (the size declared or read so far).
+    TooLarge(usize),
+    Read(String),
+}
+
+/// Read the body of `POST /import`, at most `limit` bytes (#1632). A declared
+/// `Content-Length` over the limit is refused before anything is read.
+pub fn read_import_body(
+    content_length: Option<usize>,
+    reader: &mut dyn IoRead,
+    limit: usize,
+) -> Result<String, ImportBodyError> {
+    if let Some(n) = content_length.filter(|n| *n > limit) {
+        return Err(ImportBodyError::TooLarge(n));
+    }
+    let mut body = String::new();
+    reader
+        .take(limit as u64 + 1)
+        .read_to_string(&mut body)
+        .map_err(|e| ImportBodyError::Read(format!("Failed to read body: {e}")))?;
+    if body.len() > limit {
+        return Err(ImportBodyError::TooLarge(body.len()));
+    }
+    Ok(body)
+}
+
 /// Read the body now and keep it for the handler's [`read_body`], returning it
 /// parsed as JSON for a peek. The router uses this to embed the text of a
 /// recall or a remember before it takes the store lock (#1518); the handler

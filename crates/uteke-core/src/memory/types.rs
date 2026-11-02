@@ -533,6 +533,33 @@ pub struct ImportResult {
     /// embedding (#1608); `uteke repair --reembed` adds them.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub deferred_embedding: usize,
+    /// Documents created from `type: "document"` rows (#1632, a Uteke Cloud
+    /// export). This and the counts below are absent when zero, so the
+    /// result of a file of memories is unchanged.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub documents_imported: usize,
+    /// Stored documents (same slug) that the file changed, updated in place.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub documents_updated: usize,
+    /// Stored documents the file carries unchanged (no new version).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub documents_unchanged: usize,
+    /// Documents whose `parent` is neither in the file nor stored: stored at
+    /// the root (an existing document keeps its parent).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub parent_unresolved: usize,
+    /// Rooms created from `type: "room"` rows (#1632).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rooms_imported: usize,
+    /// Room rows whose room exists: left unchanged, documents still linked.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rooms_existing: usize,
+    /// New room-to-document links from the rooms' `doc_slugs`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub room_documents_linked: usize,
+    /// `doc_slugs` naming a document that is not stored, not linked.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub room_documents_missing: usize,
 }
 
 /// How [`crate::Uteke::import_with`] treats each row.

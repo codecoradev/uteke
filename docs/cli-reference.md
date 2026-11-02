@@ -724,7 +724,7 @@ from the parent chain. It carries no vectors: `import`
 regenerates them (memories are marked for `uteke repair --reembed`, document chunks are
 re-embedded right away). `--full` makes any other file an error instead of a plain import. The
 bundle is a file, so a large document does not pass through a tool response; `POST /import`
-stays JSONL-only and capped at 10 MB.
+stays JSONL-only.
 
 A JSONL export carries each memory's room ids. Import links the memory to every room that
 exists in the target store, also for a duplicate of a stored memory, and reports the new
@@ -749,6 +749,34 @@ counts what was left out, apart from `skipped` (invalid or rejected rows):
 
 A row marked `"deprecated": true` (a Uteke Cloud export carries deleted memories) is stored
 deleted, without a vector.
+
+### A Uteke Cloud export
+
+A Cloud export (`GET /export` on Uteke Cloud) imports with its documents and rooms:
+
+```bash
+uteke import cloud-export.ndjson                 # or --defer-embed for a large one
+```
+
+- The manifest (first line) is skipped.
+- `"type": "document"` rows become documents: slug, title, content, tags and the parent (a slug,
+  or the parent's id), whatever the order of the rows. A document with the same slug is updated
+  in place when it changed and left alone when it did not. A parent that is neither in the
+  file nor stored is counted in `parent_unresolved` and the document goes to the root.
+- `"type": "room"` rows create the rooms that do not exist (title, description; an existing
+  room is not changed) and link their `doc_slugs`. A slug that is not stored is counted in
+  `room_documents_missing`.
+- Documents and rooms are stored before the memories, so each memory's `rooms` find the rooms
+  of the same file.
+
+The result adds `documents_imported`, `documents_updated`, `documents_unchanged`,
+`parent_unresolved`, `rooms_imported`, `rooms_existing`, `room_documents_linked` and
+`room_documents_missing` (each only when non-zero). With `--defer-embed` the document chunks
+are stored without vectors as well. Over HTTP, `POST /import` takes a body of up to 64 MiB
+(`UTEKE_MAX_IMPORT_SIZE`, in bytes; the other routes keep 10 MB). A larger file gets a 413
+that names the limit: split it into several calls (with `"defer_embedding": true` each returns
+in seconds), raise the limit on the server, or run `uteke import` on the server host, which has
+no limit.
 
 ### Store now, embed later (`--defer-embed`)
 

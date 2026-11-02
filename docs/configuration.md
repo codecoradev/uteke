@@ -480,6 +480,12 @@ The input limits are fixed in this release: 100,000 characters of content, 20
 tags per memory, 50 characters per tag, and a 10 MB server request body. The
 default `--limit` for recall, search and list is 10 on every surface.
 
+`POST /import` is the exception to the 10 MB body: it takes up to 64 MiB, so a
+Uteke Cloud export fits in one call. `UTEKE_MAX_IMPORT_SIZE` (bytes, read when
+`uteke-serve` starts) sets another limit for that route; an empty, zero or
+unreadable value keeps 64 MiB. A larger body is refused with a 413 before it is
+read, and the message names the limit.
+
 A `[limits]` section and the `UTEKE_MAX_CONTENT_LENGTH`, `UTEKE_MAX_TAGS_COUNT`,
 `UTEKE_MAX_TAG_LENGTH`, `UTEKE_MAX_PAYLOAD_SIZE` and `UTEKE_DEFAULT_RECALL_LIMIT`
 variables are parsed but not applied yet, so setting them has no effect.
