@@ -370,6 +370,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Aging { command } => aging::run(cli, uteke, ns, command),
 
+        Commands::Connect { .. } | Commands::Disconnect { .. } | Commands::HookRun { .. } => {
+            // Handled in main() before the store opens.
+            Ok(())
+        }
+
         Commands::Hook { .. } => {
             // The hook only exported UTEKE_PROJECT_STORE, which nothing read.
             // Print a comment (a no-op under eval or `| source`) and tell the

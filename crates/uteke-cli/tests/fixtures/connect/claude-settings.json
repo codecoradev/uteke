@@ -1,0 +1,25 @@
+{
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "Bash(git status)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo mine"
+          }
+        ]
+      }
+    ]
+  },
+  "zz_unknown": {
+    "keep": true,
+    "n": 1.5
+  }
+}
