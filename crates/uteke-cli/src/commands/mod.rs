@@ -523,11 +523,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                     println!("  Deprecated:   {}", report.deprecated);
                     match report.source_hash.as_deref() {
                         Some(h) if h == report.content_hash_now => {
-                            println!("  Content hash: {h} ✓ (matches write-time hash)");
+                            println!("  Content hash: {h} ✓ (matches the hash of the last write)");
                         }
                         Some(h) => {
                             println!(
-                                "  Content hash: {h} ✗ MISMATCH — content changed after write (now {})",
+                                "  Content hash: {h} ✗ MISMATCH — content changed outside the API (now {})",
                                 report.content_hash_now
                             );
                         }
