@@ -61,8 +61,25 @@ pub(crate) trait Adapter {
     }
 
     /// Add `entries` to `existing`; an entry already present is not added
-    /// twice. Records in `manifest` which keys and events it created.
-    fn merge(&self, existing: &mut OJson, entries: &[Entry], manifest: &mut Manifest) {
+    /// twice. Records in `manifest` which keys and events it created. A
+    /// `hooks` that is not an object, or an event that is not an array, is
+    /// refused before anything changes.
+    fn merge(
+        &self,
+        existing: &mut OJson,
+        entries: &[Entry],
+        manifest: &mut Manifest,
+    ) -> Result<(), String> {
+        match existing.get("hooks") {
+            None | Some(OJson::Object(_)) => {}
+            Some(_) => return Err("`hooks` is not a JSON object".to_string()),
+        }
+        for e in entries {
+            match existing.get("hooks").and_then(|h| h.get(&e.event)) {
+                None | Some(OJson::Array(_)) => {}
+                Some(_) => return Err(format!("`hooks.{}` is not a JSON array", e.event)),
+            }
+        }
         for (key, value) in self.required_keys() {
             if existing.get(key).is_none() {
                 existing.insert(key, value);
@@ -85,6 +102,7 @@ pub(crate) trait Adapter {
                 }
             }
         }
+        Ok(())
     }
 
     /// Remove the manifest's entries from `existing` where they still match
@@ -328,6 +346,18 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
         ..Default::default()
     };
     // A re-run replaces only what the previous run added.
+    // The config moved (`CODEX_HOME` changed): the old entries would be left
+    // behind with nothing tracking them.
+    if let Some(prev) = previous.as_ref().filter(|p| p.config_path != path) {
+        return Err(format!(
+            "uteke's {} hooks are recorded in {}, not {}: run `uteke disconnect {}` \
+             with the old location first",
+            adapter.display_name(),
+            prev.config_path.display(),
+            path.display(),
+            adapter.agent()
+        ));
+    }
     if let Some(prev) = &previous {
         let entries = adapter.render_entries();
         let stale: Vec<Entry> = prev
@@ -355,7 +385,9 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
     }
     let entries = adapter.render_entries();
     let before = value.to_value();
-    adapter.merge(&mut value, &entries, &mut manifest);
+    adapter
+        .merge(&mut value, &entries, &mut manifest)
+        .map_err(|e| format!("{}: {e}; nothing was changed", path.display()))?;
     report.added = entries
         .iter()
         .filter(|e| !entry_present(&before, e))

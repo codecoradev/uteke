@@ -279,3 +279,33 @@ fn a_symlinked_settings_file_is_written_through_the_link() {
     );
     assert_eq!(read(&target), CLAUDE_FIXTURE);
 }
+
+#[test]
+fn hooks_of_the_wrong_shape_are_refused_untouched() {
+    for text in [
+        "{\"hooks\": []}\n",
+        "{\"hooks\": {\"Stop\": {\"command\": \"x\"}}}\n",
+    ] {
+        let h = home();
+        let path = claude::ClaudeCode.config_path(h.path());
+        write(&path, text);
+        let err = connect(&claude::ClaudeCode, h.path(), false).unwrap_err();
+        assert!(err.contains("nothing was changed"), "{err}");
+        assert_eq!(read(&path), text);
+        assert!(!manifest_path(h.path(), "claude").exists());
+    }
+}
+
+#[test]
+fn a_moved_config_is_refused_while_the_old_one_is_recorded() {
+    let h = home();
+    connect(&claude::ClaudeCode, h.path(), false).unwrap();
+    let mut manifest = read_manifest(h.path(), "claude").unwrap().unwrap();
+    manifest.config_path = h.path().join("elsewhere/settings.json");
+    write(
+        &manifest_path(h.path(), "claude"),
+        &serde_json::to_string_pretty(&manifest).unwrap(),
+    );
+    let err = connect(&claude::ClaudeCode, h.path(), false).unwrap_err();
+    assert!(err.contains("disconnect"), "{err}");
+}
