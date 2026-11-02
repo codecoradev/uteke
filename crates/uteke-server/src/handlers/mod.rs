@@ -35,6 +35,8 @@ mod error_tests;
 mod graph;
 mod health;
 #[cfg(test)]
+mod import_tests;
+#[cfg(test)]
 mod isolation_tests;
 mod maintenance;
 mod mcp;

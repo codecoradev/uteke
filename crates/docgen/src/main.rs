@@ -230,10 +230,14 @@ fn render_schema(schema: &Value) -> String {
             } else {
                 "No"
             };
+            // A multi-line doc comment must stay in its table row.
             let desc = prop
                 .get("description")
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
+                .unwrap_or("")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
             s.push_str(&format!("| `{}` | {} | {} | {} |\n", name, ty, req, desc));
         }
         s.push('\n');

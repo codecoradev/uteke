@@ -4,6 +4,14 @@
 
 ### Added
 
+- **`POST /import` takes `defer_embedding` (#1634)** - `"defer_embedding": true` (default
+  false) stores the rows without a vector, like `uteke import --defer-embed` (#1608), so a
+  bulk import returns in seconds instead of embedding every row inside the request; the
+  response adds `deferred_embedding`. Run `uteke repair --reembed` afterwards so `/recall`
+  finds the rows (`/search` finds them at once). Additive on a CORE endpoint: a request
+  without the field behaves and answers as before. The API reference documents the runbook,
+  and `docgen` now keeps a multi-line field description on one table row.
+
 - **Raw capture with deferred extraction (#1466, schema v24)** - `uteke capture
   --session <id> --role user|assistant|tool [TEXT]` queues one conversation turn
   (no LLM call, no network: one SQLite insert after the privacy filter; the same
