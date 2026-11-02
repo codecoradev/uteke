@@ -716,7 +716,8 @@ copied.
 A JSONL row keeps its identity: import stores it under its `id` and keeps its
 `memory_type`, `importance`, `pinned`, `content_type` and `slug`. A missing or invalid value
 falls back to the old default (a new id, `fact`, `0.5`, not pinned, `text`, no slug), so files
-from older versions import as before. Importing the same file again adds nothing. The result
+from older versions import as before. Importing the same file again adds nothing. A copy into
+another namespace (`--namespace`) gets new ids, since an id is unique across the store. The result
 counts what was left out, apart from `skipped` (invalid or rejected rows):
 
 - `duplicates_skipped`: the row is already stored (same id and content, the same content in

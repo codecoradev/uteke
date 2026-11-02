@@ -251,26 +251,35 @@ impl crate::Uteke {
             let target_ns = namespace
                 .map(str::to_string)
                 .unwrap_or_else(|| entry.namespace.clone());
-            let row_id = entry.id.as_deref().and_then(import_id);
+            let mut row_id = entry.id.as_deref().and_then(import_id);
             let row_deprecated = entry.deprecated;
 
             // Identity first (#1633): a stored id is never overwritten. The
             // same content is a duplicate, other content an id conflict, and
             // a live row whose stored copy was forgotten stays forgotten.
-            if let Some(id) = &row_id
-                && let Some((stored, stored_deprecated)) = self.store.content_and_state(id)?
+            // Ids are unique across namespaces, so an id stored in another
+            // namespace is not this row's identity in the target (a copy into
+            // another namespace, `--namespace`): the row gets a new id and
+            // the content checks of the target namespace below.
+            if let Some(id) = row_id.clone()
+                && let Some((stored_ns, stored, stored_deprecated)) =
+                    self.store.content_and_state(&id)?
             {
-                if stored != entry.content {
-                    id_conflicts += 1;
-                } else if stored_deprecated && !row_deprecated {
-                    soft_deleted += 1;
+                if stored_ns != target_ns {
+                    row_id = None;
                 } else {
-                    deduped += 1;
-                    if !stored_deprecated {
-                        room_links.apply(self, id, &rooms, &link_author);
+                    if stored != entry.content {
+                        id_conflicts += 1;
+                    } else if stored_deprecated && !row_deprecated {
+                        soft_deleted += 1;
+                    } else {
+                        deduped += 1;
+                        if !stored_deprecated {
+                            room_links.apply(self, &id, &rooms, &link_author);
+                        }
                     }
+                    continue;
                 }
-                continue;
             }
             // The exact content in the target namespace, live or forgotten.
             let content_key = (
@@ -1161,6 +1170,37 @@ mod fidelity_tests {
             ("decision", true, Some("store-choice"))
         );
         assert!((a.importance - 0.9).abs() < 1e-9);
+    }
+
+    /// Copying a store's own export into another namespace copies the rows:
+    /// an id stored in another namespace is not this row's identity there.
+    #[test]
+    fn an_import_into_another_namespace_copies_the_rows_under_new_ids() {
+        let u = open_keyword();
+        u.create_room("team", None, "default").unwrap();
+        let file = format!(
+            r#"{{"id":"{ID_A}","content":"copy me into another namespace","memory_type":"decision","rooms":["team"]}}"#
+        );
+        assert_eq!(u.import(&file, None).unwrap().imported, 1);
+        let r = u.import(&file, Some("other")).unwrap();
+        assert_eq!(
+            (r.imported, r.duplicates_skipped, r.id_conflicts_skipped),
+            (1, 0, 0),
+            "{r:?}"
+        );
+        let copy = &u.list(None, 10, 0, Some("other")).unwrap()[0];
+        assert_ne!(copy.id, ID_A, "a new id in the other namespace");
+        assert_eq!(copy.memory_type, "decision");
+        assert_eq!(u.get_by_id(ID_A).unwrap().unwrap().namespace, "default");
+        // the copy is linked, the original keeps its one link
+        assert_eq!(u.recall_room("team", None, 0).unwrap().len(), 2);
+        // and a second copy is a duplicate in that namespace
+        let again = u.import(&file, Some("other")).unwrap();
+        assert_eq!(
+            (again.imported, again.duplicates_skipped),
+            (0, 1),
+            "{again:?}"
+        );
     }
 
     #[test]

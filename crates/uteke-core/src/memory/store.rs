@@ -405,15 +405,15 @@ impl Store {
             .map_err(|e| Error::db("read content hashes", e))
     }
 
-    /// The content and soft-delete state of the memory with this id, live or
-    /// not (#1633).
-    pub fn content_and_state(&self, id: &str) -> Result<Option<(String, bool)>, Error> {
+    /// The namespace, content and soft-delete state of the memory with this
+    /// id, live or not (#1633).
+    pub fn content_and_state(&self, id: &str) -> Result<Option<(String, String, bool)>, Error> {
         use rusqlite::OptionalExtension;
         self.conn
             .query_row(
-                "SELECT content, deprecated FROM memories WHERE id = ?1",
+                "SELECT namespace, content, deprecated FROM memories WHERE id = ?1",
                 rusqlite::params![id],
-                |row| Ok((row.get(0)?, row.get::<_, i64>(1)? != 0)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
             )
             .optional()
             .map_err(|e| Error::db("get content and state", e))
