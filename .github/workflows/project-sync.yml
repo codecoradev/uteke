@@ -7,6 +7,11 @@ on:
     types: [closed]
   # Manual trigger for backfill
   workflow_dispatch:
+    inputs:
+      issues:
+        description: "Issue numbers to mark Done, space-separated (e.g. 1595 1632)"
+        required: false
+        default: ""
 
 permissions:
   issues: read
@@ -23,9 +28,11 @@ jobs:
           GH_TOKEN: ${{ secrets.PROJECT_BOARD_TOKEN }}
           PROJECT_NODE_ID: ${{ secrets.PROJECT_NODE_ID }}
           STATUS_FIELD_ID: PVTSSF_lADOEUV_vs4BahYpzhVYcGc
-          DONE_OPTION_ID: 98236657
+          # Passed through env, never interpolated into the script.
+          BACKFILL: ${{ inputs.issues }}
         run: |
           set -e
+          DONE_OPTION_ID=""
 
           EVENT="${{ github.event.action }}"
           EVENT_NAME="${{ github.event_name }}"
@@ -117,17 +124,25 @@ jobs:
                       }
                     }
                   }
-                }" 2>/dev/null \
-              | python3 -c "
-                  import sys, json
-                  data = json.load(sys.stdin)
-                  target = '$content_node_id'
-                  for n in data['data']['node']['items']['nodes']:
-                      c = n.get('content') or {}
-                      if c.get('id') == target:
-                          print(n['id'])
-                          break
-                  " 2>/dev/null
+                }" \
+              --jq ".data.node.items.nodes[] | select(.content.id == \"$content_node_id\") | .id" \
+              2>/dev/null | head -n 1
+          }
+
+          # ------------------------------------------------------------------
+          # Helper: the id of the Status option named "Done". Looked up at run
+          # time: editing the field regenerates its option ids, which broke a
+          # hardcoded id (2026-11-02).
+          # ------------------------------------------------------------------
+          done_option_id() {
+            gh api graphql \
+              -f query="
+                query {
+                  node(id: \"$STATUS_FIELD_ID\") {
+                    ... on ProjectV2SingleSelectField { options { id name } }
+                  }
+                }" \
+              --jq '.data.node.options[] | select(.name == "Done") | .id' | head -n 1
           }
 
           # ------------------------------------------------------------------
@@ -135,7 +150,14 @@ jobs:
           # ------------------------------------------------------------------
           set_done() {
             local item_id="$1"
-            echo "Setting item $item_id → Done"
+            if [ -z "$DONE_OPTION_ID" ]; then
+              DONE_OPTION_ID=$(done_option_id)
+            fi
+            if [ -z "$DONE_OPTION_ID" ]; then
+              echo "::error::No Status option named 'Done' on field $STATUS_FIELD_ID"
+              return 1
+            fi
+            echo "Setting item $item_id → Done (option $DONE_OPTION_ID)"
             gh api graphql \
               -f query="
                 mutation {
@@ -172,14 +194,9 @@ jobs:
                         }
                       }
                     }
-                  }" 2>/dev/null \
-                | python3 -c "
-                    import sys, json
-                    data = json.load(sys.stdin)
-                    nodes = data['data']['node']['closingIssuesReferences']['nodes']
-                    for n in nodes:
-                        print(n['id'] + ' ' + str(n['number']))
-                  " 2>/dev/null || true)
+                  }" \
+                --jq '.data.node.closingIssuesReferences.nodes[] | "\(.id) \(.number)"' \
+                2>/dev/null || true)
 
               if [ -z "$LINKED" ]; then
                 echo "No linked closing issues found for PR #$PR_NUMBER — nothing to sync."
@@ -208,6 +225,28 @@ jobs:
               echo "PR #$PR_NUMBER closed without merge — no status change."
             fi
             exit 0
+          fi
+
+          # ==================================================================
+          # Manual backfill: mark the given issues Done
+          # ==================================================================
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$BACKFILL" ]; then
+            failed=0
+            for n in $BACKFILL; do
+              case "$n" in *[!0-9]*) echo "::error::Not an issue number: $n"; failed=1; continue ;; esac
+              node=$(gh api "repos/$REPO/issues/$n" --jq .node_id)
+              item_id=$(get_item_id "$node")
+              if [ -z "$item_id" ]; then
+                item_id=$(add_to_project "$node") || true
+              fi
+              if [ -n "$item_id" ] && set_done "$item_id"; then
+                echo "Issue #$n → Done"
+              else
+                echo "::error::Could not mark issue #$n Done"
+                failed=1
+              fi
+            done
+            exit $failed
           fi
 
           # ==================================================================
