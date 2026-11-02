@@ -335,7 +335,7 @@ const CURSOR_FIXTURE: &str = include_str!("../../tests/fixtures/connect/cursor-h
 fn adapters() -> Vec<(Box<dyn Adapter>, &'static str)> {
     vec![
         (Box::new(claude::ClaudeCode), CLAUDE_FIXTURE),
-        (Box::new(codex::Codex), CODEX_FIXTURE),
+        (Box::new(codex::Codex { codex_home: None }), CODEX_FIXTURE),
         (Box::new(cursor::Cursor), CURSOR_FIXTURE),
     ]
 }
@@ -372,9 +372,9 @@ fn every_adapter_creates_and_deletes_a_missing_file() {
 #[test]
 fn codex_entries_carry_a_windows_command_and_the_trust_step() {
     let h = home();
-    let path = codex::Codex.config_path(h.path());
+    let path = codex::Codex { codex_home: None }.config_path(h.path());
     write(&path, CODEX_FIXTURE);
-    let report = connect(&codex::Codex, h.path(), false).unwrap();
+    let report = connect(&codex::Codex { codex_home: None }, h.path(), false).unwrap();
     let v = json(&path);
     assert_eq!(v["description"], "my codex hooks");
     assert_eq!(
@@ -431,4 +431,18 @@ fn cursor_uses_its_own_shape_and_keeps_the_version() {
     let path = cursor::Cursor.config_path(h.path());
     assert_eq!(json(&path)["version"], 1);
     assert!(read(&path).find("\"version\"").unwrap() < read(&path).find("\"hooks\"").unwrap());
+}
+
+#[test]
+fn codex_home_moves_the_codex_config() {
+    let h = home();
+    let elsewhere = h.path().join("codex-home");
+    let codex = codex::Codex {
+        codex_home: Some(elsewhere.clone()),
+    };
+    assert_eq!(codex.config_path(h.path()), elsewhere.join("hooks.json"));
+    assert_eq!(
+        codex::Codex { codex_home: None }.config_path(h.path()),
+        h.path().join(".codex/hooks.json")
+    );
 }

@@ -168,7 +168,7 @@ fn push_unique(list: &mut Vec<String>, item: &str) {
 pub(crate) fn adapter_for(agent: &str) -> Option<Box<dyn Adapter>> {
     match agent {
         "claude" | "claude-code" => Some(Box::new(claude::ClaudeCode)),
-        "codex" => Some(Box::new(codex::Codex)),
+        "codex" => Some(Box::new(codex::Codex::from_env())),
         "cursor" => Some(Box::new(cursor::Cursor)),
         _ => None,
     }

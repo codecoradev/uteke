@@ -43,7 +43,9 @@ impl Env {
                 "PATH",
                 format!("{}:/usr/bin:/bin", self.dir.join(path_dir).display()),
             )
-            .env_remove("UTEKE_AUTH_TOKEN");
+            .env_remove("UTEKE_AUTH_TOKEN")
+            // Keep `connect codex` inside the temp HOME.
+            .env_remove("CODEX_HOME");
         cmd
     }
 

@@ -8,7 +8,21 @@
 use super::{Adapter, Entry, guarded_command, guarded_command_windows};
 use std::path::{Path, PathBuf};
 
-pub(crate) struct Codex;
+/// `CODEX_HOME`, read by [`super::adapter_for`] from the environment; tests
+/// pass `None` so they never touch a real Codex config.
+pub(crate) struct Codex {
+    pub codex_home: Option<PathBuf>,
+}
+
+impl Codex {
+    pub(crate) fn from_env() -> Self {
+        Self {
+            codex_home: std::env::var_os("CODEX_HOME")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from),
+        }
+    }
+}
 
 /// (Codex event, `hook-run` event, timeout in seconds)
 const EVENTS: &[(&str, &str, u64)] = &[
@@ -27,9 +41,9 @@ impl Adapter for Codex {
     }
 
     fn config_path(&self, home: &Path) -> PathBuf {
-        let dir = std::env::var_os("CODEX_HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
+        let dir = self
+            .codex_home
+            .clone()
             .unwrap_or_else(|| home.join(".codex"));
         dir.join("hooks.json")
     }
