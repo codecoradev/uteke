@@ -251,3 +251,31 @@ fn a_rewrite_keeps_the_file_permissions() {
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_settings_file_is_written_through_the_link() {
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    let target = h.path().join("dotfiles/claude-settings.json");
+    write(&target, CLAUDE_FIXTURE);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+
+    connect(&claude::ClaudeCode, h.path(), false).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(read(&target).contains("uteke hook-run"));
+    disconnect(&claude::ClaudeCode, h.path(), false).unwrap();
+    assert!(
+        std::fs::symlink_metadata(&path)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(read(&target), CLAUDE_FIXTURE);
+}

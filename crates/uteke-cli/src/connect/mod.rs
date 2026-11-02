@@ -237,8 +237,17 @@ fn render(value: &OJson, trailing_newline: bool) -> Result<String, String> {
 }
 
 /// Write through a temporary file and a rename, so a crash never leaves a
-/// half-written config.
+/// half-written config. A symlinked config (a dotfiles checkout) is written
+/// at its target: renaming over the link would replace the link itself.
 fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+    let resolved;
+    let path = if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        resolved = std::fs::canonicalize(path)
+            .map_err(|e| format!("Cannot resolve the link {}: {e}", path.display()))?;
+        resolved.as_path()
+    } else {
+        path
+    };
     let dir = path
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
