@@ -238,3 +238,16 @@ fn disconnect_without_connect_changes_nothing() {
     assert!(!report.changed);
     assert_eq!(read(&path), CLAUDE_FIXTURE);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_rewrite_keeps_the_file_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    write(&path, CLAUDE_FIXTURE);
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    connect(&claude::ClaudeCode, h.path(), false).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}

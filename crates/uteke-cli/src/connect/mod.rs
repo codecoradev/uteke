@@ -248,6 +248,12 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         path.file_name().unwrap_or_default().to_string_lossy()
     ));
     std::fs::write(&tmp, text).map_err(|e| format!("Cannot write {}: {e}", tmp.display()))?;
+    // The rename replaces the file: keep its permissions (a settings file the
+    // user made private stays private).
+    if let Ok(meta) = std::fs::metadata(path) {
+        std::fs::set_permissions(&tmp, meta.permissions())
+            .map_err(|e| format!("Cannot set permissions on {}: {e}", tmp.display()))?;
+    }
     std::fs::rename(&tmp, path).map_err(|e| format!("Cannot write {}: {e}", path.display()))
 }
 
