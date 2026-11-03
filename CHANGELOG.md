@@ -4,6 +4,22 @@
 
 ### Added
 
+- **History mode for time travel: `uteke recall --at T --history`, `uteke list
+  --at T --history` (#1598)** - also returns the memories deprecated after `T`
+  (forgotten, superseded, replaced by a contradiction), i.e. what was believed
+  at `T`, corrections included. This is the meaning #1086 gave `at`, which the
+  default never delivered: deprecation removes the memory's vector from the
+  index, so the index-based candidates could not contain those rows. History
+  recall merges the index results with the memories deprecated after `T`,
+  scored by cosine similarity against the embedding kept in the row (one extra
+  query and one dot product per such memory, a set `prune` bounds); history
+  list relaxes the SQL's `deprecated = 0`. Core:
+  `Uteke::recall_at_time_history`, `Uteke::list_at_time_with`. Opt-in and
+  CLI only: the default `at` on HTTP, MCP and the CLI is unchanged, and making
+  history the default waits on the contract issue uteke-cloud#458. With a
+  running server, `--history` uses the local store. Design:
+  `docs/plans/2026-11-03-time-travel-1598.md`.
+
 - **`uteke doc export --front-matter` (#1470)** - prefixes each Markdown
   document with YAML front-matter (`slug`, `title`, `tags`, `parent` as the
   parent slug or `""`), values double-quoted so `:`, `#`, quotes and newlines

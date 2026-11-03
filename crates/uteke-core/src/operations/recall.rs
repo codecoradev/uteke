@@ -147,17 +147,7 @@ impl crate::Uteke {
                 }
 
                 let score = cosine_distance_to_similarity(*distance);
-
-                // Boost hot memories (configurable boost)
-                let tier = MemoryTier::from_last_accessed(
-                    memory.last_accessed,
-                    self.tier_config.hot_days,
-                    self.tier_config.warm_days,
-                );
-                let boosted_score = match tier {
-                    MemoryTier::Hot => (score + self.tier_config.hot_boost as f32).min(1.0),
-                    _ => score,
-                };
+                let boosted_score = self.hot_boosted(memory, score);
 
                 results.push(SearchResult {
                     memory: (*memory).clone(),
@@ -188,6 +178,19 @@ impl crate::Uteke {
         }
 
         Ok(results)
+    }
+
+    /// Boost a hot memory's similarity score (configurable boost), capped at 1.
+    pub(crate) fn hot_boosted(&self, memory: &crate::memory::types::Memory, score: f32) -> f32 {
+        let tier = MemoryTier::from_last_accessed(
+            memory.last_accessed,
+            self.tier_config.hot_days,
+            self.tier_config.warm_days,
+        );
+        match tier {
+            MemoryTier::Hot => (score + self.tier_config.hot_boost as f32).min(1.0),
+            _ => score,
+        }
     }
 
     /// Recall memories using hybrid search: vector + FTS5 merged via RRF.
