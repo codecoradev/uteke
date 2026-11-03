@@ -28,6 +28,7 @@ export default createConfig({
     {
       text: 'Features',
       items: [
+        { text: 'Viewer', link: '/viewer' },
         { text: 'Rooms', link: '/rooms' },
         { text: 'Time-Travel', link: '/time-travel' },
         { text: 'Multi-Agent', link: '/multi-agent' },

@@ -25,6 +25,7 @@ mod timeline;
 mod update;
 pub(crate) mod update_check;
 pub(crate) mod upgrade;
+pub(crate) mod view;
 
 use crate::Config;
 use crate::cli::Cli;
@@ -385,7 +386,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         Commands::Connect { .. }
         | Commands::Disconnect { .. }
         | Commands::HookRun { .. }
-        | Commands::HookStatus => {
+        | Commands::HookStatus
+        | Commands::View { .. } => {
             // Handled in main() before the store opens.
             Ok(())
         }
