@@ -516,6 +516,18 @@ pub enum Commands {
         #[arg(long, default_value = "claude")]
         agent: String,
     },
+    /// Open the read-only browser viewer: lists memories, namespaces, rooms and
+    /// health on a loopback page guarded by a per-launch token (printed as the
+    /// URL). Runs `uteke-serve --viewer`; Ctrl+C stops it.
+    View {
+        /// Port to listen on (default 8768; 0 picks a free one)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Address to bind (default 127.0.0.1). A non-loopback address is
+        /// refused unless the server auth token (UTEKE_AUTH_TOKEN) is set.
+        #[arg(long)]
+        host: Option<String>,
+    },
     /// Print the state of every connected agent's hooks as JSON (what `uteke
     /// doctor` reports under `agent_hooks`). Run by `uteke upgrade` on the new
     /// binary; needs no store.

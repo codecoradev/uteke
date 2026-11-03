@@ -70,6 +70,9 @@ uteke remember "Deploy v2.1 to staging at 3pm"
 
 # Search it back: by meaning AND by keyword
 uteke recall "when do we deploy?"
+
+# Look at what is stored, in a read-only browser page
+uteke view
 ```
 
 No API keys, no Python, no cloud account. The first run downloads the embedding model (~200 MB, one time).
@@ -342,7 +345,7 @@ Tool labels (A–G) stand for common categories of AI memory layers as of August
 |---|---|
 | **Getting started** | [Installation](INSTALL.md) · [Getting started](docs/getting-started.md) · [Onboarding](docs/getting-started.md#interactive-onboarding) |
 | **Reference** | [CLI reference](docs/cli-reference.md) · [Configuration](docs/configuration.md) · [Docker](docs/docker.md) · [HTTP API](docs/api-reference.md) |
-| **Concepts** | [Rooms](docs/rooms.md) · [Organizing memories](docs/organizing-memories.md) · [Architecture](docs/architecture.md) |
+| **Concepts** | [Viewer](docs/viewer.md) · [Rooms](docs/rooms.md) · [Organizing memories](docs/organizing-memories.md) · [Architecture](docs/architecture.md) |
 | **Integrations** | [MCP setup](docs/mcp.md) (Claude Code, Claude Desktop, Cursor, Hermes) · [Hermes](docs/integrations/hermes.md) · [Claude Code](docs/integrations/claude-code.md) / [Codex](docs/integrations/codex.md) / [Cursor](docs/integrations/cursor.md) hooks |
 | **Security** | [SECURITY.md](SECURITY.md) (vulnerability reports, release signing) |
 | **Benchmarks** | [docs/benchmarks.md](docs/benchmarks.md) · [RESULTS.md](benchmarks/longmemeval/RESULTS.md) · [Reproduce it yourself](benchmarks/longmemeval/REPRODUCING.md) |

@@ -4,6 +4,16 @@
 
 ### Added
 
+- **`uteke view`: a read-only browser viewer (#1470 b)** - lists memories (with a
+  namespace filter), namespaces, rooms and health on a loopback page. It is a
+  separate listener (`uteke-serve --viewer`), not an API route, so CORE and LAB are
+  unchanged. Every request needs a random per-launch token (401 without it) and a
+  loopback `Host` with the right port (403, the API's host guard); only `GET` is
+  served (405 otherwise) and only registry rows with `writes = false`; no CORS
+  headers; a non-loopback bind is refused unless the server auth token is set.
+  Stored text is rendered with `textContent`, never as markup. Plain HTML plus the
+  vendored `@codecora/tokens` CSS, no build step. Docs: `docs/viewer.md`.
+
 - **Caller-supplied validity: `uteke remember/update --valid-from/--valid-until`
   (#1598)** - say when a fact became true and when it stopped, as RFC3339. The
   values go into the `valid_from`/`valid_until` columns that `recall --at` and

@@ -286,6 +286,20 @@ differently, or that were removed. Capture hooks need `[capture] enabled = true`
 Details: [Claude Code](integrations/claude-code.md), [Codex](integrations/codex.md),
 [Cursor](integrations/cursor.md).
 
+## uteke view
+
+Open the read-only browser viewer (#1470): memories, namespaces, rooms and health on
+a loopback page guarded by a per-launch token. Prints the URL; Ctrl+C stops it.
+
+```bash
+uteke view                 # http://127.0.0.1:8768/?token=...
+uteke view --port 9000     # 0 picks a free port
+```
+
+`--host` with a non-loopback address is refused unless `UTEKE_AUTH_TOKEN` is set.
+Read-only: only `GET`, only registry read routes, no CORS. Details:
+[Viewer](viewer.md).
+
 ## uteke tombstone
 
 ```bash
