@@ -25,9 +25,14 @@ use uteke_core::Uteke;
 use crate::api_registry;
 use crate::context::{self, HostGuard, ReqCtx};
 use crate::handlers;
+use crate::types::parse_query_param;
 
 const PAGE: &str = include_str!("viewer/index.html");
 const TOKENS_CSS: &str = include_str!("viewer/tokens.css");
+
+/// Most turns one session view returns, and most sessions the list returns.
+const SESSION_TURN_LIMIT: usize = 1000;
+const SESSION_LIST_LIMIT: usize = 200;
 
 const COOKIE: &str = "uteke_viewer";
 const TOKEN_HEADER: &str = "X-Uteke-Viewer-Token";
@@ -81,6 +86,18 @@ fn header_value(req: &Request, name: &str) -> Option<String> {
 
 /// The token a request presents and whether it came from the URL query.
 fn presented_token(req: &Request, route_path: &str) -> Option<(String, bool)> {
+    // Only the page itself may take the token from the URL: the launch link. It is
+    // read first, so a stale cookie from an earlier launch (cookies ignore
+    // ports) cannot shadow the fresh token.
+    if route_path == "/"
+        && let Some(q) = req.url().split_once('?').map(|(_, q)| q)
+    {
+        for pair in q.split('&') {
+            if let Some(t) = pair.strip_prefix("token=") {
+                return Some((t.to_string(), true));
+            }
+        }
+    }
     if let Some(t) = header_value(req, TOKEN_HEADER) {
         return Some((t.trim().to_string(), false));
     }
@@ -96,16 +113,6 @@ fn presented_token(req: &Request, route_path: &str) -> Option<(String, bool)> {
         for c in cookies.split(';') {
             if let Some(t) = c.trim().strip_prefix(&format!("{COOKIE}=")) {
                 return Some((t.to_string(), false));
-            }
-        }
-    }
-    // Only the page itself may take the token from the URL: the launch link.
-    if route_path == "/"
-        && let Some(q) = req.url().split_once('?').map(|(_, q)| q)
-    {
-        for pair in q.split('&') {
-            if let Some(t) = pair.strip_prefix("token=") {
-                return Some((t.to_string(), true));
             }
         }
     }
@@ -217,6 +224,14 @@ pub fn route(
             CSP_NONE,
             TOKENS_CSS.as_bytes().to_vec(),
         ),
+        "/viewer/sessions" => session_list(uteke),
+        "/viewer/session" => {
+            let id = url
+                .split_once('?')
+                .and_then(|(_, q)| parse_query_param(q, "id"))
+                .unwrap_or_default();
+            session_detail(uteke, &id)
+        }
         p if READ_ROUTES.contains(&p)
             && api_registry::find("GET", p).is_some_and(|e| !e.writes) =>
         {
@@ -241,6 +256,45 @@ pub fn route(
             resp
         }
         _ => error(404, "Not found"),
+    }
+}
+
+fn json<T: serde::Serialize>(value: &T) -> Response<Cursor<Vec<u8>>> {
+    match serde_json::to_vec(value) {
+        Ok(body) => reply(200, "application/json", CSP_NONE, body),
+        Err(_) => error(500, "Internal server error"),
+    }
+}
+
+/// `GET /viewer/sessions`: captured sessions, most recently active first.
+fn session_list(uteke: &Mutex<Uteke>) -> Response<Cursor<Vec<u8>>> {
+    let u = uteke.lock().unwrap_or_else(|e| e.into_inner());
+    match u.capture_sessions(SESSION_LIST_LIMIT) {
+        Ok(rows) => json(&rows),
+        Err(e) => {
+            error!("viewer sessions: {e}");
+            error(500, "Internal server error")
+        }
+    }
+}
+
+/// `GET /viewer/session?id=`: one session's turns in `seq` order and the
+/// memories whose source points back at it.
+fn session_detail(uteke: &Mutex<Uteke>, id: &str) -> Response<Cursor<Vec<u8>>> {
+    if id.is_empty() {
+        return error(400, "id is required");
+    }
+    let u = uteke.lock().unwrap_or_else(|e| e.into_inner());
+    let turns = u.session_timeline(id, SESSION_TURN_LIMIT);
+    let memories = u.session_memories(id);
+    match (turns, memories) {
+        (Ok(turns), Ok(memories)) => {
+            json(&serde_json::json!({ "session_id": id, "turns": turns, "memories": memories }))
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            error!("viewer session: {e}");
+            error(500, "Internal server error")
+        }
     }
 }
 
@@ -328,6 +382,7 @@ pub fn run(opts: Options) -> i32 {
 mod tests {
     use super::*;
     use tiny_http::TestRequest;
+    use uteke_core::capture::Role;
 
     const TOKEN: &str = "t0ken";
     const PORT: u16 = 8768;
@@ -406,6 +461,18 @@ mod tests {
     fn the_token_in_the_query_only_opens_the_page() {
         assert_eq!(get("/?token=t0ken", LOCAL, None).status_code().0, 200);
         assert_eq!(get("/health?token=t0ken", LOCAL, None).status_code().0, 401);
+    }
+
+    #[test]
+    fn a_stale_cookie_does_not_shadow_the_launch_token() {
+        let (uteke, ctx, gate) = app();
+        let mut req = TestRequest::new()
+            .with_method(Method::Get)
+            .with_path("/?token=t0ken")
+            .with_header(hdr("Host", "127.0.0.1:8768"))
+            .with_header(hdr("Cookie", "uteke_viewer=left-over-from-another-launch"))
+            .into();
+        assert_eq!(route(&uteke, &ctx, &gate, &mut req).status_code().0, 200);
     }
 
     #[test]
@@ -556,6 +623,113 @@ mod tests {
         // The markup travels verbatim as a JSON string; the page sets it with
         // textContent (no innerHTML, see the page test above), so it shows as text.
         assert!(body(r).contains(evil));
+    }
+
+    fn json_of(r: Response<Cursor<Vec<u8>>>) -> serde_json::Value {
+        serde_json::from_str(&body(r)).expect("json body")
+    }
+
+    fn send(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        path: &str,
+        token: Option<&str>,
+    ) -> Response<Cursor<Vec<u8>>> {
+        let (_, ctx, gate) = app();
+        let mut t = TestRequest::new()
+            .with_method(method)
+            .with_path(path)
+            .with_header(hdr("Host", "127.0.0.1:8768"));
+        if let Some(tok) = token {
+            t = t.with_header(hdr(TOKEN_HEADER, tok));
+        }
+        let mut req = t.into();
+        route(uteke, &ctx, &gate, &mut req)
+    }
+
+    #[test]
+    fn session_routes_need_the_token_and_refuse_writes() {
+        let (uteke, _, _) = app();
+        for path in ["/viewer/sessions", "/viewer/session?id=s1"] {
+            assert_eq!(send(&uteke, Method::Get, path, None).status_code().0, 401);
+            assert_eq!(
+                send(&uteke, Method::Post, path, Some(TOKEN))
+                    .status_code()
+                    .0,
+                405
+            );
+            assert_eq!(
+                send(&uteke, Method::Delete, path, Some(TOKEN))
+                    .status_code()
+                    .0,
+                405
+            );
+        }
+        let bad_host = {
+            let (_, ctx, gate) = app();
+            let mut req = TestRequest::new()
+                .with_method(Method::Get)
+                .with_path("/viewer/sessions")
+                .with_header(hdr("Host", "evil.example:8768"))
+                .with_header(hdr(TOKEN_HEADER, TOKEN))
+                .into();
+            route(&uteke, &ctx, &gate, &mut req)
+        };
+        assert_eq!(bad_host.status_code().0, 403);
+        assert_eq!(
+            send(&uteke, Method::Get, "/viewer/session", Some(TOKEN))
+                .status_code()
+                .0,
+            400
+        );
+    }
+
+    #[test]
+    fn the_timeline_lists_turns_in_seq_order_and_links_memories_back() {
+        let (uteke, _, _) = app();
+        {
+            let u = uteke.lock().unwrap();
+            u.capture(
+                "sess one",
+                Role::User,
+                "<script>alert(1)</script>",
+                None,
+                None,
+            )
+            .unwrap();
+            u.capture("sess one", Role::Assistant, "done", None, None)
+                .unwrap();
+            u.capture("other", Role::User, "elsewhere", None, None)
+                .unwrap();
+            let id = u
+                .remember("a fact from the session", &[], None, None)
+                .unwrap();
+            u.store_for_tests()
+                .conn
+                .execute(
+                    "UPDATE memories SET source = 'capture:sess one:batch0001' WHERE id = ?1",
+                    [&id],
+                )
+                .unwrap();
+        }
+        let list = json_of(send(&uteke, Method::Get, "/viewer/sessions", Some(TOKEN)));
+        assert_eq!(list.as_array().unwrap().len(), 2);
+
+        // the id travels percent-encoded, as the page sends it
+        let detail = json_of(send(
+            &uteke,
+            Method::Get,
+            "/viewer/session?id=sess%20one",
+            Some(TOKEN),
+        ));
+        let turns = detail["turns"].as_array().unwrap();
+        let seqs: Vec<i64> = turns.iter().map(|t| t["seq"].as_i64().unwrap()).collect();
+        assert_eq!(seqs, [1, 2]);
+        // stored markup comes back verbatim as a JSON string, for textContent
+        assert_eq!(turns[0]["content"], "<script>alert(1)</script>");
+        let mems = detail["memories"].as_array().unwrap();
+        assert_eq!(mems.len(), 1);
+        assert_eq!(mems[0]["content"], "a fact from the session");
     }
 
     #[test]

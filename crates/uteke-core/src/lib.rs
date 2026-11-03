@@ -23,6 +23,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod embedding;
+pub mod session_view;
 pub use embedding::EmbeddingWarmer;
 pub mod embedding_config;
 #[cfg(test)]
