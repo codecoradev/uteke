@@ -253,6 +253,11 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 println!("\u{2713} Memory stored\n  ID: {}", data["id"]);
             }
         }
+        // History mode (#1598) has no wire field yet (uteke-cloud#458): the
+        // local store answers instead of the server dropping the flag.
+        Commands::Recall { history: true, .. } | Commands::List { history: true, .. } => {
+            return Err("unsupported".to_string());
+        }
         Commands::Recall {
             query,
             limit,
@@ -262,6 +267,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             entity,
             category,
             at,
+            history: _,
             strategy,
             salience,
             recency,

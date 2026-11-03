@@ -175,6 +175,10 @@ pub enum Commands {
         /// Query memories as they existed at this timestamp (RFC3339, e.g. 2026-06-01T12:00:00Z)
         #[arg(long)]
         at: Option<String>,
+        /// With --at: also return memories deprecated after that time, i.e.
+        /// what was believed then, corrections included (#1598)
+        #[arg(long, requires = "at")]
+        history: bool,
         /// Content display format: 'auto' (detect), 'text' (force text), 'json' (pretty-print JSON)
         #[arg(long, default_value = "auto")]
         content_format: String,
@@ -242,6 +246,9 @@ pub enum Commands {
         /// List memories as they existed at this timestamp (RFC3339)
         #[arg(long)]
         at: Option<String>,
+        /// With --at: also list memories deprecated after that time (#1598)
+        #[arg(long, requires = "at")]
+        history: bool,
     },
     /// Get a single memory by ID
     Get {
