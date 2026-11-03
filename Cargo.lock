@@ -1570,9 +1570,9 @@ dependencies = [
 
 [[package]]
 name = "numkong"
-version = "7.8.0"
+version = "7.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81601dc994296baed2968db046b01589be7898837c31f2b073704c6e65ff8f04"
+checksum = "431a7e50171e9b47035d5dcb57e802186688a9e0a878a62beedfcc6afcb43ebd"
 dependencies = [
  "cc",
 ]
@@ -2906,9 +2906,9 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usearch"
-version = "2.26.5"
+version = "2.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caf2c7d2696bad5e99d1d722e371afd83937a6c53d7032caa1c46380210aa6ba"
+checksum = "b0b5eeb9d30a9be03057a1fa6b0096b6d02a42169fb300e096501aa48ee03ce5"
 dependencies = [
  "cxx",
  "cxx-build",
