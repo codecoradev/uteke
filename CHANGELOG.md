@@ -4,6 +4,13 @@
 
 ### Added
 
+- **`uteke doc export --front-matter` (#1470)** - prefixes each Markdown
+  document with YAML front-matter (`slug`, `title`, `tags`, `parent` as the
+  parent slug or `""`), values double-quoted so `:`, `#`, quotes and newlines
+  stay valid YAML. Off by default: the plain export is byte-identical, and the
+  flag is ignored with `--json`. No `doc import` reads it back; the lossless
+  round trip stays `uteke export --full` / `import --full`.
+
 - **`uteke namespace migrate --map <file>` (#1427 phase 3)** - moves whole
   namespaces into `default` from a TOML map (`[map."<ns>"]` with `room`, `tag`,
   `author` and/or `source`, or `drop = true`). Dry run by default with a

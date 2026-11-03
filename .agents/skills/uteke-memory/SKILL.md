@@ -63,7 +63,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doc move <ID_OR_SLUG>` | Move to new parent or root | `--parent` |
 | `uteke doc breadcrumbs <ID_OR_SLUG>` | Show path from root | |
 | `uteke doc descendants <ID_OR_SLUG>` | List all descendants | `--max-depth`, `--limit` |
-| `uteke doc export` | Export all documents as JSON | `--output` |
+| `uteke doc export` | Export all documents as Markdown (JSON with `--json`) | `--output`, `--front-matter` |
 
 ### Knowledge Graph
 

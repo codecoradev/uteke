@@ -779,11 +779,15 @@ pub enum DocCommands {
         /// Document ID
         id: String,
     },
-    /// Export all documents as JSON
+    /// Export all documents as Markdown (or JSON with --json)
     Export {
         /// Output file (default: stdout)
         #[arg(long)]
         output: Option<String>,
+        /// Prefix each Markdown document with YAML front-matter (slug, title,
+        /// tags, parent slug) so the hierarchy survives; ignored with --json
+        #[arg(long)]
+        front_matter: bool,
     },
 }
 

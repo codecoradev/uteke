@@ -48,6 +48,7 @@ base64 = "0.22"
 [dev-dependencies]
 rcgen = "0.14"
 serial_test = "3"
+yaml-rust2 = "0.13.0"
 
 [lints]
 workspace = true
