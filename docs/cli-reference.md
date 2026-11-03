@@ -1325,9 +1325,36 @@ uteke doc delete <id>
 Export all documents as JSON or markdown.
 
 ```bash
-uteke doc export           # markdown to stdout
-uteke doc export --json    # JSON to stdout
+uteke doc export                          # markdown to stdout
+uteke doc export --json                   # JSON to stdout
+uteke doc export --front-matter           # markdown, each document with YAML front-matter
+uteke doc export --front-matter --output docs.md
 ```
+
+`--front-matter` (off by default, so the plain output is unchanged) puts a YAML
+block before each document body, so a vault or static-site import keeps the
+hierarchy:
+
+```yaml
+---
+slug: "chapter-1"
+title: "Chapter 1: \"Getting started\""
+tags: ["guide", "draft"]
+parent: "book"
+---
+```
+
+`parent` is the parent document's slug, or `""` for a root document. Values are
+written as double-quoted strings, so titles with `:`, `#`, quotes or newlines
+stay valid YAML. The body after the closing `---` is byte-for-byte what the
+export prints without the flag. With `--json` the flag is ignored, since each
+JSON document already carries these fields.
+
+There is no `uteke doc import` that reads this front-matter back:
+`uteke import --batch-dir <dir> --as-doc` stores a file's whole content,
+front-matter included, under a slug taken from the file path. For a lossless
+round trip of documents (slug, title, hierarchy, content) use
+`uteke export --full` and `uteke import --full`.
 
 ## Graph API (#408, #542)
 
