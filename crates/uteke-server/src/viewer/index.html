@@ -29,6 +29,8 @@
   dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-1) var(--cc-space-4); margin: 0; }
   dt { color: var(--cc-text-muted); }
   dd { margin: 0; overflow-wrap: anywhere; }
+  h2 { font-size: var(--cc-font-size-md); font-family: var(--cc-font-display); margin: var(--cc-space-4) 0 var(--cc-space-2); }
+  button.link { min-height: 0; padding: 0; border: 0; background: none; color: var(--cc-accent); text-decoration: underline; font-size: inherit; overflow-wrap: anywhere; text-align: left; }
   code, .mono { font-family: var(--cc-font-mono); font-size: var(--cc-font-size-sm); }
 </style>
 </head>
@@ -72,6 +74,15 @@ function kv(obj) {
   });
   return dl;
 }
+// The session a memory's source points at: capture:<session>:<batch> (the
+// batch is the last segment) or observation:<session>.
+function sessionOf(source) {
+  if (typeof source !== "string") return null;
+  var id = null;
+  if (source.indexOf("observation:") === 0) id = source.slice(12);
+  else if (source.indexOf("capture:") === 0 && source.lastIndexOf(":") > 7) id = source.slice(8, source.lastIndexOf(":"));
+  return id || null;
+}
 function memoryItem(m) {
   var li = el("li");
   li.appendChild(el("p", "content", m.content));
@@ -79,6 +90,13 @@ function memoryItem(m) {
   [m.namespace, m.memory_type, m.created_at, m.source, (m.tags || []).join(", ")].forEach(function (x) {
     if (x) meta.appendChild(el("span", null, x));
   });
+  var sid = sessionOf(m.source);
+  if (sid) {
+    var link = el("button", "link", "session timeline");
+    link.type = "button";
+    link.addEventListener("click", function () { show("Sessions", sid); });
+    meta.appendChild(link);
+  }
   li.appendChild(meta);
   return li;
 }
@@ -129,6 +147,24 @@ var views = {
       root.replaceChildren(ul.children.length ? ul : el("p", "muted", "No rooms."));
     }).catch(function (e) { fail(root, e); });
   },
+  Sessions: function (root, id) {
+    if (id) return sessionDetail(root, id);
+    api("/viewer/sessions").then(function (rows) {
+      var ul = el("ul");
+      rows.forEach(function (r) {
+        var li = el("li");
+        var open = el("button", "link", r.session_id);
+        open.type = "button";
+        open.addEventListener("click", function () { show("Sessions", r.session_id); });
+        li.appendChild(open);
+        var meta = el("div", "meta");
+        [r.turns + " turns", r.first_at, r.last_at].forEach(function (x) { meta.appendChild(el("span", null, x)); });
+        li.appendChild(meta);
+        ul.appendChild(li);
+      });
+      root.replaceChildren(ul.children.length ? ul : el("p", "muted", "No captured sessions."));
+    }).catch(function (e) { fail(root, e); });
+  },
   Health: function (root) {
     Promise.all([api("/health"), api("/stats")]).then(function (r) {
       var a = el("div", "card"), b = el("div", "card"), wrap = el("div", "stack");
@@ -141,10 +177,36 @@ var views = {
   }
 };
 
+// One session: its turns in seq order, then the memories that point back at it.
+function sessionDetail(root, id) {
+  api("/viewer/session?id=" + encodeURIComponent(id)).then(function (d) {
+    var back = el("button", null, "All sessions");
+    back.type = "button";
+    back.addEventListener("click", function () { show("Sessions"); });
+    var head = el("div", "bar");
+    head.appendChild(back);
+    head.appendChild(el("span", "mono", d.session_id));
+    var turns = el("ul");
+    d.turns.forEach(function (t) {
+      var li = el("li");
+      li.appendChild(el("p", "content", t.content));
+      var meta = el("div", "meta");
+      ["#" + t.seq, t.role, t.captured_at, t.status].forEach(function (x) { meta.appendChild(el("span", null, x)); });
+      li.appendChild(meta);
+      turns.appendChild(li);
+    });
+    var mems = el("ul");
+    d.memories.forEach(function (m) { mems.appendChild(memoryItem(m)); });
+    root.replaceChildren(head,
+      el("h2", null, "Turns"), turns.children.length ? turns : el("p", "muted", "No turns in the queue (done turns are deleted after the retention period)."),
+      el("h2", null, "Memories from this session"), mems.children.length ? mems : el("p", "muted", "No memories link to this session."));
+  }).catch(function (e) { fail(root, e); });
+}
+
 var tabs = document.getElementById("tabs"), view = document.getElementById("view");
-function show(name) {
+function show(name, arg) {
   Array.prototype.forEach.call(tabs.children, function (b) { b.setAttribute("aria-pressed", String(b.textContent === name)); });
-  views[name](view);
+  views[name](view, arg);
 }
 Object.keys(views).forEach(function (name) {
   var b = el("button", null, name);

@@ -16,6 +16,20 @@ It runs `uteke-serve --viewer`, so the full install bundle (or `uteke-serve` on
 `PATH`) is needed. It uses the same store as every other command
 (`UTEKE_HOME`, `uteke.toml`) and does not load the embedding model.
 
+## Session timeline
+
+The **Sessions** tab lists the sessions in the capture queue (`uteke capture`, agent
+hooks from `uteke connect`; schema v24 `observations`), most recently active first.
+Opening one shows its turns in `seq` order (role, time, status) and the memories that
+point back at it: a memory whose source is `capture:<session>:<batch>` (what
+extraction writes) or `observation:<session>`. Every memory in the **Memories** tab
+whose source names a session has a "session timeline" link to the same page.
+
+Done turns are deleted after the capture retention period, so an old session can
+show memories with no turns. The page reads two viewer-only paths,
+`/viewer/sessions` and `/viewer/session?id=`, under the same token, `Host` and
+`GET`-only rules as everything else; they are not API routes.
+
 ## What protects it
 
 A loopback port is reachable by any local process, and by a web page through DNS
@@ -27,7 +41,7 @@ order, to every request:
 | `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (the same host guard the API server uses, plus a port check) | 403 |
 | No per-launch token, or the wrong one (cookie, `X-Uteke-Viewer-Token`, or bearer; the launch URL carries it once, on `/` only) | 401 |
 | Method other than `GET` | 405 |
-| Path other than the page and the read routes below | 404 |
+| Path other than the page, the session paths and the read routes | 404 |
 
 - **Read-only by construction.** The viewer hands a request to the API router only
   for `/health`, `/namespaces`, `/stats`, `/room/list`, `/recent` and `/memory`,

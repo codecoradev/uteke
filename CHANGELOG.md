@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Session timeline in the viewer (#1470 c)** - the `uteke view` page gets a
+  Sessions tab: the captured sessions, and for one session its turns in `seq` order
+  and the memories whose source is `capture:<session>:<batch>` or
+  `observation:<session>`; each memory with such a source links back to it. Core:
+  `Uteke::capture_sessions`, `session_timeline`, `session_memories` (read-only).
+  Same token, `Host` and `GET`-only rules; the two new paths are viewer-only, not API
+  routes. Docs: `docs/viewer.md`.
+
 - **`uteke view`: a read-only browser viewer (#1470 b)** - lists memories (with a
   namespace filter), namespaces, rooms and health on a loopback page. It is a
   separate listener (`uteke-serve --viewer`), not an API route, so CORE and LAB are
