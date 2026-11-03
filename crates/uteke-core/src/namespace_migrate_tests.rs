@@ -24,6 +24,7 @@ fn remember(
         author_type: None,
         room: None,
         author: author.map(str::to_string),
+        validity: None,
     };
     u.run_remember(&req).unwrap().outcome.id
 }

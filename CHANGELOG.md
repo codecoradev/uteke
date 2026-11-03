@@ -4,6 +4,22 @@
 
 ### Added
 
+- **Caller-supplied validity: `uteke remember/update --valid-from/--valid-until`
+  (#1598)** - say when a fact became true and when it stopped, as RFC3339. The
+  values go into the `valid_from`/`valid_until` columns that `recall --at` and
+  `list --at` read (until now `valid_from` was always the write time). The
+  interval is checked before anything is written: it must start before it
+  ends, and since a new memory starts at the write time, a past
+  `--valid-until` needs `--valid-from` too. A deprecated memory is refused
+  (restore it first). Core: `Uteke::set_validity` and
+  `RememberRequest::validity`. Deprecation now keeps a caller end that is
+  already in the past instead of overwriting it with the deprecation time;
+  rows without a caller end deprecate exactly as before. Restore still clears
+  `valid_until`. Wire unchanged: `POST /remember` keeps storing
+  `valid_from`/`valid_until` as metadata (the columns wait on the contract
+  issue uteke-cloud#458), so with a running server `remember` with these flags
+  uses the local store. Design: `docs/plans/2026-11-03-time-travel-1598.md`.
+
 - **History mode for time travel: `uteke recall --at T --history`, `uteke list
   --at T --history` (#1598)** - also returns the memories deprecated after `T`
   (forgotten, superseded, replaced by a contradiction), i.e. what was believed

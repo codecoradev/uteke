@@ -15,8 +15,27 @@ pub(crate) fn run(
     importance: Option<f64>,
     pinned: Option<bool>,
     memory_type: Option<String>,
+    valid_from: Option<&str>,
+    valid_until: Option<&str>,
 ) -> Result<(), String> {
     tracing::info!("Updating memory: {id}");
+    // #1598: the validity is checked and written first, so a refused interval
+    // (or a deprecated memory) leaves every other field untouched.
+    let validity = uteke_core::memory::types::Validity::parse(valid_from, valid_until)
+        .map_err(|e| e.to_string())?;
+    if let Some(v) = &validity {
+        let found = uteke
+            .set_validity(id, v)
+            .map_err(|e| format!("Failed to update memory: {e}"))?;
+        if !found {
+            return Err(format!("Memory not found: {id}"));
+        }
+    }
+    let other_fields = content.is_some()
+        || tags.is_some()
+        || importance.is_some()
+        || pinned.is_some()
+        || memory_type.is_some();
     let tag_list: Option<Vec<String>> = tags.map(|t| {
         t.split(',')
             .map(|s| s.trim().to_string())
@@ -24,17 +43,18 @@ pub(crate) fn run(
             .collect()
     });
 
-    let updated = uteke
-        .update_memory(
-            id,
-            content.as_deref(),
-            tag_list.as_deref(),
-            None,
-            importance,
-            pinned,
-            memory_type.as_deref(),
-        )
-        .map_err(|e| format!("Failed to update memory: {e}"))?;
+    let updated = validity.is_some() && !other_fields
+        || uteke
+            .update_memory(
+                id,
+                content.as_deref(),
+                tag_list.as_deref(),
+                None,
+                importance,
+                pinned,
+                memory_type.as_deref(),
+            )
+            .map_err(|e| format!("Failed to update memory: {e}"))?;
     if !updated {
         return Err(format!("Memory not found: {id}"));
     }
