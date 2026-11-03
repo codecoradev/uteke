@@ -93,6 +93,9 @@ impl Uteke {
         if let Some(a) = req.author.as_deref() {
             note("author", self.set_author(&id, Some(a)));
         }
+        if let Some(v) = &req.validity {
+            note("validity", self.set_validity(&id, v));
+        }
         Ok(RememberRun {
             outcome,
             contradiction,
@@ -206,5 +209,141 @@ mod tests {
             .run_remember(&req(|i| i.content = "plain".into()))
             .unwrap();
         assert!(plain.contradiction.is_none());
+    }
+
+    // #1598: caller validity. Timestamps are whole seconds so the RFC3339
+    // round trip through SQLite compares equal.
+    fn t(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    }
+
+    fn validity(from: Option<&str>, until: Option<&str>) -> crate::memory::types::Validity {
+        crate::memory::types::Validity {
+            from: from.map(t),
+            until: until.map(t),
+        }
+    }
+
+    #[test]
+    fn decode_keeps_wire_validity_as_metadata_only() {
+        // The wire fields stay metadata until uteke-cloud#458 decides.
+        let r = req(|i| {
+            i.valid_from = Some("2026-01-01T00:00:00Z".into());
+            i.valid_until = Some("2027-01-01T00:00:00Z".into());
+        });
+        assert_eq!(r.validity, None);
+        let u = open_keyword();
+        let m = stored(&u, &u.run_remember(&r).unwrap());
+        assert_eq!(m.metadata["valid_from"], "2026-01-01T00:00:00Z");
+        assert_eq!(m.valid_until, None);
+        assert_ne!(m.valid_from, Some(t("2026-01-01T00:00:00Z")));
+    }
+
+    #[test]
+    fn caller_validity_is_written_to_the_columns() {
+        let u = open_keyword();
+        let mut r = req(|_| {});
+        r.validity = Some(validity(
+            Some("2025-03-01T00:00:00Z"),
+            Some("2030-01-01T00:00:00Z"),
+        ));
+        let run = u.run_remember(&r).unwrap();
+        assert!(run.provenance_warnings.is_empty());
+        let m = stored(&u, &run);
+        assert_eq!(m.valid_from, Some(t("2025-03-01T00:00:00Z")));
+        assert_eq!(m.valid_until, Some(t("2030-01-01T00:00:00Z")));
+        // Without validity the write time stays the start, no end.
+        let plain = stored(
+            &u,
+            &u.run_remember(&req(|i| i.content = "no validity".into()))
+                .unwrap(),
+        );
+        assert_eq!(plain.valid_from, Some(plain.created_at));
+        assert_eq!(plain.valid_until, None);
+    }
+
+    #[test]
+    fn set_validity_keeps_the_unset_side_and_refuses_empty_intervals() {
+        let u = open_keyword();
+        let id = u.run_remember(&req(|_| {})).unwrap().outcome.id;
+        let both = validity(Some("2025-01-01T00:00:00Z"), Some("2026-01-01T00:00:00Z"));
+        assert!(u.set_validity(&id, &both).unwrap());
+
+        // Only the end changes; the stored start is kept.
+        assert!(
+            u.set_validity(&id, &validity(None, Some("2026-06-01T00:00:00Z")))
+                .unwrap()
+        );
+        let m = u.get_by_id(&id).unwrap().unwrap();
+        assert_eq!(m.valid_from, Some(t("2025-01-01T00:00:00Z")));
+        assert_eq!(m.valid_until, Some(t("2026-06-01T00:00:00Z")));
+
+        // An end before the stored start, and an equal start and end, are refused.
+        for bad in [
+            validity(None, Some("2024-01-01T00:00:00Z")),
+            validity(Some("2026-06-01T00:00:00Z"), None),
+        ] {
+            let e = u.set_validity(&id, &bad).unwrap_err().to_string();
+            assert!(e.contains("must be before"), "{e}");
+        }
+        let m = u.get_by_id(&id).unwrap().unwrap();
+        assert_eq!(m.valid_until, Some(t("2026-06-01T00:00:00Z")));
+
+        assert!(!u.set_validity("no-such-id", &both).unwrap());
+    }
+
+    #[test]
+    fn set_validity_refuses_a_deprecated_memory() {
+        let u = open_keyword();
+        let id = u.run_remember(&req(|_| {})).unwrap().outcome.id;
+        u.soft_forget(&id, "outdated").unwrap();
+        let e = u
+            .set_validity(&id, &validity(Some("2025-01-01T00:00:00Z"), None))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("deprecated"), "{e}");
+    }
+
+    #[test]
+    fn deprecation_keeps_an_earlier_caller_end_and_cuts_a_later_one() {
+        let u = open_keyword();
+        let ended = u
+            .run_remember(&req(|i| i.content = "the port was 8080".into()))
+            .unwrap()
+            .outcome
+            .id;
+        let open_ended = u
+            .run_remember(&req(|i| i.content = "the port is 8767".into()))
+            .unwrap()
+            .outcome
+            .id;
+        let future = u
+            .run_remember(&req(|i| i.content = "the lease runs to 2099".into()))
+            .unwrap()
+            .outcome
+            .id;
+        let past = validity(Some("2020-01-01T00:00:00Z"), Some("2021-01-01T00:00:00Z"));
+        assert!(u.set_validity(&ended, &past).unwrap());
+        assert!(
+            u.set_validity(&future, &validity(None, Some("2099-01-01T00:00:00Z")))
+                .unwrap()
+        );
+
+        for id in [&ended, &open_ended, &future] {
+            u.soft_forget(id, "outdated").unwrap();
+        }
+        // The fact had already ended: the caller's end is kept.
+        let m = u.get_by_id(&ended).unwrap().unwrap();
+        assert_eq!(m.valid_until, Some(t("2021-01-01T00:00:00Z")));
+        assert!(m.deprecated_at.unwrap() > t("2021-01-01T00:00:00Z"));
+        // No caller end (every row written before #1598): unchanged, the
+        // deprecation time.
+        let m = u.get_by_id(&open_ended).unwrap().unwrap();
+        assert_eq!(m.valid_until, m.deprecated_at);
+        // An end still in the future is cut to the deprecation time.
+        let m = u.get_by_id(&future).unwrap().unwrap();
+        assert_eq!(m.valid_until, m.deprecated_at);
     }
 }

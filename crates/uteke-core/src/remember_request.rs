@@ -177,6 +177,11 @@ pub struct RememberRequest {
     pub author_type: Option<String>,
     pub room: Option<String>,
     pub author: Option<String>,
+    /// The caller's validity interval as columns (#1598). Never filled by
+    /// [`Self::decode`]: the `valid_from`/`valid_until` wire fields stay
+    /// metadata keys until the contract changes (uteke-cloud#458). Surfaces
+    /// that own the flag (the CLI on a local store) set it after decoding.
+    pub validity: Option<crate::memory::types::Validity>,
 }
 
 impl RememberRequest {
@@ -246,6 +251,7 @@ impl RememberRequest {
             author_type: input.author_type,
             room: input.room,
             author,
+            validity: None,
         })
     }
 

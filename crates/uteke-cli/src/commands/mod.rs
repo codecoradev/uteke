@@ -81,6 +81,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             source,
             source_type,
             timestamp,
+            valid_from,
+            valid_until,
         } => remember::run(
             cli,
             uteke,
@@ -98,6 +100,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             source.as_deref(),
             source_type.as_deref(),
             timestamp.as_deref(),
+            valid_from.as_deref(),
+            valid_until.as_deref(),
         ),
 
         Commands::Recall {
@@ -199,6 +203,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             importance,
             pinned,
             r#type,
+            valid_from,
+            valid_until,
         } => update::run(
             cli,
             uteke,
@@ -208,6 +214,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             *importance,
             *pinned,
             r#type.clone(),
+            valid_from.as_deref(),
+            valid_until.as_deref(),
         ),
 
         Commands::Tombstone { command } => forget::run_tombstone(cli, uteke, command),

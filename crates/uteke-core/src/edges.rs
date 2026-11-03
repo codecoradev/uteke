@@ -2042,7 +2042,7 @@ impl crate::Uteke {
             )
             .map_err(|e| Error::db("insert supersedes edge", e))?;
             tx.execute(
-                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id = ?3 AND deprecated = 0",
+                "UPDATE memories SET deprecated = 1, valid_until = CASE WHEN deprecated = 0 AND valid_until < ?1 THEN valid_until ELSE ?1 END, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id = ?3 AND deprecated = 0",
                 params![now, reason_text, old.id],
             )
             .map_err(|e| Error::db("deprecate superseded memory", e))?;

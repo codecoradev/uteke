@@ -120,6 +120,14 @@ pub enum Commands {
         /// "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
         #[arg(long)]
         timestamp: Option<String>,
+        /// When the fact became true (RFC3339). Read by `recall --at` and
+        /// `list --at`; defaults to the write time (#1598)
+        #[arg(long)]
+        valid_from: Option<String>,
+        /// When the fact stopped being true (RFC3339). Without --valid-from it
+        /// must be later than now (#1598)
+        #[arg(long)]
+        valid_until: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -274,6 +282,12 @@ pub enum Commands {
         /// Memory type: fact, procedure, preference, decision, context, note, insight, reference, event
         #[arg(long = "type")]
         r#type: Option<String>,
+        /// When the fact became true (RFC3339, #1598)
+        #[arg(long)]
+        valid_from: Option<String>,
+        /// When the fact stopped being true (RFC3339, #1598)
+        #[arg(long)]
+        valid_until: Option<String>,
     },
     /// Delete a memory by ID
     Forget {

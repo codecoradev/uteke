@@ -1444,6 +1444,28 @@ impl Uteke {
         self.store.set_author(id, author)
     }
 
+    /// Say when a memory's fact holds (#1598): `valid_from`/`valid_until`,
+    /// which `recall --at` and `list --at` read. A side left `None` keeps
+    /// its stored value. Refused when the interval would not start before it
+    /// ends, and on a deprecated memory (restore it first). Returns false if
+    /// the memory does not exist.
+    pub fn set_validity(
+        &self,
+        id: &str,
+        validity: &crate::memory::types::Validity,
+    ) -> Result<bool, Error> {
+        let Some(existing) = self.store.get_by_id(id)? else {
+            return Ok(false);
+        };
+        if existing.deprecated {
+            return Err(Error::Validation(format!(
+                "Memory {id} is deprecated; restore it before changing its validity"
+            )));
+        }
+        validity.check_against(existing.valid_from, existing.valid_until)?;
+        self.store.set_validity(id, validity)
+    }
+
     /// Stamp the writer of a room write on the memory itself (#1427 phase 2),
     /// when it is a valid author. The room link accepts any text, so an author
     /// the memory field rejects (empty, over 128 characters, control

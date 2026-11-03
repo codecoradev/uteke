@@ -168,6 +168,63 @@ pub fn validate_author_type(author_type: &str) -> Result<(), crate::Error> {
     }
 }
 
+/// When a fact holds in the world (valid time, #1598), as the caller states
+/// it. Separate from when the store learned it (`created_at`) and stopped
+/// believing it (`deprecated_at`). `None` on a side leaves the stored value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Validity {
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Validity {
+    /// Parse RFC3339 `from`/`until` (the CLI flags). `Ok(None)` when neither
+    /// is given. An interval that ends before it starts is refused here too,
+    /// so a bad value fails before anything is written.
+    pub fn parse(from: Option<&str>, until: Option<&str>) -> Result<Option<Self>, crate::Error> {
+        let parse = |flag: &str, v: Option<&str>| {
+            v.map(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map(|t| t.with_timezone(&chrono::Utc))
+                    .map_err(|e| {
+                        crate::Error::Validation(format!(
+                            "Invalid {flag} '{s}': {e}. Use RFC3339 (e.g. 2026-06-01T12:00:00Z)"
+                        ))
+                    })
+            })
+            .transpose()
+        };
+        let v = Self {
+            from: parse("valid_from", from)?,
+            until: parse("valid_until", until)?,
+        };
+        if v.from.is_none() && v.until.is_none() {
+            return Ok(None);
+        }
+        v.check_against(None, None)?;
+        Ok(Some(v))
+    }
+
+    /// Refuse an interval that does not start before it ends, after applying
+    /// this change to the stored `valid_from`/`valid_until`.
+    pub fn check_against(
+        &self,
+        stored_from: Option<chrono::DateTime<chrono::Utc>>,
+        stored_until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), crate::Error> {
+        if let (Some(f), Some(u)) = (self.from.or(stored_from), self.until.or(stored_until))
+            && f >= u
+        {
+            return Err(crate::Error::Validation(format!(
+                "valid_from ({}) must be before valid_until ({})",
+                f.to_rfc3339(),
+                u.to_rfc3339()
+            )));
+        }
+        Ok(())
+    }
+}
+
 fn default_importance() -> f64 {
     0.5
 }

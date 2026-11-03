@@ -449,8 +449,33 @@ impl Store {
         Ok(rows > 0)
     }
 
+    /// Write the caller's validity interval (#1598) on a live memory; `None`
+    /// on a side keeps the stored value. Returns false when no live memory
+    /// has this id (a deprecated row's `valid_until` is deprecation
+    /// bookkeeping and is not touched).
+    pub fn set_validity(
+        &self,
+        id: &str,
+        validity: &crate::memory::types::Validity,
+    ) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET valid_from = COALESCE(?1, valid_from), \
+                 valid_until = COALESCE(?2, valid_until) \
+                 WHERE id = ?3 AND deprecated = 0",
+                rusqlite::params![
+                    validity.from.map(|t| t.to_rfc3339()),
+                    validity.until.map(|t| t.to_rfc3339()),
+                    id
+                ],
+            )
+            .map_err(|e| Error::db("set validity", e))?;
+        Ok(rows > 0)
+    }
+
     /// Recalculate importance for all memories.
-    /// importance = 0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
+    /// importance =0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         // Only the columns the formula needs: the old `load_all` pulled every
         // embedding blob into memory for no reason (#1332). Same predicate as

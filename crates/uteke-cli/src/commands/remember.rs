@@ -11,6 +11,28 @@ fn print_redaction(outcome: &uteke_core::RememberOutcome) {
     }
 }
 
+/// Parse `--valid-from`/`--valid-until` for a new memory (#1598). Its
+/// `valid_from` defaults to the write time, so a `--valid-until` at or before
+/// `now` without `--valid-from` would make an empty interval: refused here,
+/// before anything is stored.
+pub(crate) fn parse_validity_for_write(
+    valid_from: Option<&str>,
+    valid_until: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<Option<uteke_core::memory::types::Validity>, String> {
+    let validity = uteke_core::memory::types::Validity::parse(valid_from, valid_until)
+        .map_err(|e| e.to_string())?;
+    if let Some(v) = &validity
+        && v.from.is_none()
+        && v.until.is_some_and(|u| u <= now)
+    {
+        return Err(
+            "--valid-until is not after the write time; give --valid-from as well".to_string(),
+        );
+    }
+    Ok(validity)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
     cli: &Cli,
@@ -29,6 +51,8 @@ pub(crate) fn run(
     source: Option<&str>,
     source_type: Option<&str>,
     timestamp: Option<&str>,
+    valid_from: Option<&str>,
+    valid_until: Option<&str>,
 ) -> Result<(), String> {
     // The content is not logged: it may hold a secret the privacy filter has
     // not masked yet (#1464).
@@ -53,6 +77,11 @@ pub(crate) fn run(
                 .map_err(|e| format!("Invalid --author: {e}"))
         })
         .transpose()?;
+
+    // #1598: the validity interval is checked before any write as well. The
+    // write time is the default `valid_from`, so an end in the past needs an
+    // explicit start.
+    let validity = parse_validity_for_write(valid_from, valid_until, chrono::Utc::now())?;
 
     // Read from stdin when content argument is "-" (#620).
     // Standard Unix convention: pipe content via echo "text" | uteke remember - --tags "test"
@@ -87,7 +116,7 @@ pub(crate) fn run(
     // The same decode as `POST /remember` and MCP (#1439): content, tags and
     // type are validated, the type is copied into the metadata, and an omitted
     // type stays `None`, which means "infer it from the content".
-    let request = uteke_core::RememberRequest::decode(uteke_core::RememberInput {
+    let mut request = uteke_core::RememberRequest::decode(uteke_core::RememberInput {
         content: content.to_string(),
         tags: tags.to_vec(),
         namespace: ns.map(str::to_string),
@@ -102,6 +131,7 @@ pub(crate) fn run(
         ..uteke_core::RememberInput::default()
     })
     .map_err(|e| format!("Failed to store memory: {e}"))?;
+    request.validity = validity;
 
     // The write and its provenance follow-ups (source, author_type, author)
     // run in the core, with one failure policy (#1516).
