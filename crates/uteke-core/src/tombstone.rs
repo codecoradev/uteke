@@ -85,15 +85,28 @@ pub(crate) fn record(
     conn: &rusqlite::Connection,
     memory: &crate::Memory,
     reason: &str,
+    privacy: &crate::privacy::PrivacyConfig,
 ) -> Result<(), Error> {
-    let preview: String = memory.content.chars().take(PREVIEW_CHARS).collect();
+    // The reason and the preview outlive the memory and travel in
+    // `export --full`: filter both (#1669). The text is masked whole before
+    // it is cut, so a secret is never left half-visible at the boundary.
+    let preview: String = if privacy.tombstone_hash_only {
+        String::new()
+    } else {
+        privacy
+            .mask_note(&memory.content)
+            .chars()
+            .take(PREVIEW_CHARS)
+            .collect()
+    };
+    let reason = privacy.mask_note(reason.trim());
     conn.execute(
         "INSERT OR IGNORE INTO rejected_values (hash, memory_id, reason, preview, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![
             tombstone_hash(&memory.content),
             memory.id,
-            reason.trim(),
+            reason,
             preview,
             chrono::Utc::now().to_rfc3339()
         ],
@@ -135,7 +148,7 @@ impl crate::Uteke {
             .store
             .get_by_id(id)?
             .ok_or_else(|| Error::not_found(format!("Memory not found: {id}")))?;
-        record(self.graph_store(), &memory, reason)
+        record(self.graph_store(), &memory, reason, &self.privacy_config)
     }
 
     /// Remove the tombstone of `content`, whichever memory recorded it.
@@ -468,5 +481,72 @@ mod write_path_tests {
         u.supersede(&old, &new, Some("wrong: typo")).unwrap();
         assert!(u.get_by_id(&old).unwrap().unwrap().deprecated);
         assert_eq!(u.tombstones().unwrap()[0].reason, "wrong: typo");
+    }
+
+    fn token() -> String {
+        format!("{}{}", "ghp_", "aB3dE5gH7jK9mN1pQ3rS5tU7vW9xY1zA3bC5")
+    }
+
+    fn with_privacy(mode: crate::privacy::PrivacyMode, hash_only: bool) -> crate::Uteke {
+        let mut u = open_keyword();
+        u.set_privacy_config(crate::privacy::PrivacyConfig {
+            mode,
+            tombstone_hash_only: hash_only,
+            ..Default::default()
+        });
+        u
+    }
+
+    #[test]
+    fn a_reason_with_a_secret_is_stored_masked() {
+        use crate::privacy::PrivacyMode;
+        for mode in [PrivacyMode::Redact, PrivacyMode::Strict] {
+            let u = with_privacy(mode, false);
+            let id = u.remember("The port is 8767", &[], None, None).unwrap();
+            u.forget_with_reason(&id, Some(&format!("wrong: the token is {}", token())))
+                .unwrap();
+            let t = &u.tombstones().unwrap()[0];
+            assert!(t.reason.starts_with("wrong: the token is "), "{}", t.reason);
+            assert!(!t.reason.contains(&token()), "{mode:?}: {}", t.reason);
+            // the refusal message carries the stored (masked) reason
+            let reason = rejected(u.remember("the port is 8767", &[], None, None));
+            assert!(!reason.contains(&token()));
+        }
+    }
+
+    #[test]
+    fn a_secret_in_unfiltered_content_is_masked_in_the_preview() {
+        let u = with_privacy(crate::privacy::PrivacyMode::Redact, false);
+        let id = u.remember("seed", &[], None, None).unwrap();
+        // content that reached the store without the filter (old row, import)
+        u.graph_store()
+            .execute(
+                "UPDATE memories SET content = ?1 WHERE id = ?2",
+                rusqlite::params![format!("deploy key {}", token()), id],
+            )
+            .unwrap();
+        u.forget_with_reason(&id, Some("wrong")).unwrap();
+        let t = &u.tombstones().unwrap()[0];
+        assert!(t.preview.starts_with("deploy key "), "{}", t.preview);
+        assert!(!t.preview.contains(&token()), "{}", t.preview);
+    }
+
+    #[test]
+    fn a_hash_only_tombstone_stores_no_preview_but_still_refuses_and_survives_export() {
+        let u = with_privacy(crate::privacy::PrivacyMode::Redact, true);
+        let id = u
+            .remember("The deploy target is staging-2", &[], None, None)
+            .unwrap();
+        u.forget_with_reason(&id, Some("wrong")).unwrap();
+        let t = u.tombstones().unwrap();
+        assert_eq!(t[0].preview, "", "no preview stored");
+        rejected(u.remember("the deploy target is staging-2", &[], None, None));
+
+        let bundle = u.export_full().unwrap();
+        let dst = open_keyword();
+        let report = dst.import_full(&bundle).unwrap();
+        assert_eq!(report["imported"]["rejected_values"], 1, "{report}");
+        assert_eq!(dst.tombstones().unwrap()[0].preview, "");
+        rejected(dst.remember("The deploy target is staging-2", &[], None, None));
     }
 }

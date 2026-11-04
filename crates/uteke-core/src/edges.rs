@@ -2059,7 +2059,7 @@ impl crate::Uteke {
             // come back. In the same transaction, so a supersession never
             // lands without its tombstone.
             if let Some(r) = reason.filter(|r| crate::tombstone::is_wrong_reason(r)) {
-                crate::tombstone::record(&tx, &old, r)?;
+                crate::tombstone::record(&tx, &old, r, &self.privacy_config)?;
             }
             tx.commit()
                 .map_err(|e| Error::db("commit supersede tx", e))?;

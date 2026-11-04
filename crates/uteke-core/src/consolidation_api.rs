@@ -246,6 +246,7 @@ mod tests {
         strict.set_privacy_config(crate::privacy::PrivacyConfig {
             mode: crate::privacy::PrivacyMode::Strict,
             allowlist: Vec::new(),
+            ..Default::default()
         });
         let mut m = mem("m2", &format!("the LLM wrote {token}"));
         assert!(ConsolidationStore::insert_memory(&strict, &mut m).is_err());

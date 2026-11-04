@@ -470,11 +470,14 @@ Secrets in the content of a memory are masked before it is embedded or stored (`
 [privacy]
 mode = "redact"            # redact (default) | strict | off
 allowlist = ["^dev-"]      # regexes; a value matching any of them is kept as it is
+tombstone_preview = true   # false = a rejected-value tombstone keeps the hash only
 ```
 
 - `redact`: mask and store.
 - `strict`: refuse the write (`secret_detected`; import skips the row).
 - `off`: store as given.
+
+`tombstone_preview` (default `true`): `forget --reason wrong` keeps a 120-character preview and the reason with the tombstone, filtered like any other text (`redact` and `strict` both mask them; the forget is not refused). `false` keeps the hash only, so nothing of the forgotten text survives the prune or travels in `export --full`; the value is still refused ([CLI reference](cli-reference.md#uteke-forget)).
 
 `UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content, the tags, the strings inside the metadata and the `source` of `remember`, room remember, `update` and `import`, and the text written by room consolidation. Only the string values inside metadata are filtered, not its object keys. Importing a structural export (`uteke export --full`, restored by `uteke import`) puts a backup back as it was and does not filter; restore backups you trust.
 
