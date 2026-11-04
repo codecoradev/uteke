@@ -779,6 +779,7 @@ Request for memory feedback / trust scoring (#718).
 | `explain` | `boolean` | No | Explain mode (#1160): return per-result ranking signals alongside each memory. Memory-only recall — rejected (400) together with search_type/unified, at, before/after. |
 | `limit` | `integer` | No |  |
 | `min_score` | any | No | Minimum similarity score (0.0-1.0). Results below are filtered. Default: 0.0 (no filtering). Compares against `score`; `strict` compares against `similarity`. |
+| `min_trust` | any | No | Lowest provenance tier to return (#1651): `human`, `agent`, `external` or `untrusted` (lowercase). Filters the tier (author_type + source_type) only, before the limit is applied. author_type is self-declared, so this is a convenience filter, not a security boundary, and it is not a trust state. |
 | `namespace` | any | No |  |
 | `pack` | `boolean` | No | Budgeted context pack (#1281 Phase 1): return a ContextPack (selected/skipped/budget_used) instead of a bare ranked list. Deterministic, LLM-free, rank-order preserving. |
 | `query` | `string` | Yes |  |

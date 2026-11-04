@@ -1,6 +1,7 @@
-//! Result filters of a recall: `strict` on similarity (#1650).
+//! Result filters of a recall: `strict` on similarity (#1650) and `min_trust`
+//! on the provenance tier (#1651).
 //!
-//! The filter is applied to the ranked candidates BEFORE the result is cut to the
+//! Both are applied to the ranked candidates BEFORE the result is cut to the
 //! caller's limit, so a filtered recall still returns up to `limit` rows when
 //! that many qualify. The strategies cut to the limit themselves, so
 //! [`ResultFilter::fetch`] asks for a larger window and widens it until enough
@@ -11,6 +12,7 @@
 use crate::Uteke;
 use crate::error::Error;
 use crate::memory::types::{SearchResult, UnifiedSearchResult};
+use crate::provenance::TrustTier;
 
 /// Largest candidate window [`ResultFilter::fetch`] asks a strategy for.
 const MAX_WINDOW: usize = 1000;
@@ -21,12 +23,18 @@ pub struct ResultFilter {
     /// `strict`: keep a hit only when its `similarity` (the vector-leg cosine)
     /// is at least this. A hit without a similarity is dropped.
     pub min_similarity: Option<f32>,
+    /// Keep a hit only when its provenance tier is at least this.
+    ///
+    /// This is the provenance TIER (author_type + source_type), not a trust
+    /// state, and `author_type` is self-declared: a convenience filter, not a
+    /// security boundary.
+    pub min_trust: Option<TrustTier>,
 }
 
 impl ResultFilter {
     /// No filter is active: results pass through untouched.
     pub fn is_noop(&self) -> bool {
-        self.min_similarity.is_none()
+        self.min_similarity.is_none() && self.min_trust.is_none()
     }
 
     fn keep_similarity(&self, similarity: Option<f32>) -> bool {
@@ -36,15 +44,19 @@ impl ResultFilter {
         }
     }
 
-    /// Whether a memory result passes the filter.
+    /// Whether a memory result passes both filters.
     pub fn keep_memory(&self, r: &SearchResult) -> bool {
         self.keep_similarity(r.similarity)
+            && self
+                .min_trust
+                .is_none_or(|min| TrustTier::of(&r.memory) >= min)
     }
 
-    /// Whether a unified result passes the filter. A document has no
-    /// similarity, so an active filter drops it.
+    /// Whether a unified result passes both filters. A document has neither a
+    /// similarity nor a provenance tier, so any active filter drops it.
     pub fn keep_unified(&self, r: &UnifiedSearchResult) -> bool {
         self.keep_similarity(r.similarity)
+            && self.min_trust.is_none_or(|min| r.trust_tier >= Some(min))
     }
 
     /// Run `fetch(window)` and keep the rows `keep` accepts, up to `limit`.
@@ -112,9 +124,10 @@ impl Drop for TouchHold<'_> {
 mod tests {
     use super::*;
 
-    fn filter(sim: Option<f32>) -> ResultFilter {
+    fn filter(sim: Option<f32>, trust: Option<TrustTier>) -> ResultFilter {
         ResultFilter {
             min_similarity: sim,
+            min_trust: trust,
         }
     }
 
@@ -144,7 +157,7 @@ mod tests {
         // one, the next (48) holds three.
         let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
-        let out = filter(Some(0.5))
+        let out = filter(Some(0.5), None)
             .fetch(
                 &u,
                 2,
@@ -164,7 +177,7 @@ mod tests {
     fn it_stops_when_the_candidates_run_out() {
         let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
-        let out = filter(Some(0.5))
+        let out = filter(Some(0.5), None)
             .fetch(
                 &u,
                 5,
@@ -184,7 +197,7 @@ mod tests {
     fn the_window_is_capped() {
         let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
-        let out: Vec<usize> = filter(Some(0.5))
+        let out: Vec<usize> = filter(Some(0.5), None)
             .fetch(
                 &u,
                 10,

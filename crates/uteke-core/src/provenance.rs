@@ -31,6 +31,28 @@ pub enum TrustTier {
 }
 
 impl TrustTier {
+    /// The wire form: lowercase, the same string `serde` writes and the
+    /// `min_trust` parameter takes (`human`, `agent`, `external`, `untrusted`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrustTier::Human => "human",
+            TrustTier::Agent => "agent",
+            TrustTier::External => "external",
+            TrustTier::Untrusted => "untrusted",
+        }
+    }
+
+    /// Parse the lowercase wire form; anything else (including `Human`) is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "human" => Some(TrustTier::Human),
+            "agent" => Some(TrustTier::Agent),
+            "external" => Some(TrustTier::External),
+            "untrusted" => Some(TrustTier::Untrusted),
+            _ => None,
+        }
+    }
+
     /// Classify a memory by its provenance fields.
     ///
     /// Non-amplification starts here: a memory recorded from an external
