@@ -79,6 +79,13 @@ impl crate::Uteke {
         let mut visited: HashSet<String> = HashSet::new();
         let mut results: HashMap<String, (Memory, f32)> = HashMap::new();
 
+        // The seed hits keep their vector similarity; a memory reached over an
+        // edge has none (#1650).
+        let seed_similarity: HashMap<String, f32> = initial
+            .iter()
+            .filter_map(|sr| sr.similarity.map(|s| (sr.memory.id.clone(), s)))
+            .collect();
+
         for sr in &initial {
             visited.insert(sr.memory.id.clone());
             results.insert(sr.memory.id.clone(), (sr.memory.clone(), sr.score));
@@ -159,7 +166,11 @@ impl crate::Uteke {
 
         let mut all_results: Vec<SearchResult> = results
             .into_iter()
-            .map(|(_, (memory, score))| SearchResult::new(memory, score))
+            .map(|(id, (memory, score))| SearchResult {
+                similarity: seed_similarity.get(&id).copied(),
+                memory,
+                score,
+            })
             .collect();
         all_results.sort_by(|a, b| {
             b.score

@@ -594,4 +594,17 @@ mod tests {
             assert_eq!(count, u32::from(returned));
         }
     }
+
+    #[test]
+    fn recall_related_keeps_the_seed_similarity_so_strict_does_not_drop_it() {
+        let u = finance_store();
+        let found = u
+            .recall_related("quarterly revenue projections", 5, None, None, 0.0, 1)
+            .unwrap();
+        let seed = found
+            .iter()
+            .find(|r| r.memory.content == ON_TOPIC)
+            .expect("the seed hit is returned");
+        assert!(seed.similarity.unwrap() >= 0.5);
+    }
 }
