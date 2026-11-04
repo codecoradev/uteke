@@ -64,7 +64,8 @@ impl ResultFilter {
     /// With no active filter this is exactly `fetch(limit)`. Otherwise the
     /// window starts at three times the limit and grows fourfold while the
     /// strategy keeps returning a full window but too few rows pass, up to
-    /// [`MAX_WINDOW`] candidates.
+    /// [`MAX_WINDOW`] candidates. A pass that keeps nothing goes straight to
+    /// [`MAX_WINDOW`], so a query no hit satisfies costs two passes, not five.
     ///
     /// A recall counts what it returns (access count, hot boost). The widened
     /// passes return candidates that are then discarded, so they run with the
@@ -91,7 +92,15 @@ impl ResultFilter {
                 kept.truncate(limit);
                 break kept;
             }
-            window = window.saturating_mul(4).min(MAX_WINDOW);
+            // A first pass that keeps nothing says the query is off-topic for
+            // the filter: widen once, straight to the largest window, instead
+            // of re-running the strategy at 4x each time (#1671). The rows
+            // that finally pass are the same, the first `limit` of them.
+            window = if kept.is_empty() {
+                MAX_WINDOW
+            } else {
+                window.saturating_mul(4).min(MAX_WINDOW)
+            };
         };
         drop(_hold);
         let ids: Vec<&str> = kept.iter().filter_map(&id_of).collect();
@@ -211,5 +220,67 @@ mod tests {
             .unwrap();
         assert!(out.is_empty());
         assert_eq!(*asked.last().unwrap(), MAX_WINDOW);
+    }
+
+    #[test]
+    fn a_pass_that_keeps_nothing_widens_once_to_the_maximum() {
+        let u = crate::test_support::open_keyword();
+        let mut asked = Vec::new();
+        let out: Vec<usize> = filter(Some(0.5), None)
+            .fetch(
+                &u,
+                5,
+                |n| {
+                    asked.push(n);
+                    Ok((0..n).collect())
+                },
+                |_, _| false,
+                |_| None,
+            )
+            .unwrap();
+        assert!(out.is_empty());
+        assert_eq!(asked, vec![15, MAX_WINDOW], "two passes, not five");
+    }
+
+    #[test]
+    fn a_late_hit_is_still_found_after_an_empty_first_pass() {
+        // Nothing in the first 15 passes, one at rank 500: the jump to the
+        // maximum window finds it, like the fourfold steps did.
+        let u = crate::test_support::open_keyword();
+        let mut asked = Vec::new();
+        let out = filter(Some(0.5), None)
+            .fetch(
+                &u,
+                5,
+                |n| {
+                    asked.push(n);
+                    Ok((0..n).collect::<Vec<usize>>())
+                },
+                |_, r| *r == 500 || *r == 700,
+                |_| None,
+            )
+            .unwrap();
+        assert_eq!(out, vec![500, 700]);
+        assert_eq!(asked, vec![15, MAX_WINDOW]);
+    }
+
+    #[test]
+    fn a_partly_filled_first_pass_still_widens_in_steps() {
+        let u = crate::test_support::open_keyword();
+        let mut asked = Vec::new();
+        let out = filter(Some(0.5), None)
+            .fetch(
+                &u,
+                5,
+                |n| {
+                    asked.push(n);
+                    Ok((0..n).collect::<Vec<usize>>())
+                },
+                |_, r| r % 10 == 0,
+                |_| None,
+            )
+            .unwrap();
+        assert_eq!(out, vec![0, 10, 20, 30, 40]);
+        assert_eq!(asked, vec![15, 60]);
     }
 }

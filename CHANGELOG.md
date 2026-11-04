@@ -77,6 +77,12 @@
 
 ### Changed
 
+- **A recall filter no one satisfies costs two passes, not five (#1671)** - with `strict` or
+  `min_trust` active, a first pass that keeps no row now widens once, straight to the
+  largest window (1000 candidates), instead of re-running the strategy at 4x each time. The
+  rows returned and their order are unchanged. The capture worker's housekeeping once per
+  cycle and its shutdown check between sessions were already in place (#1663).
+
 - **Behaviour change for callers who pass `at`: history is the default (#1598)** -
   `at` on `POST /recall`, `POST /list`, `POST /room/recall`, MCP `uteke_recall` and
   `uteke_list`, and `uteke recall/list --at` now also returns the memories that were
