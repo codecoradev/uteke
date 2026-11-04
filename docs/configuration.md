@@ -250,7 +250,7 @@ A session longer than `chunk_chars` is extracted in several calls: its turns are
 into chunks on turn boundaries, and a single turn larger than a chunk is split at a
 newline or whitespace. The facts of every chunk are stored together as one batch, with
 the source `capture:<session>:<batch>`, and the batch counts as one attempt. A provider
-answer of HTTP 400 or 413, or one that names the context length, fails that session
+answer of HTTP 413, or a 4xx (a 400 too) that names the context length, fails that session
 alone (it is retried, then marked failed after `max_attempts`) and the sessions behind
 it still run; a 429 or a 5xx still stops the run. Keep `lease_minutes` above the time
 the longest session takes: every chunk is one request of up to two minutes.

@@ -1149,7 +1149,11 @@ mod tests {
     fn only_an_input_too_large_error_is_a_failure_of_one_session() {
         let err = |m: &str| Error::generic(format!("Extraction endpoint returned HTTP {m}"));
         assert!(crate::extraction::is_input_too_large(&err(
-            "400 Bad Request: x"
+            "400 Bad Request: this model's maximum context length is 8192 tokens"
+        )));
+        // a 400 about anything else (a wrong model name) stops the run
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "400 Bad Request: model not found"
         )));
         assert!(crate::extraction::is_input_too_large(&err(
             "413 Payload Too Large"
