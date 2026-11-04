@@ -30,6 +30,15 @@
   `uteke-serve` schedule print one line naming the extractor: offline, or the endpoint
   host (never the key).
 
+- **A tombstone no longer keeps a secret typed in its reason (#1669)** - the reason and
+  the 120-character preview of a `forget --reason wrong` tombstone pass the privacy
+  filter before they are stored (masked in `redact` and `strict` alike; the forget is not
+  refused). New `[privacy] tombstone_preview = false` keeps the hash only: no preview, the
+  value is still refused, and `export --full` carries nothing of the text. The docs now
+  list what a forget as wrong leaves behind. The tombstones are unreleased (develop only,
+  after v0.22.1), so there is no migration; rows stored before this change keep what they
+  hold.
+
 ### Changed
 
 - **Behaviour change for callers who pass `at`: history is the default (#1598)** -

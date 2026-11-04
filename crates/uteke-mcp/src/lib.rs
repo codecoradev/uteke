@@ -4877,6 +4877,7 @@ mod privacy_mcp_tests {
         u.set_privacy_config(PrivacyConfig {
             mode,
             allowlist: Vec::new(),
+            ..Default::default()
         });
         u
     }

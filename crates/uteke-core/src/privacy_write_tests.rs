@@ -23,6 +23,7 @@ fn store(mode: PrivacyMode) -> Uteke {
     u.set_privacy_config(PrivacyConfig {
         mode,
         allowlist: Vec::new(),
+        ..Default::default()
     });
     u
 }
@@ -157,6 +158,7 @@ fn the_allowlist_keeps_a_matching_value() {
     u.set_privacy_config(PrivacyConfig {
         mode: PrivacyMode::Redact,
         allowlist: compile_allowlist(&["^ghp_aB3".to_string()]).unwrap(),
+        ..Default::default()
     });
     let o = u
         .remember_typed_detailed(&format!("key {}", gh()), &[], None, None, "fact")

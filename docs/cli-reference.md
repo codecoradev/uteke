@@ -232,6 +232,16 @@ MCP a tool error starting with `rejected_value:`. The tombstone survives `prune`
 and is carried by `export --full`. A paraphrase is not caught. Any other reason
 (`--reason outdated`) is only kept on the forgotten memory.
 
+**What survives a forget as wrong (#1669).** The tombstone keeps the hash, the id of
+the memory, the date, the reason as you typed it and a preview (the first 120
+characters of the text), and all of it stays after the memory is pruned and travels in
+`export --full`. The reason and the preview pass the privacy filter first, so a secret
+in `wrong: the token is ...` is stored masked (also in `strict` mode, where the forget
+is never refused for it; with `[privacy] mode = "off"` they are kept as given). To keep
+no text at all, set `tombstone_preview = false` under `[privacy]`: new tombstones then
+hold the hash only (an empty preview), and the value is still refused. Tombstones
+recorded before the setting keep their preview; `uteke tombstone remove` drops one.
+
 ## uteke capture / extract-queue
 
 Queue conversation turns now, turn them into memories later (#1466). Capture makes
