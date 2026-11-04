@@ -1133,7 +1133,34 @@ impl Uteke {
             }
         });
 
-        Ok(Self {
+        Ok(Self::assemble(
+            store,
+            index,
+            embedder,
+            embedder_backend,
+            embedding_settings,
+            tier_config,
+            recall_config,
+            graph_rerank_config,
+            embed_cache_path,
+        ))
+    }
+
+    /// The one place the struct is built, so the read-write and read-only
+    /// open paths cannot drift apart (#1667).
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        store: Store,
+        index: VectorIndex,
+        embedder: Option<Box<dyn Embedder>>,
+        embedder_backend: String,
+        embedding_settings: EmbeddingSettings,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+        graph_rerank_config: graph_rerank::GraphRerankConfig,
+        embed_cache_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
             store,
             index: RwLock::new(index),
             embedder: Mutex::new(embedder.map(std::sync::Arc::from)),
@@ -1155,7 +1182,36 @@ impl Uteke {
             lifecycle_config: LifecycleConfig::default(),
             capture_settings: capture::CaptureSettings::default(),
             embed_cache_path,
-        })
+        }
+    }
+
+    /// Open an existing store **read-only** for a reader that never writes
+    /// (the viewer, #1667): the database is opened `SQLITE_OPEN_READ_ONLY`
+    /// with no migration, and no embedder, vector-index file or embedding cache
+    /// is touched, so nothing on disk can change. Keyword (FTS) reads and plain
+    /// listing work; semantic recall does not (the index is empty).
+    ///
+    /// Fails when the store is missing or its schema is not the one this build
+    /// expects (run any normal `uteke` command once to migrate it).
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let db_path = path.as_ref();
+        let db_str = if db_path.is_dir() {
+            db_path.join("uteke.db").to_string_lossy().to_string()
+        } else {
+            db_path.to_string_lossy().to_string()
+        };
+        let store = Store::open_read_only(&db_str)?;
+        Ok(Self::assemble(
+            store,
+            VectorIndex::new(DEFAULT_EMBEDDING_DIMS)?,
+            None,
+            String::new(),
+            EmbeddingSettings::default(),
+            TierConfig::default(),
+            RecallConfig::default(),
+            graph_rerank::GraphRerankConfig::default(),
+            None,
+        ))
     }
 
     /// Override the salience/recency dual-axis boost config (#352).
@@ -3489,6 +3545,37 @@ mod tests {
         resolve_db_path(&fresh).unwrap();
         let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    /// #1667: the read-only open reads the rows and leaves the directory as it
+    /// was: no index file, no embedding cache, no migration.
+    #[test]
+    fn open_read_only_reads_and_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let u = Uteke::open_with_backend(dir.path(), None).unwrap();
+            u.stats(None).unwrap();
+        }
+        let snapshot = |d: &Path| {
+            let mut v: Vec<_> = std::fs::read_dir(d)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+                .filter(|n| !n.ends_with("-wal") && !n.ends_with("-shm"))
+                .collect();
+            v.sort();
+            v
+        };
+        let before = snapshot(dir.path());
+        let db_bytes = std::fs::read(dir.path().join("uteke.db")).unwrap();
+        let u = Uteke::open_read_only(dir.path()).expect("current store opens");
+        assert!(u.stats(None).is_ok());
+        drop(u);
+        assert_eq!(snapshot(dir.path()), before);
+        assert_eq!(
+            std::fs::read(dir.path().join("uteke.db")).unwrap(),
+            db_bytes
+        );
+        assert!(Uteke::open_read_only(dir.path().join("missing")).is_err());
     }
 
     #[test]

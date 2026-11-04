@@ -40,6 +40,7 @@ order, to every request:
 |---|---|
 | `Host` is not `127.0.0.1:<port>` or `localhost:<port>` (the same host guard the API server uses, plus a port check) | 403 |
 | No per-launch token, or the wrong one (cookie, `X-Uteke-Viewer-Token`, or bearer; the launch URL carries it once, on `/` only) | 401 |
+| Non-loopback bind only: no server auth token as `Authorization: Bearer` | 401 |
 | Method other than `GET` | 405 |
 | Path other than the page, the session paths and the read routes | 404 |
 
@@ -56,9 +57,22 @@ order, to every request:
 - **Stored text is data.** The page puts every stored string into the DOM with
   `textContent`; it never parses memory content as HTML. A memory that contains
   `<script>` shows those characters.
+- **The store is opened read-only.** The database is opened `SQLITE_OPEN_READ_ONLY`
+  with no WAL pragma and no schema migration, and no index or cache file is touched,
+  so the page cannot change the store even if the routing were wrong, and it never
+  contends with a running `uteke-serve`. If the store was made by an older version
+  the viewer stops with a message: run any normal `uteke` command once (for example
+  `uteke stats`) to bring it up to date, then start it again.
 - **Binding.** The default is `127.0.0.1`. `--host` with a non-loopback address is
   refused unless the server auth token (`UTEKE_AUTH_TOKEN` or `--auth-token`) is
-  set; the viewer token is still required on top.
+  set, and then **every** request must carry that token as `Authorization: Bearer
+  <token>` in addition to the launch token (which, on such a bind, travels only in
+  the cookie, `X-Uteke-Viewer-Token` or the launch URL). A browser cannot add that
+  header by itself, so put a reverse proxy in front that does. The viewer speaks
+  **plain HTTP**: the launch URL and the cookie are not encrypted, so terminate TLS
+  in that proxy; the viewer prints a one-line warning when bound this way. The
+  launch URL it prints uses `127.0.0.1` (or `[::1]`) when you bind a wildcard
+  address, since `0.0.0.0` cannot be opened; replace the host with the proxy's.
 - The token is random per launch (two v4 UUIDs, 64 hex digits), compared in constant
   time, and printed only on stdout, never logged. After the first load the page
   moves it to an `HttpOnly; SameSite=Strict` cookie and removes it from the address

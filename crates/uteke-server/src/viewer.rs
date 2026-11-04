@@ -5,6 +5,9 @@
 //!
 //! - every request needs the per-launch token (cookie, `X-Uteke-Viewer-Token`
 //!   or bearer; the launch URL carries it once as `?token=` on `/`), else 401;
+//!   on a non-loopback bind the bearer slot is the server auth token instead,
+//!   also required on every request;
+//! - the store is opened read-only (no migration, no writes);
 //! - the `Host` header goes through the same [`HostGuard`] the API uses, plus a
 //!   port check, so a DNS-rebinding page gets 403;
 //! - only `GET` is served (anything else is 405), and a `GET` is handed to the
@@ -52,6 +55,9 @@ const READ_ROUTES: &[&str] = &[
 pub struct Gate {
     token_hash: [u8; 32],
     port: u16,
+    /// The server auth token, required on every request as `Authorization:
+    /// Bearer` in addition to the launch token. Set for a non-loopback bind only.
+    auth_hash: Option<[u8; 32]>,
 }
 
 impl Gate {
@@ -59,7 +65,27 @@ impl Gate {
         Self {
             token_hash: Sha256::digest(token.as_bytes()).into(),
             port,
+            auth_hash: None,
         }
+    }
+
+    /// Also require the server auth token (bearer) on every request.
+    pub fn with_auth_token(mut self, auth_token: &str) -> Self {
+        self.auth_hash = Some(Sha256::digest(auth_token.as_bytes()).into());
+        self
+    }
+
+    /// Whether the request carries the server auth token as a bearer. Always
+    /// true when none is required.
+    fn auth_ok(&self, req: &Request) -> bool {
+        let Some(want) = &self.auth_hash else {
+            return true;
+        };
+        let given = bearer(req).map(|t| Sha256::digest(t.as_bytes()));
+        given.is_some_and(|g| {
+            let g: [u8; 32] = g.into();
+            context::constant_time_eq_digest(&g, want)
+        })
     }
 
     fn accepts(&self, token: &str) -> bool {
@@ -84,8 +110,26 @@ fn header_value(req: &Request, name: &str) -> Option<String> {
         .map(|h| h.value.as_str().to_string())
 }
 
-/// The token a request presents and whether it came from the URL query.
-fn presented_token(req: &Request, route_path: &str) -> Option<(String, bool)> {
+/// The token of an `Authorization: Bearer <token>` header.
+fn bearer(req: &Request) -> Option<String> {
+    let v = header_value(req, "Authorization")?;
+    let mut parts = v.split_whitespace();
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(scheme), Some(t), None) if scheme.eq_ignore_ascii_case("Bearer") => {
+            Some(t.to_string())
+        }
+        _ => None,
+    }
+}
+
+/// The launch token a request presents and whether it came from the URL query.
+/// `bearer_is_launch` is false when the bearer slot carries the server auth
+/// token instead (non-loopback bind).
+fn presented_token(
+    req: &Request,
+    route_path: &str,
+    bearer_is_launch: bool,
+) -> Option<(String, bool)> {
     // Only the page itself may take the token from the URL: the launch link. It is
     // read first, so a stale cookie from an earlier launch (cookies ignore
     // ports) cannot shadow the fresh token.
@@ -101,13 +145,8 @@ fn presented_token(req: &Request, route_path: &str) -> Option<(String, bool)> {
     if let Some(t) = header_value(req, TOKEN_HEADER) {
         return Some((t.trim().to_string(), false));
     }
-    if let Some(v) = header_value(req, "Authorization") {
-        let mut parts = v.split_whitespace();
-        if let (Some(scheme), Some(t), None) = (parts.next(), parts.next(), parts.next())
-            && scheme.eq_ignore_ascii_case("Bearer")
-        {
-            return Some((t.to_string(), false));
-        }
+    if bearer_is_launch && let Some(t) = bearer(req) {
+        return Some((t, false));
     }
     if let Some(cookies) = header_value(req, "Cookie") {
         for c in cookies.split(';') {
@@ -186,11 +225,15 @@ pub fn route(
         return error(403, "Host not allowed");
     }
 
-    let Some((token, from_query)) = presented_token(req, &route_path) else {
+    let Some((token, from_query)) = presented_token(req, &route_path, gate.auth_hash.is_none())
+    else {
         return error(401, "Viewer token required");
     };
     if !gate.accepts(&token) {
         return error(401, "Invalid viewer token");
+    }
+    if !gate.auth_ok(req) {
+        return error(401, "Server auth token required (Authorization: Bearer)");
     }
 
     if *req.method() != Method::Get {
@@ -307,16 +350,37 @@ pub struct Options {
     pub allowed_hosts: Vec<String>,
 }
 
+/// Why a bind is refused, if it is: a non-loopback host needs the server auth token.
+fn check_bind(host: &str, auth_token: Option<&str>) -> Result<(), String> {
+    if !context::is_loopback_host(host) && auth_token.is_none_or(str::is_empty) {
+        return Err(format!(
+            "Refusing to bind the viewer to non-loopback address {host}: set the server auth \
+             token (--auth-token or UTEKE_AUTH_TOKEN) first."
+        ));
+    }
+    Ok(())
+}
+
+/// The host to print in the launch URL: the bind address, except that a
+/// wildcard (`0.0.0.0`, `::`), which no browser can open, becomes loopback, and
+/// an IPv6 literal gets its brackets.
+fn launch_host(bind: &str) -> String {
+    let bare = bind.trim().trim_start_matches('[').trim_end_matches(']');
+    match bare.parse::<std::net::IpAddr>() {
+        Ok(ip) if ip.is_unspecified() && ip.is_ipv6() => "[::1]".to_string(),
+        Ok(ip) if ip.is_unspecified() => "127.0.0.1".to_string(),
+        Ok(ip) if ip.is_ipv6() => format!("[{bare}]"),
+        _ => bare.to_string(),
+    }
+}
+
 /// Run the viewer until interrupted. Returns the process exit code.
 pub fn run(opts: Options) -> i32 {
-    if !context::is_loopback_host(&opts.host) && opts.auth_token.is_none() {
-        eprintln!(
-            "Refusing to bind the viewer to non-loopback address {}: set the server auth token \
-             (--auth-token or UTEKE_AUTH_TOKEN) first.",
-            opts.host
-        );
+    if let Err(msg) = check_bind(&opts.host, opts.auth_token.as_deref()) {
+        eprintln!("{msg}");
         return 1;
     }
+    let remote = !context::is_loopback_host(&opts.host);
     let home = match uteke_core::uteke_home() {
         Ok(h) => h,
         Err(e) => {
@@ -325,11 +389,13 @@ pub fn run(opts: Options) -> i32 {
         }
     };
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
-    // No embedder: the viewer only reads rows, so it skips the model load.
-    let uteke = match Uteke::open_with_backend(&db_path, None) {
+    // Read-only and without an embedder: the viewer only reads rows, so it
+    // never writes the store, migrates it, or loads the model (#1667). An older
+    // schema is refused with a message instead of being upgraded from here.
+    let uteke = match Uteke::open_read_only(&db_path) {
         Ok(u) => Mutex::new(u),
         Err(e) => {
-            error!("Failed to open store: {e}");
+            eprintln!("Cannot open the store for viewing: {e}");
             return 1;
         }
     };
@@ -346,7 +412,10 @@ pub fn run(opts: Options) -> i32 {
         .map(|a| a.port())
         .unwrap_or(opts.port);
     let token = new_token();
-    let gate = Gate::new(&token, port);
+    let mut gate = Gate::new(&token, port);
+    if remote && let Some(t) = opts.auth_token.as_deref() {
+        gate = gate.with_auth_token(t);
+    }
     let ctx = ReqCtx {
         auth_token_hash: None,
         read_only_token_hash: None,
@@ -359,7 +428,15 @@ pub fn run(opts: Options) -> i32 {
     };
 
     // Printed on stdout so `uteke view` can relay it; never logged.
-    println!("http://{}:{port}/?token={token}", opts.host);
+    println!("http://{}:{port}/?token={token}", launch_host(&opts.host));
+    if remote {
+        eprintln!(
+            "Warning: the viewer speaks plain HTTP on {}:{port}. Every request also needs the \
+             server auth token as `Authorization: Bearer`; terminate TLS in front (a reverse \
+             proxy that adds the header) before using it beyond a trusted network.",
+            opts.host
+        );
+    }
     info!("Viewer listening on {}:{port} (read-only)", opts.host);
 
     ctrlc::set_handler(|| std::process::exit(0)).ok();
@@ -737,5 +814,94 @@ mod tests {
         let a = new_token();
         assert_eq!(a.len(), 64);
         assert_ne!(a, new_token());
+    }
+
+    // --- #1667: bind guard and read-only store ---
+
+    fn call_with_auth(auth: Option<&str>, token: Option<&str>) -> u16 {
+        let (uteke, mut ctx, _) = app();
+        ctx.host_guard = HostGuard::new("0.0.0.0", &[]);
+        let gate = Gate::new(TOKEN, PORT).with_auth_token("srv-secret");
+        let mut t = TestRequest::new()
+            .with_method(Method::Get)
+            .with_path("/health")
+            .with_header(hdr("Host", "10.0.0.5:8768"));
+        if let Some(tok) = token {
+            t = t.with_header(hdr(TOKEN_HEADER, tok));
+        }
+        if let Some(a) = auth {
+            t = t.with_header(hdr("Authorization", &format!("Bearer {a}")));
+        }
+        let mut req = t.into();
+        route(&uteke, &ctx, &gate, &mut req).status_code().0
+    }
+
+    #[test]
+    fn a_non_loopback_bind_without_the_auth_token_is_refused() {
+        assert!(check_bind("0.0.0.0", None).is_err());
+        assert!(check_bind("192.168.1.9", Some("")).is_err());
+        assert!(check_bind("0.0.0.0", Some("x")).is_ok());
+        assert!(check_bind("127.0.0.1", None).is_ok());
+        let code = run(Options {
+            host: "0.0.0.0".to_string(),
+            port: 0,
+            auth_token: None,
+            allowed_hosts: Vec::new(),
+        });
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn with_the_auth_token_configured_every_request_needs_it() {
+        assert_eq!(call_with_auth(Some("srv-secret"), Some(TOKEN)), 200);
+        // Launch token alone is not enough.
+        assert_eq!(call_with_auth(None, Some(TOKEN)), 401);
+        assert_eq!(call_with_auth(Some("wrong"), Some(TOKEN)), 401);
+        // The auth token alone is not enough either, and is not a launch token.
+        assert_eq!(call_with_auth(Some("srv-secret"), None), 401);
+    }
+
+    #[test]
+    fn the_launch_url_host_is_one_a_browser_can_open() {
+        assert_eq!(launch_host("0.0.0.0"), "127.0.0.1");
+        assert_eq!(launch_host("::"), "[::1]");
+        assert_eq!(launch_host("[::]"), "[::1]");
+        assert_eq!(launch_host("192.168.1.9"), "192.168.1.9");
+        assert_eq!(launch_host("2001:db8::1"), "[2001:db8::1]");
+        assert_eq!(launch_host("viewer.lan"), "viewer.lan");
+        assert_eq!(launch_host("127.0.0.1"), "127.0.0.1");
+    }
+
+    #[test]
+    fn the_viewer_handle_cannot_write() {
+        let dir = std::env::temp_dir().join(format!("uteke-viewer-{}", uuid::Uuid::new_v4()));
+        drop(Uteke::open_with_backend(&dir, None).unwrap());
+        let ro = Uteke::open_read_only(&dir).expect("current store opens");
+        assert!(ro.stats(None).is_ok());
+        // A write through the handle fails: pinning needs a write transaction.
+        assert!(ro.store_for_tests().pin("nope").is_err());
+        // Every route the page reads still answers on the read-only handle.
+        let (_, ctx, gate) = app();
+        let uteke = Mutex::new(ro);
+        for path in [
+            "/health",
+            "/namespaces",
+            "/stats",
+            "/room/list",
+            "/recent",
+            "/memory?id=x",
+            "/viewer/sessions",
+        ] {
+            let mut req = TestRequest::new()
+                .with_method(Method::Get)
+                .with_path(path)
+                .with_header(hdr("Host", "127.0.0.1:8768"))
+                .with_header(hdr(TOKEN_HEADER, TOKEN))
+                .into();
+            let status = route(&uteke, &ctx, &gate, &mut req).status_code().0;
+            assert!(matches!(status, 200 | 400 | 404), "{path}: {status}");
+        }
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
