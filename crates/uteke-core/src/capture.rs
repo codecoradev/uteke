@@ -16,6 +16,14 @@ use serde::{Deserialize, Serialize};
 /// owner decision 2026-11-01). Large tool output is noise for extraction.
 pub const TOOL_SUMMARY_CHARS: usize = 2000;
 
+/// Default most characters one extractor call receives (#1664): about 6000
+/// tokens, far below the context window of any model used for extraction.
+pub const DEFAULT_CHUNK_CHARS: usize = 24_000;
+
+/// Smallest chunk accepted from the settings, so a role label and a few words
+/// always fit.
+pub const MIN_CHUNK_CHARS: usize = 64;
+
 /// Longest accepted session id.
 const MAX_SESSION_ID: usize = 200;
 
@@ -37,6 +45,21 @@ pub struct CaptureSettings {
     /// Minutes after which a session left `extracting` (a crashed run) is
     /// handed back to the queue.
     pub lease_minutes: u64,
+    /// Most characters one extractor call receives (#1664). A longer session
+    /// is extracted in several calls and its facts stored as one batch. 0 means
+    /// [`DEFAULT_CHUNK_CHARS`].
+    pub chunk_chars: usize,
+}
+
+impl CaptureSettings {
+    /// The effective chunk size: the default for 0, never below
+    /// [`MIN_CHUNK_CHARS`].
+    pub fn chunk_budget(&self) -> usize {
+        match self.chunk_chars {
+            0 => DEFAULT_CHUNK_CHARS,
+            n => n.max(MIN_CHUNK_CHARS),
+        }
+    }
 }
 
 impl Default for CaptureSettings {
@@ -48,6 +71,7 @@ impl Default for CaptureSettings {
             retention_days: 30,
             max_attempts: 3,
             lease_minutes: 15,
+            chunk_chars: DEFAULT_CHUNK_CHARS,
         }
     }
 }
@@ -225,6 +249,85 @@ fn turn_hash(session_id: &str, role: Role, content: &str) -> String {
 
 fn ago(minutes: i64) -> String {
     (chrono::Utc::now() - chrono::Duration::minutes(minutes)).to_rfc3339()
+}
+
+/// Pieces of `text`, none longer than `max` characters, cut at a newline when
+/// there is one in the second half of the window, else at whitespace, else
+/// at a character boundary.
+fn split_on_boundary(text: &str, max: usize) -> Vec<&str> {
+    let max = max.max(1);
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let Some((window_end, _)) = rest.char_indices().nth(max) else {
+            out.push(rest);
+            break;
+        };
+        let window = &rest[..window_end];
+        let after = |i: usize| i + window[i..].chars().next().map_or(0, char::len_utf8);
+        let cut = window
+            .rfind('\n')
+            .map(after)
+            .or_else(|| window.rfind(char::is_whitespace).map(after))
+            .filter(|&i| i >= window_end / 2)
+            .unwrap_or(window_end);
+        out.push(&rest[..cut]);
+        rest = &rest[cut..];
+    }
+    out
+}
+
+/// The text of one session as extractor inputs (#1664): each turn is a
+/// `role: content` line, lines are packed in order into chunks of at most
+/// `budget` characters, and a turn longer than that is split on a safe
+/// boundary, each piece with its own role label. A session that fits in the
+/// budget is one chunk, the same text as before.
+fn chunk_session(turns: &[(String, String, Option<String>)], budget: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut cur = String::new();
+    let mut cur_len = 0usize;
+    for (role, content, _) in turns {
+        let label = format!("{role}: ");
+        let label_len = label.chars().count();
+        let whole = content.chars().count() + label_len <= budget;
+        let pieces: Vec<&str> = if whole {
+            vec![content.as_str()]
+        } else {
+            split_on_boundary(content, budget.saturating_sub(label_len))
+        };
+        for piece in pieces {
+            if piece.trim().is_empty() {
+                continue;
+            }
+            let n = label_len + piece.chars().count();
+            let sep = usize::from(cur_len > 0);
+            if cur_len > 0 && cur_len + sep + n > budget {
+                chunks.push(std::mem::take(&mut cur));
+                cur_len = 0;
+            }
+            if cur_len > 0 {
+                cur.push('\n');
+                cur_len += 1;
+            }
+            cur.push_str(&label);
+            cur.push_str(piece);
+            cur_len += n;
+        }
+    }
+    if cur_len > 0 {
+        chunks.push(cur);
+    }
+    chunks
+}
+
+/// Why one batch's extraction stopped.
+enum ExtractFailure {
+    /// The extractor is unavailable (rate limit, provider down): the run
+    /// stops, the sessions behind would fail the same way.
+    Stop(String),
+    /// The provider refused this session's input as too large: this session
+    /// alone failed, the sessions behind it still run.
+    Session(String),
 }
 
 impl crate::Uteke {
@@ -500,15 +603,28 @@ impl crate::Uteke {
         }
 
         {
-            let text = turns
-                .iter()
-                .map(|(role, content, _)| format!("{role}: {content}"))
-                .collect::<Vec<_>>()
-                .join("\n");
             // The namespace the session was captured in (its first turn).
             let namespace = turns.first().and_then(|t| t.2.clone());
-            let outcome = match facts.extract(&text) {
-                Ok(found) => {
+            // Every chunk is extracted before anything is stored, so a failed
+            // chunk leaves nothing behind and the batch stays one unit.
+            let mut found: Vec<ExtractedFact> = Vec::new();
+            let mut failure: Option<ExtractFailure> = None;
+            for chunk in chunk_session(&turns, settings.chunk_budget()) {
+                match facts.extract(&chunk) {
+                    Ok(f) => found.extend(f),
+                    Err(e) => {
+                        failure = Some(if crate::extraction::is_input_too_large(&e) {
+                            ExtractFailure::Session(e.to_string())
+                        } else {
+                            ExtractFailure::Stop(e.to_string())
+                        });
+                        break;
+                    }
+                }
+            }
+            let outcome = match failure {
+                Some(f) => Err(f),
+                None => {
                     let mut stored = Vec::new();
                     let mut failure = None;
                     for fact in &found {
@@ -547,13 +663,12 @@ impl crate::Uteke {
                                     tracing::warn!("Failed to withdraw captured fact {id}: {e}");
                                 }
                             }
-                            Err(why)
+                            Err(ExtractFailure::Stop(why))
                         }
                     }
                 }
-                Err(e) => Err(e.to_string()),
             };
-            if let Err(why) = outcome {
+            if let Err(failure) = outcome {
                 // Per turn: a turn that joined this batch later has fewer
                 // attempts and goes back to pending.
                 conn.execute(
@@ -579,7 +694,13 @@ impl crate::Uteke {
                 if failed > 0 {
                     report.sessions_failed += 1;
                 }
-                return Ok(Err(why));
+                return Ok(match failure {
+                    ExtractFailure::Stop(why) => Err(why),
+                    ExtractFailure::Session(why) => {
+                        tracing::warn!("Capture session {session} refused by the provider: {why}");
+                        Ok(())
+                    }
+                });
             }
         }
         conn.execute(
@@ -892,6 +1013,223 @@ mod tests {
             "SELECT COUNT(*) FROM memories WHERE source LIKE 'capture:%' AND deprecated = 0",
         );
         assert_eq!(live, 2, "each fact once");
+    }
+
+    fn turn(role: &str, content: &str) -> (String, String, Option<String>) {
+        (role.to_string(), content.to_string(), None)
+    }
+
+    #[test]
+    fn a_session_is_packed_into_chunks_on_turn_boundaries() {
+        let turns = vec![
+            turn("user", &"a".repeat(30)),
+            turn("assistant", &"b".repeat(30)),
+            turn("user", &"c".repeat(30)),
+        ];
+        // one chunk when it fits: the same text as before chunking
+        let one = chunk_session(&turns, 1000);
+        assert_eq!(one.len(), 1);
+        assert!(one[0].starts_with("user: aaa") && one[0].contains("\nassistant: bbb"));
+        // else whole turns, none longer than the budget
+        let many = chunk_session(&turns, 70);
+        assert_eq!(many.len(), 3);
+        assert!(many.iter().all(|c| c.chars().count() <= 70), "{many:?}");
+        assert!(many[1].starts_with("assistant: "));
+    }
+
+    #[test]
+    fn a_turn_larger_than_the_budget_is_split_on_a_safe_boundary() {
+        let words = "alpha beta gamma delta epsilon ".repeat(20);
+        let chunks = chunk_session(&[turn("user", &words)], 80);
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|c| c.chars().count() <= 80), "{chunks:?}");
+        assert!(chunks.iter().all(|c| c.starts_with("user: ")));
+        // cut at whitespace: no word is broken, nothing is lost
+        let words_back: Vec<&str> = chunks
+            .iter()
+            .flat_map(|c| c.strip_prefix("user: ").unwrap().split_whitespace())
+            .collect();
+        assert_eq!(words_back, words.split_whitespace().collect::<Vec<_>>());
+        // no whitespace and multibyte text: cut on a character boundary
+        let long = "é".repeat(500);
+        let chunks = chunk_session(&[turn("tool", &long)], 100);
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|c| c.chars().count() <= 100));
+        let total: usize = chunks.iter().map(|c| c.matches('é').count()).sum();
+        assert_eq!(total, 500);
+    }
+
+    #[test]
+    fn a_session_larger_than_the_budget_is_extracted_in_several_calls() {
+        let u = open_keyword();
+        for i in 0..6 {
+            u.capture(
+                "big",
+                Role::User,
+                &format!("the service number {i} listens on port {}", 8000 + i),
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        let s = CaptureSettings {
+            chunk_chars: 100,
+            ..settings()
+        };
+        let fake = Fake::new(0);
+        let r = u.run_capture_extraction(&fake, 5, &s).unwrap();
+        assert!(fake.calls() > 1, "{} call(s)", fake.calls());
+        assert!(
+            fake.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|c| c.chars().count() <= 100),
+            "no call over the budget"
+        );
+        assert_eq!((r.sessions_done, r.facts_stored, r.stopped), (1, 6, None));
+        // one batch: every fact carries the same source
+        let sources: i64 = rows(
+            &u,
+            "SELECT COUNT(DISTINCT source) FROM memories WHERE source LIKE 'capture:big:%'",
+        );
+        assert_eq!(sources, 1);
+        assert_eq!(
+            rows(
+                &u,
+                "SELECT COUNT(*) FROM memories WHERE source LIKE 'capture:big:%'"
+            ),
+            6,
+            "each fact once"
+        );
+        let st = u.capture_status().unwrap();
+        assert_eq!((st.pending, st.done), (0, 6));
+    }
+
+    /// Refuses any text mentioning `huge` the way a provider refuses a prompt
+    /// over its context window.
+    struct RefusesHuge;
+
+    impl FactSource for RefusesHuge {
+        fn extract(&self, text: &str) -> Result<Vec<ExtractedFact>, Error> {
+            if text.contains("huge") {
+                return Err(Error::generic(
+                    "Extraction endpoint returned HTTP 400 Bad Request: maximum context length exceeded",
+                ));
+            }
+            Ok(vec![ExtractedFact::flat(format!("fact: {text}"))])
+        }
+    }
+
+    #[test]
+    fn a_session_the_provider_refuses_fails_alone_and_the_ones_behind_it_run() {
+        let u = open_keyword();
+        u.capture("a", Role::User, "huge conversation", None, None)
+            .unwrap();
+        u.capture("b", Role::User, "the cache is redis", None, None)
+            .unwrap();
+        let s = CaptureSettings {
+            max_attempts: 2,
+            ..settings()
+        };
+        let r = u.run_capture_extraction(&RefusesHuge, 5, &s).unwrap();
+        assert_eq!(r.stopped, None, "the run goes on");
+        assert_eq!((r.sessions_done, r.sessions_failed), (1, 0));
+        assert_eq!(u.capture_status().unwrap().pending, 1, "a is retried");
+        let r = u.run_capture_extraction(&RefusesHuge, 5, &s).unwrap();
+        assert_eq!(
+            (r.stopped, r.sessions_failed, r.sessions_done),
+            (None, 1, 0)
+        );
+        let st = u.capture_status().unwrap();
+        assert_eq!((st.failed, st.done, st.pending), (1, 1, 0));
+    }
+
+    #[test]
+    fn only_an_input_too_large_error_is_a_failure_of_one_session() {
+        let err = |m: &str| Error::generic(format!("Extraction endpoint returned HTTP {m}"));
+        assert!(crate::extraction::is_input_too_large(&err(
+            "400 Bad Request: this model's maximum context length is 8192 tokens"
+        )));
+        // a 400 about anything else (a wrong model name) stops the run
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "400 Bad Request: model not found"
+        )));
+        assert!(crate::extraction::is_input_too_large(&err(
+            "413 Payload Too Large"
+        )));
+        assert!(crate::extraction::is_input_too_large(&err(
+            "422 Unprocessable: maximum context length is 8192 tokens"
+        )));
+        // the status decides: a 5xx or 429 body never makes it "too large"
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "503 Service Unavailable: upstream request took too long"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "429 Too Many Requests: context length quota"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&Error::generic(
+            "Extraction request failed: operation too long, timed out"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "404 Not Found: model"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "429 Too Many Requests"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "401 Unauthorized"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "503 Service Unavailable"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err("4000 odd")));
+    }
+
+    #[test]
+    fn a_crash_halfway_through_chunk_stores_is_rerun_whole_without_duplicates() {
+        let u = open_keyword();
+        for i in 0..4 {
+            u.capture(
+                "s",
+                Role::User,
+                &format!("the shard {i} lives on host h{i}"),
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        let s = CaptureSettings {
+            chunk_chars: 70,
+            ..settings()
+        };
+        let fake = Fake::new(0);
+        u.run_capture_extraction(&fake, 5, &s).unwrap();
+        assert!(fake.calls() > 1);
+        // crash after two of the four facts were stored: the other two never
+        // were, and the batch is still `extracting` with an expired lease
+        u.graph_store()
+            .execute(
+                "DELETE FROM memories WHERE content LIKE '%shard 2%' OR content LIKE '%shard 3%'",
+                [],
+            )
+            .unwrap();
+        u.graph_store()
+            .execute(
+                "UPDATE observations SET status = 'extracting', claimed_at = ?1, finished_at = NULL",
+                [ago(60)],
+            )
+            .unwrap();
+        let r = u.run_capture_extraction(&fake, 5, &s).unwrap();
+        assert_eq!((r.reclaimed, r.sessions_done, r.facts_stored), (1, 1, 4));
+        assert_eq!(
+            rows(
+                &u,
+                "SELECT COUNT(*) FROM memories WHERE source LIKE 'capture:%' AND deprecated = 0"
+            ),
+            4,
+            "each fact once"
+        );
     }
 
     #[test]
