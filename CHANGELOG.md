@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Behaviour change for callers who pass `at`: history is the default (#1598)** -
+  `at` on `POST /recall`, `POST /list`, `POST /room/recall`, MCP `uteke_recall` and
+  `uteke_list`, and `uteke recall/list --at` now also returns the memories that were
+  deprecated (forgotten, superseded, replaced by a contradiction) **after** `at`:
+  `created_at <= at < deprecated_at` and `valid_from <= at < valid_until`. This is
+  the meaning #1086 documented but never delivered, since deprecation removes a
+  memory's vector from the index. Agreed in Amendment 3 of the core contract
+  (uteke-cloud#458); there is no `history` wire parameter. An `at` taken before a
+  correction now returns more rows than before. Room recall with `at` follows the
+  same rule (it used to look only at live room memories). `uteke recall/list --at T
+  --history` (0.22.x) is still accepted as a deprecated no-op alias. Core:
+  `Uteke::recall_at_time` and `list_at_time` are history queries; the
+  `recall_at_time_history` and `list_at_time_with` methods are gone, new
+  `recall_room_at_time` and `recall_room_semantic_at_time`. Docs:
+  `docs/time-travel.md`.
+
 ### Added
 
 - **Validity in columns on HTTP and MCP (#1598)** - `POST /remember`, `PUT /memory`
@@ -47,10 +65,8 @@
   `RememberRequest::validity`. Deprecation now keeps a caller end that is
   already in the past instead of overwriting it with the deprecation time;
   rows without a caller end deprecate exactly as before. Restore still clears
-  `valid_until`. Wire unchanged: `POST /remember` keeps storing
-  `valid_from`/`valid_until` as metadata (the columns wait on the contract
-  issue uteke-cloud#458), so with a running server `remember` with these flags
-  uses the local store. Design: `docs/plans/2026-11-03-time-travel-1598.md`.
+  `valid_until`. The wire followed in the "Validity in columns on
+  HTTP and MCP" entry above. Design: `docs/plans/2026-11-03-time-travel-1598.md`.
 
 - **History mode for time travel: `uteke recall --at T --history`, `uteke list
   --at T --history` (#1598)** - also returns the memories deprecated after `T`
@@ -62,10 +78,8 @@
   scored by cosine similarity against the embedding kept in the row (one extra
   query and one dot product per such memory, a set `prune` bounds); history
   list relaxes the SQL's `deprecated = 0`. Core:
-  `Uteke::recall_at_time_history`, `Uteke::list_at_time_with`. Opt-in and
-  CLI only: the default `at` on HTTP, MCP and the CLI is unchanged, and making
-  history the default waits on the contract issue uteke-cloud#458. With a
-  running server, `--history` uses the local store. Design:
+  `Uteke::recall_at_time_history`, `Uteke::list_at_time_with`. Opt-in when it
+  landed; history became the default in the "Changed" entry above. Design:
   `docs/plans/2026-11-03-time-travel-1598.md`.
 
 - **`uteke doc export --front-matter` (#1470)** - prefixes each Markdown

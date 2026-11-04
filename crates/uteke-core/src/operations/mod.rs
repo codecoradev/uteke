@@ -22,6 +22,7 @@ mod update;
 mod write;
 
 pub(crate) use recall::rrf_fuse_weighted;
+pub(crate) use time_travel::memory_existed_at;
 
 /// Retry embedding generation with exponential backoff (#621).
 ///

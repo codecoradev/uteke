@@ -120,7 +120,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             depth,
             context,
             at,
-            history,
+            history: _,
             content_format,
             r#where,
             r#type,
@@ -146,7 +146,6 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             *depth,
             *context,
             at.as_deref(),
-            *history,
             content_format.as_str(),
             r#where.as_deref(),
             *salience,
@@ -181,7 +180,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             entity,
             category,
             at,
-            history,
+            history: _,
         } => list::run_list(
             cli,
             uteke,
@@ -192,7 +191,6 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             entity.as_deref(),
             category.as_deref(),
             at.as_deref(),
-            *history,
         ),
 
         Commands::Get { id } => list::run_get(cli, uteke, id),

@@ -8,7 +8,16 @@ Query memories as they existed at a specific point in time.
 
 ## How It Works
 
-Every memory has temporal validity (`valid_from` / `valid_until`). The `--at` flag filters queries to only memories that existed at the given timestamp.
+Every memory has temporal validity (`valid_from` / `valid_until`). The `--at` flag answers "what did we believe at that instant, and was it true then?": a memory is returned when
+
+- `created_at <= at` and it was not yet deprecated (`at < deprecated_at`), and
+- `valid_from <= at < valid_until`.
+
+A memory that was forgotten, superseded or replaced **after** `at` therefore comes back, as it was. The same rule applies to `recall`, `list` and room recall, over HTTP (`POST /recall`, `/list`, `/room/recall`), MCP (`uteke_recall`, `uteke_list`) and the CLI. There is no extra parameter for it.
+
+> **Behaviour change.** Before this release `at` never returned a memory that had been deprecated since, although the rule above was documented. `uteke recall --at T --history` and `uteke list --at T --history` (0.22.x) are now the default: the flags are still accepted so scripts do not break, but they are deprecated and have no effect.
+
+How it is found: deprecation removes a memory's vector from the search index, so recall adds the memories deprecated after `at` from SQL and scores them by cosine similarity against the embedding kept in the row. They stay queryable until `prune` removes the row (`deprecated_ttl_days`; 0 keeps them). `update` edits a memory in place, so `at` shows its current content; supersede is the versioned path.
 
 ## Usage
 

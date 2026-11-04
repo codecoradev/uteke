@@ -2399,9 +2399,30 @@ mod tests {
             .insert(&make_temporal_memory("ok", "active", t0, None, None, false))
             .unwrap();
 
+        // Deprecated before the instant: gone then.
+        store
+            .conn
+            .execute(
+                "UPDATE memories SET deprecated_at = ?1 WHERE id = 'dep'",
+                rusqlite::params!["2026-03-01T00:00:00+00:00"],
+            )
+            .unwrap();
         let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "ok");
+
+        // Deprecated after the instant (#1598): it existed then.
+        let t_early = chrono::DateTime::parse_from_rfc3339("2026-02-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut ids: Vec<String> = store
+            .list_at_time(None, None, 100, 0, t_early)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["dep".to_string(), "ok".to_string()]);
     }
 
     #[test]

@@ -49,7 +49,6 @@ pub(crate) fn run_recall(
     depth: usize,
     context: bool,
     at: Option<&str>,
-    history: bool,
     content_format: &str,
     where_filter: Option<&str>,
     salience: Option<bool>,
@@ -351,24 +350,18 @@ pub(crate) fn run_recall(
             if related {
                 return Err("--at and --related cannot be used together".into());
             }
-            // #1598: --history also takes the memories deprecated after --at.
-            let recall_at = if history {
-                Uteke::recall_at_time_history
-            } else {
-                Uteke::recall_at_time
-            };
-            recall_at(
-                uteke,
-                query,
-                limit,
-                tags_filter,
-                ns,
-                point_in_time,
-                min_score,
-                None,
-                None,
-            )
-            .map_err(|e| format!("Failed to recall at time: {e}"))?
+            uteke
+                .recall_at_time(
+                    query,
+                    limit,
+                    tags_filter,
+                    ns,
+                    point_in_time,
+                    min_score,
+                    None,
+                    None,
+                )
+                .map_err(|e| format!("Failed to recall at time: {e}"))?
         } else if related {
             uteke
                 .recall_related(query, limit, tags_filter, ns, min_score, depth)

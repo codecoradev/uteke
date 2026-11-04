@@ -1,5 +1,5 @@
-//! `uteke list --at T --history` (#1598): memories forgotten after `T` are
-//! listed as they were at `T`; without `--history` the output is unchanged.
+//! `uteke list --at T` (#1598): memories forgotten after `T` are listed as
+//! they were at `T`. `--history` is a deprecated alias with no effect.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -84,11 +84,12 @@ fn list_history_shows_what_was_believed_then() {
     );
 
     let plain = store.json(&["--json", "list", "--at", &between]);
-    assert!(ids(&plain).is_empty(), "{plain}");
-    let history = store.json(&["--json", "list", "--at", &between, "--history"]);
-    assert_eq!(ids(&history), vec![id.clone()]);
+    assert_eq!(ids(&plain), vec![id.clone()], "{plain}");
+    // The old flag is accepted and changes nothing.
+    let alias = store.json(&["--json", "list", "--at", &between, "--history"]);
+    assert_eq!(ids(&alias), ids(&plain));
     let now = chrono::Utc::now().to_rfc3339();
-    let after = store.json(&["--json", "list", "--at", &now, "--history"]);
+    let after = store.json(&["--json", "list", "--at", &now]);
     assert!(ids(&after).is_empty(), "{after}");
 }
 

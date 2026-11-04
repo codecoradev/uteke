@@ -566,6 +566,39 @@ impl super::Store {
         Ok(added > 0)
     }
 
+    /// The memories linked to a room that may have existed at
+    /// `point_in_time` (#1598): live ones and those deprecated after it
+    /// (`deprecated_at` unset counts as after), oldest link first. The
+    /// validity bounds are checked by the caller (`memory_existed_at`).
+    pub fn room_memories_at_time(
+        &self,
+        room_id: &str,
+        author: Option<&str>,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<crate::memory::types::Memory>, Error> {
+        let pit = point_in_time.to_rfc3339();
+        let mut stmt = self
+            .conn
+            .prepare(concat!(
+                "SELECT ",
+                memory_columns_m!(),
+                " \
+                 FROM memories m \
+                 INNER JOIN room_memories rm ON m.id = rm.memory_id \
+                 WHERE rm.room_id = ?1 \
+                   AND (?2 IS NULL OR rm.author = ?2) \
+                   AND m.created_at <= ?3 \
+                   AND (m.deprecated = 0 OR m.deprecated_at IS NULL OR m.deprecated_at > ?3) \
+                 ORDER BY rm.joined_at ASC"
+            ))
+            .map_err(|e| Error::db("prepare room_memories_at_time", e))?;
+        use super::store::row_to_memory;
+        stmt.query_map(params![room_id, author, pit], row_to_memory)
+            .map_err(|e| Error::db("query room_memories_at_time", e))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read room_memories_at_time", e))
+    }
+
     /// Compatibility wrapper: old signature without a namespace filter.
     /// Delegates to `recall_room_scoped` with `namespace = None`.
     pub fn recall_room(

@@ -56,7 +56,6 @@ pub(crate) fn run_list(
     entity: Option<&str>,
     category: Option<&str>,
     at: Option<&str>,
-    history: bool,
 ) -> Result<(), String> {
     tracing::info!(
         "Listing memories (tag: {:?}, limit: {limit}, offset: {offset})",
@@ -80,7 +79,7 @@ pub(crate) fn run_list(
         |off: usize, lim: usize| -> Result<Vec<uteke_core::memory::types::Memory>, String> {
             match point_in_time {
                 Some(pit) => uteke
-                    .list_at_time_with(tag.as_deref(), lim, off, ns, pit, history)
+                    .list_at_time(tag.as_deref(), lim, off, ns, pit)
                     .map_err(|e| format!("Failed to list at time: {e}")),
                 None => uteke
                     .list(tag.as_deref(), lim, off, ns)
