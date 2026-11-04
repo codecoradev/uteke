@@ -259,7 +259,11 @@ fn default_content_type() -> String {
 }
 
 /// A search result with relevance score.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Serializes with two derived fields next to the stored ones: `similarity`
+/// (the vector-leg cosine, `null` when only full-text search found the hit,
+/// #1650) and `trust_tier` (the provenance tier of the memory, #1651).
+#[derive(Debug, Clone, Deserialize)]
 pub struct SearchResult {
     /// The matched memory.
     pub memory: Memory,
@@ -280,6 +284,21 @@ impl SearchResult {
             score,
             similarity: None,
         }
+    }
+}
+
+impl Serialize for SearchResult {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = serializer.serialize_struct("SearchResult", 4)?;
+        st.serialize_field("memory", &self.memory)?;
+        st.serialize_field("score", &self.score)?;
+        st.serialize_field("similarity", &self.similarity)?;
+        st.serialize_field(
+            "trust_tier",
+            &crate::provenance::TrustTier::of(&self.memory),
+        )?;
+        st.end()
     }
 }
 
@@ -308,6 +327,9 @@ pub struct UnifiedSearchResult {
     /// has none (found by full-text only, or a document) (#1650).
     #[serde(default)]
     pub similarity: Option<f32>,
+    /// Provenance tier of the memory (#1651); absent for documents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_tier: Option<crate::provenance::TrustTier>,
     /// Memory content (always populated for type=memory, excerpt for type=document).
     pub content: String,
     /// Memory ID (populated for type=memory).
@@ -383,6 +405,7 @@ impl UnifiedSearchResult {
             result_type: SearchResultType::Memory,
             score: sr.score,
             similarity: sr.similarity,
+            trust_tier: Some(crate::provenance::TrustTier::of(m)),
             content: m.content.clone(),
             memory_id: Some(m.id.clone()),
             tags: m.tags.clone(),
@@ -1436,6 +1459,7 @@ mod tests {
             result_type: SearchResultType::Memory,
             score: 0.85,
             similarity: None,
+            trust_tier: None,
             content: "test memory".to_string(),
             memory_id: Some("abc-123".to_string()),
             tags: vec!["test".to_string()],
@@ -1495,6 +1519,7 @@ mod tests {
             result_type: SearchResultType::Document,
             score: 0.92,
             similarity: None,
+            trust_tier: None,
             content: "chunk excerpt here".to_string(),
             memory_id: None,
             tags: vec![],

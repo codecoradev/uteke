@@ -95,3 +95,31 @@ fn pack_results_carry_the_similarity_too() {
     let first = &packed["selected"][0];
     assert!(first["similarity"].as_f64().is_some(), "{packed}");
 }
+
+#[test]
+fn min_trust_filters_the_tier_and_results_carry_trust_tier() {
+    let u = uteke_core::test_support::open_keyword();
+    let h = u
+        .remember("tier words human statement", &[], None, None)
+        .unwrap();
+    u.set_author_type(&h, "human").unwrap();
+    u.remember("tier words agent note", &[], None, None)
+        .unwrap();
+    let app = Mutex::new(u);
+    let body = |min: Option<&str>| {
+        serde_json::json!({"query": "tier words", "strategy": "vector",
+                           "min_trust": min, "namespace": null})
+    };
+    let all = recall(&app, body(None));
+    let tiers: Vec<&str> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["trust_tier"].as_str().unwrap())
+        .collect();
+    assert_eq!(tiers.len(), 2);
+    assert!(tiers.contains(&"human") && tiers.contains(&"agent"));
+    let human = recall(&app, body(Some("human")));
+    assert_eq!(human.as_array().unwrap().len(), 1);
+    assert_eq!(human[0]["trust_tier"], "human");
+}

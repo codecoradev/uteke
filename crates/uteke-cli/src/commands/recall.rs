@@ -43,6 +43,7 @@ pub(crate) fn run_recall(
     category: Option<&str>,
     min: Option<f32>,
     strict: bool,
+    min_trust: Option<&str>,
     strategy: Option<&str>,
     config: &Config,
     related: bool,
@@ -102,12 +103,13 @@ pub(crate) fn run_recall(
     };
 
     // Score floor: --min > config min_score > 0.0. `--strict` does not touch
-    // it: it filters on similarity instead (#1650), before the result is cut to
-    // --limit.
+    // it: it filters on similarity instead (#1650), with `--min-trust` (#1651),
+    // both before the result is cut to --limit.
     let min_score = min.unwrap_or(config.engine.recall.min_score as f32);
     let filter = uteke_core::RecallRequest::decode(uteke_core::RecallInput {
         query: query.to_string(),
         strict,
+        min_trust: min_trust.map(str::to_string),
         ..Default::default()
     })
     .map_err(|e| e.to_string())?

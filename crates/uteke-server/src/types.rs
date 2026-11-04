@@ -149,6 +149,9 @@ pub fn to_v1_flat(result: &uteke_core::memory::types::UnifiedSearchResult) -> se
     );
     map.insert("score".into(), serde_json::json!(result.score));
     map.insert("similarity".into(), serde_json::json!(result.similarity));
+    if let Some(tier) = result.trust_tier {
+        map.insert("trust_tier".into(), serde_json::json!(tier));
+    }
     if let Some(id) = &result.memory_id {
         map.insert("id".into(), serde_json::Value::String(id.clone()));
     }
@@ -279,6 +282,13 @@ pub struct RecallRequest {
     /// dropped. `score` and `min_score` keep their meaning.
     #[serde(default)]
     pub strict: bool,
+    /// Lowest provenance tier to return (#1651): `human`, `agent`, `external`
+    /// or `untrusted` (lowercase). Filters the tier (author_type +
+    /// source_type) only, before the limit is applied. author_type is
+    /// self-declared, so this is a convenience filter, not a security
+    /// boundary, and it is not a trust state.
+    #[serde(default)]
+    pub min_trust: Option<String>,
     /// Time-travel: query memories that existed at this RFC3339 timestamp.
     #[serde(default)]
     pub at: Option<String>,
@@ -337,6 +347,7 @@ impl RecallRequest {
             category: self.category.clone(),
             min_score: self.min_score,
             strict: self.strict,
+            min_trust: self.min_trust.clone(),
             at: self.at.clone(),
             after: self.after.clone(),
             before: self.before.clone(),

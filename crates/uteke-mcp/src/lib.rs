@@ -463,6 +463,7 @@ fn tool_recall() -> Value {
                 "entity": { "type": "string", "description": "Only memories whose metadata entity equals this value" },
                 "category": { "type": "string", "description": "Only memories whose metadata category equals this value" },
                 "strict": { "type": "boolean", "description": "Confident matches only (#1650): keep a result when its similarity (the vector-leg cosine, shown as `sim`) reaches [recall] min_score_strict (default 0.5). Results found by full-text search only have no similarity and are dropped. Ranking scores and min_score are unchanged." },
+                "min_trust": { "type": "string", "enum": ["human", "agent", "external", "untrusted"], "description": "Lowest provenance tier to return (#1651). Filters the tier (author_type + source_type) before the limit; documents have no tier and are dropped. author_type is self-declared: a convenience filter, not a security boundary, and not a trust state." },
                 "enrich": { "type": "boolean", "description": "Attach linked documents and memories to each result" },
                 "at": { "type": "string", "description": "Point in time (RFC3339): recall the memories that existed then. Not combinable with explain or pack." },
                 "after": { "type": "string", "description": "Only memories created at or after this time (RFC3339). Not combinable with explain or pack." },
@@ -1447,6 +1448,7 @@ pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, Str
         entity: args["entity"].as_str().map(str::to_string),
         category: args["category"].as_str().map(str::to_string),
         strict: args["strict"].as_bool().unwrap_or(false),
+        min_trust: args["min_trust"].as_str().map(str::to_string),
         enrich: args["enrich"].as_bool().unwrap_or(false),
         at: args["at"].as_str().map(str::to_string),
         after: args["after"].as_str().map(str::to_string),
@@ -1537,7 +1539,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                             format!(
                                 " (id: {}{})",
                                 display_id(id, full_ids),
-                                hit_signals(r.similarity)
+                                hit_signals(r.similarity, r.trust_tier)
                             )
                         })
                         .unwrap_or_default(),
@@ -1589,7 +1591,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 lines.push(format!(
                     "       (id: {}{})",
                     display_id(&r.memory.id, full_ids),
-                    hit_signals(r.similarity)
+                    hit_signals(r.similarity, Some(uteke_core::TrustTier::of(&r.memory)))
                 ));
             }
             Ok(text_result(lines.join("\n")))
@@ -1597,12 +1599,16 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     }
 }
 
-/// `, sim 0.68` after a hit's id: the vector-leg similarity (`null` when only
-/// full-text search found it, #1650). The JSON surfaces carry it as
-/// `similarity`.
-fn hit_signals(similarity: Option<f32>) -> String {
+/// `, sim 0.68, tier human` after a hit's id: the vector-leg similarity
+/// (`null` when only full-text search found it, #1650) and the provenance tier
+/// (#1651). The JSON surfaces carry the same two values as `similarity` and
+/// `trust_tier`.
+fn hit_signals(similarity: Option<f32>, tier: Option<uteke_core::TrustTier>) -> String {
     let sim = similarity.map_or_else(|| "null".to_string(), |s| format!("{s:.2}"));
-    format!(", sim {sim}")
+    let tier = tier
+        .map(|t| format!(", tier {}", t.as_str()))
+        .unwrap_or_default();
+    format!(", sim {sim}{tier}")
 }
 
 /// Refuse an argument the tool does not declare (#1439), with the list of the
@@ -5020,6 +5026,34 @@ mod recall_settings_mcp_tests {
             serde_json::json!({"query": "rust ownership", "strategy": "fts5", "strict": true}),
         );
         assert_eq!(t, "No results found.");
+    }
+
+    #[test]
+    fn min_trust_filters_the_tier_and_the_line_shows_it() {
+        let u = open_keyword();
+        let h = u
+            .remember("tier words human statement", &[], None, None)
+            .unwrap();
+        u.set_author_type(&h, "human").unwrap();
+        u.remember("tier words agent note", &[], None, None)
+            .unwrap();
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "tier words", "type": "memory"}),
+        );
+        assert!(t.contains("tier human") && t.contains("tier agent"), "{t}");
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "tier words", "type": "memory", "min_trust": "human"}),
+        );
+        assert!(
+            t.contains("human statement") && !t.contains("agent note"),
+            "{t}"
+        );
+        let e = exec_recall(&u, &serde_json::json!({"query": "q", "min_trust": "Human"}))
+            .err()
+            .unwrap();
+        assert!(e.starts_with("Invalid min_trust"), "{e}");
     }
 
     #[test]

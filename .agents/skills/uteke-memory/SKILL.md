@@ -34,7 +34,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `uteke remember <TEXT>` | Store a new memory | `--tags`, `--type`, `--entity`, `--category`, `--meta`, `--room`, `--author`, `--source`, `--source-type`, `--detect-contradiction` |
-| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience <true|false>`, `--recency <true|false>`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter), `--explain` (real vector similarity), `--budget`, `--pack`, `--strict` (similarity floor, #1650), `--enrich`, `--exclude-ids`, `--content-format` |
+| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience <true|false>`, `--recency <true|false>`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter), `--explain` (real vector similarity), `--budget`, `--pack`, `--strict` (similarity floor, #1650), `--min-trust` (human/agent/external/untrusted, #1651), `--enrich`, `--exclude-ids`, `--content-format` |
 | `uteke search <QUERY>` | Keyword text search | `--limit`, `--tags` |
 | `uteke list` | List memories with filters | `--tag`, `--entity`, `--category`, `--limit`, `--offset`, `--at` |
 | `uteke get <ID>` | Get single memory by UUID | |

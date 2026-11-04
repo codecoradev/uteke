@@ -299,6 +299,17 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 > full-text search found it. `strict` and `min_score_strict` compare against it, so
 > "confident match only" works under fusion, where `score` never reaches 0.5. `score`
 > and `min_score` keep their meaning.
+>
+> **`min_trust` and `trust_tier` (#1651):** every memory result carries `trust_tier`,
+> the provenance tier of the memory, as a lowercase string: `human` (author_type
+> `human` and source_type `user`), `agent`, `external` (url, file, import) or
+> `untrusted`. It is the string `uteke provenance` writes in its JSON, and the
+> string `min_trust` takes. `min_trust` keeps results at or above that tier and runs
+> before the limit; documents have no tier and are dropped when it is set. This is the
+> **provenance tier** only, a different axis from any future trust *state*
+> (candidate, stated, verified...), which will use another name. `author_type` is
+> self-declared (MCP `uteke_remember` accepts `human` from any agent), so the filter is
+> a convenience, **not a security boundary**.
 
 ### Salience + Recency Boost (#352)
 

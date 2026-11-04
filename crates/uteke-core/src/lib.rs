@@ -2530,6 +2530,7 @@ impl Uteke {
                 result_type: SearchResultType::Document,
                 score: dr.score,
                 similarity: None,
+                trust_tier: None,
                 content: if dr.chunk_snippet.is_empty() {
                     dr.document.title.clone()
                 } else {
@@ -2653,6 +2654,7 @@ impl Uteke {
                         result_type: SearchResultType::Memory,
                         score: sr.score,
                         similarity: sr.similarity,
+                        trust_tier: Some(TrustTier::of(m)),
                         content: m.content.clone(),
                         memory_id: Some(m.id.clone()),
                         tags: m.tags.clone(),
@@ -2684,6 +2686,7 @@ impl Uteke {
                         // one.
                         score: dr.score,
                         similarity: None,
+                        trust_tier: None,
                         content: if dr.chunk_snippet.is_empty() {
                             dr.document.title.clone()
                         } else {

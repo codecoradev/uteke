@@ -36,6 +36,16 @@
   `benchmarks/internal/STRICT_FLOOR.md`. Wire names (`similarity`, `strict`,
   `min_score_strict`) are those agreed with uteke-cloud#459.
 
+- **`recall --min-trust` and `trust_tier` on results (#1651)** - `min_trust`
+  (`human`, `agent`, `external` or `untrusted`, lowercase) on the CLI, `POST /recall`
+  and `uteke_recall` keeps results whose provenance tier is at least that, before the
+  limit, so up to N rows still come back. Each memory result carries `trust_tier`, the
+  same lowercase string `uteke provenance` writes in JSON and `min_trust` takes (the
+  MCP text lines show `tier <x>`). Omitting `min_trust` changes nothing. It filters the
+  provenance tier only, not a trust state, and `author_type` is self-declared, so it is
+  a convenience filter, not a security boundary. Documents have no tier and are dropped
+  when it is set. Wire names agreed in uteke-cloud#460.
+
 - **Validity in columns on HTTP and MCP (#1598)** - `POST /remember`, `PUT /memory`
   and the MCP tools `uteke_remember` and `uteke_update` accept `valid_from` and
   `valid_until` (RFC 3339) and store them in the columns that `at` reads, as

@@ -155,6 +155,12 @@ pub enum Commands {
         /// similarity and are dropped. `score` and `--min` are unchanged.
         #[arg(long)]
         strict: bool,
+        /// Lowest provenance tier to return: human, agent, external or
+        /// untrusted. Filters the tier (author_type + source_type) before
+        /// the limit; author_type is self-declared, so this is a convenience
+        /// filter, not a security boundary.
+        #[arg(long)]
+        min_trust: Option<String>,
         /// Recall strategy: vector, fts5, hybrid, graph, or fusion (fusion =
         /// weighted RRF of vector×1.7 + hybrid×1, #1123; graph = hybrid +
         /// graph-signal reranking, #378). Defaults to config's

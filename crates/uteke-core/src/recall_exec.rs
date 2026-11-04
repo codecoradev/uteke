@@ -245,6 +245,7 @@ impl Uteke {
 mod tests {
     use super::*;
     use crate::RecallInput;
+    use crate::TrustTier;
     use crate::test_support::open_keyword;
 
     fn req(f: impl FnOnce(&mut RecallInput)) -> RecallRequest {
@@ -606,5 +607,122 @@ mod tests {
             .find(|r| r.memory.content == ON_TOPIC)
             .expect("the seed hit is returned");
         assert!(seed.similarity.unwrap() >= 0.5);
+    }
+
+    /// One memory per tier, all matching `tier words`.
+    fn tier_store() -> Uteke {
+        let u = open_keyword();
+        let mk = |text: &str, author: &str, source_type: &str| {
+            let id = u.remember(text, &[], None, None).unwrap();
+            u.set_author_type(&id, author).unwrap();
+            u.set_source(&id, None, source_type).unwrap();
+        };
+        mk("tier words human statement", "human", "user");
+        mk("tier words agent note", "agent", "user");
+        mk("tier words external page", "agent", "url");
+        mk("tier words untrusted derived", "agent", "derived");
+        u
+    }
+
+    fn tiers(u: &Uteke, min: Option<&str>) -> Vec<String> {
+        let r = req(|i| {
+            i.query = "tier words".into();
+            i.strategy = Some("vector".into());
+            i.min_trust = min.map(String::from);
+        });
+        let mut t: Vec<String> = memories(u, &r)
+            .iter()
+            .map(|r| TrustTier::of(&r.memory).as_str().to_string())
+            .collect();
+        t.sort();
+        t
+    }
+
+    #[test]
+    fn min_trust_returns_each_tiers_expected_set() {
+        let u = tier_store();
+        assert_eq!(tiers(&u, None).len(), 4, "no filter, nothing dropped");
+        assert_eq!(tiers(&u, Some("untrusted")).len(), 4);
+        assert_eq!(tiers(&u, Some("external")), ["agent", "external", "human"]);
+        assert_eq!(tiers(&u, Some("agent")), ["agent", "human"]);
+        assert_eq!(tiers(&u, Some("human")), ["human"]);
+    }
+
+    #[test]
+    fn trust_tier_on_each_result_matches_the_classifier() {
+        let u = tier_store();
+        let r = req(|i| {
+            i.query = "tier words".into();
+            i.strategy = Some("vector".into());
+        });
+        for sr in memories(&u, &r) {
+            let v = serde_json::to_value(&sr).unwrap();
+            assert_eq!(v["trust_tier"], TrustTier::of(&sr.memory).as_str());
+        }
+        let RecallOutput::Unified(rows) = run(
+            &u,
+            &req(|i| {
+                i.query = "tier words".into();
+                i.search_type = Some("memory".into());
+            }),
+        )
+        .unwrap() else {
+            panic!()
+        };
+        assert!(rows.iter().all(|r| r.trust_tier.is_some()));
+    }
+
+    #[test]
+    fn min_trust_runs_before_the_limit() {
+        // Ten agent notes outrank one human note on the query, yet limit 1
+        // with min_trust=human must still return the human note.
+        let u = open_keyword();
+        for i in 0..10 {
+            u.remember(
+                &format!("deploy checklist steps agent {i}"),
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        let id = u.remember("deploy checklist", &[], None, None).unwrap();
+        u.set_author_type(&id, "human").unwrap();
+        let r = req(|i| {
+            i.query = "deploy checklist steps agent".into();
+            i.strategy = Some("vector".into());
+            i.limit = Some(1);
+            i.min_trust = Some("human".into());
+        });
+        let got = memories(&u, &r);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].memory.id, id);
+    }
+
+    #[test]
+    fn omitting_min_trust_changes_nothing_and_a_bad_value_is_rejected() {
+        let u = tier_store();
+        let base = req(|i| {
+            i.query = "tier words".into();
+            i.strategy = Some("vector".into());
+        });
+        let explicit_none = req(|i| {
+            i.query = "tier words".into();
+            i.strategy = Some("vector".into());
+            i.min_trust = None;
+        });
+        assert_eq!(
+            serde_json::to_string(&memories(&u, &base)).unwrap(),
+            serde_json::to_string(&memories(&u, &explicit_none)).unwrap()
+        );
+        for bad in ["Human", "admin", ""] {
+            let e = RecallRequest::decode(RecallInput {
+                query: "q".into(),
+                min_trust: Some(bad.into()),
+                ..RecallInput::default()
+            })
+            .unwrap_err();
+            assert!(e.to_string().starts_with("Invalid min_trust"), "{bad}");
+        }
     }
 }

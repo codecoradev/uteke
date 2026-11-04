@@ -15,6 +15,7 @@
 //! | empty `tags: []`        | no filter           | no filter (#1439)         | sent, so no filter    |
 //! | namespace omitted       | all namespaces      | all namespaces            | `"default"` only      |
 //! | `strict`, config floor  | honoured            | honoured (#1650)          | `--strict` forwarded  |
+//! | `min_trust`             | honoured (#1651)    | honoured (#1651)          | `--min-trust` forwarded |
 //! | entity/category/enrich  | honoured            | not accepted              | forwarded             |
 //! | at/after/before         | honoured            | not accepted              | `--at` forwarded      |
 //!
@@ -22,6 +23,7 @@
 //! resolves its own namespace to `Some("default")` before encoding.
 
 use crate::memory::types::{RecallStrategy, SearchType};
+use crate::provenance::TrustTier;
 use chrono::{DateTime, Utc};
 use std::fmt;
 
@@ -48,6 +50,9 @@ pub struct RecallInput {
     pub category: Option<String>,
     pub min_score: Option<f32>,
     pub strict: bool,
+    /// Lowest provenance tier to return: `human` | `agent` | `external` |
+    /// `untrusted` (#1651). Validated by [`RecallRequest::decode`].
+    pub min_trust: Option<String>,
     /// RFC3339 point-in-time.
     pub at: Option<String>,
     /// RFC3339 lower bound on creation time.
@@ -91,6 +96,9 @@ impl RecallInput {
         }
         if self.strict {
             body["strict"] = serde_json::json!(true);
+        }
+        if let Some(t) = &self.min_trust {
+            body["min_trust"] = serde_json::json!(t);
         }
         if let Some(a) = &self.at {
             body["at"] = serde_json::json!(a);
@@ -145,6 +153,8 @@ pub struct RecallRequest {
     pub category: Option<String>,
     pub min_score: Option<f32>,
     pub strict: bool,
+    /// `None` = no provenance filter (#1651).
+    pub min_trust: Option<TrustTier>,
     pub at: Option<DateTime<Utc>>,
     pub after: Option<DateTime<Utc>>,
     pub before: Option<DateTime<Utc>>,
@@ -193,6 +203,14 @@ impl RecallRequest {
             Some(t) if t.is_empty() => None,
             other => other,
         };
+        let min_trust = match input.min_trust {
+            None => None,
+            Some(t) => Some(TrustTier::parse(&t).ok_or_else(|| {
+                RecallRequestError(format!(
+                    "Invalid min_trust: '{t}'. Use 'human', 'agent', 'external', or 'untrusted'."
+                ))
+            })?),
+        };
         let at = parse_ts("at", input.at, "2026-06-01T12:00:00Z")?;
         let after = parse_ts("after", input.after, "2026-01-01T00:00:00Z")?;
         let before = parse_ts("before", input.before, "2026-01-01T00:00:00Z")?;
@@ -206,6 +224,7 @@ impl RecallRequest {
             category: input.category,
             min_score: input.min_score,
             strict: input.strict,
+            min_trust,
             at,
             after,
             before,
@@ -284,13 +303,14 @@ impl RecallRequest {
             .then(|| config_min_score_strict.unwrap_or(RECALL_STRICT_MIN_SCORE as f64) as f32)
     }
 
-    /// The result filters of this request (`strict`).
+    /// The result filters of this request (`strict` and `min_trust`).
     pub fn result_filter(
         &self,
         config_min_score_strict: Option<f64>,
     ) -> crate::recall_filter::ResultFilter {
         crate::recall_filter::ResultFilter {
             min_similarity: self.resolve_min_similarity(config_min_score_strict),
+            min_trust: self.min_trust,
         }
     }
 

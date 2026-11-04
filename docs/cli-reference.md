@@ -177,6 +177,7 @@ uteke list --at 2026-06-01T12:00:00Z   # Time-travel: list at point in time
 | `--category <cat>` | Filter by category |
 | `--limit <n>` | Max results (default: 10, at most 1000) |
 | `--offset <n>` | Skip first N results |
+| `--min-trust <tier>` | Lowest provenance tier to return: `human`, `agent`, `external` or `untrusted` (lowercase). Filters the tier (author_type + source_type) before `--limit`. `author_type` is self-declared, so this is a convenience filter, not a security boundary; it is not a trust state (#1651). Each result carries `trust_tier` in `--json` |
 | `--at <timestamp>` | Query memories at point in time (RFC3339), including those deprecated after it (#1598) |
 | `--history` | Deprecated, no effect: `--at` always includes memories deprecated after it. Needs `--at` |
 | `--json` | Output as JSON |
