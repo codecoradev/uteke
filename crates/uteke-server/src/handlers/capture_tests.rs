@@ -116,3 +116,29 @@ fn a_secret_is_masked_before_it_is_queued() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["redacted"], true, "{body}");
 }
+
+#[test]
+fn an_oversized_turn_is_413_and_a_full_queue_is_400() {
+    let uteke = app(true);
+    {
+        let mut e = uteke_core::EngineSettings::default();
+        e.capture.enabled = true;
+        e.capture.max_turn_bytes = 50;
+        e.capture.max_queue_turns = 1;
+        uteke.lock().unwrap().apply_settings(&e);
+    }
+    let (status, body) = call(
+        &uteke,
+        Method::Post,
+        "/capture",
+        Some(turn(&"x".repeat(51))),
+    );
+    assert_eq!(status, 413, "{body}");
+    let (status, body) = call(&uteke, Method::Post, "/capture", Some(turn("one")));
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = call(&uteke, Method::Post, "/capture", Some(turn("two")));
+    assert_eq!(status, 400, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("queue is full"));
+    let (_, s) = call(&uteke, Method::Get, "/capture/status", None);
+    assert_eq!(s["pending_bytes"], 3, "{s}");
+}

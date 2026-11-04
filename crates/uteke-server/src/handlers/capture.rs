@@ -18,8 +18,15 @@ pub(super) fn post_capture(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         Ok(b) => b,
         Err(e) => return ctx.error_response_for(req, 400, e),
     };
-    if validate_content_size(&body.content, 1_048_576).is_err() {
-        return ctx.error_response_for(req, 413, "Content too large (max 1MB)");
+    let limit = uteke.capture_settings().turn_limit();
+    if !body.role.trim().eq_ignore_ascii_case("tool")
+        && validate_content_size(&body.content, limit).is_err()
+    {
+        return ctx.error_response_for(
+            req,
+            413,
+            format!("Content too large (max {limit} bytes, `max_turn_bytes` under [capture])"),
+        );
     }
     let role: uteke_core::capture::Role = match body.role.parse() {
         Ok(r) => r,

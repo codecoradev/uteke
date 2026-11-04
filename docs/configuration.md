@@ -241,6 +241,9 @@ retention_days = 30      # done turns are deleted after this many days
 max_attempts = 3         # a session that keeps failing is marked failed
 lease_minutes = 15       # a session left `extracting` by a crash is requeued
 chunk_chars = 24000      # most characters one extractor call receives (min 64)
+max_turn_bytes = 1048576 # a larger turn is refused (CLI, MCP and HTTP); 0 = the default
+max_queue_turns = 100000 # capture refuses past this many waiting turns; 0 = no limit
+max_queue_bytes = 536870912 # same, for the bytes of waiting text; 0 = no limit
 interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
 ```
 
@@ -258,6 +261,15 @@ request runs, so a slow or hung provider does not hold recall and writes back. A
 that is claimed and then lost (a crash) is requeued when its lease expires. A run the extractor stopped (rate limit,
 provider down) doubles the wait before the next one, up to 16 intervals; a run that
 goes through resets it.
+
+**Limits.** One turn may have at most `max_turn_bytes` (1 MiB): `Uteke::capture` refuses a
+larger one with a validation error on every surface (the CLI reads stdin only up to that
+size, HTTP answers 413), except a tool result, which is cut to 2000 characters first.
+The queue is bounded too, so a stuck extraction cannot fill the disk: capture refuses a
+new turn while the pending and extracting turns number `max_queue_turns` or hold
+`max_queue_bytes` of text, and `uteke extract-queue status` (and `GET /capture/status`)
+shows the waiting bytes and warns from 80% of either limit. Repeating a turn already in
+the queue is still a no-op.
 
 A session longer than `chunk_chars` is extracted in several calls: its turns are packed
 into chunks on turn boundaries, and a single turn larger than a chunk is split at a

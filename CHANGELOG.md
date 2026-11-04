@@ -38,6 +38,17 @@
   runs once per scheduled cycle, each session is tried once per cycle, and a shutdown
   is seen between sessions. `uteke extract-queue run` goes through the same steps.
 
+- **Capture turns and the capture queue are bounded (#1666)** - `Uteke::capture` refuses a
+  turn over `[capture] max_turn_bytes` (1 MiB, the limit `POST /capture` already had) on
+  every surface, and `uteke capture` reads stdin only up to that size. It also refuses new
+  turns while the waiting queue holds `max_queue_turns` (100000) or `max_queue_bytes`
+  (512 MiB), and `extract-queue status` and `GET /capture/status` show `pending_bytes` and
+  a `warning` from 80% of a limit, so a stuck extraction cannot fill the disk. The run
+  report counters are exact: `reclaimed` counts the batches an expired lease handed back,
+  those it failed at `max_attempts` are added to `sessions_failed`, and `facts_refused` is
+  not counted again when an attempt is retried. The raw capture queue (#1466) is not
+  released yet, so these limits and counters change without a compatibility shim.
+
 - **A long capture session no longer starves the extraction queue (#1664)** - a
   session is extracted in chunks of at most `[capture] chunk_chars` (24000)
   characters instead of one request, and its facts are stored as one batch. A
