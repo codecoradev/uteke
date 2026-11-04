@@ -209,12 +209,14 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
     "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
     "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;",
+    // The session view matches `source` by equality and range (#1670).
+    "CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);",
     // After the observations column check: an early build lacked batch_id.
     "CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 24;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 25;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -1775,6 +1777,44 @@ mod tests {
         assert!((m.access_signal() - 2.5).abs() < 1e-6);
         // empty batches are a no-op
         store.touch_recall_batch(&[]).unwrap();
+    }
+
+    /// #1670: a v24 store (no `idx_memories_source`) upgrades in place, keeps
+    /// its data and ends with the index, which the session lookup uses.
+    #[test]
+    fn test_migration_v25_adds_source_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v24.db");
+        let path = path.to_str().unwrap();
+        {
+            let store = Store::open(path).unwrap();
+            store
+                .insert(&make_test_memory("old", "legacy memory", &[]))
+                .unwrap();
+            store
+                .conn
+                .execute_batch(
+                    "DROP INDEX idx_memories_source;
+                     UPDATE schema_version SET version = 24;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(store.get_by_id("old").unwrap().is_some());
+        let n: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_memories_source'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        // Reopening at the current version is a no-op.
+        drop(store);
+        assert!(Store::open(path).is_ok());
     }
 
     /// #1337: a v20 store (no `recall_count`) upgrades in place and keeps its

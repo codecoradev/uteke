@@ -492,6 +492,9 @@ impl super::Store {
                 23 => self.migrate_v22_to_v23()?,
                 // v24: observations — the raw capture queue (#1466)
                 24 => self.migrate_v23_to_v24()?,
+                // v25: index on memories.source — the session view looks
+                // memories up by source (#1670)
+                25 => self.migrate_v24_to_v25()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1228,6 +1231,17 @@ CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, sessi
 CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
             )
             .map_err(|e| Error::db("schema migration v23 to v24", e))?;
+        Ok(())
+    }
+
+    /// v25: `idx_memories_source` (#1670). The session view matches `source` by
+    /// equality and range; without an index every viewer request scans the table.
+    /// Forward-only: an older binary ignores the extra index.
+    fn migrate_v24_to_v25(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v24 to v25: idx_memories_source");
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);")
+            .map_err(|e| Error::db("schema migration v24 to v25", e))?;
         Ok(())
     }
 

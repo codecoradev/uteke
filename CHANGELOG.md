@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **The session view matches a session exactly and uses an index (#1670)** -
+  `session_memories` matched `source` with a `substr` prefix, so the view of session `a`
+  also listed the memories of session `a:b` (source `capture:a:b:<batch>`), and the
+  condition scanned every memory. After the `capture:<session>:` prefix only the batch id
+  (no `:`) may follow; the lookup is an equality plus a range on `source`, so a session id
+  with `%`, `_` or a quote is taken literally. Schema v25 adds `idx_memories_source`
+  (forward-only; an older binary ignores the index; a fresh store gets it at open). The
+  session view (#1470 c) is unreleased (only on `develop`), so this changes its behaviour
+  with no compatibility shim.
+
 - **The viewer never writes the store, and its non-loopback bind authenticates (#1667)** -
   `uteke view` opens the database `SQLITE_OPEN_READ_ONLY` (new `Uteke::open_read_only`):
   no WAL pragma, no schema migration, no vector-index or cache file. A store whose
