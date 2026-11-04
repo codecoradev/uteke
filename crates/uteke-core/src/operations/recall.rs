@@ -152,6 +152,8 @@ impl crate::Uteke {
                 results.push(SearchResult {
                     memory: (*memory).clone(),
                     score: boosted_score,
+                    // Raw cosine of the vector leg: `score` may carry the hot boost.
+                    similarity: Some(score),
                 });
             }
 
@@ -523,7 +525,7 @@ impl crate::Uteke {
                 } else {
                     (((rank - worst) / range).clamp(0.0, 1.0)) as f32
                 };
-                SearchResult { memory, score }
+                SearchResult::new(memory, score)
             })
             .take(limit)
             .collect();
@@ -584,6 +586,13 @@ impl crate::Uteke {
             std::collections::HashMap::new();
         let mut memories: std::collections::HashMap<String, Memory> =
             std::collections::HashMap::new();
+
+        // The vector leg's cosine per memory, carried onto the fused results
+        // (#1650). A memory only the FTS leg found has none.
+        let vector_similarity: std::collections::HashMap<String, f32> = vector_results
+            .iter()
+            .filter_map(|sr| sr.similarity.map(|s| (sr.memory.id.clone(), s)))
+            .collect();
 
         // Score vector results by rank
         for (rank, sr) in vector_results.iter().enumerate() {
@@ -650,9 +659,11 @@ impl crate::Uteke {
                 // Normalize by dividing by that theoretical max.
                 let max_rrf = 2.0 / (RRF_K as f64 + 1.0);
                 let normalized = (score / max_rrf).clamp(0.0, 1.0);
+                let similarity = vector_similarity.get(&id).copied();
                 Some(SearchResult {
                     memory,
                     score: normalized as f32,
+                    similarity,
                 })
             })
             .collect();
@@ -702,10 +713,7 @@ impl crate::Uteke {
                     true
                 }
             })
-            .map(|memory| SearchResult {
-                memory,
-                score: 1.0, // Text search doesn't have meaningful scores
-            })
+            .map(|memory| SearchResult::new(memory, 1.0)) // text search has no meaningful scores
             .collect();
 
         // Touch access for returned results
@@ -936,6 +944,12 @@ pub(crate) fn rrf_fuse_weighted(
 
     // Chain both rankings, dedup by id (first occurrence wins the payload),
     // then stable-sort by fused score descending.
+    let mut similarities: HashMap<String, f32> = HashMap::new();
+    for r in primary.iter().chain(secondary.iter()) {
+        if let Some(sim) = r.similarity {
+            similarities.entry(r.memory.id.clone()).or_insert(sim);
+        }
+    }
     let mut seen = std::collections::HashSet::new();
     let mut out: Vec<SearchResult> = primary
         .into_iter()
@@ -949,6 +963,11 @@ pub(crate) fn rrf_fuse_weighted(
     });
     for r in out.iter_mut() {
         r.score = scores.get(&r.memory.id).copied().unwrap_or(0.0) as f32;
+        // The kept payload may come from the leg without a similarity; the
+        // vector leg's cosine survives the fuse (#1650).
+        if r.similarity.is_none() {
+            r.similarity = similarities.get(&r.memory.id).copied();
+        }
     }
     out
 }
@@ -986,7 +1005,7 @@ mod rrf_fuse_weighted_tests {
             author_type: "agent".to_string(),
             author: None,
         };
-        SearchResult { memory, score }
+        SearchResult::new(memory, score)
     }
 
     #[test]

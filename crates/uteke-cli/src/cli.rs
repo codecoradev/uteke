@@ -149,7 +149,10 @@ pub enum Commands {
         /// `--min-score` is accepted as an alias (#1593).
         #[arg(long, alias = "min-score")]
         min: Option<f32>,
-        /// Use strict threshold from config (min_score_strict)
+        /// Confident matches only: keep a result when its vector similarity
+        /// (the `similarity` field) reaches `[recall] min_score_strict`
+        /// (default 0.5). Hits found by full-text search only have no
+        /// similarity and are dropped. `score` and `--min` are unchanged.
         #[arg(long)]
         strict: bool,
         /// Recall strategy: vector, fts5, hybrid, graph, or fusion (fusion =

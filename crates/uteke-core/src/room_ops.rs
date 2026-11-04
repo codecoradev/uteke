@@ -268,7 +268,11 @@ impl crate::Uteke {
 
                 for mem in missing_memories {
                     let score = crate::consolidate::cosine_similarity(&query_emb, &mem.embedding);
-                    results.push(SearchResult { memory: mem, score });
+                    results.push(SearchResult {
+                        memory: mem,
+                        score,
+                        similarity: Some(score.clamp(0.0, 1.0)),
+                    });
                 }
             }
         }

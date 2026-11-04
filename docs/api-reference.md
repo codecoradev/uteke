@@ -778,13 +778,13 @@ Request for memory feedback / trust scoring (#718).
 | `exclude_ids` | any | No | Memory IDs already injected this turn; excluded from pack results (reported as `skipped` with reason `excluded`). |
 | `explain` | `boolean` | No | Explain mode (#1160): return per-result ranking signals alongside each memory. Memory-only recall — rejected (400) together with search_type/unified, at, before/after. |
 | `limit` | `integer` | No |  |
-| `min_score` | any | No | Minimum similarity score (0.0-1.0). Results below are filtered. Default: 0.0 (no filtering). Use `strict=true` for 0.5 default (#995). |
+| `min_score` | any | No | Minimum similarity score (0.0-1.0). Results below are filtered. Default: 0.0 (no filtering). Compares against `score`; `strict` compares against `similarity`. |
 | `namespace` | any | No |  |
 | `pack` | `boolean` | No | Budgeted context pack (#1281 Phase 1): return a ContextPack (selected/skipped/budget_used) instead of a bare ranked list. Deterministic, LLM-free, rank-order preserving. |
 | `query` | `string` | Yes |  |
 | `search_type` | any | No | Search type filter: "all" (default, unified), "memory", or "doc" (#531). |
 | `strategy` | any | No | Recall strategy: "fusion" (default since 0.16.0), "vector", "fts5", "hybrid", or "graph" (#900, #1034, #1123). When absent, the server falls back to `[recall] default_strategy` from uteke.toml, then to "fusion" — matching the CLI default. Invalid values return HTTP 400. |
-| `strict` | `boolean` | No | Use strict threshold (defaults to 0.5 if min_score not set). |
+| `strict` | `boolean` | No | Confident matches only (#1650): keep a hit when its `similarity` (the vector-leg cosine) reaches `[recall] min_score_strict` (default 0.5). Hits without a similarity (found by full-text search only) are dropped. `score` and `min_score` keep their meaning. |
 | `tags` | ``string``[] | No |  |
 
 

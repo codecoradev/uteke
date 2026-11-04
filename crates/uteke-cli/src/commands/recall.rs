@@ -101,12 +101,17 @@ pub(crate) fn run_recall(
         SearchType::Memory | SearchType::Document => true,
     };
 
-    // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
-    let min_score = match min {
-        Some(m) => m,
-        None if strict => config.engine.recall.min_score_strict as f32,
-        None => config.engine.recall.min_score as f32,
-    };
+    // Score floor: --min > config min_score > 0.0. `--strict` does not touch
+    // it: it filters on similarity instead (#1650), before the result is cut to
+    // --limit.
+    let min_score = min.unwrap_or(config.engine.recall.min_score as f32);
+    let filter = uteke_core::RecallRequest::decode(uteke_core::RecallInput {
+        query: query.to_string(),
+        strict,
+        ..Default::default()
+    })
+    .map_err(|e| e.to_string())?
+    .result_filter(Some(config.engine.recall.min_score_strict));
 
     tracing::info!(
         "Recalling: {query} (limit: {limit}, min_score: {min_score}, type: {:?})",
@@ -182,8 +187,12 @@ pub(crate) fn run_recall(
         if enrich {
             return Err("--explain and --enrich cannot be used together".to_string());
         }
-        let explained = uteke
-            .recall_explained(query, limit, tags_filter, ns, resolved_strategy, min_score)
+        let explained = filter
+            .fetch(
+                limit,
+                |n| uteke.recall_explained(query, n, tags_filter, ns, resolved_strategy, min_score),
+                |f, e| f.keep_memory(&e.result),
+            )
             .map_err(|e| format!("Failed to recall: {e}"))?;
         uteke.reset_salience_recency_config();
 
@@ -252,22 +261,33 @@ pub(crate) fn run_recall(
                 "--pack does not support --at/--related/--where; rerun without them".to_string(),
             );
         }
-        let pack_result = uteke
-            .recall_unified_packed(
-                query,
+        let packed = filter
+            .fetch(
                 limit,
-                tags_filter,
-                ns,
-                min_score,
-                resolved_search_type,
-                entity,
-                category,
-                enrich,
-                resolved_strategy,
-                budget,
-                exclude_ids,
+                |n| {
+                    uteke.recall_unified(
+                        query,
+                        n,
+                        tags_filter,
+                        ns,
+                        min_score,
+                        resolved_search_type,
+                        entity,
+                        category,
+                        enrich,
+                        resolved_strategy,
+                    )
+                },
+                |f, r| f.keep_unified(r),
             )
-            .map_err(|e| format!("Failed to recall: {e}"))?;
+            .map_err(|e| format!("Failed to recall: {e}"));
+        let pack_result = match packed {
+            Ok(results) => uteke_core::pack_mode::pack_context(results, budget, exclude_ids),
+            Err(e) => {
+                uteke.reset_salience_recency_config();
+                return Err(e);
+            }
+        };
 
         uteke.reset_salience_recency_config();
 
@@ -281,18 +301,24 @@ pub(crate) fn run_recall(
 
     if use_unified {
         // Unified search path (#531)
-        let unified_results = uteke
-            .recall_unified(
-                query,
+        let unified_results = filter
+            .fetch(
                 limit,
-                tags_filter,
-                ns,
-                min_score,
-                resolved_search_type,
-                None,
-                None,
-                enrich,
-                resolved_strategy,
+                |n| {
+                    uteke.recall_unified(
+                        query,
+                        n,
+                        tags_filter,
+                        ns,
+                        min_score,
+                        resolved_search_type,
+                        None,
+                        None,
+                        enrich,
+                        resolved_strategy,
+                    )
+                },
+                |f, r| f.keep_unified(r),
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
@@ -350,25 +376,41 @@ pub(crate) fn run_recall(
             if related {
                 return Err("--at and --related cannot be used together".into());
             }
-            uteke
-                .recall_at_time(
-                    query,
+            filter
+                .fetch(
                     limit,
-                    tags_filter,
-                    ns,
-                    point_in_time,
-                    min_score,
-                    None,
-                    None,
+                    |n| {
+                        uteke.recall_at_time(
+                            query,
+                            n,
+                            tags_filter,
+                            ns,
+                            point_in_time,
+                            min_score,
+                            None,
+                            None,
+                        )
+                    },
+                    |f, r| f.keep_memory(r),
                 )
                 .map_err(|e| format!("Failed to recall at time: {e}"))?
         } else if related {
-            uteke
-                .recall_related(query, limit, tags_filter, ns, min_score, depth)
+            filter
+                .fetch(
+                    limit,
+                    |n| uteke.recall_related(query, n, tags_filter, ns, min_score, depth),
+                    |f, r| f.keep_memory(r),
+                )
                 .map_err(|e| format!("Failed to recall: {e}"))?
         } else {
-            uteke
-                .recall_hybrid(query, limit, tags_filter, ns, resolved_strategy, min_score)
+            filter
+                .fetch(
+                    limit,
+                    |n| {
+                        uteke.recall_hybrid(query, n, tags_filter, ns, resolved_strategy, min_score)
+                    },
+                    |f, r| f.keep_memory(r),
+                )
                 .map_err(|e| format!("Failed to recall: {e}"))?
         };
         Ok(results)

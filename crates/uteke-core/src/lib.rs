@@ -73,6 +73,7 @@ pub use list_request::{
     ListRequest, ListRequestError,
 };
 pub use operations::{RememberOutcome, UpdateOutcome};
+pub use recall_filter::ResultFilter;
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
     RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallRequest, RecallRequestError,
@@ -89,6 +90,7 @@ pub mod provenance;
 mod recall_cache;
 pub mod recall_exec;
 pub mod recall_explain;
+mod recall_filter;
 mod recall_request;
 pub mod recall_settings;
 pub mod remember_exec;
@@ -2523,6 +2525,7 @@ impl Uteke {
             .map(|dr| UnifiedSearchResult {
                 result_type: SearchResultType::Document,
                 score: dr.score,
+                similarity: None,
                 content: if dr.chunk_snippet.is_empty() {
                     dr.document.title.clone()
                 } else {
@@ -2645,6 +2648,7 @@ impl Uteke {
                     UnifiedSearchResult {
                         result_type: SearchResultType::Memory,
                         score: sr.score,
+                        similarity: sr.similarity,
                         content: m.content.clone(),
                         memory_id: Some(m.id.clone()),
                         tags: m.tags.clone(),
@@ -2675,6 +2679,7 @@ impl Uteke {
                         // semantic). NOT a cosine — do not threshold it like
                         // one.
                         score: dr.score,
+                        similarity: None,
                         content: if dr.chunk_snippet.is_empty() {
                             dr.document.title.clone()
                         } else {
@@ -3421,10 +3426,7 @@ mod tests {
             author: None,
         };
 
-        let sr = SearchResult {
-            memory: m,
-            score: 0.95,
-        };
+        let sr = SearchResult::new(m, 0.95);
         assert_eq!(sr.score, 0.95);
         assert_eq!(sr.memory.id, "sr-test");
     }

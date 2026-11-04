@@ -159,7 +159,7 @@ impl crate::Uteke {
 
         let mut all_results: Vec<SearchResult> = results
             .into_iter()
-            .map(|(_, (memory, score))| SearchResult { memory, score })
+            .map(|(_, (memory, score))| SearchResult::new(memory, score))
             .collect();
         all_results.sort_by(|a, b| {
             b.score
