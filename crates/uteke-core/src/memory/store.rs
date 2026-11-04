@@ -248,6 +248,52 @@ impl Store {
         Ok(store)
     }
 
+    /// Open an existing store **read-only** (#1667): `SQLITE_OPEN_READ_ONLY`, no
+    /// WAL pragma, no schema migration, nothing created.
+    ///
+    /// Fails when the file does not exist or its schema is not the one this
+    /// build expects, so a reader never migrates a store behind a writer's back.
+    /// An older store is brought up by running any normal `uteke` command once.
+    pub fn open_read_only(path: &str) -> Result<Self, Error> {
+        use rusqlite::OpenFlags;
+
+        if path == ":memory:" || !std::path::Path::new(path).is_file() {
+            return Err(Error::db_msg(format!(
+                "No store at {path}; run any `uteke` command once to create it"
+            )));
+        }
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_URI
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| Error::db("Failed to open database read-only", e))?;
+        conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA query_only=ON;")
+            .map_err(|e| Error::db("Failed to configure read-only connection", e))?;
+
+        let store = Self { conn };
+        let found = store.schema_version().ok();
+        match found {
+            Some(v) if v == CURRENT_SCHEMA_VERSION => {}
+            Some(v) if v > CURRENT_SCHEMA_VERSION => {
+                return Err(Error::db_msg(format!(
+                    "The store schema (version {v}) is newer than this build understands \
+                     (version {CURRENT_SCHEMA_VERSION}); upgrade uteke"
+                )));
+            }
+            other => {
+                let found = other.map_or_else(|| "none".to_string(), |v| v.to_string());
+                return Err(Error::db_msg(format!(
+                    "The store schema (version {found}) is older than this build expects \
+                     (version {CURRENT_SCHEMA_VERSION}); run any normal `uteke` command once \
+                     (for example `uteke stats`) to bring it up to date, then try again"
+                )));
+            }
+        }
+        Ok(store)
+    }
+
     /// Wrap an existing connection as a Store and run init_schema.
     /// Used in tests to set up a pre-seeded database before migration.
     #[cfg(test)]
@@ -2762,5 +2808,59 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fk_count, 0, "timeline_events must have no FK after v20");
+    }
+
+    // --- read-only open (#1667) ---
+
+    #[test]
+    fn open_read_only_does_not_touch_an_older_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_version VALUES (19, '2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        let err = Store::open_read_only(path.to_str().unwrap())
+            .err()
+            .expect("an older schema is refused")
+            .to_string();
+        assert!(err.contains("run any normal `uteke` command"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "file changed");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "stray files: {names:?}");
+    }
+
+    #[test]
+    fn open_read_only_refuses_a_missing_store_without_creating_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("none.db");
+        assert!(Store::open_read_only(path.to_str().unwrap()).is_err());
+        assert!(!path.exists());
+        assert!(Store::open_read_only(":memory:").is_err());
+    }
+
+    #[test]
+    fn open_read_only_handle_cannot_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cur.db");
+        let path = path.to_str().unwrap();
+        drop(Store::open(path).unwrap());
+        let ro = Store::open_read_only(path).expect("current schema opens");
+        assert!(ro.conn.execute_batch("CREATE TABLE t (x INTEGER)").is_err());
+        assert!(
+            ro.conn
+                .execute("UPDATE memories SET pinned = 1", [])
+                .is_err()
+        );
+        assert!(ro.pin("nope").is_err());
+        assert_eq!(ro.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     }
 }

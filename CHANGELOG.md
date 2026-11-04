@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **The viewer never writes the store, and its non-loopback bind authenticates (#1667)** -
+  `uteke view` opens the database `SQLITE_OPEN_READ_ONLY` (new `Uteke::open_read_only`):
+  no WAL pragma, no schema migration, no vector-index or cache file. A store whose
+  schema is older than the binary expects is refused with a message to run any normal
+  `uteke` command once, instead of being migrated from the viewer. A non-loopback
+  `--host` still needs the server auth token, and now every request must also carry it
+  as `Authorization: Bearer` on top of the launch token (the bearer slot is no longer a
+  launch-token source on such a bind); a one-line warning says the viewer speaks plain
+  HTTP and TLS must be terminated in front; the printed launch URL uses `127.0.0.1` /
+  `[::1]` for a wildcard bind instead of `0.0.0.0`. The viewer is unreleased (only on
+  `develop`), so this changes its behaviour with no compatibility shim. Docs:
+  `docs/viewer.md`.
+
 - **Capture extraction no longer holds the store lock across the LLM call (#1663)** -
   `uteke-serve` claims a batch under the lock, releases it for the extractor request
   (up to two minutes per chunk), and takes it again to store the facts and mark the
