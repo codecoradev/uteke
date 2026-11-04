@@ -632,12 +632,19 @@ pub(crate) fn run_connect(agent: &str, dry_run: bool, json: bool) -> Result<(), 
     let adapter = adapter_for(agent).ok_or_else(|| unsupported(agent))?;
     let home = home_dir()?;
     let mut report = connect(adapter.as_ref(), &home, dry_run)?;
-    if !dry_run && !crate::config::Config::load().engine.capture.enabled {
-        report.notes.push(
-            "Note: capture is off, so the prompt and stop hooks do nothing yet. Set \
-             `enabled = true` under [capture] in the global uteke.toml to store turns."
-                .to_string(),
-        );
+    if !dry_run {
+        let config = crate::config::Config::load();
+        if !config.engine.capture.enabled {
+            report.notes.push(
+                "Note: capture is off, so the prompt and stop hooks do nothing yet. Set \
+                 `enabled = true` under [capture] in the global uteke.toml to store turns."
+                    .to_string(),
+            );
+        } else {
+            report
+                .notes
+                .push(uteke_core::capture::extractor_line(&config.extraction));
+        }
     }
     print_report("Connected", adapter.display_name(), &report, json);
     Ok(())

@@ -72,3 +72,7 @@ The hooks call `uteke hook-run`, so upgrading uteke upgrades them. If a release
 changes the entries themselves (a new event, a different timeout), `uteke doctor`
 lists the agent as stale and `uteke connect claude` refreshes them. `doctor` also
 reports entries that were removed from the settings file.
+
+Extraction uses the offline rules, so the turns stay on your machine. They go to an LLM
+endpoint only if you set `mode = "llm"` under `[extraction]`; an API key alone does not
+(`connect` prints which extractor receives the turns).

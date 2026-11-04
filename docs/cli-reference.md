@@ -251,8 +251,11 @@ uteke extract-queue run --budget 5  # extract up to 5 sessions now
 - Roles are `user`, `assistant` and `tool`; a tool result is kept as a summary (its
   first 2000 characters). The privacy filter runs before a turn is queued.
 - Capturing the same text from the same role in the same session again is a no-op.
-- `run` uses the `[extraction]` settings: the LLM endpoint when one is configured,
-  otherwise the offline rules. Facts are stored like any other write (duplicate
+- `run` extracts with the offline rules (no network) unless `[extraction] mode = "llm"`
+  is set: only that explicit mode sends the conversation turns to the LLM endpoint. An
+  API key alone does not (it may be there for `import --extract`). `run`, `uteke connect`
+  (when capture is on) and the `uteke-serve` schedule print or log one line saying which
+  extractor receives the turns (offline, or the endpoint host, never the key). Facts are stored like any other write (duplicate
   check, rejected-value tombstones), tagged `capture`, with the source
   `capture:<session>:<batch>`. An extractor error (rate limit, provider down)
   stops the run and the session is retried next time; after `max_attempts` it is

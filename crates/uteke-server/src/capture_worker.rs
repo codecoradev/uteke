@@ -129,6 +129,7 @@ pub(crate) fn run_forever(
 ) {
     // Minimum one minute to prevent a busy loop.
     let interval = Duration::from_secs(settings.interval_minutes.max(1) * 60);
+    info!("{}", uteke_core::capture::extractor_line(extraction));
     let mut wait = interval;
     loop {
         // Sleep in one-second steps so a shutdown is seen promptly.

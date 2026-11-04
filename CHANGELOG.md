@@ -20,6 +20,16 @@
   fails that session alone, counting an attempt, instead of stopping the run for
   the sessions behind it; a 429 or 5xx still stops the run.
 
+### Security
+
+- **An extraction API key alone no longer sends captured conversations to the LLM (#1665)** -
+  the raw capture queue extracts with the offline rules unless `[extraction] mode = "llm"`
+  is set; a key with no mode (set for `import --extract`) keeps the turns local. The queue
+  is unreleased (develop only, after v0.22.1), so there is no shim for the earlier
+  "key means send" rule. `uteke connect` (capture on), `uteke extract-queue run` and the
+  `uteke-serve` schedule print one line naming the extractor: offline, or the endpoint
+  host (never the key).
+
 ### Changed
 
 - **Behaviour change for callers who pass `at`: history is the default (#1598)** -

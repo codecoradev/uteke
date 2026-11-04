@@ -74,6 +74,12 @@ pub(crate) fn run_extract_queue(
             let settings = config.engine.capture;
             let facts = uteke_core::capture::fact_source(&config.extraction)
                 .map_err(|e| format!("Failed to initialize extractor: {e}"))?;
+            if !cli.json {
+                println!(
+                    "{}",
+                    uteke_core::capture::extractor_line(&config.extraction)
+                );
+            }
             let r = uteke
                 .run_capture_extraction(
                     facts.as_ref(),
