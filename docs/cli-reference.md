@@ -493,7 +493,8 @@ uteke namespace migrate --map map.toml --apply --allow-drop
 ```
 
 - The dry run writes nothing. `--apply` first writes a full export
-  (`namespace-migrate-<UTC time>.ndjson` next to the database) and only then
+  (`namespace-migrate-<UTC time>.ndjson` next to the database, created owner-only,
+  mode 0600 on Unix, since it holds every memory) and only then
   migrates, one transaction per namespace. Restore it with
   `uteke import --full` into a fresh store. Run it on a copy of the database first.
 - `default` cannot be named in the map. Namespaces the map does not name are
@@ -787,6 +788,9 @@ uteke import notes.md --tags imported,notes
 uteke export --full bundle.ndjson          # on the source: memories, rooms, graph, documents, ...
 uteke import --full bundle.ndjson          # on the target
 ```
+
+Export files (`--output` / the bundle) are created owner-only (mode 0600 on Unix), also over an
+existing file, because they hold the memories of the store.
 
 The bundle restores documents with their slug, title, parent (hierarchy), path and content,
 plus rooms (with each member's role), edges, the graph and the timeline, keeping the original

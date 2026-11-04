@@ -239,6 +239,9 @@ struct ConfigFile {
     value: OJson,
     existed: bool,
     trailing_newline: bool,
+    /// The bytes as read (`None` when the file did not exist), so the write can
+    /// tell that the file changed in between (#1668).
+    text: Option<String>,
 }
 
 fn read_config(path: &Path) -> Result<ConfigFile, String> {
@@ -247,6 +250,7 @@ fn read_config(path: &Path) -> Result<ConfigFile, String> {
             value: OJson::empty_object(),
             existed: true,
             trailing_newline: true,
+            text: Some(text),
         }),
         Ok(text) => {
             let value: OJson = serde_json::from_str(&text).map_err(|e| {
@@ -265,12 +269,14 @@ fn read_config(path: &Path) -> Result<ConfigFile, String> {
                 value,
                 existed: true,
                 trailing_newline: text.ends_with('\n'),
+                text: Some(text),
             })
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFile {
             value: OJson::empty_object(),
             existed: false,
             trailing_newline: true,
+            text: None,
         }),
         Err(e) => Err(format!("Cannot read {}: {e}", path.display())),
     }
@@ -284,10 +290,40 @@ fn render(value: &OJson, trailing_newline: bool) -> Result<String, String> {
     Ok(text)
 }
 
+/// Create the temporary file with the final file's mode (0600 when there is
+/// none) from the start, so a private settings file is never briefly readable
+/// by others (#1668). A leftover from a crashed run is removed first, which also
+/// keeps a planted symlink from being followed.
+fn create_temp(tmp: &Path, mode: Option<u32>) -> std::io::Result<std::fs::File> {
+    match std::fs::remove_file(tmp) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(mode.unwrap_or(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    opts.open(tmp)
+}
+
 /// Write through a temporary file and a rename, so a crash never leaves a
 /// half-written config. A symlinked config (a dotfiles checkout) is written
 /// at its target: renaming over the link would replace the link itself.
-fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+///
+/// `read_as` is what the caller read before computing `text` (`None`: the file
+/// did not exist). If the file no longer holds exactly that when the write is
+/// about to replace it, something else (the agent app itself, say) changed it
+/// in between: nothing is written and the error says so, instead of silently
+/// dropping the other writer's change. A change in the instant between this
+/// check and the rename cannot be excluded without a lock the agent would also
+/// have to take.
+fn write_atomic(path: &Path, text: &str, read_as: Option<&str>) -> Result<(), String> {
     let resolved;
     let path = if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         resolved = std::fs::canonicalize(path)
@@ -304,14 +340,52 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         ".{}.uteke-tmp",
         path.file_name().unwrap_or_default().to_string_lossy()
     ));
-    std::fs::write(&tmp, text).map_err(|e| format!("Cannot write {}: {e}", tmp.display()))?;
     // The rename replaces the file: keep its permissions (a settings file the
-    // user made private stays private).
-    if let Ok(meta) = std::fs::metadata(path) {
-        std::fs::set_permissions(&tmp, meta.permissions())
-            .map_err(|e| format!("Cannot set permissions on {}: {e}", tmp.display()))?;
+    // user made private stays private), from the moment the temp file exists.
+    let meta = std::fs::metadata(path).ok();
+    #[cfg(unix)]
+    let mode = meta.as_ref().map(|m| {
+        use std::os::unix::fs::PermissionsExt;
+        m.permissions().mode() & 0o7777
+    });
+    #[cfg(not(unix))]
+    let mode = None;
+    let mut file =
+        create_temp(&tmp, mode).map_err(|e| format!("Cannot write {}: {e}", tmp.display()))?;
+    let written =
+        std::io::Write::write_all(&mut file, text.as_bytes()).and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("Cannot write {}: {e}", tmp.display()));
     }
-    std::fs::rename(&tmp, path).map_err(|e| format!("Cannot write {}: {e}", path.display()))
+    if let Some(meta) = &meta {
+        // The umask may have cleared bits the original had: restore it exactly.
+        if let Err(e) = std::fs::set_permissions(&tmp, meta.permissions()) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("Cannot set permissions on {}: {e}", tmp.display()));
+        }
+    }
+    let now = match std::fs::read_to_string(path) {
+        Ok(t) => Some(t),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("Cannot read {}: {e}", path.display()));
+        }
+    };
+    if now.as_deref() != read_as {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!(
+            "{} changed while uteke was updating it (another program wrote it); nothing was \
+             written. Run the command again.",
+            path.display()
+        ));
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("Cannot write {}: {e}", path.display())
+    })
 }
 
 /// `<file>.uteke-bak`, written once: the copy of the file before uteke first
@@ -436,8 +510,9 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
     // entries written without a manifest would be untracked.
     let manifest_text = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
     let mpath = manifest_path(home, adapter.agent());
-    if std::fs::read_to_string(&mpath).ok().as_deref() != Some(manifest_text.as_str()) {
-        write_atomic(&mpath, &manifest_text)?;
+    let old_manifest = std::fs::read_to_string(&mpath).ok();
+    if old_manifest.as_deref() != Some(manifest_text.as_str()) {
+        write_atomic(&mpath, &manifest_text, old_manifest.as_deref())?;
     }
     if report.changed {
         if file.existed {
@@ -448,7 +523,7 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
                 report.backup = Some(bak);
             }
         }
-        write_atomic(&path, &new_text)?;
+        write_atomic(&path, &new_text, file.text.as_deref())?;
     }
     report.notes = adapter.notes();
     Ok(report)
@@ -508,7 +583,7 @@ pub(crate) fn disconnect(
         std::fs::remove_file(&path)
             .map_err(|e| format!("Cannot remove {}: {e}", path.display()))?;
     } else if report.changed {
-        write_atomic(&path, &new_text)?;
+        write_atomic(&path, &new_text, file.text.as_deref())?;
     }
     let mpath = manifest_path(home, adapter.agent());
     std::fs::remove_file(&mpath).map_err(|e| format!("Cannot remove {}: {e}", mpath.display()))?;

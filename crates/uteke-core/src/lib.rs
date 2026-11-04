@@ -59,6 +59,7 @@ pub mod privacy;
 mod privacy_field_tests;
 #[cfg(test)]
 mod privacy_write_tests;
+pub mod private_file;
 mod redaction_flags;
 #[cfg(test)]
 mod timeline_write_tests;

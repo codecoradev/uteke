@@ -17,6 +17,18 @@
   `develop`), so this changes its behaviour with no compatibility shim. Docs:
   `docs/viewer.md`.
 
+- **Exports are owner-only and `connect` no longer exposes or clobbers a config (#1668)** -
+  the pre-migration export of `uteke namespace migrate` and the files written by
+  `uteke export` (plain and `--full`) are created with mode 0600 on Unix (new
+  `uteke_core::private_file::create_private`; an existing export file is tightened
+  before it is truncated). `connect`/`disconnect` create the temp config with the
+  original file's mode (0600 when there is none) from the start, instead of copying the
+  mode afterwards, and compare the file with what was read before the rename: if another
+  program changed it in between, nothing is written and the error says so. `namespace
+  migrate` and `connect` are unreleased (only on `develop`), so this changes their
+  behaviour with no compatibility shim; the `uteke export` mode change applies to a
+  released command and only tightens permissions.
+
 - **Capture extraction no longer holds the store lock across the LLM call (#1663)** -
   `uteke-serve` claims a batch under the lock, releases it for the extractor request
   (up to two minutes per chunk), and takes it again to store the facts and mark the

@@ -255,16 +255,13 @@ impl crate::Uteke {
     /// Write the full structural export to a new file.
     fn write_export(&self, path: &Path) -> Result<(), Error> {
         let export = self.export_full()?;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|e| {
-                Error::Validation(format!(
-                    "cannot write the export {} (it must not exist yet): {e}",
-                    path.display()
-                ))
-            })?;
+        // Owner-only from creation: the file holds every memory in the store (#1668).
+        let mut file = crate::private_file::create_private(path, false).map_err(|e| {
+            Error::Validation(format!(
+                "cannot write the export {} (it must not exist yet): {e}",
+                path.display()
+            ))
+        })?;
         file.write_all(export.as_bytes())
             .and_then(|()| file.sync_all())
             .map_err(Error::Io)

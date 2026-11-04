@@ -508,3 +508,21 @@ fn soft_deleted_rows_stay_where_they_are() {
     assert_eq!(row.namespace, "ns-a");
     assert!(!row.tags.contains(&"a".to_string()));
 }
+
+/// #1668: the pre-migration export holds every memory, so it is created
+/// owner-only, not with the umask default.
+#[cfg(unix)]
+#[test]
+fn the_export_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let u = open_keyword();
+    remember(&u, "ns-a", "alpha", None, None);
+    let dir = tempfile::tempdir().unwrap();
+    let path = export_path(&dir);
+
+    u.apply_namespace_migration(&map("[map.ns-a]\ntag = \"a\""), &path, false)
+        .unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "export mode {mode:o}");
+}
