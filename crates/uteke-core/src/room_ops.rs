@@ -149,7 +149,11 @@ impl crate::Uteke {
                 if min_score > 0.0 && score < min_score {
                     continue;
                 }
-                results.push(SearchResult { memory, score });
+                results.push(SearchResult {
+                    memory,
+                    score,
+                    similarity: Some(similarity),
+                });
             }
         }
         results.sort_by(|a, b| {
