@@ -1154,8 +1154,21 @@ mod tests {
         assert!(crate::extraction::is_input_too_large(&err(
             "413 Payload Too Large"
         )));
-        assert!(crate::extraction::is_input_too_large(&Error::generic(
-            "This model's maximum context length is 8192 tokens"
+        assert!(crate::extraction::is_input_too_large(&err(
+            "422 Unprocessable: maximum context length is 8192 tokens"
+        )));
+        // the status decides: a 5xx or 429 body never makes it "too large"
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "503 Service Unavailable: upstream request took too long"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "429 Too Many Requests: context length quota"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&Error::generic(
+            "Extraction request failed: operation too long, timed out"
+        )));
+        assert!(!crate::extraction::is_input_too_large(&err(
+            "404 Not Found: model"
         )));
         assert!(!crate::extraction::is_input_too_large(&err(
             "429 Too Many Requests"
