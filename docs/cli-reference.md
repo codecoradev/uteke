@@ -261,6 +261,9 @@ uteke extract-queue run --budget 5  # extract up to 5 sessions now
 - Roles are `user`, `assistant` and `tool`; a tool result is kept as a summary (its
   first 2000 characters). The privacy filter runs before a turn is queued.
 - Capturing the same text from the same role in the same session again is a no-op.
+- A turn over `max_turn_bytes` (1 MiB) is refused, and so is any turn while the queue holds
+  `max_queue_turns` / `max_queue_bytes`. `status` shows the waiting bytes and warns from 80%
+  of a limit.
 - `run` extracts with the offline rules (no network) unless `[extraction] mode = "llm"`
   is set: only that explicit mode sends the conversation turns to the LLM endpoint. An
   API key alone does not (it may be there for `import --extract`). `run`, `uteke connect`

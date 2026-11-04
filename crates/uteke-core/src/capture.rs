@@ -24,6 +24,16 @@ pub const DEFAULT_CHUNK_CHARS: usize = 24_000;
 /// always fit.
 pub const MIN_CHUNK_CHARS: usize = 64;
 
+/// Default most bytes one captured turn may have (#1666): the limit the HTTP
+/// route already used.
+pub const DEFAULT_MAX_TURN_BYTES: usize = 1_048_576;
+
+/// Default most turns waiting in the queue (pending or being extracted).
+pub const DEFAULT_MAX_QUEUE_TURNS: usize = 100_000;
+
+/// Default most bytes of turn text waiting in the queue.
+pub const DEFAULT_MAX_QUEUE_BYTES: u64 = 512 * 1024 * 1024;
+
 /// Longest accepted session id.
 const MAX_SESSION_ID: usize = 200;
 
@@ -49,9 +59,28 @@ pub struct CaptureSettings {
     /// is extracted in several calls and its facts stored as one batch. 0 means
     /// [`DEFAULT_CHUNK_CHARS`].
     pub chunk_chars: usize,
+    /// Most bytes one turn may have (#1666), for every surface: CLI, MCP and
+    /// HTTP. A larger turn is refused. A tool result is summarised first, so
+    /// it never reaches this. 0 means [`DEFAULT_MAX_TURN_BYTES`].
+    pub max_turn_bytes: usize,
+    /// Most turns waiting in the queue (pending or being extracted); capture
+    /// refuses past it and `extract-queue status` warns at 80%. 0 means no
+    /// limit.
+    pub max_queue_turns: usize,
+    /// Most bytes of turn text waiting in the queue; same behaviour. 0 means
+    /// no limit.
+    pub max_queue_bytes: u64,
 }
 
 impl CaptureSettings {
+    /// The effective turn limit in bytes: the default for 0.
+    pub fn turn_limit(&self) -> usize {
+        match self.max_turn_bytes {
+            0 => DEFAULT_MAX_TURN_BYTES,
+            n => n,
+        }
+    }
+
     /// The effective chunk size: the default for 0, never below
     /// [`MIN_CHUNK_CHARS`].
     pub fn chunk_budget(&self) -> usize {
@@ -72,6 +101,9 @@ impl Default for CaptureSettings {
             max_attempts: 3,
             lease_minutes: 15,
             chunk_chars: DEFAULT_CHUNK_CHARS,
+            max_turn_bytes: DEFAULT_MAX_TURN_BYTES,
+            max_queue_turns: DEFAULT_MAX_QUEUE_TURNS,
+            max_queue_bytes: DEFAULT_MAX_QUEUE_BYTES,
         }
     }
 }
@@ -128,18 +160,26 @@ pub struct QueueStatus {
     pub failed: usize,
     /// Sessions with at least one pending turn.
     pub sessions_pending: usize,
+    /// Bytes of turn text waiting (pending or being extracted).
+    pub pending_bytes: u64,
+    /// Set when the waiting queue is at 80% of a `[capture]` queue limit or
+    /// past it (capture then refuses): extraction is not keeping up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 /// What one extraction run did.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct ExtractionRunReport {
     pub sessions_done: usize,
-    /// Sessions that reached `max_attempts` in this run.
+    /// Sessions that reached `max_attempts` in this run, by a failed
+    /// extraction or by an expired lease.
     pub sessions_failed: usize,
     pub facts_stored: usize,
     /// Facts refused by a rejected-value tombstone or the privacy filter.
     pub facts_refused: usize,
-    /// Sessions handed back after an expired lease.
+    /// Batches an expired lease handed back to the queue (batches it failed
+    /// at `max_attempts` are in `sessions_failed` instead).
     pub reclaimed: usize,
     /// Done turns deleted by the retention rule.
     pub pruned: usize,
@@ -385,6 +425,19 @@ pub fn extract_batch(
     Ok(found)
 }
 
+/// Turns waiting in the queue (pending or being extracted) and their bytes.
+/// The byte count reads the blob length, which SQLite takes from the row
+/// header without loading the text.
+fn queue_size(conn: &rusqlite::Connection) -> Result<(usize, u64), Error> {
+    conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(content AS BLOB))), 0) FROM observations
+         WHERE status IN ('pending', 'extracting')",
+        [],
+        |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as u64)),
+    )
+    .map_err(|e| Error::db("capture queue size", e))
+}
+
 impl crate::Uteke {
     /// Append one turn to the capture queue (#1466). The privacy filter runs
     /// first, so a secret never sits in the queue in clear text. Capturing
@@ -408,6 +461,13 @@ impl crate::Uteke {
         if content.trim().is_empty() {
             return Err(Error::validation("Nothing to capture: the turn is empty"));
         }
+        let limit = self.capture_settings.turn_limit();
+        if role != Role::Tool && content.len() > limit {
+            return Err(Error::validation(format!(
+                "The turn is too large: {} bytes, the limit is {limit} (`max_turn_bytes` under [capture])",
+                content.len()
+            )));
+        }
         let text: String = if role == Role::Tool && content.chars().count() > TOOL_SUMMARY_CHARS {
             let mut s: String = content.chars().take(TOOL_SUMMARY_CHARS).collect();
             s.push_str(" [...]");
@@ -421,6 +481,27 @@ impl crate::Uteke {
         let hash = turn_hash(session_id, role, &text);
 
         let conn = self.graph_store();
+        // A turn already queued is a no-op, so it is never refused for size
+        // of the queue.
+        let queued: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM observations WHERE content_hash = ?1)",
+                params![hash],
+                |r| r.get(0),
+            )
+            .map_err(|e| Error::db("capture lookup", e))?;
+        if !queued {
+            let (turns, bytes) = queue_size(conn)?;
+            let cfg = &self.capture_settings;
+            let over = (cfg.max_queue_turns > 0 && turns >= cfg.max_queue_turns)
+                || (cfg.max_queue_bytes > 0 && bytes + text.len() as u64 > cfg.max_queue_bytes);
+            if over {
+                return Err(Error::validation(format!(
+                    "The capture queue is full: {turns} turns, {bytes} bytes waiting (limits: {} turns, {} bytes under [capture]). Run `uteke extract-queue run`, or check why extraction is not running",
+                    cfg.max_queue_turns, cfg.max_queue_bytes
+                )));
+            }
+        }
         // INSERT OR IGNORE: two hooks capturing the same turn at once both
         // succeed, one of them as the duplicate.
         let inserted = conn
@@ -477,6 +558,23 @@ impl crate::Uteke {
             }
         }
         status.sessions_pending = self.sessions_pending()?;
+        let (turns, bytes) = queue_size(conn)?;
+        status.pending_bytes = bytes;
+        let cfg = &self.capture_settings;
+        let near = |n: u64, max: u64| max > 0 && n * 5 >= max * 4;
+        if near(turns as u64, cfg.max_queue_turns as u64) || near(bytes, cfg.max_queue_bytes) {
+            let full = (cfg.max_queue_turns > 0 && turns >= cfg.max_queue_turns)
+                || (cfg.max_queue_bytes > 0 && bytes >= cfg.max_queue_bytes);
+            status.warning = Some(if full {
+                format!(
+                    "The queue is full ({turns} turns, {bytes} bytes): capture refuses new turns until extraction catches up"
+                )
+            } else {
+                format!(
+                    "The queue is at 80% of its limit ({turns} turns, {bytes} bytes): extraction is not keeping up"
+                )
+            });
+        }
         Ok(status)
     }
 
@@ -554,29 +652,42 @@ impl crate::Uteke {
             )
             .map_err(|e| Error::db("capture retention", e))?;
         let lease = ago(settings.lease_minutes as i64);
-        report.reclaimed += conn
-            .query_row(
-                "SELECT COUNT(DISTINCT batch_id) FROM observations
-                 WHERE status = 'extracting' AND claimed_at < ?1",
-                params![lease],
-                |r| r.get::<_, i64>(0),
-            )
-            .map_err(|e| Error::db("capture reclaim", e))? as usize;
         // A batch that keeps crashing the run (it never reaches the error
-        // path) fails like one that keeps erroring.
-        conn.execute(
-            "UPDATE observations
-             SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
-                 claimed_at = NULL,
-                 finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
-             WHERE status = 'extracting' AND claimed_at < ?1",
-            params![
-                lease,
-                settings.max_attempts,
-                chrono::Utc::now().to_rfc3339()
-            ],
-        )
-        .map_err(|e| Error::db("capture reclaim", e))?;
+        // path) fails like one that keeps erroring. The counts come from the
+        // rows this UPDATE changes, so a batch another run reclaimed first is
+        // not counted twice.
+        let mut stmt = conn
+            .prepare(
+                "UPDATE observations
+                 SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
+                     claimed_at = NULL,
+                     finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
+                 WHERE status = 'extracting' AND claimed_at < ?1
+                 RETURNING batch_id, status",
+            )
+            .map_err(|e| Error::db("capture reclaim", e))?;
+        let changed: Vec<(Option<String>, String)> = stmt
+            .query_map(
+                params![
+                    lease,
+                    settings.max_attempts,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| Error::db("capture reclaim", e))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| Error::db("capture reclaim", e))?;
+        let batches = |status: &str| {
+            changed
+                .iter()
+                .filter(|(_, s)| s == status)
+                .map(|(b, _)| b.as_deref())
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        };
+        report.reclaimed += batches("pending");
+        report.sessions_failed += batches("failed");
         Ok(())
     }
 
@@ -709,6 +820,9 @@ impl crate::Uteke {
             Ok(found) => {
                 let mut stored = Vec::new();
                 let mut failure = None;
+                // Counted into the report only when the attempt stands: a
+                // retried attempt counts its refusals again.
+                let mut refused = 0;
                 for fact in &found {
                     match self.store_captured_fact(fact, source, batch.namespace.as_deref()) {
                         Ok(Some(id)) => stored.push(id),
@@ -722,7 +836,7 @@ impl crate::Uteke {
                             | Error::Validation(_)),
                         ) => {
                             tracing::debug!("Captured fact refused: {e}");
-                            report.facts_refused += 1
+                            refused += 1
                         }
                         // Database, embedder or lock: may pass next time,
                         // so the batch is retried whole.
@@ -735,6 +849,7 @@ impl crate::Uteke {
                 match failure {
                     None => {
                         report.facts_stored += stored.len();
+                        report.facts_refused += refused;
                         Ok(())
                     }
                     // Take back what this attempt stored, so the retry
@@ -1693,5 +1808,157 @@ mod tests {
         assert_eq!(next_run_delay(hour, hour * 16, false), hour, "reset");
         // A previous wait shorter than the interval still doubles the interval.
         assert_eq!(next_run_delay(hour, Duration::ZERO, true), hour * 2);
+    }
+    fn limited(f: impl FnOnce(&mut CaptureSettings)) -> crate::Uteke {
+        let mut u = open_keyword();
+        let mut s = settings();
+        f(&mut s);
+        u.set_capture_settings(s);
+        u
+    }
+
+    #[test]
+    fn a_turn_over_the_size_limit_is_refused_and_one_at_the_limit_is_kept() {
+        let u = limited(|s| s.max_turn_bytes = 100);
+        let at = "a".repeat(100);
+        assert!(u.capture("s", Role::User, &at, None, None).is_ok());
+        for role in [Role::User, Role::Assistant] {
+            let over = "b".repeat(101);
+            let e = u.capture("s", role, &over, None, None).unwrap_err();
+            assert!(matches!(e, Error::Validation(_)), "{e}");
+            assert!(e.to_string().contains("100"), "{e}");
+        }
+        // Bytes, not characters: 51 two-byte characters are 102 bytes.
+        let wide = "é".repeat(51);
+        assert!(u.capture("s", Role::User, &wide, None, None).is_err());
+        // A tool result is summarised to a small text first, so it is kept.
+        let tool = "t".repeat(5000);
+        assert!(u.capture("s", Role::Tool, &tool, None, None).is_ok());
+        assert_eq!(rows(&u, "SELECT COUNT(*) FROM observations"), 2);
+    }
+
+    #[test]
+    fn the_default_turn_limit_is_one_megabyte_and_zero_means_the_default() {
+        assert_eq!(CaptureSettings::default().max_turn_bytes, 1_048_576);
+        let s = CaptureSettings {
+            max_turn_bytes: 0,
+            ..Default::default()
+        };
+        assert_eq!(s.turn_limit(), DEFAULT_MAX_TURN_BYTES);
+    }
+
+    #[test]
+    fn a_queue_past_the_turn_limit_refuses_and_status_says_so() {
+        let u = limited(|s| s.max_queue_turns = 2);
+        u.capture("s", Role::User, "one", None, None).unwrap();
+        u.capture("s", Role::User, "two", None, None).unwrap();
+        let e = u.capture("s", Role::User, "three", None, None).unwrap_err();
+        assert!(matches!(e, Error::Validation(_)), "{e}");
+        assert!(e.to_string().contains("queue is full"), "{e}");
+        // The same turn again is still a no-op, not a refusal.
+        assert!(
+            u.capture("s", Role::User, "two", None, None)
+                .unwrap()
+                .duplicate
+        );
+        let st = u.capture_status().unwrap();
+        assert_eq!((st.pending, st.pending_bytes), (2, 6));
+        assert!(st.warning.as_deref().unwrap().contains("full"));
+    }
+
+    #[test]
+    fn a_queue_past_the_byte_limit_refuses() {
+        let u = limited(|s| s.max_queue_bytes = 10);
+        u.capture("s", Role::User, "123456", None, None).unwrap();
+        // 6 queued + 5 would be 11 > 10.
+        assert!(u.capture("s", Role::User, "abcde", None, None).is_err());
+        assert!(u.capture("s", Role::User, "abcd", None, None).is_ok());
+    }
+
+    #[test]
+    fn the_queue_limit_counts_turns_waiting_and_being_extracted_not_done_ones() {
+        let u = limited(|s| s.max_queue_turns = 1);
+        u.capture("s", Role::User, "one", None, None).unwrap();
+        u.run_capture_extraction(&Fake::new(0), 5, &settings())
+            .unwrap();
+        assert!(u.capture("s", Role::User, "two", None, None).is_ok());
+    }
+
+    #[test]
+    fn a_queue_near_its_limit_warns_in_status_but_still_accepts() {
+        let u = limited(|s| s.max_queue_turns = 5);
+        for t in ["a", "b", "c", "d"] {
+            u.capture("s", Role::User, t, None, None).unwrap();
+        }
+        let st = u.capture_status().unwrap();
+        assert!(st.warning.as_deref().unwrap().contains("80%"));
+        assert!(u.capture("s", Role::User, "e", None, None).is_ok());
+        let none = limited(|_| {});
+        none.capture("s", Role::User, "a", None, None).unwrap();
+        assert!(none.capture_status().unwrap().warning.is_none());
+    }
+
+    #[test]
+    fn a_lease_that_expired_is_counted_as_reclaimed_or_as_failed_never_as_both() {
+        let u = open_keyword();
+        for s in ["retry", "exhausted"] {
+            u.capture(s, Role::User, s, None, None).unwrap();
+        }
+        for (s, b, attempts) in [("retry", "b1", 1), ("exhausted", "b2", 3)] {
+            u.graph_store()
+                .execute(
+                    "UPDATE observations SET status = 'extracting', claimed_at = ?1, attempts = ?2, batch_id = ?3 WHERE session_id = ?4",
+                    rusqlite::params![ago(60), attempts, b, s],
+                )
+                .unwrap();
+        }
+        let mut r = ExtractionRunReport::default();
+        u.capture_housekeeping(&settings(), &mut r).unwrap();
+        assert_eq!((r.reclaimed, r.sessions_failed), (1, 1));
+        // Nothing left to hand back: a second pass counts nothing.
+        let mut again = ExtractionRunReport::default();
+        u.capture_housekeeping(&settings(), &mut again).unwrap();
+        assert_eq!((again.reclaimed, again.sessions_failed), (0, 0));
+    }
+
+    /// One fact a tombstone refuses, then one whose insert fails until `fixed`.
+    struct RefusedThenBroken {
+        fixed: Mutex<bool>,
+    }
+
+    impl FactSource for RefusedThenBroken {
+        fn extract(&self, _text: &str) -> Result<Vec<ExtractedFact>, Error> {
+            let mut facts = vec![ExtractedFact::flat("the port is 9999")];
+            if !*self.fixed.lock().unwrap() {
+                facts.push(ExtractedFact::flat("boom fact"));
+            }
+            Ok(facts)
+        }
+    }
+
+    #[test]
+    fn a_refused_fact_is_counted_once_when_the_attempt_is_retried() {
+        let u = open_keyword();
+        let id = u.remember("the port is 9999", &[], None, None).unwrap();
+        u.forget_with_reason(&id, Some("wrong")).unwrap();
+        u.capture("s", Role::User, "how do we build", None, None)
+            .unwrap();
+        u.graph_store()
+            .execute_batch(
+                "CREATE TEMP TRIGGER boom BEFORE INSERT ON memories WHEN NEW.content = 'boom fact'
+                 BEGIN SELECT RAISE(ABORT, 'disk is busy'); END;",
+            )
+            .unwrap();
+        let src = RefusedThenBroken {
+            fixed: Mutex::new(false),
+        };
+        let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
+        assert!(r.stopped.is_some());
+        assert_eq!(r.facts_refused, 0, "the attempt was rolled back");
+
+        *src.fixed.lock().unwrap() = true;
+        u.graph_store().execute_batch("DROP TRIGGER boom;").unwrap();
+        let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
+        assert_eq!((r.sessions_done, r.facts_refused), (1, 1));
     }
 }

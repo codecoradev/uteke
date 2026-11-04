@@ -29,12 +29,8 @@ pub(crate) fn run_capture(
     let content = match text {
         Some(t) => t.to_string(),
         None => {
-            use std::io::Read;
-            let mut buf = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| format!("Failed to read stdin: {e}"))?;
-            buf
+            let limit = config.engine.capture.turn_limit();
+            read_turn(std::io::stdin().lock(), limit)?
         }
     };
     let out = uteke
@@ -48,6 +44,24 @@ pub(crate) fn run_capture(
         println!("\u{2713} Captured: {}", out.id);
     }
     Ok(())
+}
+
+/// Read a turn from `input`, at most `limit` bytes: one byte more is read to
+/// tell a turn at the limit from one over it, and nothing beyond that.
+fn read_turn(input: impl std::io::Read, limit: usize) -> Result<String, String> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    input
+        .take(limit as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+    if buf.len() > limit {
+        return Err(format!(
+            "The turn is too large: more than {limit} bytes on stdin (`max_turn_bytes` under [capture])"
+        ));
+    }
+    String::from_utf8(buf)
+        .map_err(|_| "Failed to read stdin: the turn is not valid UTF-8".to_string())
 }
 
 pub(crate) fn run_extract_queue(
@@ -68,6 +82,10 @@ pub(crate) fn run_extract_queue(
                     "Capture queue: {} pending ({} sessions), {} extracting, {} done, {} failed",
                     s.pending, s.sessions_pending, s.extracting, s.done, s.failed
                 );
+                println!("Waiting text: {} bytes", s.pending_bytes);
+                if let Some(w) = &s.warning {
+                    println!("  \u{26a0} {w}");
+                }
             }
         }
         ExtractQueueCommands::Run { budget } => {
@@ -116,4 +134,24 @@ pub(crate) fn run_extract_queue(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_turn;
+
+    #[test]
+    fn stdin_is_read_up_to_the_limit_and_no_further() {
+        assert_eq!(read_turn(&b"hello"[..], 5).unwrap(), "hello");
+        let e = read_turn(&b"hello!"[..], 5).unwrap_err();
+        assert!(e.contains("too large") && e.contains('5'), "{e}");
+        // An endless input is cut at limit + 1 instead of read to the end.
+        let endless = std::io::repeat(b'x');
+        assert!(read_turn(endless, 1000).is_err());
+        assert!(
+            read_turn(&[0xff, 0xfe][..], 10)
+                .unwrap_err()
+                .contains("UTF-8")
+        );
+    }
 }
