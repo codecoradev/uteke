@@ -177,7 +177,8 @@ uteke list --at 2026-06-01T12:00:00Z   # Time-travel: list at point in time
 | `--category <cat>` | Filter by category |
 | `--limit <n>` | Max results (default: 10, at most 1000) |
 | `--offset <n>` | Skip first N results |
-| `--at <timestamp>` | Query memories at point in time (RFC3339) |
+| `--at <timestamp>` | Query memories at point in time (RFC3339), including those deprecated after it (#1598) |
+| `--history` | Deprecated, no effect: `--at` always includes memories deprecated after it. Needs `--at` |
 | `--json` | Output as JSON |
 
 ## uteke forget
@@ -559,7 +560,8 @@ uteke recall "api design" --context
 |------|-------------|
 | `--min <score>` | Minimum score (default 0.0 since 0.17.x, #1223: fusion scores are rank-based, not cosine). `--min-score` is accepted as an alias (#1593) |
 | `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
-| `--at <timestamp>` | Query memories at point in time (RFC3339) |
+| `--at <timestamp>` | Query memories at point in time (RFC3339), including those deprecated after it (#1598) |
+| `--history` | Deprecated, no effect: `--at` always includes memories deprecated after it. Needs `--at` |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |

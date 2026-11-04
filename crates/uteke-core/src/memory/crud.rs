@@ -901,7 +901,7 @@ impl super::Store {
     /// - `created_at <= point_in_time`
     /// - `valid_from IS NULL OR valid_from <= point_in_time`
     /// - `valid_until IS NULL OR valid_until > point_in_time`
-    /// - `deprecated = 0`
+    /// - not deprecated, or deprecated after `point_in_time` (#1598)
     pub fn list_at_time(
         &self,
         tag: Option<&str>,
@@ -910,7 +910,7 @@ impl super::Store {
         offset: usize,
         point_in_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<Memory>, Error> {
-        self.list_at_time_with(tag, namespace, limit, offset, point_in_time, false)
+        self.list_at_time_with(tag, namespace, limit, offset, point_in_time, true)
     }
 
     /// [`Self::list_at_time`], optionally in history mode (#1598): with

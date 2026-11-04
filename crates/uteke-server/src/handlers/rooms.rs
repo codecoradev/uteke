@@ -196,26 +196,21 @@ pub(super) fn post_room_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let query = req_data.query.as_deref().unwrap_or("").trim();
             if query.is_empty() {
                 // No query provided — fall back to chronological recall (#785)
-                // Over-fetch when time-traveling: the SQL LIMIT applies
-                // before the temporal post-filter, so fetch extra rows
-                // and truncate after filtering (cora MAJOR on #1085).
-                let fetch_limit = if point_in_time.is_some() && req_data.limit > 0 {
-                    req_data.limit.saturating_mul(3).max(req_data.limit + 10)
-                } else {
-                    req_data.limit
+                let recalled = match point_in_time {
+                    Some(pit) => uteke.recall_room_at_time(
+                        &req_data.room_id,
+                        req_data.author.as_deref(),
+                        req_data.limit,
+                        pit,
+                    ),
+                    None => uteke.recall_room(
+                        &req_data.room_id,
+                        req_data.author.as_deref(),
+                        req_data.limit,
+                    ),
                 };
-                match uteke.recall_room(&req_data.room_id, req_data.author.as_deref(), fetch_limit)
-                {
-                    Ok(memories) => {
-                        let mut memories = match point_in_time {
-                            Some(pit) => filter_room_memories_at_time(memories, pit),
-                            None => memories,
-                        };
-                        if point_in_time.is_some() && req_data.limit > 0 {
-                            memories.truncate(req_data.limit);
-                        }
-                        ctx.ok_response_for(req, &memories)
-                    }
+                match recalled {
+                    Ok(memories) => ctx.ok_response_for(req, &memories),
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
@@ -229,27 +224,26 @@ pub(super) fn post_room_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         .map(|r| r.min_score)
                         .unwrap_or(DEFAULT_MIN_SCORE as f64) as f32,
                 );
-                match uteke.recall_room_semantic(
-                    &req_data.room_id,
-                    query,
-                    req_data.limit,
-                    req_data.author.as_deref(),
-                    min_score,
-                ) {
-                    Ok(results) => {
-                        let results = match point_in_time {
-                            Some(pit) => {
-                                let mut kept: Vec<_> = results
-                                    .into_iter()
-                                    .filter(|sr| memory_exists_at(&sr.memory, pit))
-                                    .collect();
-                                kept.truncate(req_data.limit.max(1));
-                                kept
-                            }
-                            None => results,
-                        };
-                        ctx.ok_response_for(req, &results)
-                    }
+                let recalled = match point_in_time {
+                    // limit 0 keeps its old meaning here: one result.
+                    Some(pit) => uteke.recall_room_semantic_at_time(
+                        &req_data.room_id,
+                        query,
+                        req_data.limit.max(1),
+                        req_data.author.as_deref(),
+                        min_score,
+                        pit,
+                    ),
+                    None => uteke.recall_room_semantic(
+                        &req_data.room_id,
+                        query,
+                        req_data.limit,
+                        req_data.author.as_deref(),
+                        min_score,
+                    ),
+                };
+                match recalled {
+                    Ok(results) => ctx.ok_response_for(req, &results),
                     Err(e) => {
                         error!("Internal error: {e}");
                         ctx.error_response_for(req, 500, "Internal server error")
