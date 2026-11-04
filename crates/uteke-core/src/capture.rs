@@ -320,14 +320,53 @@ fn chunk_session(turns: &[(String, String, Option<String>)], budget: usize) -> V
     chunks
 }
 
-/// Why one batch's extraction stopped.
-enum ExtractFailure {
+/// Why the extraction of one batch failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExtractFailure {
     /// The extractor is unavailable (rate limit, provider down): the run
     /// stops, the sessions behind would fail the same way.
     Stop(String),
     /// The provider refused this session's input as too large: this session
     /// alone failed, the sessions behind it still run.
     Session(String),
+}
+
+/// One claimed batch (#1663): the turns of a session, read under the store
+/// lock so the extractor call that follows needs none. Its facts are stored
+/// with [`crate::Uteke::finish_capture_batch`].
+#[derive(Debug, Clone)]
+pub struct CaptureBatch {
+    /// The session the turns belong to.
+    pub session: String,
+    batch: String,
+    /// `capture:<session>:<batch>`, the source of the batch's facts.
+    source: String,
+    /// The namespace the session was captured in (its first turn).
+    namespace: Option<String>,
+    /// `(role, content, namespace)` in `seq` order.
+    turns: Vec<(String, String, Option<String>)>,
+}
+
+/// Extract every chunk of a claimed batch (#1664). This is the slow step (one
+/// blocking provider request per chunk) and takes no store access, so a
+/// caller sharing the store releases its lock around it. Nothing is stored:
+/// a failed chunk leaves no fact behind and the batch stays one unit.
+pub fn extract_batch(
+    facts: &dyn FactSource,
+    batch: &CaptureBatch,
+    settings: &CaptureSettings,
+) -> Result<Vec<ExtractedFact>, ExtractFailure> {
+    let mut found = Vec::new();
+    for chunk in chunk_session(&batch.turns, settings.chunk_budget()) {
+        match facts.extract(&chunk) {
+            Ok(f) => found.extend(f),
+            Err(e) if crate::extraction::is_input_too_large(&e) => {
+                return Err(ExtractFailure::Session(e.to_string()));
+            }
+            Err(e) => return Err(ExtractFailure::Stop(e.to_string())),
+        }
+    }
+    Ok(found)
 }
 
 impl crate::Uteke {
@@ -425,7 +464,8 @@ impl crate::Uteke {
         Ok(status)
     }
 
-    fn sessions_pending(&self) -> Result<usize, Error> {
+    /// Sessions with at least one pending turn.
+    pub fn sessions_pending(&self) -> Result<usize, Error> {
         self.graph_store()
             .query_row(
                 "SELECT COUNT(DISTINCT session_id) FROM observations WHERE status = 'pending'",
@@ -438,9 +478,10 @@ impl crate::Uteke {
 
     /// One extraction run (#1466): delete done and failed turns past the
     /// retention, hand back batches whose lease expired, then extract up to
-    /// `budget` sessions, oldest first, one extractor call each. An extractor
-    /// error (rate limit, provider down) stops the run: the turns go back to
-    /// the queue, or are marked failed after `max_attempts`.
+    /// `budget` sessions, oldest first, each in chunks of `chunk_chars` (#1664).
+    /// An extractor error (rate limit, provider down) stops the run: the turns
+    /// go back to the queue, or are marked failed after `max_attempts`. A
+    /// provider refusal of the input size fails that session alone.
     ///
     /// Each claim is a batch: its id is written on the turns, which keep it
     /// until they are done. A crashed batch is claimed again as the same
@@ -450,24 +491,54 @@ impl crate::Uteke {
     /// done) withdraws them and extracts the batch again, so its facts are
     /// stored whole and never twice. The claim is one conditional UPDATE, so
     /// two runs never work on the same batch.
+    ///
+    /// This holds `&self` for the whole run, which suits the CLI. A caller
+    /// that shares the store behind a lock (the server) uses the steps
+    /// instead: [`Self::capture_housekeeping`],
+    /// [`Self::capture_pending_sessions`], [`Self::claim_capture_batch`],
+    /// [`extract_batch`] (no store access, no lock needed) and
+    /// [`Self::finish_capture_batch`] (#1663).
     pub fn run_capture_extraction(
         &self,
         facts: &dyn FactSource,
         budget: usize,
         settings: &CaptureSettings,
     ) -> Result<ExtractionRunReport, Error> {
+        let mut report = ExtractionRunReport::default();
+        self.capture_housekeeping(settings, &mut report)?;
+        for session in self.capture_pending_sessions(budget)? {
+            let Some(batch) = self.claim_capture_batch(&session)? else {
+                continue;
+            };
+            let extracted = extract_batch(facts, &batch, settings);
+            if let Err(stop) =
+                self.finish_capture_batch(&batch, extracted, settings, &mut report)?
+            {
+                report.stopped = Some(stop);
+                break;
+            }
+        }
+        report.sessions_pending = self.sessions_pending()?;
+        Ok(report)
+    }
+
+    /// Start of a run: delete done and failed turns past the retention and
+    /// hand back batches whose lease expired (a crashed run), counting both
+    /// in `report`.
+    pub fn capture_housekeeping(
+        &self,
+        settings: &CaptureSettings,
+        report: &mut ExtractionRunReport,
+    ) -> Result<(), Error> {
         let conn = self.graph_store();
-        let mut report = ExtractionRunReport {
-            pruned: conn
-                .execute(
-                    "DELETE FROM observations WHERE status IN ('done', 'failed') AND finished_at < ?1",
-                    params![ago(i64::from(settings.retention_days) * 24 * 60)],
-                )
-                .map_err(|e| Error::db("capture retention", e))?,
-            ..Default::default()
-        };
+        report.pruned += conn
+            .execute(
+                "DELETE FROM observations WHERE status IN ('done', 'failed') AND finished_at < ?1",
+                params![ago(i64::from(settings.retention_days) * 24 * 60)],
+            )
+            .map_err(|e| Error::db("capture retention", e))?;
         let lease = ago(settings.lease_minutes as i64);
-        report.reclaimed = conn
+        report.reclaimed += conn
             .query_row(
                 "SELECT COUNT(DISTINCT batch_id) FROM observations
                  WHERE status = 'extracting' AND claimed_at < ?1",
@@ -490,29 +561,23 @@ impl crate::Uteke {
             ],
         )
         .map_err(|e| Error::db("capture reclaim", e))?;
+        Ok(())
+    }
 
-        let sessions: Vec<String> = {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT session_id FROM observations WHERE status = 'pending'
-                     GROUP BY session_id ORDER BY MIN(captured_at), session_id LIMIT ?1",
-                )
-                .map_err(|e| Error::db("capture sessions", e))?;
-            let rows = stmt
-                .query_map(params![budget as i64], |r| r.get::<_, String>(0))
-                .map_err(|e| Error::db("capture sessions", e))?;
-            rows.collect::<Result<_, _>>()
-                .map_err(|e| Error::db("capture sessions", e))?
-        };
-
-        for session in sessions {
-            if let Err(stop) = self.extract_session(facts, &session, settings, &mut report)? {
-                report.stopped = Some(stop);
-                break;
-            }
-        }
-        report.sessions_pending = self.sessions_pending()?;
-        Ok(report)
+    /// Up to `budget` sessions with pending turns, oldest first.
+    pub fn capture_pending_sessions(&self, budget: usize) -> Result<Vec<String>, Error> {
+        let conn = self.graph_store();
+        let mut stmt = conn
+            .prepare(
+                "SELECT session_id FROM observations WHERE status = 'pending'
+                 GROUP BY session_id ORDER BY MIN(captured_at), session_id LIMIT ?1",
+            )
+            .map_err(|e| Error::db("capture sessions", e))?;
+        let rows = stmt
+            .query_map(params![budget as i64], |r| r.get::<_, String>(0))
+            .map_err(|e| Error::db("capture sessions", e))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("capture sessions", e))
     }
 
     /// Claim the next batch of `session`: the pending turns of an unfinished
@@ -558,20 +623,18 @@ impl crate::Uteke {
         Ok((claimed > 0).then_some(batch))
     }
 
-    /// Extract one batch of a session. The outer `Result` is a database
-    /// failure; the inner `Err` is an extractor failure that stops the run.
-    fn extract_session(
-        &self,
-        facts: &dyn FactSource,
-        session: &str,
-        settings: &CaptureSettings,
-        report: &mut ExtractionRunReport,
-    ) -> Result<Result<(), String>, Error> {
+    /// Claim the next batch of `session` and read its turns (#1663): the
+    /// first of the three steps of an extraction, the only one besides
+    /// [`Self::finish_capture_batch`] that touches the store. `None` when
+    /// another run claimed the session first. The claim counts an attempt; the
+    /// lease covers the time until the batch is finished, so a crash anywhere
+    /// after this call hands the batch back as the same batch.
+    pub fn claim_capture_batch(&self, session: &str) -> Result<Option<CaptureBatch>, Error> {
         let Some(batch) = self.claim_batch(session)? else {
-            return Ok(Ok(()));
+            return Ok(None);
         };
-        let conn = self.graph_store();
         let turns: Vec<(String, String, Option<String>)> = {
+            let conn = self.graph_store();
             let mut stmt = conn
                 .prepare(
                     "SELECT role, content, namespace FROM observations
@@ -584,10 +647,33 @@ impl crate::Uteke {
             rows.collect::<Result<_, _>>()
                 .map_err(|e| Error::db("capture turns", e))?
         };
-        let source = format!("capture:{session}:{}", &batch[..batch.len().min(16)]);
+        Ok(Some(CaptureBatch {
+            session: session.to_string(),
+            source: format!("capture:{session}:{}", &batch[..batch.len().min(16)]),
+            namespace: turns.first().and_then(|t| t.2.clone()),
+            batch,
+            turns,
+        }))
+    }
+
+    /// Last step of an extraction (#1663): store the facts of `extracted`
+    /// (what [`extract_batch`] returned) and mark the batch done, or hand its
+    /// turns back to the queue, or fail them at `max_attempts`. The outer
+    /// `Result` is a database failure; the inner `Err` is a failure that stops
+    /// the run. A refusal of the input size (`ExtractFailure::Session`) fails
+    /// this session alone and gives `Ok(Ok(()))`.
+    pub fn finish_capture_batch(
+        &self,
+        batch: &CaptureBatch,
+        extracted: Result<Vec<ExtractedFact>, ExtractFailure>,
+        settings: &CaptureSettings,
+        report: &mut ExtractionRunReport,
+    ) -> Result<Result<(), String>, Error> {
+        let conn = self.graph_store();
+        let source = batch.source.as_str();
         // Facts of this batch still live from an earlier attempt that never
         // reached "done" (a crash, possibly halfway through storing): take
-        // them back, so the batch is extracted and stored whole, once.
+        // them back, so the batch is stored whole, once.
         let leftovers: Vec<String> = {
             let mut stmt = conn
                 .prepare("SELECT id FROM memories WHERE source = ?1 AND deprecated = 0")
@@ -602,111 +688,93 @@ impl crate::Uteke {
             self.soft_forget(id, "capture batch rerun")?;
         }
 
-        {
-            // The namespace the session was captured in (its first turn).
-            let namespace = turns.first().and_then(|t| t.2.clone());
-            // Every chunk is extracted before anything is stored, so a failed
-            // chunk leaves nothing behind and the batch stays one unit.
-            let mut found: Vec<ExtractedFact> = Vec::new();
-            let mut failure: Option<ExtractFailure> = None;
-            for chunk in chunk_session(&turns, settings.chunk_budget()) {
-                match facts.extract(&chunk) {
-                    Ok(f) => found.extend(f),
-                    Err(e) => {
-                        failure = Some(if crate::extraction::is_input_too_large(&e) {
-                            ExtractFailure::Session(e.to_string())
-                        } else {
-                            ExtractFailure::Stop(e.to_string())
-                        });
-                        break;
-                    }
-                }
-            }
-            let outcome = match failure {
-                Some(f) => Err(f),
-                None => {
-                    let mut stored = Vec::new();
-                    let mut failure = None;
-                    for fact in &found {
-                        match self.store_captured_fact(fact, &source, namespace.as_deref()) {
-                            Ok(Some(id)) => stored.push(id),
-                            Ok(None) => {}
-                            // A refusal of this one fact: a tombstone, strict
-                            // privacy, or a fact the write rejects as invalid.
-                            // Retrying would give the same answer.
-                            Err(
-                                e @ (Error::RejectedValue { .. }
-                                | Error::SecretDetected { .. }
-                                | Error::Validation(_)),
-                            ) => {
-                                tracing::debug!("Captured fact refused: {e}");
-                                report.facts_refused += 1
-                            }
-                            // Database, embedder or lock: may pass next time,
-                            // so the batch is retried whole.
-                            Err(e) => {
-                                failure = Some(format!("storing a fact failed: {e}"));
-                                break;
-                            }
+        let outcome = match extracted {
+            Err(f) => Err(f),
+            Ok(found) => {
+                let mut stored = Vec::new();
+                let mut failure = None;
+                for fact in &found {
+                    match self.store_captured_fact(fact, source, batch.namespace.as_deref()) {
+                        Ok(Some(id)) => stored.push(id),
+                        Ok(None) => {}
+                        // A refusal of this one fact: a tombstone, strict
+                        // privacy, or a fact the write rejects as invalid.
+                        // Retrying would give the same answer.
+                        Err(
+                            e @ (Error::RejectedValue { .. }
+                            | Error::SecretDetected { .. }
+                            | Error::Validation(_)),
+                        ) => {
+                            tracing::debug!("Captured fact refused: {e}");
+                            report.facts_refused += 1
                         }
-                    }
-                    match failure {
-                        None => {
-                            report.facts_stored += stored.len();
-                            Ok(())
-                        }
-                        // Take back what this attempt stored, so the retry
-                        // extracts the batch whole.
-                        Some(why) => {
-                            for id in &stored {
-                                if let Err(e) = self.soft_forget(id, "capture batch retried") {
-                                    tracing::warn!("Failed to withdraw captured fact {id}: {e}");
-                                }
-                            }
-                            Err(ExtractFailure::Stop(why))
+                        // Database, embedder or lock: may pass next time,
+                        // so the batch is retried whole.
+                        Err(e) => {
+                            failure = Some(format!("storing a fact failed: {e}"));
+                            break;
                         }
                     }
                 }
-            };
-            if let Err(failure) = outcome {
-                // Per turn: a turn that joined this batch later has fewer
-                // attempts and goes back to pending.
-                conn.execute(
-                    "UPDATE observations
-                     SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
-                         claimed_at = NULL,
-                         finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
-                     WHERE batch_id = ?1 AND status = 'extracting'",
-                    params![
-                        batch,
-                        settings.max_attempts,
-                        chrono::Utc::now().to_rfc3339()
-                    ],
-                )
-                .map_err(|e| Error::db("capture release", e))?;
-                let failed: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM observations WHERE batch_id = ?1 AND status = 'failed'",
-                        params![batch],
-                        |r| r.get(0),
-                    )
-                    .map_err(|e| Error::db("capture release", e))?;
-                if failed > 0 {
-                    report.sessions_failed += 1;
-                }
-                return Ok(match failure {
-                    ExtractFailure::Stop(why) => Err(why),
-                    ExtractFailure::Session(why) => {
-                        tracing::warn!("Capture session {session} refused by the provider: {why}");
+                match failure {
+                    None => {
+                        report.facts_stored += stored.len();
                         Ok(())
                     }
-                });
+                    // Take back what this attempt stored, so the retry
+                    // extracts the batch whole.
+                    Some(why) => {
+                        for id in &stored {
+                            if let Err(e) = self.soft_forget(id, "capture batch retried") {
+                                tracing::warn!("Failed to withdraw captured fact {id}: {e}");
+                            }
+                        }
+                        Err(ExtractFailure::Stop(why))
+                    }
+                }
             }
+        };
+        if let Err(failure) = outcome {
+            // Per turn: a turn that joined this batch later has fewer
+            // attempts and goes back to pending.
+            conn.execute(
+                "UPDATE observations
+                 SET status = CASE WHEN attempts >= ?2 THEN 'failed' ELSE 'pending' END,
+                     claimed_at = NULL,
+                     finished_at = CASE WHEN attempts >= ?2 THEN ?3 ELSE NULL END
+                 WHERE batch_id = ?1 AND status = 'extracting'",
+                params![
+                    batch.batch,
+                    settings.max_attempts,
+                    chrono::Utc::now().to_rfc3339()
+                ],
+            )
+            .map_err(|e| Error::db("capture release", e))?;
+            let failed: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM observations WHERE batch_id = ?1 AND status = 'failed'",
+                    params![batch.batch],
+                    |r| r.get(0),
+                )
+                .map_err(|e| Error::db("capture release", e))?;
+            if failed > 0 {
+                report.sessions_failed += 1;
+            }
+            return Ok(match failure {
+                ExtractFailure::Stop(why) => Err(why),
+                ExtractFailure::Session(why) => {
+                    tracing::warn!(
+                        "Capture session {} refused by the provider: {why}",
+                        batch.session
+                    );
+                    Ok(())
+                }
+            });
         }
         conn.execute(
             "UPDATE observations SET status = 'done', finished_at = ?2
              WHERE batch_id = ?1 AND status = 'extracting'",
-            params![batch, chrono::Utc::now().to_rfc3339()],
+            params![batch.batch, chrono::Utc::now().to_rfc3339()],
         )
         .map_err(|e| Error::db("capture done", e))?;
         report.sessions_done += 1;
@@ -1230,6 +1298,50 @@ mod tests {
             4,
             "each fact once"
         );
+    }
+
+    #[test]
+    fn a_batch_abandoned_between_claim_and_store_is_claimed_again_as_the_same_batch() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "the region is eu-west-1", None, None)
+            .unwrap();
+        let st = settings();
+        // the process dies after the claim and after the extractor call
+        let first = u.claim_capture_batch("s").unwrap().unwrap();
+        let _lost = extract_batch(&Fake::new(0), &first, &st).unwrap();
+        assert!(u.claim_capture_batch("s").unwrap().is_none(), "leased");
+        u.graph_store()
+            .execute("UPDATE observations SET claimed_at = ?1", [ago(60)])
+            .unwrap();
+        let mut report = ExtractionRunReport::default();
+        u.capture_housekeeping(&st, &mut report).unwrap();
+        assert_eq!(report.reclaimed, 1);
+        let again = u.claim_capture_batch("s").unwrap().unwrap();
+        assert_eq!(again.source, first.source, "the same batch");
+        let found = extract_batch(&Fake::new(0), &again, &st);
+        assert!(
+            u.finish_capture_batch(&again, found, &st, &mut report)
+                .unwrap()
+                .is_ok()
+        );
+        assert_eq!((report.sessions_done, report.facts_stored), (1, 1));
+    }
+
+    #[test]
+    fn an_extractor_failure_between_claim_and_store_releases_the_batch() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "x", None, None).unwrap();
+        let st = settings();
+        let batch = u.claim_capture_batch("s").unwrap().unwrap();
+        let failed = extract_batch(&Fake::new(1), &batch, &st);
+        assert!(matches!(failed, Err(ExtractFailure::Stop(_))));
+        let mut report = ExtractionRunReport::default();
+        let out = u
+            .finish_capture_batch(&batch, failed, &st, &mut report)
+            .unwrap();
+        assert!(out.unwrap_err().contains("429"));
+        let q = u.capture_status().unwrap();
+        assert_eq!((q.pending, q.extracting), (1, 0), "back in the queue");
     }
 
     #[test]
