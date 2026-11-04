@@ -204,6 +204,8 @@ calls; everything else stays offline.
 
 ```toml
 [extraction]
+mode = ""                    # "llm" sends captured conversations to the endpoint
+                             # (#1665); empty or "offline" keeps them local
 model = "gpt-4o-mini"        # chat model (or UTEKE_EXTRACTION_MODEL)
 api_key = ""                 # or UTEKE_EXTRACTION_API_KEY; falls back to the
                              # embedding / OPENAI_API_KEY credential
@@ -214,6 +216,7 @@ max_facts = 0                # cap facts per document. 0 = built-in default
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `mode` | `""` | `"llm"` = also send captured conversations to the endpoint. `"offline"`, `""` or any other value = offline rules for capture (`import --extract` still uses the LLM when a key is set) |
 | `model` | `""` | Chat model used to distill facts |
 | `api_key` | `""` | API key (falls back to embedding/`OPENAI_API_KEY`) |
 | `base_url` | `""` | OpenAI-compatible base URL. Empty = OpenAI default |
@@ -240,6 +243,14 @@ lease_minutes = 15       # a session left `extracting` by a crash is requeued
 chunk_chars = 24000      # most characters one extractor call receives (min 64)
 interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
 ```
+
+**Where the turns go.** Capture extracts with the offline rules (no network) by default.
+The turns are sent to the LLM endpoint of `[extraction]` only when you set
+`mode = "llm"` there; an `api_key` with no mode keeps them local, because a key set for
+`import --extract` is not consent to send every conversation. `uteke connect`,
+`uteke extract-queue run` and the `uteke-serve` schedule print one line naming the
+extractor (offline, or the endpoint host; never the key). Turns pass the privacy filter
+before they are queued, whichever extractor runs.
 
 `uteke-serve` starts the schedule only when `enabled = true`. It holds the store lock
 only to claim a session's batch and to store its facts, never while the extractor

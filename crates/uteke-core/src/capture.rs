@@ -178,15 +178,31 @@ impl FactSource for OfflineFacts {
     }
 }
 
-/// Captured conversations go to an LLM only when the user chose one: mode
-/// `llm`, or no mode at all with an API key. Any other mode (`offline`, the
-/// `none` that onboarding writes, an unknown value) keeps them local.
+/// Captured conversations go to an LLM only on an explicit choice: mode
+/// `llm`. An API key alone does not count (it may have been set for a one-off
+/// `import --extract`), and neither does any other mode (`offline`, the
+/// `none` that onboarding writes, an empty or unknown value): those keep the
+/// turns local, on the offline rules.
 pub fn sends_to_llm(cfg: &crate::extraction::ExtractionConfig) -> bool {
-    match cfg.mode.as_str() {
-        "llm" => true,
-        "" => !cfg.api_key.is_empty(),
-        _ => false,
+    cfg.mode == "llm"
+}
+
+/// One line naming who receives the captured turns: the offline rules, or the
+/// host of the LLM endpoint. Never the key, nor the rest of the URL (it can
+/// carry credentials).
+pub fn extractor_line(cfg: &crate::extraction::ExtractionConfig) -> String {
+    if !sends_to_llm(cfg) {
+        return "Capture extractor: offline rules (turns stay on this machine)".to_string();
     }
+    let base = if cfg.base_url.is_empty() {
+        crate::extraction::DEFAULT_BASE_URL
+    } else {
+        cfg.base_url.as_str()
+    };
+    let after_scheme = base.split_once("://").map_or(base, |(_, rest)| rest);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    format!("Capture extractor: LLM at {host} (turns are sent there)")
 }
 
 /// The fact source of an extraction run (CLI, server schedule): the LLM
@@ -1611,7 +1627,7 @@ mod tests {
     }
 
     #[test]
-    fn the_llm_is_used_only_when_extraction_names_one() {
+    fn the_llm_is_used_only_when_extraction_mode_is_llm() {
         use crate::extraction::ExtractionConfig;
         let cfg = |mode: &str, key: &str| ExtractionConfig {
             mode: mode.into(),
@@ -1619,14 +1635,46 @@ mod tests {
             ..Default::default()
         };
         assert!(!sends_to_llm(&cfg("", "")), "unconfigured: offline rules");
-        assert!(sends_to_llm(&cfg("", "sk-test")));
+        assert!(
+            !sends_to_llm(&cfg("", "sk-test")),
+            "a key with no explicit mode keeps the turns local"
+        );
         assert!(sends_to_llm(&cfg("llm", "")));
+        assert!(sends_to_llm(&cfg("llm", "sk-test")));
         assert!(!sends_to_llm(&cfg("offline", "sk-test")));
         assert!(
             !sends_to_llm(&cfg("none", "sk-test")),
             "onboarding's none stays local"
         );
         assert!(!sends_to_llm(&cfg("typo", "sk-test")));
+    }
+
+    #[test]
+    fn the_extractor_line_names_the_receiver_and_never_the_key() {
+        use crate::extraction::ExtractionConfig;
+        let keyed = ExtractionConfig {
+            api_key: "sk-secret".into(),
+            ..Default::default()
+        };
+        let line = extractor_line(&keyed);
+        assert!(line.contains("offline rules"), "{line}");
+        assert!(!line.contains("sk-secret"));
+
+        let llm = ExtractionConfig {
+            mode: "llm".into(),
+            api_key: "sk-secret".into(),
+            base_url: "https://user:pw@llm.example.com:8443/v1/x?k=1".into(),
+            ..Default::default()
+        };
+        let line = extractor_line(&llm);
+        assert!(line.contains("llm.example.com:8443"), "{line}");
+        assert!(!line.contains("sk-secret") && !line.contains("pw@") && !line.contains("/v1"));
+
+        let default_host = ExtractionConfig {
+            mode: "llm".into(),
+            ..Default::default()
+        };
+        assert!(extractor_line(&default_host).contains("api.openai.com"));
     }
 
     #[test]
