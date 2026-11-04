@@ -3,7 +3,7 @@
 //! Plain stdout of `SessionStart` and `UserPromptSubmit` is added to the
 //! context; `Stop` carries `last_assistant_message` (code.claude.com/docs/en/hooks).
 
-use super::{Adapter, Entry, guarded_command};
+use super::{Adapter, Entry, guarded_command_with};
 use std::path::{Path, PathBuf};
 
 pub(crate) struct ClaudeCode;
@@ -28,7 +28,7 @@ impl Adapter for ClaudeCode {
         home.join(".claude").join("settings.json")
     }
 
-    fn render_entries(&self) -> Vec<Entry> {
+    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry> {
         EVENTS
             .iter()
             .map(|(event, run, timeout)| Entry {
@@ -36,7 +36,7 @@ impl Adapter for ClaudeCode {
                 entry: serde_json::json!({
                     "hooks": [{
                         "type": "command",
-                        "command": guarded_command(run, self.agent()),
+                        "command": guarded_command_with(run, self.agent(), None, bin),
                         "timeout": timeout,
                     }]
                 }),

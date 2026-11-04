@@ -163,12 +163,20 @@ fn main() {
             output::print_json(&hooks);
             std::process::exit(0);
         }
-        Commands::Connect { agent, dry_run } | Commands::Disconnect { agent, dry_run } => {
-            let result = if matches!(cli.command, Commands::Connect { .. }) {
-                connect::run_connect(agent, *dry_run, cli.json)
-            } else {
-                connect::run_disconnect(agent, *dry_run, cli.json)
-            };
+        Commands::Connect {
+            agent,
+            dry_run,
+            absolute_path,
+        } => {
+            let result = connect::run_connect(agent, *dry_run, *absolute_path, cli.json);
+            if let Err(e) = result {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::Disconnect { agent, dry_run } => {
+            let result = connect::run_disconnect(agent, *dry_run, cli.json);
             if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);

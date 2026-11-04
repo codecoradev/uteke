@@ -27,6 +27,13 @@ Windows. Both are guarded: without `uteke` on `PATH` the hook does nothing and
 exits 0. `hook-run` itself always exits 0 and logs errors to
 `~/.codecora/uteke/hook.log`.
 
+`uteke connect codex --absolute-path` writes the running binary's path into both commands
+(the `sh` one and the PowerShell one) instead of resolving `uteke` through `PATH`. Read
+[which `uteke` runs](claude-code.md#which-uteke-runs-path-or-a-fixed-path) for what an
+earlier `PATH` entry would receive and the trade-offs. Codex trusts a hook by its hash, so
+changing between the two forms, or refreshing after the binary moved, needs `/hooks` once
+more.
+
 ## Trust the hooks once
 
 Codex runs hooks it does not manage only after you review them. After

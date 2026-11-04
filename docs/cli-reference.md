@@ -295,8 +295,15 @@ removes its files while they are unchanged.
 ```bash
 uteke connect claude --dry-run   # what would be added; writes nothing
 uteke connect claude             # install or refresh
+uteke connect claude --absolute-path   # pin this binary's path instead of using PATH
 uteke disconnect claude          # remove exactly what connect added
 ```
+
+By default the hook finds `uteke` through `PATH`, so a program named `uteke` in an earlier
+`PATH` directory would receive every prompt and reply. `--absolute-path` (the hook agents
+only, not `pi`/`hermes`) writes the running binary's path instead; `doctor` reports the
+install as stale when that file is gone, and `uteke connect <agent> --absolute-path`
+refreshes it. See [Claude Code](integrations/claude-code.md#which-uteke-runs-path-or-a-fixed-path).
 
 Each hook runs `uteke hook-run <event>` (hidden) through a guard that is a no-op
 when `uteke` is not on `PATH`; `hook-run` always exits 0 and logs errors to

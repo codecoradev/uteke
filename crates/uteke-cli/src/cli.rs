@@ -506,6 +506,10 @@ pub enum Commands {
         /// Show what would change and write nothing
         #[arg(long)]
         dry_run: bool,
+        /// Write this binary's absolute path into the hook commands instead of
+        /// resolving `uteke` through PATH (re-run after the binary moves)
+        #[arg(long)]
+        absolute_path: bool,
     },
     /// Remove the hooks `uteke connect` installed, leaving everything else
     Disconnect {

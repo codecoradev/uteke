@@ -33,6 +33,11 @@ never held back. Cursor treats a non-zero exit other than 2 as a failed hook
 and continues anyway. `hook-run` always exits 0 and logs errors to
 `~/.codecora/uteke/hook.log`. Restart Cursor after connecting.
 
+`uteke connect cursor --absolute-path` pins the binary's path instead of resolving `uteke`
+through `PATH`; the prompt hook still answers `{"continue": true}` when the file is gone.
+See [which `uteke` runs](claude-code.md#which-uteke-runs-path-or-a-fixed-path) for the
+trade-off.
+
 ## Known Cursor bug: session-start context dropped
 
 Some Cursor versions ignore `additional_context` returned by `sessionStart`

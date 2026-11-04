@@ -7,7 +7,7 @@
 //! A non-zero exit other than 2 fails open.
 
 use super::ojson::OJson;
-use super::{Adapter, Entry, guarded_command_or};
+use super::{Adapter, Entry, guarded_command_with};
 use std::path::{Path, PathBuf};
 
 pub(crate) struct Cursor;
@@ -36,13 +36,13 @@ impl Adapter for Cursor {
         home.join(".cursor").join("hooks.json")
     }
 
-    fn render_entries(&self) -> Vec<Entry> {
+    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry> {
         EVENTS
             .iter()
             .map(|(event, run, timeout, fallback)| Entry {
                 event: event.to_string(),
                 entry: serde_json::json!({
-                    "command": guarded_command_or(run, self.agent(), *fallback),
+                    "command": guarded_command_with(run, self.agent(), *fallback, bin),
                     "timeout": timeout,
                 }),
             })
