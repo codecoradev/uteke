@@ -189,9 +189,11 @@ pub(crate) fn run_recall(
         }
         let explained = filter
             .fetch(
+                uteke,
                 limit,
                 |n| uteke.recall_explained(query, n, tags_filter, ns, resolved_strategy, min_score),
                 |f, e| f.keep_memory(&e.result),
+                |e| Some(e.result.memory.id.as_str()),
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
         uteke.reset_salience_recency_config();
@@ -263,6 +265,7 @@ pub(crate) fn run_recall(
         }
         let packed = filter
             .fetch(
+                uteke,
                 limit,
                 |n| {
                     uteke.recall_unified(
@@ -279,6 +282,7 @@ pub(crate) fn run_recall(
                     )
                 },
                 |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )
             .map_err(|e| format!("Failed to recall: {e}"));
         let pack_result = match packed {
@@ -303,6 +307,7 @@ pub(crate) fn run_recall(
         // Unified search path (#531)
         let unified_results = filter
             .fetch(
+                uteke,
                 limit,
                 |n| {
                     uteke.recall_unified(
@@ -319,6 +324,7 @@ pub(crate) fn run_recall(
                     )
                 },
                 |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
@@ -378,6 +384,7 @@ pub(crate) fn run_recall(
             }
             filter
                 .fetch(
+                    uteke,
                     limit,
                     |n| {
                         uteke.recall_at_time(
@@ -392,24 +399,29 @@ pub(crate) fn run_recall(
                         )
                     },
                     |f, r| f.keep_memory(r),
+                    |r| Some(r.memory.id.as_str()),
                 )
                 .map_err(|e| format!("Failed to recall at time: {e}"))?
         } else if related {
             filter
                 .fetch(
+                    uteke,
                     limit,
                     |n| uteke.recall_related(query, n, tags_filter, ns, min_score, depth),
                     |f, r| f.keep_memory(r),
+                    |r| Some(r.memory.id.as_str()),
                 )
                 .map_err(|e| format!("Failed to recall: {e}"))?
         } else {
             filter
                 .fetch(
+                    uteke,
                     limit,
                     |n| {
                         uteke.recall_hybrid(query, n, tags_filter, ns, resolved_strategy, min_score)
                     },
                     |f, r| f.keep_memory(r),
+                    |r| Some(r.memory.id.as_str()),
                 )
                 .map_err(|e| format!("Failed to recall: {e}"))?
         };

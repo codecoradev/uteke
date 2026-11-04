@@ -723,6 +723,9 @@ pub struct Uteke {
     capture_settings: capture::CaptureSettings,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
+    /// While non-zero, recalls do not touch what they return (access count,
+    /// hot boost). Held by [`ResultFilter::fetch`] over its widened passes.
+    touch_hold: std::sync::atomic::AtomicUsize,
     /// Path to the persistent embedding cache DB (`embed_cache.db`).
     /// `None` for in-memory stores (tests).
     embed_cache_path: Option<std::path::PathBuf>,
@@ -1144,6 +1147,7 @@ impl Uteke {
             graph_rerank_config: graph_rerank_config.sanitized(),
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
+            touch_hold: std::sync::atomic::AtomicUsize::new(0),
             jaccard_weight: 0.0,
             recall_settings: RecallSettings::default(),
             dream_config: DreamConfig::default(),

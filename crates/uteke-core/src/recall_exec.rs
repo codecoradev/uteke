@@ -88,6 +88,7 @@ impl Uteke {
             }
             return filter
                 .fetch(
+                    self,
                     limit,
                     |n| {
                         self.recall_explained(
@@ -100,6 +101,7 @@ impl Uteke {
                         )
                     },
                     |f, e| f.keep_memory(&e.result),
+                    |e| Some(e.result.memory.id.as_str()),
                 )
                 .map(RecallOutput::Explained);
         }
@@ -115,6 +117,7 @@ impl Uteke {
                 .search_type()
                 .map_err(|e| Error::Validation(e.to_string()))?;
             let results = filter.fetch(
+                self,
                 limit,
                 |n| {
                     self.recall_unified(
@@ -131,6 +134,7 @@ impl Uteke {
                     )
                 },
                 |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )?;
             return Ok(RecallOutput::Packed(crate::pack_mode::pack_context(
                 results,
@@ -147,6 +151,7 @@ impl Uteke {
                 .search_type()
                 .map_err(|e| Error::Validation(e.to_string()))?;
             let mut results = filter.fetch(
+                self,
                 limit,
                 |n| {
                     self.recall_unified(
@@ -163,6 +168,7 @@ impl Uteke {
                     )
                 },
                 |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )?;
             if has_temporal {
                 results.retain(|r| {
@@ -180,6 +186,7 @@ impl Uteke {
         // over-fetch (as in recall_unified_memories).
         let needs_post_filter = entity_filter.is_some() || category_filter.is_some();
         let mut results = filter.fetch(
+            self,
             limit,
             |n| {
                 let fetch_limit = if needs_post_filter {
@@ -222,6 +229,7 @@ impl Uteke {
                 Ok(found)
             },
             |f, r| f.keep_memory(r),
+            |r| Some(r.memory.id.as_str()),
         )?;
         if has_temporal {
             results.retain(|r| {
@@ -560,5 +568,30 @@ mod tests {
         assert_eq!(pack.selected.len(), 1);
         let v = serde_json::to_value(&pack.selected[0]).unwrap();
         assert!(v["similarity"].as_f64().unwrap() >= 0.5);
+    }
+
+    #[test]
+    fn a_filtered_recall_counts_only_the_rows_it_returns() {
+        // The widened passes fetch discarded candidates; they must not be
+        // counted as recalled (#1650 review).
+        let u = finance_store();
+        let r = req(|i| {
+            i.query = "quarterly revenue projections".into();
+            i.strict = true;
+            i.limit = Some(1);
+        });
+        let got = memories(&u, &r);
+        assert_eq!(got.len(), 1);
+        let counts: Vec<(bool, u32)> = u
+            .store()
+            .list(None, None, 100, 0)
+            .unwrap()
+            .iter()
+            .map(|m| (m.id == got[0].memory.id, m.recall_count))
+            .collect();
+        assert_eq!(counts.len(), 5);
+        for (returned, count) in counts {
+            assert_eq!(count, u32::from(returned));
+        }
     }
 }

@@ -8,6 +8,7 @@
 //!
 //! Neither filter changes `score` or the ranking.
 
+use crate::Uteke;
 use crate::error::Error;
 use crate::memory::types::{SearchResult, UnifiedSearchResult};
 
@@ -52,26 +53,58 @@ impl ResultFilter {
     /// window starts at three times the limit and grows fourfold while the
     /// strategy keeps returning a full window but too few rows pass, up to
     /// [`MAX_WINDOW`] candidates.
+    ///
+    /// A recall counts what it returns (access count, hot boost). The widened
+    /// passes return candidates that are then discarded, so they run with the
+    /// touch held, and only the rows finally returned are touched, once.
+    /// `id_of` names the memory behind a row (`None` for a document).
     pub fn fetch<T>(
         &self,
+        uteke: &Uteke,
         limit: usize,
         mut fetch: impl FnMut(usize) -> Result<Vec<T>, Error>,
         keep: impl Fn(&Self, &T) -> bool,
+        id_of: impl Fn(&T) -> Option<&str>,
     ) -> Result<Vec<T>, Error> {
         if self.is_noop() {
             return fetch(limit);
         }
+        let _hold = TouchHold::new(uteke);
         let mut window = limit.saturating_mul(3).max(limit + 10).min(MAX_WINDOW);
-        loop {
+        let kept = loop {
             let raw = fetch(window)?;
             let exhausted = raw.len() < window;
             let mut kept: Vec<T> = raw.into_iter().filter(|r| keep(self, r)).collect();
             if kept.len() >= limit || exhausted || window >= MAX_WINDOW {
                 kept.truncate(limit);
-                return Ok(kept);
+                break kept;
             }
             window = window.saturating_mul(4).min(MAX_WINDOW);
-        }
+        };
+        drop(_hold);
+        let ids: Vec<&str> = kept.iter().filter_map(&id_of).collect();
+        uteke.touch_ids(&ids);
+        Ok(kept)
+    }
+}
+
+/// Holds [`Uteke::touch_hold`] for its lifetime, also on an early return.
+struct TouchHold<'a>(&'a Uteke);
+
+impl<'a> TouchHold<'a> {
+    fn new(uteke: &'a Uteke) -> Self {
+        uteke
+            .touch_hold
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(uteke)
+    }
+}
+
+impl Drop for TouchHold<'_> {
+    fn drop(&mut self) {
+        self.0
+            .touch_hold
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -87,15 +120,18 @@ mod tests {
 
     #[test]
     fn a_noop_filter_fetches_exactly_the_limit() {
+        let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
         let out = ResultFilter::default()
             .fetch(
+                &u,
                 5,
                 |n| {
                     asked.push(n);
                     Ok((0..n).collect::<Vec<usize>>())
                 },
                 |_, _| false,
+                |_| None,
             )
             .unwrap();
         assert_eq!(asked, vec![5]);
@@ -106,15 +142,18 @@ mod tests {
     fn the_window_widens_until_the_limit_is_filled() {
         // Only multiples of 20 pass; the first window (limit 2 -> 12) holds
         // one, the next (48) holds three.
+        let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
         let out = filter(Some(0.5))
             .fetch(
+                &u,
                 2,
                 |n| {
                     asked.push(n);
                     Ok((0..n).collect::<Vec<usize>>())
                 },
                 |_, r| r % 20 == 0,
+                |_| None,
             )
             .unwrap();
         assert_eq!(asked, vec![12, 48]);
@@ -123,15 +162,18 @@ mod tests {
 
     #[test]
     fn it_stops_when_the_candidates_run_out() {
+        let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
         let out = filter(Some(0.5))
             .fetch(
+                &u,
                 5,
                 |n| {
                     asked.push(n);
                     Ok((0..7usize.min(n)).collect::<Vec<usize>>())
                 },
                 |_, r| *r == 3,
+                |_| None,
             )
             .unwrap();
         assert_eq!(asked, vec![15]);
@@ -140,15 +182,18 @@ mod tests {
 
     #[test]
     fn the_window_is_capped() {
+        let u = crate::test_support::open_keyword();
         let mut asked = Vec::new();
         let out: Vec<usize> = filter(Some(0.5))
             .fetch(
+                &u,
                 10,
                 |n| {
                     asked.push(n);
                     Ok((0..n).collect())
                 },
                 |_, _| false,
+                |_| None,
             )
             .unwrap();
         assert!(out.is_empty());

@@ -40,7 +40,18 @@ impl crate::Uteke {
     /// and the arms work on a `boost_window` of candidates, so touching inside
     /// them counted one recall several times and bumped memories that were
     /// never returned.
+    /// Count recalls for the memories with these ids (once each).
+    pub(crate) fn touch_ids(&self, ids: &[&str]) {
+        if ids.is_empty() {
+            return;
+        }
+        self.store.touch_recall_batch(ids).ok();
+    }
+
     fn touch_recalled(&self, results: &[SearchResult]) {
+        if self.touch_hold.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+            return;
+        }
         let ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
         self.store.touch_recall_batch(&ids).ok();
     }
