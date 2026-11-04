@@ -287,29 +287,39 @@ impl Extractor {
 }
 
 /// Whether an extraction error says the provider refused the input as too
-/// large (#1664): HTTP 400 or 413, or a message about the context length. Such
-/// an input fails the same way on every retry, so a caller fails that input
-/// alone instead of treating the provider as down (a 429 or 5xx is that).
+/// large (#1664): HTTP 400 or 413, or another 4xx (not 408 or 429) whose body
+/// names the context length. Such an input fails the same way on every retry,
+/// so a caller fails that input alone instead of treating the provider as down.
+/// The status decides first: a 429, a 5xx or an error with no HTTP status (a
+/// network failure) is never "too large", whatever its body says.
 pub fn is_input_too_large(err: &Error) -> bool {
     let msg = err.to_string();
-    let status = msg.split_once("returned HTTP ").map(|(_, rest)| {
+    let Some(status) = msg.split_once("returned HTTP ").and_then(|(_, rest)| {
         rest.chars()
             .take_while(char::is_ascii_digit)
             .collect::<String>()
-    });
-    if matches!(status.as_deref(), Some("400" | "413")) {
-        return true;
+            .parse::<u16>()
+            .ok()
+    }) else {
+        return false;
+    };
+    match status {
+        400 | 413 => true,
+        408 | 429 => false,
+        400..=499 => {
+            let lower = msg.to_ascii_lowercase();
+            [
+                "context length",
+                "context_length",
+                "too large",
+                "too long",
+                "maximum context",
+            ]
+            .iter()
+            .any(|m| lower.contains(m))
+        }
+        _ => false,
     }
-    let lower = msg.to_ascii_lowercase();
-    [
-        "context length",
-        "context_length",
-        "too large",
-        "too long",
-        "maximum context",
-    ]
-    .iter()
-    .any(|m| lower.contains(m))
 }
 
 /// Normalize an endpoint path: empty -> default, ensure leading slash.
