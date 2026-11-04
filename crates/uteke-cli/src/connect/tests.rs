@@ -35,8 +35,8 @@ impl Adapter for Renamed {
     fn config_path(&self, home: &Path) -> PathBuf {
         claude::ClaudeCode.config_path(home)
     }
-    fn render_entries(&self) -> Vec<Entry> {
-        let mut entries = claude::ClaudeCode.render_entries();
+    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry> {
+        let mut entries = claude::ClaudeCode.render_entries_for(bin);
         entries[0].entry["hooks"][0]["timeout"] = serde_json::json!(20);
         entries
     }
@@ -508,4 +508,157 @@ fn an_unchanged_config_is_replaced() {
     write(&path, "{\"a\": 1}\n");
     write_atomic(&path, "{\"a\": 2}\n", Some("{\"a\": 1}\n")).unwrap();
     assert_eq!(read(&path), "{\"a\": 2}\n");
+}
+
+// ---- --absolute-path (#1672) ----
+
+/// A path with spaces and a single quote: the hard case for both shells.
+const AWKWARD: &str = "/opt/my tools/it's here/uteke";
+
+#[test]
+fn the_default_entries_are_unchanged_without_the_flag() {
+    assert_eq!(
+        guarded_command("session-start", "claude"),
+        "sh -c 'command -v uteke >/dev/null 2>&1 && uteke hook-run session-start --agent claude || true'"
+    );
+    assert_eq!(
+        guarded_command_or("prompt", "cursor", Some(CURSOR_CONTINUE)),
+        r#"sh -c 'command -v uteke >/dev/null 2>&1 && uteke hook-run prompt --agent cursor || echo "{\"continue\":true}"'"#
+    );
+    assert_eq!(
+        guarded_command_windows_with("stop", "codex", None),
+        r#"powershell -NoProfile -Command "if (Get-Command uteke -ErrorAction SilentlyContinue) { uteke hook-run stop --agent codex }; exit 0""#
+    );
+    let h = home();
+    connect(&claude::ClaudeCode, h.path(), false).unwrap();
+    let text = read(&manifest_path(h.path(), "claude"));
+    assert!(!text.contains("binary"), "{text}");
+}
+
+#[test]
+fn an_absolute_path_is_quoted_for_sh() {
+    let cmd = guarded_command_with("prompt", "claude", None, Some(AWKWARD));
+    assert_eq!(
+        cmd,
+        r#"sh -c '[ -x '\''/opt/my tools/it'\''\'\'''\''s here/uteke'\'' ] && '\''/opt/my tools/it'\''\'\'''\''s here/uteke'\'' hook-run prompt --agent claude || true'"#
+    );
+}
+
+/// Run the command with a real `sh`, with a fake binary at an awkward path.
+#[cfg(unix)]
+#[test]
+fn an_absolute_path_command_runs_the_binary_and_is_silent_when_it_is_gone() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("my tools").join("it's here").join("uteke");
+    std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+    std::fs::write(&bin, "#!/bin/sh\necho \"ran $*\"\n").unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let run = |agent: &str, fallback| {
+        let cmd = guarded_command_with("prompt", agent, fallback, bin.to_str());
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .output()
+            .unwrap()
+    };
+    let out = run("claude", None);
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "ran hook-run prompt --agent claude\n"
+    );
+    std::fs::remove_file(&bin).unwrap();
+    let out = run("claude", None);
+    assert!(out.status.success() && out.stdout.is_empty());
+    let out = run("cursor", Some(CURSOR_CONTINUE));
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), CURSOR_CONTINUE);
+}
+
+#[test]
+fn an_absolute_path_is_quoted_for_powershell() {
+    assert_eq!(
+        guarded_command_windows_with("stop", "codex", Some(r"C:\Program Files\it's\uteke.exe")),
+        r#"powershell -NoProfile -Command "if (Test-Path -LiteralPath 'C:\Program Files\it''s\uteke.exe' -PathType Leaf) { & 'C:\Program Files\it''s\uteke.exe' hook-run stop --agent codex }; exit 0""#
+    );
+    assert!(check_binary(Path::new("/a/b\"c")).is_err());
+    assert_eq!(check_binary(Path::new("/a/b")).unwrap(), "/a/b");
+}
+
+#[test]
+fn absolute_path_is_recorded_idempotent_and_disconnect_removes_it() {
+    for (adapter, fixture) in adapters() {
+        let h = home();
+        let cfg = adapter.config_path(h.path());
+        write(&cfg, fixture);
+        let bin = tempfile::NamedTempFile::new().unwrap();
+        let bin_path = bin.path().to_str().unwrap().to_string();
+
+        connect_with(adapter.as_ref(), h.path(), false, Some(&bin_path)).unwrap();
+        let after = read(&cfg);
+        assert!(after.contains(&bin_path), "{after}");
+        assert!(!after.contains("command -v uteke"), "{after}");
+        let manifest = read_manifest(h.path(), adapter.agent()).unwrap().unwrap();
+        assert_eq!(manifest.binary.as_deref(), Some(bin_path.as_str()));
+        assert_eq!(
+            manifest.entries,
+            adapter.render_entries_for(Some(&bin_path))
+        );
+        assert!(!is_stale(adapter.as_ref(), &manifest));
+        assert_eq!(hook_status(h.path())[0].state, "ok");
+
+        // A second run changes nothing, in the file or the manifest.
+        let mtext = read(&manifest_path(h.path(), adapter.agent()));
+        let report = connect_with(adapter.as_ref(), h.path(), false, Some(&bin_path)).unwrap();
+        assert!(!report.changed, "{report:?}");
+        assert_eq!(read(&cfg), after);
+        assert_eq!(read(&manifest_path(h.path(), adapter.agent())), mtext);
+
+        // disconnect removes exactly the installed entries, by the manifest.
+        let report = disconnect(adapter.as_ref(), h.path(), false).unwrap();
+        assert!(report.left_alone.is_empty(), "{report:?}");
+        assert_eq!(read(&cfg), fixture, "{}", adapter.agent());
+        assert!(read_manifest(h.path(), adapter.agent()).unwrap().is_none());
+    }
+}
+
+#[test]
+fn a_moved_binary_is_stale_and_a_rerun_refreshes_it() {
+    let h = home();
+    let cfg = claude::ClaudeCode.config_path(h.path());
+    write(&cfg, CLAUDE_FIXTURE);
+    let dir = tempfile::tempdir().unwrap();
+    let old = dir.path().join("old-uteke");
+    std::fs::write(&old, "").unwrap();
+    connect_with(&claude::ClaudeCode, h.path(), false, old.to_str()).unwrap();
+    assert_eq!(hook_status(h.path())[0].state, "ok");
+
+    std::fs::remove_file(&old).unwrap();
+    assert_eq!(hook_status(h.path())[0].state, "stale");
+    let manifest = read_manifest(h.path(), "claude").unwrap().unwrap();
+    assert!(is_stale(&claude::ClaudeCode, &manifest));
+
+    let new = dir.path().join("new-uteke");
+    std::fs::write(&new, "").unwrap();
+    let report = connect_with(&claude::ClaudeCode, h.path(), false, new.to_str()).unwrap();
+    assert_eq!(report.removed.len(), 3, "{report:?}");
+    assert_eq!(report.added.len(), 3);
+    assert_eq!(hook_status(h.path())[0].state, "ok");
+    let text = read(&cfg);
+    assert!(
+        text.contains("new-uteke") && !text.contains("old-uteke"),
+        "{text}"
+    );
+    assert!(text.contains("echo mine"), "the user's own hook stays");
+}
+
+#[test]
+fn connecting_without_the_flag_goes_back_to_path() {
+    let h = home();
+    let bin = tempfile::NamedTempFile::new().unwrap();
+    connect_with(&claude::ClaudeCode, h.path(), false, bin.path().to_str()).unwrap();
+    connect(&claude::ClaudeCode, h.path(), false).unwrap();
+    let manifest = read_manifest(h.path(), "claude").unwrap().unwrap();
+    assert_eq!(manifest.binary, None);
+    assert_eq!(manifest.entries, claude::ClaudeCode.render_entries());
 }

@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`uteke connect <agent> --absolute-path` (#1672)** - writes the path of the running
+  `uteke` into the hook commands (quoted for `sh -c` and for the PowerShell
+  `commandWindows`) instead of resolving it through `PATH`, for users who do not want an
+  earlier `PATH` entry named `uteke` to receive every prompt and reply. The manifest
+  records the path; `doctor` reports the install as stale once that file is gone and
+  `uteke connect <agent> --absolute-path` refreshes it; `disconnect` removes the entries by
+  the manifest as before. Without the flag the entries and manifests are byte-identical to
+  before. The integration pages now document the `PATH` trade-off. `connect` is unreleased
+  (only on `develop`), so this adds a flag with no compatibility shim.
+
 ### Fixed
 
 - **The session view matches a session exactly and uses an index (#1670)** -

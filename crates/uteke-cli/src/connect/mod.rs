@@ -3,7 +3,8 @@
 //!
 //! Each hook entry runs the guarded `uteke hook-run <event>` command, resolved
 //! through `PATH` at run time, so nothing in the agent's config changes on an
-//! upgrade. `connect` records what it added in a manifest
+//! upgrade. `--absolute-path` (#1672) bakes the running binary's path in
+//! instead, for users who would rather not trust `PATH`. `connect` records what it added in a manifest
 //! (`~/.codecora/uteke/connect/<agent>.json`); `disconnect` removes exactly
 //! those entries and leaves anything the user wrote or edited alone.
 //! Design: `docs/plans/2026-10-29-hook-adapters-1465.md`.
@@ -34,6 +35,10 @@ pub(crate) struct Manifest {
     pub config_path: PathBuf,
     pub uteke_version: String,
     pub entries: Vec<Entry>,
+    /// The binary path baked into the entries by `--absolute-path` (#1672);
+    /// absent for the default `PATH` form, so those manifests are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
     /// `connect` created the file, so `disconnect` may delete it once empty.
     #[serde(default)]
     pub created_file: bool,
@@ -53,8 +58,15 @@ pub(crate) trait Adapter {
     fn display_name(&self) -> &'static str;
     /// The config file the hooks go into.
     fn config_path(&self, home: &Path) -> PathBuf;
-    /// The entries this version of uteke installs.
-    fn render_entries(&self) -> Vec<Entry>;
+    /// The entries this version of uteke installs. `bin` is the absolute path of
+    /// the binary to run (`--absolute-path`); `None` resolves `uteke` through
+    /// `PATH` at run time.
+    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry>;
+    /// The default (`PATH`) entries.
+    #[cfg(test)]
+    fn render_entries(&self) -> Vec<Entry> {
+        self.render_entries_for(None)
+    }
     /// Top-level keys the file needs next to `hooks` (Cursor's `version`).
     fn required_keys(&self) -> Vec<(&'static str, OJson)> {
         Vec::new()
@@ -181,30 +193,91 @@ pub(crate) const SUPPORTED: &[&str] = &["claude", "codex", "cursor"];
 /// The command a hook entry runs. Guarded: a missing `uteke` binary is a
 /// no-op with exit 0 instead of the shell's 127, so the agent never sees a
 /// failing hook. The string is the same on every machine.
+#[cfg(test)]
 pub(crate) fn guarded_command(event: &str, agent: &str) -> String {
-    guarded_command_or(event, agent, None)
+    guarded_command_with(event, agent, None, None)
 }
 
 /// [`guarded_command`] that prints `fallback` when `uteke` is missing, for an
 /// event whose agent expects an answer on stdout (Cursor's
 /// `beforeSubmitPrompt`). `fallback` is fixed JSON without single quotes or
 /// backslashes; it is double-quoted inside the single-quoted `sh -c` script.
+#[cfg(test)]
 pub(crate) fn guarded_command_or(event: &str, agent: &str, fallback: Option<&str>) -> String {
+    guarded_command_with(event, agent, fallback, None)
+}
+
+/// Single-quote `s` for a POSIX shell: `'` becomes `'\''`.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The guarded command. With `bin` (`--absolute-path`, #1672) the script runs
+/// that exact file, if it is still executable, instead of `uteke` from `PATH`;
+/// the path is quoted for the inner script and the whole script again for
+/// `sh -c`. Without `bin` the text is the one every earlier release wrote.
+pub(crate) fn guarded_command_with(
+    event: &str,
+    agent: &str,
+    fallback: Option<&str>,
+    bin: Option<&str>,
+) -> String {
     let otherwise = match fallback {
         Some(f) => format!("echo \"{}\"", f.replace('"', "\\\"")),
         None => "true".to_string(),
     };
-    format!(
-        "sh -c 'command -v uteke >/dev/null 2>&1 && uteke hook-run {event} --agent {agent} || {otherwise}'"
-    )
+    let script = match bin {
+        None => format!(
+            "command -v uteke >/dev/null 2>&1 && uteke hook-run {event} --agent {agent} || {otherwise}"
+        ),
+        Some(bin) => {
+            let bin = sh_quote(bin);
+            format!("[ -x {bin} ] && {bin} hook-run {event} --agent {agent} || {otherwise}")
+        }
+    };
+    format!("sh -c {}", sh_quote(&script))
 }
 
 /// The same guard for PowerShell, for an agent with a Windows command field
-/// (Codex's `commandWindows`).
-pub(crate) fn guarded_command_windows(event: &str, agent: &str) -> String {
-    format!(
-        "powershell -NoProfile -Command \"if (Get-Command uteke -ErrorAction SilentlyContinue) {{ uteke hook-run {event} --agent {agent} }}; exit 0\""
-    )
+/// (Codex's `commandWindows`). With `bin` the path is a PowerShell
+/// single-quoted literal (`'` doubled); [`check_binary`] has refused a `"`,
+/// which cannot sit in the double-quoted `-Command` argument.
+pub(crate) fn guarded_command_windows_with(event: &str, agent: &str, bin: Option<&str>) -> String {
+    match bin {
+        None => format!(
+            "powershell -NoProfile -Command \"if (Get-Command uteke -ErrorAction SilentlyContinue) {{ uteke hook-run {event} --agent {agent} }}; exit 0\""
+        ),
+        Some(bin) => {
+            let bin = format!("'{}'", bin.replace('\'', "''"));
+            format!(
+                "powershell -NoProfile -Command \"if (Test-Path -LiteralPath {bin} -PathType Leaf) {{ & {bin} hook-run {event} --agent {agent} }}; exit 0\""
+            )
+        }
+    }
+}
+
+/// The path `--absolute-path` bakes in: the running binary, which must be UTF-8
+/// (it goes into JSON) and free of `"` (it cannot be quoted inside the Windows
+/// command).
+pub(crate) fn current_binary() -> Result<String, String> {
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("Cannot find the running uteke binary: {e}"))?;
+    check_binary(&exe)
+}
+
+fn check_binary(exe: &Path) -> Result<String, String> {
+    let s = exe.to_str().ok_or_else(|| {
+        format!(
+            "{} is not valid UTF-8; cannot use --absolute-path",
+            exe.display()
+        )
+    })?;
+    if s.contains('"') {
+        return Err(format!(
+            "{s} contains a double quote; cannot use --absolute-path"
+        ));
+    }
+    Ok(s.to_string())
 }
 
 /// `~/.codecora/uteke`: the hook log and the connect manifests live here,
@@ -430,8 +503,20 @@ pub(crate) struct Report {
     pub notes: Vec<String>,
 }
 
-/// Install (or refresh) the hooks of `adapter` under `home`.
+/// Install (or refresh) the hooks of `adapter` under `home`, resolving `uteke`
+/// through `PATH`.
+#[cfg(test)]
 pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Result<Report, String> {
+    connect_with(adapter, home, dry_run, None)
+}
+
+/// [`connect`] with an optional absolute binary path (`--absolute-path`).
+pub(crate) fn connect_with(
+    adapter: &dyn Adapter,
+    home: &Path,
+    dry_run: bool,
+    bin: Option<&str>,
+) -> Result<Report, String> {
     let path = adapter.config_path(home);
     let file = read_config(&path)?;
     let previous = read_manifest(home, adapter.agent())?;
@@ -441,6 +526,7 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
         config_path: path.clone(),
         uteke_version: env!("CARGO_PKG_VERSION").to_string(),
         created_file: !file.existed,
+        binary: bin.map(str::to_string),
         ..Default::default()
     };
     let mut report = Report {
@@ -463,7 +549,7 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
         ));
     }
     if let Some(prev) = &previous {
-        let entries = adapter.render_entries();
+        let entries = adapter.render_entries_for(bin);
         let stale: Vec<Entry> = prev
             .entries
             .iter()
@@ -487,7 +573,7 @@ pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Resu
         manifest.created_keys = prev.created_keys.clone();
         manifest.created_events = prev.created_events.clone();
     }
-    let entries = adapter.render_entries();
+    let entries = adapter.render_entries_for(bin);
     let before = value.to_value();
     adapter
         .merge(&mut value, &entries, &mut manifest)
@@ -590,10 +676,16 @@ pub(crate) fn disconnect(
     Ok(report)
 }
 
-/// The installed entries differ from what this version renders: `doctor`
-/// reports it and `uteke connect <agent>` refreshes them.
+/// The installed entries differ from what this version renders, or the binary
+/// an `--absolute-path` install points at is gone (moved, or replaced by an
+/// upgrade): `doctor` reports it and `uteke connect <agent>` (with
+/// `--absolute-path` for such an install) refreshes them.
 pub(crate) fn is_stale(adapter: &dyn Adapter, manifest: &Manifest) -> bool {
-    manifest.entries != adapter.render_entries()
+    manifest.entries != adapter.render_entries_for(manifest.binary.as_deref())
+        || manifest
+            .binary
+            .as_deref()
+            .is_some_and(|b| !Path::new(b).is_file())
 }
 
 /// The state of one connected agent, for `uteke doctor`.
@@ -605,6 +697,9 @@ pub(crate) struct HookStatus {
     /// <agent>`) or `missing` (some installed entries are gone from the file).
     pub state: &'static str,
     pub installed_by: String,
+    /// The binary baked in by `--absolute-path`, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
 }
 
 /// Every agent with a connect manifest under `home`.
@@ -630,6 +725,7 @@ pub(crate) fn hook_status(home: &Path) -> Vec<HookStatus> {
             config_path: manifest.config_path.clone(),
             state,
             installed_by: manifest.uteke_version.clone(),
+            binary: manifest.binary.clone(),
         });
     }
     out
@@ -644,10 +740,16 @@ pub(crate) fn print_hook_status(statuses: &[HookStatus]) {
     for s in statuses {
         let what = match s.state {
             "ok" => "\u{2713} up to date".to_string(),
-            "stale" => format!(
-                "\u{26a0} installed by uteke {}, this version installs different hooks: run `uteke connect {}`",
-                s.installed_by, s.agent
-            ),
+            "stale" => match &s.binary {
+                Some(bin) => format!(
+                    "\u{26a0} installed by uteke {}, pinned to {bin}, which is gone or no longer matches: run `uteke connect {} --absolute-path`",
+                    s.installed_by, s.agent
+                ),
+                None => format!(
+                    "\u{26a0} installed by uteke {}, this version installs different hooks: run `uteke connect {}`",
+                    s.installed_by, s.agent
+                ),
+            },
             _ => format!(
                 "\u{26a0} some hooks were removed from {}: run `uteke connect {}` to restore them",
                 s.config_path.display(),
@@ -699,14 +801,30 @@ fn print_report(verb: &str, name: &str, report: &Report, json: bool) {
     }
 }
 
-/// `uteke connect <agent> [--dry-run]`.
-pub(crate) fn run_connect(agent: &str, dry_run: bool, json: bool) -> Result<(), String> {
+/// `uteke connect <agent> [--dry-run] [--absolute-path]`.
+pub(crate) fn run_connect(
+    agent: &str,
+    dry_run: bool,
+    absolute_path: bool,
+    json: bool,
+) -> Result<(), String> {
     if provider::PROVIDER_AGENTS.contains(&agent) {
+        if absolute_path {
+            return Err(format!(
+                "--absolute-path applies to the hook agents ({}); {agent} gets a plugin, not a hook command",
+                SUPPORTED.join(", ")
+            ));
+        }
         return provider::connect(agent, dry_run, json);
     }
     let adapter = adapter_for(agent).ok_or_else(|| unsupported(agent))?;
     let home = home_dir()?;
-    let mut report = connect(adapter.as_ref(), &home, dry_run)?;
+    let bin = if absolute_path {
+        Some(current_binary()?)
+    } else {
+        None
+    };
+    let mut report = connect_with(adapter.as_ref(), &home, dry_run, bin.as_deref())?;
     if !dry_run {
         let config = crate::config::Config::load();
         if !config.engine.capture.enabled {
