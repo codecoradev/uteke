@@ -257,6 +257,9 @@ uteke extract-queue run --budget 5  # extract up to 5 sessions now
   `capture:<session>:<batch>`. An extractor error (rate limit, provider down)
   stops the run and the session is retried next time; after `max_attempts` it is
   marked failed. A session left mid-run by a crash is requeued after the lease.
+  A long session is extracted in chunks of `chunk_chars` (24000) characters, stored
+  as one batch; a provider refusal of the input size (HTTP 400/413) fails that
+  session only and the run goes on.
 - Done turns are deleted after `retention_days` (30).
 - `uteke-serve` extracts on its own every `interval_minutes` (60) when capture is
   on, `budget_per_run` sessions per run, and doubles the wait after a run the

@@ -286,6 +286,32 @@ impl Extractor {
     }
 }
 
+/// Whether an extraction error says the provider refused the input as too
+/// large (#1664): HTTP 400 or 413, or a message about the context length. Such
+/// an input fails the same way on every retry, so a caller fails that input
+/// alone instead of treating the provider as down (a 429 or 5xx is that).
+pub fn is_input_too_large(err: &Error) -> bool {
+    let msg = err.to_string();
+    let status = msg.split_once("returned HTTP ").map(|(_, rest)| {
+        rest.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+    });
+    if matches!(status.as_deref(), Some("400" | "413")) {
+        return true;
+    }
+    let lower = msg.to_ascii_lowercase();
+    [
+        "context length",
+        "context_length",
+        "too large",
+        "too long",
+        "maximum context",
+    ]
+    .iter()
+    .any(|m| lower.contains(m))
+}
+
 /// Normalize an endpoint path: empty -> default, ensure leading slash.
 fn normalize_endpoint_path(path: &str) -> String {
     if path.is_empty() {

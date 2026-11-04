@@ -237,6 +237,7 @@ budget_per_run = 10      # sessions (extractor calls) per run
 retention_days = 30      # done turns are deleted after this many days
 max_attempts = 3         # a session that keeps failing is marked failed
 lease_minutes = 15       # a session left `extracting` by a crash is requeued
+chunk_chars = 24000      # most characters one extractor call receives (min 64)
 interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
 ```
 
@@ -244,6 +245,15 @@ interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
 once per session, not for the whole run. A run the extractor stopped (rate limit,
 provider down) doubles the wait before the next one, up to 16 intervals; a run that
 goes through resets it.
+
+A session longer than `chunk_chars` is extracted in several calls: its turns are packed
+into chunks on turn boundaries, and a single turn larger than a chunk is split at a
+newline or whitespace. The facts of every chunk are stored together as one batch, with
+the source `capture:<session>:<batch>`, and the batch counts as one attempt. A provider
+answer of HTTP 400 or 413, or one that names the context length, fails that session
+alone (it is retried, then marked failed after `max_attempts`) and the sessions behind
+it still run; a 429 or a 5xx still stops the run. Keep `lease_minutes` above the time
+the longest session takes: every chunk is one request of up to two minutes.
 
 ## Recall Threshold
 

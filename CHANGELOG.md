@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A long capture session no longer starves the extraction queue (#1664)** - a
+  session is extracted in chunks of at most `[capture] chunk_chars` (24000)
+  characters instead of one request, and its facts are stored as one batch. A
+  provider refusal of the input size (HTTP 400/413, or a context-length message)
+  fails that session alone, counting an attempt, instead of stopping the run for
+  the sessions behind it; a 429 or 5xx still stops the run.
+
 ### Changed
 
 - **Behaviour change for callers who pass `at`: history is the default (#1598)** -
