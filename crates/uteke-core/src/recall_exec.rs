@@ -56,6 +56,9 @@ impl Uteke {
         let tag_vec = req.tag_filter();
         let tags_filter = tag_vec.as_deref();
         let min_score = req.resolve_min_score(defaults.min_score, defaults.min_score_strict);
+        // `strict` (on similarity, #1650) and `min_trust` (#1651) run before
+        // the result is cut to `limit`, and never change `score`.
+        let filter = req.result_filter(defaults.min_score_strict);
         let namespace = req.namespace.as_deref();
         let entity_filter = req.entity.as_deref();
         let category_filter = req.category.as_deref();
@@ -83,14 +86,22 @@ impl Uteke {
                     "explain cannot be combined with entity/category/enrich",
                 ));
             }
-            return self
-                .recall_explained(
-                    &req.query,
+            return filter
+                .fetch(
+                    self,
                     limit,
-                    tags_filter,
-                    namespace,
-                    strategy,
-                    min_score,
+                    |n| {
+                        self.recall_explained(
+                            &req.query,
+                            n,
+                            tags_filter,
+                            namespace,
+                            strategy,
+                            min_score,
+                        )
+                    },
+                    |f, e| f.keep_memory(&e.result),
+                    |e| Some(e.result.memory.id.as_str()),
                 )
                 .map(RecallOutput::Explained);
         }
@@ -105,22 +116,31 @@ impl Uteke {
             let search_type = req
                 .search_type()
                 .map_err(|e| Error::Validation(e.to_string()))?;
-            return self
-                .recall_unified_packed(
-                    &req.query,
-                    limit,
-                    tags_filter,
-                    namespace,
-                    min_score,
-                    search_type,
-                    entity_filter,
-                    category_filter,
-                    req.enrich,
-                    strategy,
-                    req.budget_chars_or_default(),
-                    &req.exclude_ids,
-                )
-                .map(RecallOutput::Packed);
+            let results = filter.fetch(
+                self,
+                limit,
+                |n| {
+                    self.recall_unified(
+                        &req.query,
+                        n,
+                        tags_filter,
+                        namespace,
+                        min_score,
+                        search_type,
+                        entity_filter,
+                        category_filter,
+                        req.enrich,
+                        strategy,
+                    )
+                },
+                |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
+            )?;
+            return Ok(RecallOutput::Packed(crate::pack_mode::pack_context(
+                results,
+                req.budget_chars_or_default(),
+                &req.exclude_ids,
+            )));
         }
 
         // Unified search (#531): when a search_type was given and there is no
@@ -130,17 +150,25 @@ impl Uteke {
             let search_type: SearchType = req
                 .search_type()
                 .map_err(|e| Error::Validation(e.to_string()))?;
-            let mut results = self.recall_unified(
-                &req.query,
+            let mut results = filter.fetch(
+                self,
                 limit,
-                tags_filter,
-                namespace,
-                min_score,
-                search_type,
-                entity_filter,
-                category_filter,
-                req.enrich,
-                strategy,
+                |n| {
+                    self.recall_unified(
+                        &req.query,
+                        n,
+                        tags_filter,
+                        namespace,
+                        min_score,
+                        search_type,
+                        entity_filter,
+                        category_filter,
+                        req.enrich,
+                        strategy,
+                    )
+                },
+                |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )?;
             if has_temporal {
                 results.retain(|r| {
@@ -157,43 +185,52 @@ impl Uteke {
         // entity/category support, so they are post-filters with a 3x
         // over-fetch (as in recall_unified_memories).
         let needs_post_filter = entity_filter.is_some() || category_filter.is_some();
-        let fetch_limit = if needs_post_filter {
-            limit.saturating_mul(3).max(limit + 10)
-        } else {
-            limit
-        };
-        let mut results = if let Some(pit) = point_in_time {
-            // Time travel: the strategy does not apply to point-in-time recall.
-            self.recall_at_time(
-                &req.query,
-                limit,
-                tags_filter,
-                namespace,
-                pit,
-                min_score,
-                entity_filter,
-                category_filter,
-            )?
-        } else {
-            self.recall_hybrid(
-                &req.query,
-                fetch_limit,
-                tags_filter,
-                namespace,
-                strategy,
-                min_score,
-            )?
-        };
-        if needs_post_filter && point_in_time.is_none() {
-            results.retain(|sr| {
-                entity_filter.is_none_or(|ent| {
-                    sr.memory.metadata.get("entity").and_then(|v| v.as_str()) == Some(ent)
-                }) && category_filter.is_none_or(|cat| {
-                    sr.memory.metadata.get("category").and_then(|v| v.as_str()) == Some(cat)
-                })
-            });
-            results.truncate(limit);
-        }
+        let mut results = filter.fetch(
+            self,
+            limit,
+            |n| {
+                let fetch_limit = if needs_post_filter {
+                    n.saturating_mul(3).max(n + 10)
+                } else {
+                    n
+                };
+                let mut found = if let Some(pit) = point_in_time {
+                    // Time travel: the strategy does not apply to point-in-time recall.
+                    self.recall_at_time(
+                        &req.query,
+                        n,
+                        tags_filter,
+                        namespace,
+                        pit,
+                        min_score,
+                        entity_filter,
+                        category_filter,
+                    )?
+                } else {
+                    self.recall_hybrid(
+                        &req.query,
+                        fetch_limit,
+                        tags_filter,
+                        namespace,
+                        strategy,
+                        min_score,
+                    )?
+                };
+                if needs_post_filter && point_in_time.is_none() {
+                    found.retain(|sr| {
+                        entity_filter.is_none_or(|ent| {
+                            sr.memory.metadata.get("entity").and_then(|v| v.as_str()) == Some(ent)
+                        }) && category_filter.is_none_or(|cat| {
+                            sr.memory.metadata.get("category").and_then(|v| v.as_str()) == Some(cat)
+                        })
+                    });
+                    found.truncate(n);
+                }
+                Ok(found)
+            },
+            |f, r| f.keep_memory(r),
+            |r| Some(r.memory.id.as_str()),
+        )?;
         if has_temporal {
             results.retain(|r| {
                 let t = &r.memory.created_at;
@@ -362,5 +399,212 @@ mod tests {
             i.strategy = Some("fts5".into());
         });
         assert!(matches!(run(&u, &r), Ok(RecallOutput::Unified(_))));
+    }
+
+    // ── #1650: strict filters on similarity, #1651: min_trust ───────────
+
+    const ON_TOPIC: &str = "quarterly revenue projections for the board meeting";
+
+    /// One on-topic memory and four that share no word with the query.
+    fn finance_store() -> Uteke {
+        let u = open_keyword();
+        u.remember(ON_TOPIC, &["finance"], None, None).unwrap();
+        for (i, topic) in [
+            "gardening tulips",
+            "zebra savanna",
+            "volcano basalt",
+            "origami cranes",
+        ]
+        .iter()
+        .enumerate()
+        {
+            u.remember(&format!("{topic} note {i}"), &["misc"], None, None)
+                .unwrap();
+        }
+        u
+    }
+
+    fn memories(u: &Uteke, r: &RecallRequest) -> Vec<SearchResult> {
+        match run(u, r).unwrap() {
+            RecallOutput::Memories { results, .. } => results,
+            other => panic!("memory-only expected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn strict_under_fusion_returns_the_on_topic_memory_and_drops_the_rest() {
+        let u = finance_store();
+        let q = |i: &mut RecallInput| i.query = "quarterly revenue projections".into();
+        let plain = memories(&u, &req(q));
+        assert!(plain.len() > 1, "without strict every memory is returned");
+        // The old strict compared the fused score to 0.5; fusion can never
+        // reach it, so strict returned nothing at all.
+        assert!(plain.iter().all(|r| r.score < 0.5));
+
+        let strict = memories(
+            &u,
+            &req(|i| {
+                q(i);
+                i.strict = true;
+            }),
+        );
+        assert_eq!(strict.len(), 1, "only the on-topic memory is confident");
+        assert_eq!(strict[0].memory.content, ON_TOPIC);
+        assert!(strict[0].similarity.unwrap() >= 0.5);
+        assert!(strict[0].score < 0.5, "score keeps its meaning");
+    }
+
+    #[test]
+    fn strict_drops_hits_without_a_similarity() {
+        let u = finance_store();
+        let q = |i: &mut RecallInput| {
+            i.query = "quarterly revenue projections".into();
+            i.strategy = Some("fts5".into());
+        };
+        let plain = memories(&u, &req(q));
+        assert!(!plain.is_empty(), "the full-text leg finds the memory");
+        assert!(plain.iter().all(|r| r.similarity.is_none()));
+        let strict = memories(
+            &u,
+            &req(|i| {
+                q(i);
+                i.strict = true;
+            }),
+        );
+        assert!(strict.is_empty(), "no similarity, no strict hit");
+    }
+
+    #[test]
+    fn strict_never_changes_a_score_for_any_strategy() {
+        for strategy in ["vector", "hybrid", "fts5", "fusion", "graph"] {
+            let q = |i: &mut RecallInput| {
+                i.query = "quarterly revenue projections".into();
+                i.strategy = Some(strategy.into());
+            };
+            // A recall touches what it returns (hot boost), so each run gets a
+            // fresh store.
+            let plain = memories(&finance_store(), &req(q));
+            let u = finance_store();
+            let strict = memories(
+                &u,
+                &req(|i| {
+                    q(i);
+                    i.strict = true;
+                    i.min_score = Some(0.0);
+                }),
+            );
+            for r in &strict {
+                let same = plain
+                    .iter()
+                    .find(|p| p.memory.content == r.memory.content)
+                    .unwrap_or_else(|| panic!("{strategy}: strict added a hit"));
+                assert_eq!(same.score, r.score, "{strategy}: score changed");
+            }
+        }
+    }
+
+    #[test]
+    fn min_score_still_filters_on_score_with_and_without_strict() {
+        let u = finance_store();
+        let r = memories(
+            &u,
+            &req(|i| {
+                i.query = "quarterly revenue projections".into();
+                i.strategy = Some("vector".into());
+                i.min_score = Some(0.5);
+            }),
+        );
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].memory.content, ON_TOPIC);
+    }
+
+    #[test]
+    fn similarity_is_the_unboosted_cosine_and_null_for_fts_only_in_json() {
+        let u = finance_store();
+        let vec_hit = memories(
+            &u,
+            &req(|i| {
+                i.query = "quarterly revenue projections".into();
+                i.strategy = Some("vector".into());
+            }),
+        );
+        let v = serde_json::to_value(&vec_hit[0]).unwrap();
+        assert!(v["similarity"].as_f64().unwrap() > 0.5);
+        let fts_hit = memories(
+            &u,
+            &req(|i| {
+                i.query = "quarterly revenue projections".into();
+                i.strategy = Some("fts5".into());
+            }),
+        );
+        let v = serde_json::to_value(&fts_hit[0]).unwrap();
+        assert!(v.get("similarity").is_some_and(|s| s.is_null()));
+    }
+
+    #[test]
+    fn strict_applies_to_unified_and_pack_results_too() {
+        let u = finance_store();
+        let q = |i: &mut RecallInput| {
+            i.query = "quarterly revenue projections".into();
+            i.search_type = Some("memory".into());
+            i.strict = true;
+        };
+        let RecallOutput::Unified(results) = run(&u, &req(q)).unwrap() else {
+            panic!("unified expected");
+        };
+        assert_eq!(results.len(), 1);
+        assert!(results[0].similarity.unwrap() >= 0.5);
+
+        let RecallOutput::Packed(pack) = run(
+            &u,
+            &req(|i| {
+                q(i);
+                i.pack = true;
+            }),
+        )
+        .unwrap() else {
+            panic!("pack expected");
+        };
+        assert_eq!(pack.selected.len(), 1);
+        let v = serde_json::to_value(&pack.selected[0]).unwrap();
+        assert!(v["similarity"].as_f64().unwrap() >= 0.5);
+    }
+
+    #[test]
+    fn a_filtered_recall_counts_only_the_rows_it_returns() {
+        // The widened passes fetch discarded candidates; they must not be
+        // counted as recalled (#1650 review).
+        let u = finance_store();
+        let r = req(|i| {
+            i.query = "quarterly revenue projections".into();
+            i.strict = true;
+            i.limit = Some(1);
+        });
+        let got = memories(&u, &r);
+        assert_eq!(got.len(), 1);
+        let counts: Vec<(bool, u32)> = u
+            .store()
+            .list(None, None, 100, 0)
+            .unwrap()
+            .iter()
+            .map(|m| (m.id == got[0].memory.id, m.recall_count))
+            .collect();
+        assert_eq!(counts.len(), 5);
+        for (returned, count) in counts {
+            assert_eq!(count, u32::from(returned));
+        }
+    }
+
+    #[test]
+    fn recall_related_keeps_the_seed_similarity_so_strict_does_not_drop_it() {
+        let u = finance_store();
+        let found = u
+            .recall_related("quarterly revenue projections", 5, None, None, 0.0, 1)
+            .unwrap();
+        let seed = found
+            .iter()
+            .find(|r| r.memory.content == ON_TOPIC)
+            .expect("the seed hit is returned");
+        assert!(seed.similarity.unwrap() >= 0.5);
     }
 }

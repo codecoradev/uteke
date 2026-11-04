@@ -462,7 +462,7 @@ fn tool_recall() -> Value {
                 "explain": { "type": "boolean", "description": "Return per-result ranking signals (#1160): vector similarity/rank, RRF contributions, jaccard/salience/recency/graph boosts. Memory-only: do not pass type with explain." },
                 "entity": { "type": "string", "description": "Only memories whose metadata entity equals this value" },
                 "category": { "type": "string", "description": "Only memories whose metadata category equals this value" },
-                "strict": { "type": "boolean", "description": "Use the strict similarity floor ([recall] min_score_strict, default 0.5) when min_score is not given" },
+                "strict": { "type": "boolean", "description": "Confident matches only (#1650): keep a result when its similarity (the vector-leg cosine, shown as `sim`) reaches [recall] min_score_strict (default 0.5). Results found by full-text search only have no similarity and are dropped. Ranking scores and min_score are unchanged." },
                 "enrich": { "type": "boolean", "description": "Attach linked documents and memories to each result" },
                 "at": { "type": "string", "description": "Point in time (RFC3339): recall the memories that existed then. Not combinable with explain or pack." },
                 "after": { "type": "string", "description": "Only memories created at or after this time (RFC3339). Not combinable with explain or pack." },
@@ -1422,8 +1422,7 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
 /// Decode the arguments of `uteke_recall` into the typed request shared with
 /// the HTTP server and the CLI (#1343), under the MCP policy: no limit cap,
-/// blank queries accepted, `tags: []` kept as a filter. The tool exposes no
-/// entity/category/enrich/at/after/before/strict, so those stay unset.
+/// blank queries accepted, `tags: []` kept as a filter.
 pub fn decode_recall_args(args: &Value) -> Result<uteke_core::RecallRequest, String> {
     let query = args["query"].as_str().ok_or("Missing 'query'")?;
     // An invalid `limit` is an error, as on `POST /recall`, not a silent default (#1439).
@@ -1534,7 +1533,13 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                     uteke_core::SearchResultType::Memory => r
                         .memory_id
                         .as_ref()
-                        .map(|id| format!(" (id: {})", display_id(id, full_ids)))
+                        .map(|id| {
+                            format!(
+                                " (id: {}{})",
+                                display_id(id, full_ids),
+                                hit_signals(r.similarity)
+                            )
+                        })
                         .unwrap_or_default(),
                     uteke_core::SearchResultType::Document => r
                         .doc_slug
@@ -1582,13 +1587,22 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                     r.memory.content
                 ));
                 lines.push(format!(
-                    "       (id: {})",
-                    display_id(&r.memory.id, full_ids)
+                    "       (id: {}{})",
+                    display_id(&r.memory.id, full_ids),
+                    hit_signals(r.similarity)
                 ));
             }
             Ok(text_result(lines.join("\n")))
         }
     }
+}
+
+/// `, sim 0.68` after a hit's id: the vector-leg similarity (`null` when only
+/// full-text search found it, #1650). The JSON surfaces carry it as
+/// `similarity`.
+fn hit_signals(similarity: Option<f32>) -> String {
+    let sim = similarity.map_or_else(|| "null".to_string(), |s| format!("{s:.2}"));
+    format!(", sim {sim}")
 }
 
 /// Refuse an argument the tool does not declare (#1439), with the list of the
@@ -3892,6 +3906,7 @@ mod room_recall_tests {
                 author: None,
             },
             score,
+            similarity: None,
         }
     }
 
@@ -4976,6 +4991,35 @@ mod recall_settings_mcp_tests {
             t.contains("rust ownership"),
             "the call's own floor wins: {t}"
         );
+    }
+
+    #[test]
+    fn strict_keeps_confident_matches_and_the_line_shows_the_similarity() {
+        let u = store(|_| {});
+        let t = recall(&u, serde_json::json!({"query": "rust ownership borrowing"}));
+        assert!(t.contains("rust ownership") && t.contains("python"), "{t}");
+        assert!(t.contains(", sim 0."), "similarity is shown: {t}");
+        // Default fusion: the old strict floor on the fused score matched nothing.
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "rust ownership borrowing", "strict": true}),
+        );
+        assert!(t.contains("rust ownership"), "{t}");
+        assert!(
+            !t.contains("python"),
+            "the off-topic memory is dropped: {t}"
+        );
+        // Full-text only: no similarity, so strict drops it and the plain line says null.
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "rust ownership", "strategy": "fts5"}),
+        );
+        assert!(t.contains("sim null"), "{t}");
+        let t = recall(
+            &u,
+            serde_json::json!({"query": "rust ownership", "strategy": "fts5", "strict": true}),
+        );
+        assert_eq!(t, "No results found.");
     }
 
     #[test]

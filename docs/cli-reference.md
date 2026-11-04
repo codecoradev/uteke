@@ -511,7 +511,7 @@ Additional flags not shown in the basic example above:
 ```bash
 # Minimum similarity score filter
 uteke recall "database config" --min 0.7
-uteke recall "database config" --strict    # uses min_score_strict (default 0.5)
+uteke recall "database config" --strict    # confident matches only: similarity >= min_score_strict (default 0.5)
 uteke recall "database config" --min 0.25  # opt-in similarity threshold (default 0.0 since #1223: fusion scores are rank-based)
 
 # Time-travel: query memories at specific point in time
@@ -559,7 +559,7 @@ uteke recall "api design" --context
 | Flag | Description |
 |------|-------------|
 | `--min <score>` | Minimum score (default 0.0 since 0.17.x, #1223: fusion scores are rank-based, not cosine). `--min-score` is accepted as an alias (#1593) |
-| `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
+| `--strict` | Confident matches only: keep a hit when its `similarity` (the vector-leg cosine) reaches `min_score_strict` (default 0.5). Hits found by full-text search only have no similarity and are dropped. `score` and `--min` are unchanged, and `--strict` works under every strategy (#1650). See [the floor benchmark](../benchmarks/internal/STRICT_FLOOR.md) |
 | `--at <timestamp>` | Query memories at point in time (RFC3339), including those deprecated after it (#1598) |
 | `--history` | Deprecated, no effect: `--at` always includes memories deprecated after it. Needs `--at` |
 | `--related` | Follow relationship edges |

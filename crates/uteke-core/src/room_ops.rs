@@ -149,7 +149,11 @@ impl crate::Uteke {
                 if min_score > 0.0 && score < min_score {
                     continue;
                 }
-                results.push(SearchResult { memory, score });
+                results.push(SearchResult {
+                    memory,
+                    score,
+                    similarity: Some(similarity),
+                });
             }
         }
         results.sort_by(|a, b| {
@@ -268,7 +272,11 @@ impl crate::Uteke {
 
                 for mem in missing_memories {
                     let score = crate::consolidate::cosine_similarity(&query_emb, &mem.embedding);
-                    results.push(SearchResult { memory: mem, score });
+                    results.push(SearchResult {
+                        memory: mem,
+                        score,
+                        similarity: Some(score.clamp(0.0, 1.0)),
+                    });
                 }
             }
         }

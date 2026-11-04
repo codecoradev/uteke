@@ -263,8 +263,24 @@ fn default_content_type() -> String {
 pub struct SearchResult {
     /// The matched memory.
     pub memory: Memory,
-    /// Cosine similarity score (0.0–1.0).
+    /// Ranking score. Its scale depends on the strategy (cosine for `vector`,
+    /// rank-based for `hybrid`/`fusion`, plus boosts); not a similarity.
     pub score: f32,
+    /// Cosine similarity of the vector leg (0.0–1.0), unboosted. `None` for a
+    /// hit that only the full-text leg found. `strict` filters on this field.
+    #[serde(default)]
+    pub similarity: Option<f32>,
+}
+
+impl SearchResult {
+    /// A result with no vector similarity (full-text, graph, LIKE search).
+    pub fn new(memory: Memory, score: f32) -> Self {
+        Self {
+            memory,
+            score,
+            similarity: None,
+        }
+    }
 }
 
 /// Result type discriminator for unified search (#531).
@@ -288,6 +304,10 @@ pub struct UnifiedSearchResult {
     pub result_type: SearchResultType,
     /// Relevance score (0.0–1.0), normalized via RRF.
     pub score: f32,
+    /// Cosine similarity of the vector leg (0.0–1.0); `null` when the item
+    /// has none (found by full-text only, or a document) (#1650).
+    #[serde(default)]
+    pub similarity: Option<f32>,
     /// Memory content (always populated for type=memory, excerpt for type=document).
     pub content: String,
     /// Memory ID (populated for type=memory).
@@ -362,6 +382,7 @@ impl UnifiedSearchResult {
         UnifiedSearchResult {
             result_type: SearchResultType::Memory,
             score: sr.score,
+            similarity: sr.similarity,
             content: m.content.clone(),
             memory_id: Some(m.id.clone()),
             tags: m.tags.clone(),
@@ -1414,6 +1435,7 @@ mod tests {
         let result = UnifiedSearchResult {
             result_type: SearchResultType::Memory,
             score: 0.85,
+            similarity: None,
             content: "test memory".to_string(),
             memory_id: Some("abc-123".to_string()),
             tags: vec!["test".to_string()],
@@ -1472,6 +1494,7 @@ mod tests {
         let result = UnifiedSearchResult {
             result_type: SearchResultType::Document,
             score: 0.92,
+            similarity: None,
             content: "chunk excerpt here".to_string(),
             memory_id: None,
             tags: vec![],

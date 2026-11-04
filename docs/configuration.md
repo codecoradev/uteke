@@ -257,7 +257,7 @@ Control minimum similarity score for recall results:
 # Default: 0.0 (no filtering; fusion scores are rank-based, see below).
 min_score = 0.0
 
-# Strict-mode threshold (used with `--strict` flag)
+# Floor on `similarity` (the vector-leg cosine) for `strict` recalls (#1650)
 min_score_strict = 0.5
 
 # Default recall strategy for `uteke recall` when --strategy is not given.
@@ -281,7 +281,7 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `min_score` | 0.0 | Minimum score; results below it are dropped |
-| `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`) |
+| `min_score_strict` | 0.5 | Floor on a result's `similarity` (the vector-leg cosine, not `score`) for `strict` recalls. Hits without a similarity are dropped. Why 0.5: [benchmark note](../benchmarks/internal/STRICT_FLOOR.md) |
 | `default_strategy` | `fusion` | Default recall strategy (`vector\|fts5\|hybrid\|graph\|fusion`). Since 0.16.0 `fusion` (weighted RRF: vector×1.7 + hybrid×1, #1123) is the default — LongMemEval fast50 R@5 0.98 vs 0.9267 hybrid |
 | `graph_density_weight` | 0.1 | Edge-density boost weight (graph strategy only) |
 | `graph_authority_weight` | 0.1 | Incoming-edge authority boost weight (graph strategy only) |
@@ -291,8 +291,14 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 > recall score is rank-based (RRF contribution plus salience/recency boosts,
 > typically about 0.0 to 0.2), not a cosine similarity. That is why the default
 > `min_score` is 0.0 on every surface. Set a threshold (config `min_score`,
-> `--min`, `--strict`, or HTTP/MCP `min_score`) only when you know the score scale
-> of the active strategy. For benchmark evaluation pass `--min 0.0` explicitly.
+> `--min` or HTTP/MCP `min_score`) only when you know the score scale of the
+> active strategy. For benchmark evaluation pass `--min 0.0` explicitly.
+>
+> **`similarity` and `strict` (#1650):** every memory result also carries
+> `similarity`, the cosine of the vector leg (0 to 1, not boosted), or `null` when only
+> full-text search found it. `strict` and `min_score_strict` compare against it, so
+> "confident match only" works under fusion, where `score` never reaches 0.5. `score`
+> and `min_score` keep their meaning.
 
 ### Salience + Recency Boost (#352)
 

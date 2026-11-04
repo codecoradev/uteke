@@ -148,6 +148,7 @@ pub fn to_v1_flat(result: &uteke_core::memory::types::UnifiedSearchResult) -> se
         serde_json::Value::String(result.content.clone()),
     );
     map.insert("score".into(), serde_json::json!(result.score));
+    map.insert("similarity".into(), serde_json::json!(result.similarity));
     if let Some(id) = &result.memory_id {
         map.insert("id".into(), serde_json::Value::String(id.clone()));
     }
@@ -269,10 +270,13 @@ pub struct RecallRequest {
     #[serde(default)]
     pub category: Option<String>,
     /// Minimum similarity score (0.0-1.0). Results below are filtered.
-    /// Default: 0.0 (no filtering). Use `strict=true` for 0.5 default (#995).
+    /// Default: 0.0 (no filtering). Compares against `score`; `strict` compares against `similarity`.
     #[serde(default)]
     pub min_score: Option<f32>,
-    /// Use strict threshold (defaults to 0.5 if min_score not set).
+    /// Confident matches only (#1650): keep a hit when its `similarity` (the
+    /// vector-leg cosine) reaches `[recall] min_score_strict` (default 0.5).
+    /// Hits without a similarity (found by full-text search only) are
+    /// dropped. `score` and `min_score` keep their meaning.
     #[serde(default)]
     pub strict: bool,
     /// Time-travel: query memories that existed at this RFC3339 timestamp.

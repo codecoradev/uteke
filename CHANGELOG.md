@@ -22,6 +22,20 @@
 
 ### Added
 
+- **`similarity` on recall results, and `strict` that works (#1650)** - every memory
+  result on the CLI (`--json`), `POST /recall` and `uteke_recall` (explain and pack
+  JSON, the `sim` field of the text lines) carries `similarity`: the unboosted cosine
+  of the vector leg (0 to 1), or `null` when only full-text search found the hit.
+  Pack and unified results carry it too (`null` for documents). `strict` and
+  `[recall] min_score_strict` now compare against `similarity` and drop hits with
+  none; before they compared the 0.5 floor against `score`, which under the default
+  fusion strategy is at most about 0.25, so `recall --strict` returned nothing.
+  `score`, `--min` and the ranking are unchanged for every strategy. The filter runs
+  before the limit, so up to N rows come back when N qualify. MCP `uteke_recall`
+  already accepted `strict`. Why 0.5 fits EmbeddingGemma cosine, and what it costs:
+  `benchmarks/internal/STRICT_FLOOR.md`. Wire names (`similarity`, `strict`,
+  `min_score_strict`) are those agreed with uteke-cloud#459.
+
 - **Validity in columns on HTTP and MCP (#1598)** - `POST /remember`, `PUT /memory`
   and the MCP tools `uteke_remember` and `uteke_update` accept `valid_from` and
   `valid_until` (RFC 3339) and store them in the columns that `at` reads, as
@@ -200,6 +214,12 @@
   Rows it embeds also get the cosine links `remember` makes. The Rust API gains
   `Uteke::import_with` / `ImportOptions` and `Uteke::reembed_missing_with` /
   `ReembedOptions`. `POST /import` and `POST /repair` are unchanged.
+
+### Changed
+
+- `recall --strict` with `--min` now applies both: `--min` to `score` as before, and
+  the strict floor to `similarity`. `--strict` alone no longer sets a floor on
+  `score`.
 
 ### Security
 

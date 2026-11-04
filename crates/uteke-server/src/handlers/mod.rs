@@ -45,6 +45,8 @@ mod namespaces;
 #[cfg(test)]
 mod privacy_tests;
 #[cfg(test)]
+mod recall_similarity_tests;
+#[cfg(test)]
 mod room_link_tests;
 mod rooms;
 mod tags;

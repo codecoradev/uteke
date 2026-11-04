@@ -14,7 +14,7 @@
 //! | blank query             | rejected            | rejected (#1439)          | accepted (server 400) |
 //! | empty `tags: []`        | no filter           | no filter (#1439)         | sent, so no filter    |
 //! | namespace omitted       | all namespaces      | all namespaces            | `"default"` only      |
-//! | `strict`, config floor  | honoured            | not accepted              | `--strict` forwarded  |
+//! | `strict`, config floor  | honoured            | honoured (#1650)          | `--strict` forwarded  |
 //! | entity/category/enrich  | honoured            | not accepted              | forwarded             |
 //! | at/after/before         | honoured            | not accepted              | `--at` forwarded      |
 //!
@@ -33,7 +33,8 @@ pub const RECALL_HTTP_MAX_LIMIT: usize = 100;
 pub const RECALL_DEFAULT_BUDGET_CHARS: usize = 4000;
 /// Similarity floor when neither the request nor `[recall]` sets one.
 pub const RECALL_DEFAULT_MIN_SCORE: f32 = 0.0;
-/// Similarity floor of `strict` when `[recall] min_score_strict` is unset.
+/// Floor of `strict` when `[recall] min_score_strict` is unset. It applies to
+/// the result's `similarity` (the vector-leg cosine), not to `score` (#1650).
 pub const RECALL_STRICT_MIN_SCORE: f32 = 0.5;
 
 /// Raw, undecoded recall arguments as a surface read them.
@@ -262,20 +263,35 @@ impl RecallRequest {
         }
     }
 
-    /// Similarity floor: `min_score`, else the `[recall]` value for the mode
-    /// (`strict` or not), else the built-in default.
+    /// Floor on `score`: `min_score`, else `[recall] min_score`, else the
+    /// built-in default. `strict` does not change it: `strict` filters on
+    /// `similarity` instead (see [`Self::resolve_min_similarity`], #1650).
     pub fn resolve_min_score(
         &self,
         config_min_score: Option<f64>,
-        config_min_score_strict: Option<f64>,
+        _config_min_score_strict: Option<f64>,
     ) -> f32 {
-        let (configured, builtin) = if self.strict {
-            (config_min_score_strict, RECALL_STRICT_MIN_SCORE)
-        } else {
-            (config_min_score, RECALL_DEFAULT_MIN_SCORE)
-        };
         self.min_score
-            .unwrap_or_else(|| configured.unwrap_or(builtin as f64) as f32)
+            .unwrap_or_else(|| config_min_score.unwrap_or(RECALL_DEFAULT_MIN_SCORE as f64) as f32)
+    }
+
+    /// Floor on `similarity` (the vector-leg cosine) when `strict` is set:
+    /// `[recall] min_score_strict`, else the built-in
+    /// [`RECALL_STRICT_MIN_SCORE`]. `None` when `strict` is off. Hits without
+    /// a similarity are dropped under strict.
+    pub fn resolve_min_similarity(&self, config_min_score_strict: Option<f64>) -> Option<f32> {
+        self.strict
+            .then(|| config_min_score_strict.unwrap_or(RECALL_STRICT_MIN_SCORE as f64) as f32)
+    }
+
+    /// The result filters of this request (`strict`).
+    pub fn result_filter(
+        &self,
+        config_min_score_strict: Option<f64>,
+    ) -> crate::recall_filter::ResultFilter {
+        crate::recall_filter::ResultFilter {
+            min_similarity: self.resolve_min_similarity(config_min_score_strict),
+        }
     }
 
     /// Character budget for `pack`.
@@ -456,8 +472,15 @@ mod tests {
         let mut i = input("q");
         i.strict = true;
         let strict = RecallRequest::decode(i).unwrap();
-        assert_eq!(strict.resolve_min_score(None, None), 0.5);
-        assert_eq!(strict.resolve_min_score(Some(0.25), Some(0.8)), 0.8);
+        assert_eq!(
+            strict.resolve_min_score(None, None),
+            0.0,
+            "strict no longer sets a score floor"
+        );
+        assert_eq!(strict.resolve_min_similarity(None), Some(0.5));
+        assert_eq!(strict.resolve_min_score(Some(0.25), Some(0.8)), 0.25);
+        assert_eq!(strict.resolve_min_similarity(Some(0.8)), Some(0.8));
+        assert_eq!(plain.resolve_min_similarity(Some(0.8)), None);
 
         let mut i = input("q");
         i.strict = true;
