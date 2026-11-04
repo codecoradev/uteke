@@ -198,12 +198,6 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             valid_from,
             valid_until,
         } => {
-            // `POST /remember` stores `valid_from`/`valid_until` as metadata
-            // only (the columns wait on uteke-cloud#458), so the local store
-            // answers instead of silently dropping the interval (#1598).
-            if valid_from.is_some() || valid_until.is_some() {
-                return Err("unsupported".to_string());
-            }
             // `POST /remember` takes no `room` (a room write is a separate
             // operation). Say so here instead of sending a key the server
             // rejects as unknown, and do not fall back to a local store: that
@@ -238,6 +232,10 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 source_type: source_type.clone(),
                 author_type: author_type.clone(),
                 author: author.clone(),
+                // Validity goes into the columns on the server (#1598); the
+                // server validates it, and so does the local path.
+                valid_from: valid_from.clone(),
+                valid_until: valid_until.clone(),
                 ..uteke_core::RememberInput::default()
             }
             .to_http_body();

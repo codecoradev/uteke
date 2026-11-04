@@ -205,6 +205,27 @@ impl Validity {
         Ok(Some(v))
     }
 
+    /// [`Self::parse`] for a new memory (a write over the wire, #1598). The
+    /// write time is the default `valid_from`, so an end at or before `now`
+    /// without a start would be an empty interval: refused here, before
+    /// anything is stored.
+    pub fn parse_for_write(
+        from: Option<&str>,
+        until: Option<&str>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<Self>, crate::Error> {
+        let validity = Self::parse(from, until)?;
+        if let Some(v) = &validity
+            && v.from.is_none()
+            && v.until.is_some_and(|u| u <= now)
+        {
+            return Err(crate::Error::Validation(
+                "valid_until is not after the write time; give valid_from as well".to_string(),
+            ));
+        }
+        Ok(validity)
+    }
+
     /// Refuse an interval that does not start before it ends, after applying
     /// this change to the stored `valid_from`/`valid_until`.
     pub fn check_against(
@@ -534,6 +555,14 @@ pub struct ExportEntry {
     /// When the row was soft-deleted (#1633). Only read with `deprecated`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deprecated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the fact starts to hold (#1598). Absent on rows from older export
+    /// files: import falls back to `created_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the fact stops holding (#1598). Absent: no end. An end that is not
+    /// after the start is dropped on import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn default_metadata() -> serde_json::Value {

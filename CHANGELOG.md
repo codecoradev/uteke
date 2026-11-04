@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Validity in columns on HTTP and MCP (#1598)** - `POST /remember`, `PUT /memory`
+  and the MCP tools `uteke_remember` and `uteke_update` accept `valid_from` and
+  `valid_until` (RFC 3339) and store them in the columns that `at` reads, as
+  agreed in Amendment 3 of the core contract (uteke-cloud#458). A value that is not
+  RFC 3339, an interval that does not start before it ends, or (on `/remember`) an
+  end at or before the write time without a start is refused with 400 and nothing
+  is written. `POST /remember` keeps the metadata copy of both values for one
+  release. `uteke remember` with these flags now goes through a running server
+  instead of falling back to the local store. `uteke export` writes `valid_from`
+  and `valid_until` and `import` reads them (an old file starts at `created_at`; an
+  end that does not follow the start is dropped), so a round trip keeps the
+  interval. Rows that carry the values only in metadata are not migrated: the
+  metadata is free text. Docs: `docs/time-travel.md`.
+
 - **Session timeline in the viewer (#1470 c)** - the `uteke view` page gets a
   Sessions tab: the captured sessions, and for one session its turns in `seq` order
   and the memories whose source is `capture:<session>:<batch>` or

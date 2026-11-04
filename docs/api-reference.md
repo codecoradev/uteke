@@ -735,6 +735,8 @@ Request for memory feedback / trust scoring (#718).
 | `namespace` | any | No | Move the memory to this namespace (#1181). Plain column update — no re-embed. |
 | `pinned` | any | No | Set pinned state. |
 | `tags` | any | No | Replace tags entirely with this list. |
+| `valid_from` | any | No | When the fact starts to hold (RFC 3339, #1598). Stored in the `valid_from` column that `at` reads. Must be before `valid_until`. |
+| `valid_until` | any | No | When the fact stops holding (RFC 3339, #1598). Stored in the `valid_until` column. Refused on a deprecated memory. |
 
 
 ### `OrphansRequest`
