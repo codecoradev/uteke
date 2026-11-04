@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Capture extraction no longer holds the store lock across the LLM call (#1663)** -
+  `uteke-serve` claims a batch under the lock, releases it for the extractor request
+  (up to two minutes per chunk), and takes it again to store the facts and mark the
+  batch done, so recall and writes are not stalled by a slow or hung provider. The
+  lease and the `capture:<session>:<batch>` source work as before, so a crash between
+  the steps hands the batch back whole. Housekeeping (retention, lease reclaim) now
+  runs once per scheduled cycle, each session is tried once per cycle, and a shutdown
+  is seen between sessions. `uteke extract-queue run` goes through the same steps.
+
 - **A long capture session no longer starves the extraction queue (#1664)** - a
   session is extracted in chunks of at most `[capture] chunk_chars` (24000)
   characters instead of one request, and its facts are stored as one batch. A

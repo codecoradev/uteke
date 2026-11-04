@@ -241,8 +241,10 @@ chunk_chars = 24000      # most characters one extractor call receives (min 64)
 interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
 ```
 
-`uteke-serve` starts the schedule only when `enabled = true`. It takes the store lock
-once per session, not for the whole run. A run the extractor stopped (rate limit,
+`uteke-serve` starts the schedule only when `enabled = true`. It holds the store lock
+only to claim a session's batch and to store its facts, never while the extractor
+request runs, so a slow or hung provider does not hold recall and writes back. A batch
+that is claimed and then lost (a crash) is requeued when its lease expires. A run the extractor stopped (rate limit,
 provider down) doubles the wait before the next one, up to 16 intervals; a run that
 goes through resets it.
 
