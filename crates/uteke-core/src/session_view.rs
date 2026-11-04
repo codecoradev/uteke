@@ -50,6 +50,21 @@ pub fn session_of_source(source: &str) -> Option<&str> {
     Some(session).filter(|s| !s.is_empty())
 }
 
+/// `?1` = `observation:<session>`, `?2`/`?3` = the half-open range of sources that
+/// start with `capture:<session>:`. Equality and range predicates on `source` use
+/// `idx_memories_source` (v25), unlike a `substr` prefix test, and take the
+/// session id literally (no LIKE wildcards). `+deprecated` keeps the planner off
+/// the low-selectivity `deprecated` index (it picks it over `source` when the
+/// table has no statistics). The `instr` guard keeps a longer
+/// session id (`a:b`) out of the view of its prefix (`a`): after the prefix only
+/// the batch id (no ':') may follow.
+const SESSION_MEMORIES_SQL: &str = "SELECT id, content, namespace, created_at, source FROM memories
+     WHERE +deprecated = 0
+       AND (source = ?1
+            OR (source >= ?2 AND source < ?3
+                AND instr(substr(source, length(?2) + 1), ':') = 0))
+     ORDER BY created_at, id";
+
 impl crate::Uteke {
     /// Sessions in the capture queue, most recently active first.
     pub fn capture_sessions(&self, limit: usize) -> Result<Vec<SessionSummary>, Error> {
@@ -106,19 +121,19 @@ impl crate::Uteke {
     /// Live memories whose source is `observation:<session>` or
     /// `capture:<session>:<batch>`, oldest first.
     pub fn session_memories(&self, session_id: &str) -> Result<Vec<SessionMemory>, Error> {
-        let capture_prefix = format!("capture:{session_id}:");
         let mut stmt = self
             .graph_store()
-            .prepare(
-                "SELECT id, content, namespace, created_at, source FROM memories
-                 WHERE deprecated = 0
-                   AND (source = ?1 OR substr(source, 1, length(?2)) = ?2)
-                 ORDER BY created_at, id",
-            )
+            .prepare(SESSION_MEMORIES_SQL)
             .map_err(|e| Error::db("session memories", e))?;
         let rows = stmt
             .query_map(
-                params![format!("observation:{session_id}"), capture_prefix],
+                params![
+                    format!("observation:{session_id}"),
+                    format!("capture:{session_id}:"),
+                    // ';' is the character after ':', so the pair bounds every
+                    // source that starts with `capture:<session>:`.
+                    format!("capture:{session_id};"),
+                ],
                 |r| {
                     Ok(SessionMemory {
                         id: r.get(0)?,
@@ -238,5 +253,87 @@ mod tests {
             .collect();
         got.sort();
         assert_eq!(got, ["from capture", "from observation"]);
+    }
+
+    /// Stores `source` on a fresh memory and returns nothing; helper for the
+    /// session-match tests below.
+    fn with_sources(u: &Uteke, rows: &[(&str, &str)]) {
+        let conn = u.graph_store();
+        for (content, src) in rows {
+            let id = u.remember(content, &[], None, None).unwrap();
+            conn.execute(
+                "UPDATE memories SET source = ?1 WHERE id = ?2",
+                params![src, id],
+            )
+            .unwrap();
+        }
+    }
+
+    fn contents(u: &Uteke, session: &str) -> Vec<String> {
+        let mut got: Vec<String> = u
+            .session_memories(session)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.content)
+            .collect();
+        got.sort();
+        got
+    }
+
+    #[test]
+    fn a_session_id_with_a_colon_does_not_leak_into_its_prefix_session() {
+        let u = open();
+        with_sources(
+            &u,
+            &[
+                ("a one", "capture:a:batch0001"),
+                ("a obs", "observation:a"),
+                ("a:b one", "capture:a:b:batch0002"),
+                ("a:b obs", "observation:a:b"),
+                ("a:b:c one", "capture:a:b:c:batch0003"),
+            ],
+        );
+        assert_eq!(contents(&u, "a"), ["a obs", "a one"]);
+        assert_eq!(contents(&u, "a:b"), ["a:b obs", "a:b one"]);
+        assert_eq!(contents(&u, "a:b:c"), ["a:b:c one"]);
+    }
+
+    #[test]
+    fn wildcards_and_quotes_in_a_session_id_are_literal() {
+        let u = open();
+        with_sources(
+            &u,
+            &[
+                ("pct", "capture:100%:batch0001"),
+                ("any", "capture:100xyz:batch0002"),
+                ("under", "capture:s_1:batch0003"),
+                ("other under", "capture:sa1:batch0004"),
+                ("quote", "capture:it's:batch0005"),
+                ("semi", "capture:a;b:batch0006"),
+            ],
+        );
+        assert_eq!(contents(&u, "100%"), ["pct"]);
+        assert_eq!(contents(&u, "s_1"), ["under"]);
+        assert_eq!(contents(&u, "it's"), ["quote"]);
+        assert_eq!(contents(&u, "a;b"), ["semi"]);
+        assert!(contents(&u, "%").is_empty());
+    }
+
+    #[test]
+    fn the_session_lookup_is_served_by_a_source_index() {
+        let u = open();
+        let conn = u.graph_store();
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {SESSION_MEMORIES_SQL}"))
+            .unwrap()
+            .query_map(params!["observation:s", "capture:s:", "capture:s;"], |r| {
+                r.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let plan = plan.join(" | ");
+        assert!(plan.contains("idx_memories_source"), "plan: {plan}");
+        assert!(!plan.contains("SCAN memories"), "plan: {plan}");
     }
 }
