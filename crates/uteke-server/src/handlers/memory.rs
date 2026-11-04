@@ -499,6 +499,15 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     format!("Invalid UUID format: {}", req_data.id),
                 );
             }
+            // Caller validity (#1598): validated before anything is written,
+            // so a bad interval leaves every other field untouched.
+            let validity = match uteke_core::memory::types::Validity::parse(
+                req_data.valid_from.as_deref(),
+                req_data.valid_until.as_deref(),
+            ) {
+                Ok(v) => v,
+                Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
+            };
             // Check that at least one field is provided
             if req_data.content.is_none()
                 && req_data.tags.is_none()
@@ -507,11 +516,46 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 && req_data.pinned.is_none()
                 && req_data.memory_type.is_none()
                 && req_data.namespace.is_none()
+                && validity.is_none()
             {
                 return ctx.error_response_for(
                     req,
                     400,
-                    "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type, namespace",
+                    "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type, namespace, valid_from, valid_until",
+                );
+            }
+            if let Some(v) = &validity {
+                match uteke.set_validity(&req_data.id, v) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Memory not found: {}", req_data.id),
+                        );
+                    }
+                    Err(e) => return ctx.core_error(req, &e),
+                }
+            }
+            let only_validity = validity.is_some()
+                && req_data.content.is_none()
+                && req_data.tags.is_none()
+                && req_data.metadata.is_none()
+                && req_data.importance.is_none()
+                && req_data.pinned.is_none()
+                && req_data.memory_type.is_none();
+            if only_validity {
+                if let Some(ns) = req_data.namespace.as_deref() {
+                    if let Err(e) = uteke.move_memory(&req_data.id, ns) {
+                        return ctx.core_error(req, &e);
+                    }
+                }
+                return ctx.ok_response_for(
+                    req,
+                    &with_namespace_warning(
+                        serde_json::json!({"updated": req_data.id, "redacted": false}),
+                        req_data.namespace.as_deref(),
+                    ),
                 );
             }
             let tag_refs: Option<Vec<String>> = req_data.tags;

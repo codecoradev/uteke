@@ -692,6 +692,14 @@ pub struct MemoryUpdateRequest {
     /// Move the memory to this namespace (#1181). Plain column update — no re-embed.
     #[serde(default)]
     pub namespace: Option<String>,
+    /// When the fact starts to hold (RFC 3339, #1598). Stored in the
+    /// `valid_from` column that `at` reads. Must be before `valid_until`.
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    /// When the fact stops holding (RFC 3339, #1598). Stored in the
+    /// `valid_until` column. Refused on a deprecated memory.
+    #[serde(default)]
+    pub valid_until: Option<String>,
 }
 
 // ── Namespace Management Types (#1181) ─────────────────────────────────────

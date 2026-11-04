@@ -206,6 +206,10 @@ impl crate::Uteke {
                 slug: m.slug,
                 deprecated: false,
                 deprecated_at: None,
+                // Valid time round-trips (#1598); only live rows are exported,
+                // so an end here is the caller's, not deprecation bookkeeping.
+                valid_from: m.valid_from,
+                valid_until: m.valid_until,
             })
             .collect();
 
@@ -431,6 +435,11 @@ impl crate::Uteke {
             let id = row_id.unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
             let now = chrono::Utc::now();
 
+            // Valid time (#1598): the start defaults to the creation time, an
+            // end that does not follow the start is dropped, not the row.
+            let valid_from = entry.valid_from.unwrap_or(entry.created_at);
+            let valid_until = entry.valid_until.filter(|u| *u > valid_from);
+
             let memory = Memory {
                 id: id.clone(),
                 content: entry.content,
@@ -445,8 +454,8 @@ impl crate::Uteke {
                 last_accessed: None,
                 deprecated: row_deprecated,
                 deprecated_at: row_deprecated.then(|| entry.deprecated_at.unwrap_or(now)),
-                valid_from: Some(entry.created_at),
-                valid_until: None,
+                valid_from: Some(valid_from),
+                valid_until,
                 // A missing or bad value falls back to the default (#1633).
                 memory_type: entry
                     .memory_type
@@ -827,6 +836,8 @@ mod tests {
             slug: None,
             deprecated: false,
             deprecated_at: None,
+            valid_from: None,
+            valid_until: None,
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(
@@ -836,6 +847,55 @@ mod tests {
         let restored: ExportEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.content, "hello world");
         assert_eq!(restored.tags.len(), 1);
+    }
+
+    /// #1598: the caller's validity interval survives export and import; an
+    /// old file without it falls back to the creation time, and an end that
+    /// does not follow the start is dropped without failing the row.
+    #[test]
+    fn test_validity_survives_export_import() {
+        let src = crate::test_support::open_keyword();
+        let a = src
+            .remember("a fact with an interval", &[], None, None)
+            .unwrap();
+        src.remember("a plain fact", &[], None, None).unwrap();
+        let v = crate::memory::types::Validity::parse(
+            Some("2025-01-01T00:00:00Z"),
+            Some("2026-01-01T00:00:00Z"),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(src.set_validity(&a, &v).unwrap());
+        let exported = src.export(None).unwrap();
+
+        let dst = crate::test_support::open_keyword();
+        dst.import(&exported, None).unwrap();
+        let got = dst.get_by_id(&a).unwrap().unwrap();
+        assert_eq!(got.valid_from, Some(v.from.unwrap()));
+        assert_eq!(got.valid_until, Some(v.until.unwrap()));
+        let plain = src.export(None).unwrap();
+        let line = plain.lines().find(|l| l.contains("a plain fact")).unwrap();
+        let row: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert!(row.get("valid_until").is_none(), "{row}");
+
+        // Old file: no validity keys, the start is the creation time.
+        let old = dst_old_file();
+        let u = crate::test_support::open_keyword();
+        u.import(&old, None).unwrap();
+        let m = u.list(None, 10, 0, None).unwrap().remove(0);
+        assert_eq!(m.valid_from, Some(m.created_at));
+        assert_eq!(m.valid_until, None);
+
+        // An end that is not after the start is dropped, the row stays.
+        let bad = r#"{"content":"inverted","created_at":"2025-01-01T00:00:00Z","valid_from":"2025-06-01T00:00:00Z","valid_until":"2025-02-01T00:00:00Z"}"#;
+        let u = crate::test_support::open_keyword();
+        assert_eq!(u.import(bad, None).unwrap().imported, 1);
+        let m = u.list(None, 10, 0, None).unwrap().remove(0);
+        assert_eq!(m.valid_until, None);
+    }
+
+    fn dst_old_file() -> String {
+        r#"{"content":"from an old export","created_at":"2024-03-01T00:00:00Z"}"#.to_string()
     }
 
     /// #1427 phase 2: the author survives export and import; an invalid author

@@ -3095,6 +3095,68 @@ mod rejected_value_tests {
         );
     }
 
+    /// #1598 (Amendment 3): caller validity goes into the columns on
+    /// `/remember` and `PUT /memory`, validated, 400 otherwise.
+    #[test]
+    fn remember_and_update_store_validity_in_the_columns() {
+        let u = app();
+        let post = |body: serde_json::Value| call(&u, Method::Post, "/remember", &body.to_string());
+        let (s, body) = post(serde_json::json!({
+            "content": "the office is in Bandung",
+            "valid_from": "2025-01-01T00:00:00Z",
+            "valid_until": "2026-01-01T00:00:00Z",
+        }));
+        assert_eq!(s, 200, "{body}");
+        let id = body["id"].as_str().unwrap().to_string();
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_from.unwrap().to_rfc3339(),
+            "2025-01-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2026-01-01T00:00:00+00:00"
+        );
+        // The metadata copy stays for one release.
+        assert_eq!(m.metadata["valid_from"], "2025-01-01T00:00:00Z");
+
+        for bad in [
+            serde_json::json!({"content": "a", "valid_from": "yesterday"}),
+            serde_json::json!({"content": "b", "valid_until": "2030"}),
+            serde_json::json!({"content": "c", "valid_from": "2027-01-01T00:00:00Z", "valid_until": "2026-01-01T00:00:00Z"}),
+        ] {
+            let (s, body) = post(bad.clone());
+            assert_eq!(s, 400, "{bad}: {body}");
+        }
+        assert_eq!(
+            u.lock().unwrap().count_active(None).unwrap(),
+            1,
+            "a refused write stores nothing"
+        );
+
+        let put = |b: serde_json::Value| call(&u, Method::Put, "/memory", &b.to_string());
+        let (s, body) = put(serde_json::json!({"id": id, "valid_until": "2027-06-01T00:00:00Z"}));
+        assert_eq!(s, 200, "{body}");
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2027-06-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            m.valid_from.unwrap().to_rfc3339(),
+            "2025-01-01T00:00:00+00:00"
+        );
+
+        let (s, _) = put(serde_json::json!({"id": id, "valid_until": "2024-01-01T00:00:00Z"}));
+        assert_eq!(s, 400, "an end before the stored start");
+        let (s, _) = put(serde_json::json!({"id": id, "valid_from": "nope"}));
+        assert_eq!(s, 400);
+        let (s, _) = put(
+            serde_json::json!({"id": uuid::Uuid::new_v4().to_string(), "valid_from": "2025-01-01T00:00:00Z"}),
+        );
+        assert_eq!(s, 404);
+    }
+
     #[test]
     fn update_and_room_remember_answer_409_too() {
         let u = app();

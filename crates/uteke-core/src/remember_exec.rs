@@ -227,18 +227,19 @@ mod tests {
     }
 
     #[test]
-    fn decode_keeps_wire_validity_as_metadata_only() {
-        // The wire fields stay metadata until uteke-cloud#458 decides.
+    fn wire_validity_lands_in_the_columns_and_keeps_the_metadata_copy() {
+        // #1598, Amendment 3 of the core contract: columns, plus the metadata
+        // copy for one release.
         let r = req(|i| {
             i.valid_from = Some("2026-01-01T00:00:00Z".into());
             i.valid_until = Some("2027-01-01T00:00:00Z".into());
         });
-        assert_eq!(r.validity, None);
         let u = open_keyword();
         let m = stored(&u, &u.run_remember(&r).unwrap());
+        assert_eq!(m.valid_from, Some(t("2026-01-01T00:00:00Z")));
+        assert_eq!(m.valid_until, Some(t("2027-01-01T00:00:00Z")));
         assert_eq!(m.metadata["valid_from"], "2026-01-01T00:00:00Z");
-        assert_eq!(m.valid_until, None);
-        assert_ne!(m.valid_from, Some(t("2026-01-01T00:00:00Z")));
+        assert_eq!(m.metadata["valid_until"], "2027-01-01T00:00:00Z");
     }
 
     #[test]

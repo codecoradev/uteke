@@ -13,7 +13,7 @@
 //! | `type` in metadata        | copied as `"type"`          | copied as `"type"` (#1439)  | copied (server decodes)   |
 //! | metadata object           | merged, plus entity/etc.    | not accepted (always none)  | built from flags, sent    |
 //! | entity/category fields    | honoured (into metadata)    | not accepted                | folded into `metadata`    |
-//! | valid_from/valid_until    | honoured (into metadata)    | not accepted                | not sent                  |
+//! | valid_from/valid_until    | columns + metadata copy (#1598) | columns (#1598)         | forwarded when set        |
 //! | detect_contradiction      | honoured                    | not accepted                | forwarded when set        |
 //! | source/source_type/author_type | honoured               | not accepted                | forwarded                 |
 //! | author                    | honoured, validated (1-128) | honoured, also room author  | forwarded                 |
@@ -58,9 +58,9 @@ impl RememberInput {
     /// server). Nothing is validated or rewritten here: the server owns that.
     /// `content`, `tags` and `namespace` are always present; the others only
     /// when set (`type` only when non-empty, `detect_contradiction` only when
-    /// true, `metadata` only when a non-empty object). `entity`, `category`,
-    /// `valid_from` and `valid_until` are not part of this encoding: the CLI
-    /// folds entity/category into `metadata`. `room` is never sent: the server
+    /// true, `metadata` only when a non-empty object). `valid_from` and
+    /// `valid_until` are sent when set (#1598). `entity` and `category` are not
+    /// part of this encoding: the CLI folds them into `metadata`. `room` is never sent: the server
     /// has no such key (#1439). `author` is accepted since #1427 phase 2.
     pub fn to_http_body(&self) -> Value {
         let mut body = serde_json::json!({
@@ -84,6 +84,12 @@ impl RememberInput {
         }
         if let Some(author) = &self.author {
             body["author"] = serde_json::json!(author);
+        }
+        if let Some(v) = &self.valid_from {
+            body["valid_from"] = serde_json::json!(v);
+        }
+        if let Some(v) = &self.valid_until {
+            body["valid_until"] = serde_json::json!(v);
         }
         if let Some(src) = &self.source {
             body["source"] = serde_json::json!(src);
@@ -177,10 +183,11 @@ pub struct RememberRequest {
     pub author_type: Option<String>,
     pub room: Option<String>,
     pub author: Option<String>,
-    /// The caller's validity interval as columns (#1598). Never filled by
-    /// [`Self::decode`]: the `valid_from`/`valid_until` wire fields stay
-    /// metadata keys until the contract changes (uteke-cloud#458). Surfaces
-    /// that own the flag (the CLI on a local store) set it after decoding.
+    /// The caller's validity interval as columns (#1598). Filled by
+    /// [`Self::decode`] from the `valid_from`/`valid_until` wire fields
+    /// (uteke-cloud#458, Amendment 3); the metadata copy of the same fields
+    /// stays for one release. The CLI on a local store overwrites it from its
+    /// flags after decoding.
     pub validity: Option<crate::memory::types::Validity>,
 }
 
@@ -218,6 +225,15 @@ impl RememberRequest {
             Some(Value::Object(meta))
         };
 
+        // Caller validity (#1598): RFC3339, from < until, otherwise the whole
+        // request is refused (400 over HTTP) before anything is stored.
+        let validity = crate::memory::types::Validity::parse_for_write(
+            input.valid_from.as_deref(),
+            input.valid_until.as_deref(),
+            chrono::Utc::now(),
+        )
+        .map_err(|e| RememberRequestError(e.to_string()))?;
+
         // Validate before any write (#1083): an invalid value must reject the
         // whole request, not leave a stored memory behind.
         if let Some(at) = input.author_type.as_deref() {
@@ -251,7 +267,7 @@ impl RememberRequest {
             author_type: input.author_type,
             room: input.room,
             author,
-            validity: None,
+            validity,
         })
     }
 
@@ -344,17 +360,79 @@ mod tests {
         let mut i = input("x");
         i.entity = Some("e".into());
         i.category = Some("c".into());
-        i.valid_from = Some("2026-01-01".into());
-        i.valid_until = Some("2027-01-01".into());
+        i.valid_from = Some("2026-01-01T00:00:00Z".into());
+        i.valid_until = Some("2027-01-01T00:00:00Z".into());
         i.metadata = Some(json!({"project": "uteke", "entity": "override"}));
         let r = RememberRequest::decode(i).unwrap();
         assert_eq!(
             r.metadata,
             Some(json!({
-                "valid_from": "2026-01-01", "valid_until": "2027-01-01",
+                "valid_from": "2026-01-01T00:00:00Z", "valid_until": "2027-01-01T00:00:00Z",
                 "entity": "override", "category": "c", "project": "uteke"
             }))
         );
+    }
+
+    /// #1598: the wire fields land in the typed validity (columns) and the
+    /// metadata copy stays for one release.
+    #[test]
+    fn wire_validity_is_typed_and_copied_to_metadata() {
+        let mut i = input("x");
+        i.valid_from = Some("2026-01-01T00:00:00+02:00".into());
+        i.valid_until = Some("2027-01-01T00:00:00Z".into());
+        let r = RememberRequest::decode(i).unwrap();
+        let v = r.validity.expect("validity");
+        assert_eq!(v.from.unwrap().to_rfc3339(), "2025-12-31T22:00:00+00:00");
+        assert_eq!(v.until.unwrap().to_rfc3339(), "2027-01-01T00:00:00+00:00");
+        assert_eq!(
+            r.metadata.unwrap()["valid_from"],
+            "2026-01-01T00:00:00+02:00"
+        );
+        assert_eq!(RememberRequest::decode(input("y")).unwrap().validity, None);
+    }
+
+    #[test]
+    fn bad_wire_validity_is_refused_at_decode() {
+        for (from, until, needle) in [
+            (Some("2026-01-01"), None, "Invalid valid_from"),
+            (None, Some("soon"), "Invalid valid_until"),
+            (
+                Some("2027-01-01T00:00:00Z"),
+                Some("2026-01-01T00:00:00Z"),
+                "must be before",
+            ),
+            (
+                Some("2026-01-01T00:00:00Z"),
+                Some("2026-01-01T00:00:00Z"),
+                "must be before",
+            ),
+            (
+                None,
+                Some("2001-01-01T00:00:00Z"),
+                "not after the write time",
+            ),
+        ] {
+            let mut i = input("x");
+            i.valid_from = from.map(Into::into);
+            i.valid_until = until.map(Into::into);
+            let e = RememberRequest::decode(i).unwrap_err();
+            assert!(
+                e.message().contains(needle),
+                "{from:?} {until:?}: {}",
+                e.message()
+            );
+        }
+    }
+
+    #[test]
+    fn http_body_carries_validity_when_set() {
+        let mut i = input("x");
+        assert!(i.to_http_body().get("valid_from").is_none());
+        i.valid_from = Some("2026-01-01T00:00:00Z".into());
+        i.valid_until = Some("2027-01-01T00:00:00Z".into());
+        let b = i.to_http_body();
+        assert_eq!(b["valid_from"], "2026-01-01T00:00:00Z");
+        assert_eq!(b["valid_until"], "2027-01-01T00:00:00Z");
     }
 
     #[test]

@@ -436,7 +436,9 @@ fn tool_remember() -> Value {
                 "source": { "type": "string", "description": "Where the memory comes from: URL, file path or identifier (optional)" },
                 "source_type": { "type": "string", "description": "Source type: user, url, file, import, derived, system, unknown (default: user when a source is given)" },
                 "author_type": { "type": "string", "enum": ["human", "agent"], "description": "Who wrote it: human or agent (default: agent)" },
-                "author": { "type": "string", "description": "Who wrote this memory: the agent, user or tool name (1 to 128 characters). Recorded on the memory with or without a room; in a room it is also the room author (default there: anonymous)." }
+                "author": { "type": "string", "description": "Who wrote this memory: the agent, user or tool name (1 to 128 characters). Recorded on the memory with or without a room; in a room it is also the room author (default there: anonymous)." },
+                "valid_from": { "type": "string", "description": "When the fact starts to hold (RFC3339, default: now). Read by `at` in recall and list. Must be before valid_until." },
+                "valid_until": { "type": "string", "description": "When the fact stops holding (RFC3339, default: no end). Needs valid_from when it is not after the write time." }
             },
             "required": ["content"]
         }
@@ -682,7 +684,9 @@ fn tool_update() -> Value {
                 "importance": { "type": "number", "description": "0.0–1.0" },
                 "pinned": { "type": "boolean", "description": "Pin (never decays) or unpin" },
                 "memory_type": { "type": "string", "description": "fact | procedure | preference | decision | context | note | insight | reference | event" },
-                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Move the memory to this namespace (#1181 — plain move, no re-embed); the result carries a deprecation warning." }
+                "namespace": { "type": "string", "description": "DEPRECATED: namespaces will be removed in a future 0.x release; prefer rooms, tags and author. Move the memory to this namespace (#1181 — plain move, no re-embed); the result carries a deprecation warning." },
+                "valid_from": { "type": "string", "description": "When the fact starts to hold (RFC3339). Read by `at` in recall and list." },
+                "valid_until": { "type": "string", "description": "When the fact stops holding (RFC3339). Refused on a deprecated memory." }
             },
             "required": ["id"]
         }
@@ -1347,9 +1351,21 @@ pub fn decode_remember_args(args: &Value) -> Result<uteke_core::RememberRequest,
         source: args["source"].as_str().map(str::to_string),
         source_type: args["source_type"].as_str().map(str::to_string),
         author_type: args["author_type"].as_str().map(str::to_string),
+        valid_from: str_arg(args, "valid_from")?,
+        valid_until: str_arg(args, "valid_until")?,
         ..uteke_core::RememberInput::default()
     };
     uteke_core::RememberRequest::decode(input).map_err(|e| e.to_string())
+}
+
+/// An optional string argument: absent or null is `None`, any other type is an
+/// error (a number must not be read as "not given").
+fn str_arg(args: &Value, key: &str) -> Result<Option<String>, String> {
+    match &args[key] {
+        Value::Null => Ok(None),
+        Value::String(s) => Ok(Some(s.clone())),
+        _ => Err(format!("Invalid '{key}': expected a string")),
+    }
 }
 
 /// Deprecation signal for a namespaced write (#1427, phase 1): a trailing
@@ -1799,17 +1815,50 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tags_ref = tags.as_deref();
     let metadata = args.get("metadata").filter(|m| !m.is_null());
 
-    let outcome = uteke
-        .update_memory_detailed(
-            &id,
-            content,
-            tags_ref,
-            metadata,
-            importance,
-            pinned,
-            memory_type,
-        )
-        .map_err(write_error)?;
+    // Caller validity (#1598): checked and written first, so a refused
+    // interval (or a deprecated memory) leaves every other field untouched.
+    let valid_from = str_arg(args, "valid_from")?;
+    let valid_until = str_arg(args, "valid_until")?;
+    let validity =
+        uteke_core::memory::types::Validity::parse(valid_from.as_deref(), valid_until.as_deref())
+            .map_err(|e| e.to_string())?;
+    let only_validity = validity.is_some()
+        && content.is_none()
+        && tags.is_none()
+        && metadata.is_none()
+        && importance.is_none()
+        && pinned.is_none()
+        && memory_type.is_none();
+    if let Some(v) = &validity
+        && !uteke.set_validity(&id, v).map_err(write_error)?
+    {
+        return Ok(ToolResult {
+            content: vec![McpContent::Text {
+                r#type: "text".to_string(),
+                text: format!("Memory not found: {id}"),
+            }],
+            is_error: true,
+        });
+    }
+
+    let outcome = if only_validity {
+        uteke_core::UpdateOutcome {
+            updated: true,
+            redactions: Vec::new(),
+        }
+    } else {
+        uteke
+            .update_memory_detailed(
+                &id,
+                content,
+                tags_ref,
+                metadata,
+                importance,
+                pinned,
+                memory_type,
+            )
+            .map_err(write_error)?
+    };
 
     if !outcome.updated {
         return Ok(ToolResult {
@@ -3571,6 +3620,58 @@ mod id_resolution_tests {
         assert_eq!(
             m.content, "id resolution probe content",
             "content untouched"
+        );
+        drop(uteke);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// #1598: validity on `uteke_remember` and `uteke_update` lands in the
+    /// columns; a bad interval is an error and writes nothing.
+    #[test]
+    fn remember_and_update_take_validity() {
+        let (uteke, dir) = scratch();
+        let req = decode_remember_args(&serde_json::json!({
+            "content": "validity probe",
+            "valid_from": "2025-01-01T00:00:00Z",
+            "valid_until": "2026-01-01T00:00:00Z",
+        }))
+        .unwrap();
+        let id = uteke.run_remember(&req).unwrap().outcome.id;
+        let m = uteke.get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_from.unwrap().to_rfc3339(),
+            "2025-01-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2026-01-01T00:00:00+00:00"
+        );
+
+        for bad in [
+            serde_json::json!({"content": "x", "valid_from": "soon"}),
+            serde_json::json!({"content": "x", "valid_from": 5}),
+            serde_json::json!({"content": "x", "valid_from": "2027-01-01T00:00:00Z", "valid_until": "2026-01-01T00:00:00Z"}),
+        ] {
+            assert!(decode_remember_args(&bad).is_err(), "{bad}");
+        }
+
+        let r = exec_update(
+            &uteke,
+            &serde_json::json!({"id": id, "valid_until": "2027-01-01T00:00:00Z"}),
+        )
+        .unwrap();
+        assert!(!r.is_error);
+        let m = uteke.get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2027-01-01T00:00:00+00:00"
+        );
+        assert!(
+            exec_update(
+                &uteke,
+                &serde_json::json!({"id": id, "valid_until": "2020-01-01T00:00:00Z"})
+            )
+            .is_err()
         );
         drop(uteke);
         std::fs::remove_dir_all(&dir).ok();
