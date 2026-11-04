@@ -446,3 +446,66 @@ fn codex_home_moves_the_codex_config() {
         h.path().join(".codex/hooks.json")
     );
 }
+
+// --- #1668: temp file mode and concurrent writers ---
+
+#[cfg(unix)]
+#[test]
+fn the_temp_file_is_created_with_the_original_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = home();
+    let tmp = dir.path().join(".settings.json.uteke-tmp");
+    // Checked while the handle is open, i.e. at creation, before any chmod.
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    let f = create_temp(&tmp, Some(0o600)).unwrap();
+    assert_eq!(mode(&tmp), 0o600);
+    drop(f);
+    // No original file: owner-only, never the umask default.
+    let f = create_temp(&tmp, None).unwrap();
+    assert_eq!(mode(&tmp), 0o600);
+    drop(f);
+    // A leftover from a crashed run is replaced, not followed.
+    let target = dir.path().join("victim");
+    std::fs::remove_file(&tmp).unwrap();
+    std::os::unix::fs::symlink(&target, &tmp).unwrap();
+    drop(create_temp(&tmp, None).unwrap());
+    assert!(!target.exists(), "the leftover link was followed");
+}
+
+#[test]
+fn a_config_changed_since_it_was_read_is_not_overwritten() {
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    write(&path, CLAUDE_FIXTURE);
+    // What uteke read, then another program writes before uteke does.
+    let read_as = read(&path);
+    write(&path, "{\"theirs\": true}\n");
+
+    let err = write_atomic(&path, "{\"ours\": true}\n", Some(&read_as)).unwrap_err();
+
+    assert!(err.contains("changed while uteke was updating it"), "{err}");
+    assert_eq!(read(&path), "{\"theirs\": true}\n");
+    assert!(
+        !path.with_file_name(".settings.json.uteke-tmp").exists(),
+        "temp file left behind"
+    );
+}
+
+#[test]
+fn a_file_created_since_it_was_read_is_not_overwritten() {
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    write(&path, "{\"theirs\": true}\n");
+    let err = write_atomic(&path, "{}\n", None).unwrap_err();
+    assert!(err.contains("changed while uteke was updating it"), "{err}");
+    assert_eq!(read(&path), "{\"theirs\": true}\n");
+}
+
+#[test]
+fn an_unchanged_config_is_replaced() {
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    write(&path, "{\"a\": 1}\n");
+    write_atomic(&path, "{\"a\": 2}\n", Some("{\"a\": 1}\n")).unwrap();
+    assert_eq!(read(&path), "{\"a\": 2}\n");
+}

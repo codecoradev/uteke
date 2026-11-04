@@ -218,6 +218,15 @@ pub(crate) fn run_consolidate(
     Ok(())
 }
 
+/// Write an export owner-only (0600 on Unix, tightened before any old content is
+/// replaced): it holds the memories of the store (#1668).
+fn write_export_file(output: &str, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    uteke_core::private_file::create_private(std::path::Path::new(output), true)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .map_err(|e| format!("Failed to write export file: {e}"))
+}
+
 pub(crate) fn run_export(
     cli: &Cli,
     uteke: &Uteke,
@@ -233,8 +242,7 @@ pub(crate) fn run_export(
         if output == "-" {
             println!("{ndjson}");
         } else {
-            std::fs::write(output, &ndjson)
-                .map_err(|e| format!("Failed to write export file: {e}"))?;
+            write_export_file(output, &ndjson)?;
             let count = ndjson.lines().filter(|l| !l.trim().is_empty()).count() - 1; // minus manifest
             if cli.json {
                 output::print_json(
@@ -255,7 +263,7 @@ pub(crate) fn run_export(
     if output == "-" {
         println!("{jsonl}");
     } else {
-        std::fs::write(output, &jsonl).map_err(|e| format!("Failed to write export file: {e}"))?;
+        write_export_file(output, &jsonl)?;
         let count = jsonl.lines().filter(|l| !l.trim().is_empty()).count();
         if cli.json {
             output::print_json(&serde_json::json!({"exported": count}));
@@ -1453,5 +1461,28 @@ mod extraction_bail_tests {
             b.record(false);
         }
         assert!(!b.should_stop(), "the run is partly working: keep going");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod export_file_tests {
+    use super::write_export_file;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// #1668: `uteke export --output` writes the memories owner-only, also
+    /// over an existing world-readable file.
+    #[test]
+    fn export_output_is_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.jsonl");
+        let out = path.to_str().unwrap();
+        write_export_file(out, "{\"a\":1}\n").unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_export_file(out, "new\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
     }
 }
