@@ -322,6 +322,7 @@ mod tests {
                 author: None,
             },
             score,
+            similarity: None,
         }
     }
 

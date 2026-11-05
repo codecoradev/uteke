@@ -43,6 +43,7 @@ pub(crate) fn run_recall(
     category: Option<&str>,
     min: Option<f32>,
     strict: bool,
+    min_trust: Option<&str>,
     strategy: Option<&str>,
     config: &Config,
     related: bool,
@@ -87,7 +88,7 @@ pub(crate) fn run_recall(
     // When unified (default), use existing recall path for backward compat with
     // --strategy, --at, --related, --entity, --category, --where flags
     // which only apply to memory recall.
-    // --salience/--recency/--no-salience/--no-recency work on both paths (#721).
+    // --salience/--recency <true|false> work on both paths (#721).
     let use_unified = match resolved_search_type {
         SearchType::All => {
             // Use unified only when no memory-only flags are active.
@@ -101,12 +102,18 @@ pub(crate) fn run_recall(
         SearchType::Memory | SearchType::Document => true,
     };
 
-    // Resolve threshold: --min > --strict (→ config min_score_strict) > config min_score > 0.0
-    let min_score = match min {
-        Some(m) => m,
-        None if strict => config.engine.recall.min_score_strict as f32,
-        None => config.engine.recall.min_score as f32,
-    };
+    // Score floor: --min > config min_score > 0.0. `--strict` does not touch
+    // it: it filters on similarity instead (#1650), with `--min-trust` (#1651),
+    // both before the result is cut to --limit.
+    let min_score = min.unwrap_or(config.engine.recall.min_score as f32);
+    let filter = uteke_core::RecallRequest::decode(uteke_core::RecallInput {
+        query: query.to_string(),
+        strict,
+        min_trust: min_trust.map(str::to_string),
+        ..Default::default()
+    })
+    .map_err(|e| e.to_string())?
+    .result_filter(Some(config.engine.recall.min_score_strict));
 
     tracing::info!(
         "Recalling: {query} (limit: {limit}, min_score: {min_score}, type: {:?})",
@@ -134,16 +141,16 @@ pub(crate) fn run_recall(
 
     // #352/#721: dual-axis salience/recency boost.
     // Tri-state via Option<bool>: None (absent) = use default (0.1),
-    // Some(true) = use config weight (0.15), Some(false) / --no-* = 0.0.
+    // Some(true) = use config weight (0.15), Some(false) = 0.0.
     uteke.set_salience_recency_config(uteke_core::SalienceRecencyConfig {
         salience_weight: match salience {
             Some(true) => config.engine.recall.salience_weight, // explicit --salience
-            Some(false) => 0.0,                                 // explicit --no-salience
+            Some(false) => 0.0,                                 // explicit --salience false
             None => uteke_core::SalienceRecencyConfig::default().salience_weight, // default 0.1
         },
         recency_weight: match recency {
             Some(true) => config.engine.recall.recency_weight, // explicit --recency
-            Some(false) => 0.0,                                // explicit --no-recency
+            Some(false) => 0.0,                                // explicit --recency false
             None => uteke_core::SalienceRecencyConfig::default().recency_weight, // default 0.1
         },
     });
@@ -182,8 +189,14 @@ pub(crate) fn run_recall(
         if enrich {
             return Err("--explain and --enrich cannot be used together".to_string());
         }
-        let explained = uteke
-            .recall_explained(query, limit, tags_filter, ns, resolved_strategy, min_score)
+        let explained = filter
+            .fetch(
+                uteke,
+                limit,
+                |n| uteke.recall_explained(query, n, tags_filter, ns, resolved_strategy, min_score),
+                |f, e| f.keep_memory(&e.result),
+                |e| Some(e.result.memory.id.as_str()),
+            )
             .map_err(|e| format!("Failed to recall: {e}"))?;
         uteke.reset_salience_recency_config();
 
@@ -252,22 +265,35 @@ pub(crate) fn run_recall(
                 "--pack does not support --at/--related/--where; rerun without them".to_string(),
             );
         }
-        let pack_result = uteke
-            .recall_unified_packed(
-                query,
+        let packed = filter
+            .fetch(
+                uteke,
                 limit,
-                tags_filter,
-                ns,
-                min_score,
-                resolved_search_type,
-                entity,
-                category,
-                enrich,
-                resolved_strategy,
-                budget,
-                exclude_ids,
+                |n| {
+                    uteke.recall_unified(
+                        query,
+                        n,
+                        tags_filter,
+                        ns,
+                        min_score,
+                        resolved_search_type,
+                        entity,
+                        category,
+                        enrich,
+                        resolved_strategy,
+                    )
+                },
+                |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )
-            .map_err(|e| format!("Failed to recall: {e}"))?;
+            .map_err(|e| format!("Failed to recall: {e}"));
+        let pack_result = match packed {
+            Ok(results) => uteke_core::pack_mode::pack_context(results, budget, exclude_ids),
+            Err(e) => {
+                uteke.reset_salience_recency_config();
+                return Err(e);
+            }
+        };
 
         uteke.reset_salience_recency_config();
 
@@ -281,18 +307,26 @@ pub(crate) fn run_recall(
 
     if use_unified {
         // Unified search path (#531)
-        let unified_results = uteke
-            .recall_unified(
-                query,
+        let unified_results = filter
+            .fetch(
+                uteke,
                 limit,
-                tags_filter,
-                ns,
-                min_score,
-                resolved_search_type,
-                None,
-                None,
-                enrich,
-                resolved_strategy,
+                |n| {
+                    uteke.recall_unified(
+                        query,
+                        n,
+                        tags_filter,
+                        ns,
+                        min_score,
+                        resolved_search_type,
+                        None,
+                        None,
+                        enrich,
+                        resolved_strategy,
+                    )
+                },
+                |f, r| f.keep_unified(r),
+                |r| r.memory_id.as_deref(),
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
@@ -304,13 +338,29 @@ pub(crate) fn run_recall(
             } else if min_score > 0.0 {
                 println!("No matching results found.");
                 println!("(min_score threshold: {:.2})", min_score);
+            } else if context {
+                println!("{}", format_context(query, &[]));
             } else {
                 println!("No matching results found.");
             }
             return Ok(());
         }
 
-        if cli.json {
+        if context {
+            // The same layout as the memory-only path below (#1642).
+            let rows: Vec<ContextRow<'_>> = unified_results
+                .iter()
+                .map(|r| ContextRow {
+                    score: r.score,
+                    content: &r.content,
+                    tags: &r.tags,
+                    pinned: r.pinned == Some(true),
+                    importance: r.importance.unwrap_or(0.0),
+                    doc_title: r.doc_title.as_deref(),
+                })
+                .collect();
+            println!("{}", format_context(query, &rows));
+        } else if cli.json {
             output::print_json(&unified_results);
         } else {
             output::print_unified_human(&unified_results);
@@ -334,25 +384,47 @@ pub(crate) fn run_recall(
             if related {
                 return Err("--at and --related cannot be used together".into());
             }
-            uteke
-                .recall_at_time(
-                    query,
+            filter
+                .fetch(
+                    uteke,
                     limit,
-                    tags_filter,
-                    ns,
-                    point_in_time,
-                    min_score,
-                    None,
-                    None,
+                    |n| {
+                        uteke.recall_at_time(
+                            query,
+                            n,
+                            tags_filter,
+                            ns,
+                            point_in_time,
+                            min_score,
+                            None,
+                            None,
+                        )
+                    },
+                    |f, r| f.keep_memory(r),
+                    |r| Some(r.memory.id.as_str()),
                 )
                 .map_err(|e| format!("Failed to recall at time: {e}"))?
         } else if related {
-            uteke
-                .recall_related(query, limit, tags_filter, ns, min_score, depth)
+            filter
+                .fetch(
+                    uteke,
+                    limit,
+                    |n| uteke.recall_related(query, n, tags_filter, ns, min_score, depth),
+                    |f, r| f.keep_memory(r),
+                    |r| Some(r.memory.id.as_str()),
+                )
                 .map_err(|e| format!("Failed to recall: {e}"))?
         } else {
-            uteke
-                .recall_hybrid(query, limit, tags_filter, ns, resolved_strategy, min_score)
+            filter
+                .fetch(
+                    uteke,
+                    limit,
+                    |n| {
+                        uteke.recall_hybrid(query, n, tags_filter, ns, resolved_strategy, min_score)
+                    },
+                    |f, r| f.keep_memory(r),
+                    |r| Some(r.memory.id.as_str()),
+                )
                 .map_err(|e| format!("Failed to recall: {e}"))?
         };
         Ok(results)
@@ -436,7 +508,7 @@ pub(crate) fn run_recall(
             println!("No matching memories found.");
             println!("(min_score threshold: {:.2})", min_score);
         } else if context {
-            println!("[No relevant memories found for: {query}]");
+            println!("{}", format_context(query, &[]));
         } else {
             println!("No matching memories found.");
         }
@@ -445,34 +517,18 @@ pub(crate) fn run_recall(
 
     if context {
         // Context mode: formatted for AI prompt injection
-        let avg_score: f32 = filtered.iter().map(|r| r.score).sum::<f32>() / filtered.len() as f32;
-        println!(
-            "[Relevant Memories ({} results, {:.2} avg score)]",
-            filtered.len(),
-            avg_score
-        );
-        for (i, sr) in filtered.iter().enumerate() {
-            let tags = if sr.memory.tags.is_empty() {
-                String::new()
-            } else {
-                format!(" [{}]", sr.memory.tags.join(", "))
-            };
-            let importance = if sr.memory.pinned {
-                " \u{2605}".to_string() // ★
-            } else if sr.memory.importance > 0.7 {
-                " \u{2191}".to_string() // ↑
-            } else {
-                String::new()
-            };
-            println!(
-                "{}. [{:.2}] {}{}{}",
-                i + 1,
-                sr.score,
-                sr.memory.content,
-                tags,
-                importance
-            );
-        }
+        let rows: Vec<ContextRow<'_>> = filtered
+            .iter()
+            .map(|sr| ContextRow {
+                score: sr.score,
+                content: &sr.memory.content,
+                tags: &sr.memory.tags,
+                pinned: sr.memory.pinned,
+                importance: sr.memory.importance,
+                doc_title: None,
+            })
+            .collect();
+        println!("{}", format_context(query, &rows));
     } else if cli.json {
         // Apply content_format: pretty-print JSON content when requested
         if content_format == "json" {
@@ -493,6 +549,56 @@ pub(crate) fn run_recall(
         output::print_recall_human(&filtered);
     }
     Ok(())
+}
+
+/// One recall hit as `--context` prints it, from either the memory-only or the
+/// unified path.
+struct ContextRow<'a> {
+    score: f32,
+    content: &'a str,
+    tags: &'a [String],
+    pinned: bool,
+    importance: f64,
+    /// Set for a document hit, printed after the excerpt.
+    doc_title: Option<&'a str>,
+}
+
+/// The `--context` layout for AI prompt injection, or its empty-result line.
+fn format_context(query: &str, rows: &[ContextRow<'_>]) -> String {
+    if rows.is_empty() {
+        return format!("[No relevant memories found for: {query}]");
+    }
+    let avg_score: f32 = rows.iter().map(|r| r.score).sum::<f32>() / rows.len() as f32;
+    let mut lines = vec![format!(
+        "[Relevant Memories ({} results, {:.2} avg score)]",
+        rows.len(),
+        avg_score
+    )];
+    for (i, r) in rows.iter().enumerate() {
+        let tags = if r.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", r.tags.join(", "))
+        };
+        let doc = r
+            .doc_title
+            .map(|t| format!(" (doc: {t})"))
+            .unwrap_or_default();
+        let importance = if r.pinned {
+            " \u{2605}" // ★
+        } else if r.importance > 0.7 {
+            " \u{2191}" // ↑
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "{}. [{:.2}] {}{doc}{tags}{importance}",
+            i + 1,
+            r.score,
+            r.content
+        ));
+    }
+    lines.join("\n")
 }
 
 pub(crate) fn run_search(
@@ -561,5 +667,56 @@ mod decode_tests {
         let e = decode_local("q", 5, &[], Some("yesterday")).unwrap_err();
         assert!(e.starts_with("Invalid 'at' timestamp: yesterday"), "{e}");
         assert!(decode_local("q", 5, &[], Some("2026-06-01T12:00:00Z")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::{ContextRow, format_context};
+
+    #[test]
+    fn no_rows_print_the_empty_line() {
+        assert_eq!(
+            format_context("q", &[]),
+            "[No relevant memories found for: q]"
+        );
+    }
+
+    #[test]
+    fn rows_print_score_content_doc_tags_and_marker() {
+        let tags = vec!["a".to_string(), "b".to_string()];
+        let rows = [
+            ContextRow {
+                score: 0.9,
+                content: "pinned fact",
+                tags: &tags,
+                pinned: true,
+                importance: 0.1,
+                doc_title: None,
+            },
+            ContextRow {
+                score: 0.5,
+                content: "an excerpt",
+                tags: &[],
+                pinned: false,
+                importance: 0.8,
+                doc_title: Some("Guide"),
+            },
+            ContextRow {
+                score: 0.4,
+                content: "plain",
+                tags: &[],
+                pinned: false,
+                importance: 0.7,
+                doc_title: None,
+            },
+        ];
+        assert_eq!(
+            format_context("q", &rows),
+            "[Relevant Memories (3 results, 0.60 avg score)]\n\
+             1. [0.90] pinned fact [a, b] \u{2605}\n\
+             2. [0.50] an excerpt (doc: Guide) \u{2191}\n\
+             3. [0.40] plain"
+        );
     }
 }

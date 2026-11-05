@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Uteke viewer</title>
+<link rel="stylesheet" href="/tokens.css">
+<style nonce="__NONCE__">
+  body { margin: 0; background: var(--cc-surface); color: var(--cc-text); font-family: var(--cc-font-sans); font-size: var(--cc-font-size-md); line-height: var(--cc-leading-normal); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cc-space-3); padding: var(--cc-space-3) var(--cc-space-4); border-bottom: 1px solid var(--cc-border); background: var(--cc-surface-raised); }
+  h1 { font-family: var(--cc-font-display); font-size: var(--cc-font-size-lg); margin: 0; }
+  .badge { font-size: var(--cc-font-size-xs); padding: 2px var(--cc-space-2); border-radius: var(--cc-radius-pill); background: var(--cc-accent-soft); color: var(--cc-text); border: 1px solid var(--cc-border); }
+  nav { display: flex; gap: var(--cc-space-1); margin-left: auto; flex-wrap: wrap; }
+  button { font: inherit; min-height: 2.25rem; padding: 0 var(--cc-space-3); border: 1px solid var(--cc-border-strong); border-radius: var(--cc-radius-md); background: var(--cc-surface-raised); color: var(--cc-text); cursor: pointer; }
+  button:hover { background: var(--cc-surface-hover); }
+  button[aria-pressed="true"] { background: var(--cc-accent); color: var(--cc-accent-text); border-color: var(--cc-accent); }
+  :focus-visible { outline: 2px solid var(--cc-focus); outline-offset: 2px; }
+  main { max-width: 64rem; margin: 0 auto; padding: var(--cc-space-4); }
+  .bar { display: flex; flex-wrap: wrap; gap: var(--cc-space-2); margin-bottom: var(--cc-space-4); align-items: center; }
+  select { font: inherit; min-height: 2.25rem; border: 1px solid var(--cc-border-strong); border-radius: var(--cc-radius-md); background: var(--cc-surface-raised); color: var(--cc-text); padding: 0 var(--cc-space-2); }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--cc-space-2); }
+  li, .card { padding: var(--cc-space-3); border: 1px solid var(--cc-border); border-radius: var(--cc-radius-md); background: var(--cc-surface-raised); }
+  .content { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 var(--cc-space-2); }
+  .meta { font-size: var(--cc-font-size-xs); color: var(--cc-text-muted); display: flex; flex-wrap: wrap; gap: var(--cc-space-3); }
+  .muted { color: var(--cc-text-muted); }
+  .err { color: var(--cc-danger); }
+  .stack { display: grid; gap: var(--cc-space-3); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--cc-space-1) var(--cc-space-4); margin: 0; }
+  dt { color: var(--cc-text-muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  h2 { font-size: var(--cc-font-size-md); font-family: var(--cc-font-display); margin: var(--cc-space-4) 0 var(--cc-space-2); }
+  button.link { min-height: 0; padding: 0; border: 0; background: none; color: var(--cc-accent); text-decoration: underline; font-size: inherit; overflow-wrap: anywhere; text-align: left; }
+  code, .mono { font-family: var(--cc-font-mono); font-size: var(--cc-font-size-sm); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Uteke viewer</h1>
+  <span class="badge">read-only</span>
+  <nav id="tabs" aria-label="Sections"></nav>
+</header>
+<main id="view" aria-live="polite"></main>
+<script nonce="__NONCE__">
+"use strict";
+// Every stored string reaches the DOM through textContent only: memory
+// content is untrusted data, so nothing here parses it as markup.
+var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)");
+function theme() { document.documentElement.setAttribute("data-theme", dark && dark.matches ? "uteke-dark" : "uteke"); }
+theme();
+if (dark && dark.addEventListener) dark.addEventListener("change", theme);
+// The launch URL carried the token once; the cookie holds it from here on.
+if (location.search) history.replaceState(null, "", location.pathname);
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = String(text);
+  return e;
+}
+function api(path) {
+  return fetch(path, { credentials: "same-origin" }).then(function (r) {
+    if (!r.ok) throw new Error(r.status + " " + r.statusText);
+    return r.json();
+  });
+}
+function fail(root, e) { root.replaceChildren(el("p", "err", "Could not load: " + e.message)); }
+function kv(obj) {
+  var dl = el("dl");
+  Object.keys(obj).forEach(function (k) {
+    var v = obj[k];
+    dl.appendChild(el("dt", null, k));
+    dl.appendChild(el("dd", null, v !== null && typeof v === "object" ? JSON.stringify(v) : v));
+  });
+  return dl;
+}
+// The session a memory's source points at: capture:<session>:<batch> (the
+// batch is the last segment) or observation:<session>.
+function sessionOf(source) {
+  if (typeof source !== "string") return null;
+  var id = null;
+  if (source.indexOf("observation:") === 0) id = source.slice(12);
+  else if (source.indexOf("capture:") === 0 && source.lastIndexOf(":") > 7) id = source.slice(8, source.lastIndexOf(":"));
+  return id || null;
+}
+function memoryItem(m) {
+  var li = el("li");
+  li.appendChild(el("p", "content", m.content));
+  var meta = el("div", "meta");
+  [m.namespace, m.memory_type, m.created_at, m.source, (m.tags || []).join(", ")].forEach(function (x) {
+    if (x) meta.appendChild(el("span", null, x));
+  });
+  var sid = sessionOf(m.source);
+  if (sid) {
+    var link = el("button", "link", "session timeline");
+    link.type = "button";
+    link.addEventListener("click", function () { show("Sessions", sid); });
+    meta.appendChild(link);
+  }
+  li.appendChild(meta);
+  return li;
+}
+
+var PAGE = 20;
+var views = {
+  Memories: function (root) {
+    var ns = "", offset = 0;
+    var bar = el("div", "bar"), sel = el("select"), list = el("ul"), more = el("button", null, "Load more");
+    sel.setAttribute("aria-label", "Namespace");
+    var all = el("option", null, "all namespaces");
+    all.value = "";
+    sel.appendChild(all);
+    bar.appendChild(sel);
+    root.replaceChildren(bar, list, more);
+    function load(reset) {
+      if (reset) { offset = 0; list.replaceChildren(); }
+      var q = "/recent?limit=" + PAGE + "&offset=" + offset + (ns ? "&namespace=" + encodeURIComponent(ns) : "");
+      api(q).then(function (rows) {
+        rows.forEach(function (m) { list.appendChild(memoryItem(m)); });
+        offset += rows.length;
+        more.hidden = rows.length < PAGE;
+        if (!list.children.length) list.appendChild(el("li", "muted", "No memories."));
+      }).catch(function (e) { fail(root, e); });
+    }
+    sel.addEventListener("change", function () { ns = sel.value; load(true); });
+    more.addEventListener("click", function () { load(false); });
+    api("/namespaces").then(function (names) {
+      names.forEach(function (n) { var name = n !== null && typeof n === "object" ? n.name : n; var o = el("option", null, name); o.value = name; sel.appendChild(o); });
+    }).catch(function () {});
+    load(true);
+  },
+  Namespaces: function (root) {
+    api("/namespaces?with_counts=true").then(function (rows) {
+      var ul = el("ul");
+      rows.forEach(function (r) {
+        var li = el("li");
+        if (r !== null && typeof r === "object") li.appendChild(kv(r)); else li.appendChild(el("span", "mono", r));
+        ul.appendChild(li);
+      });
+      root.replaceChildren(ul.children.length ? ul : el("p", "muted", "No namespaces."));
+    }).catch(function (e) { fail(root, e); });
+  },
+  Rooms: function (root) {
+    api("/room/list").then(function (rows) {
+      var ul = el("ul");
+      rows.forEach(function (r) { var li = el("li"); li.appendChild(kv(r)); ul.appendChild(li); });
+      root.replaceChildren(ul.children.length ? ul : el("p", "muted", "No rooms."));
+    }).catch(function (e) { fail(root, e); });
+  },
+  Sessions: function (root, id) {
+    if (id) return sessionDetail(root, id);
+    api("/viewer/sessions").then(function (rows) {
+      var ul = el("ul");
+      rows.forEach(function (r) {
+        var li = el("li");
+        var open = el("button", "link", r.session_id);
+        open.type = "button";
+        open.addEventListener("click", function () { show("Sessions", r.session_id); });
+        li.appendChild(open);
+        var meta = el("div", "meta");
+        [r.turns + " turns", r.first_at, r.last_at].forEach(function (x) { meta.appendChild(el("span", null, x)); });
+        li.appendChild(meta);
+        ul.appendChild(li);
+      });
+      root.replaceChildren(ul.children.length ? ul : el("p", "muted", "No captured sessions."));
+    }).catch(function (e) { fail(root, e); });
+  },
+  Health: function (root) {
+    Promise.all([api("/health"), api("/stats")]).then(function (r) {
+      var a = el("div", "card"), b = el("div", "card"), wrap = el("div", "stack");
+      a.appendChild(kv(r[0]));
+      b.appendChild(kv(r[1]));
+      wrap.appendChild(a);
+      wrap.appendChild(b);
+      root.replaceChildren(wrap);
+    }).catch(function (e) { fail(root, e); });
+  }
+};
+
+// One session: its turns in seq order, then the memories that point back at it.
+function sessionDetail(root, id) {
+  api("/viewer/session?id=" + encodeURIComponent(id)).then(function (d) {
+    var back = el("button", null, "All sessions");
+    back.type = "button";
+    back.addEventListener("click", function () { show("Sessions"); });
+    var head = el("div", "bar");
+    head.appendChild(back);
+    head.appendChild(el("span", "mono", d.session_id));
+    var turns = el("ul");
+    d.turns.forEach(function (t) {
+      var li = el("li");
+      li.appendChild(el("p", "content", t.content));
+      var meta = el("div", "meta");
+      ["#" + t.seq, t.role, t.captured_at, t.status].forEach(function (x) { meta.appendChild(el("span", null, x)); });
+      li.appendChild(meta);
+      turns.appendChild(li);
+    });
+    var mems = el("ul");
+    d.memories.forEach(function (m) { mems.appendChild(memoryItem(m)); });
+    root.replaceChildren(head,
+      el("h2", null, "Turns"), turns.children.length ? turns : el("p", "muted", "No turns in the queue (done turns are deleted after the retention period)."),
+      el("h2", null, "Memories from this session"), mems.children.length ? mems : el("p", "muted", "No memories link to this session."));
+  }).catch(function (e) { fail(root, e); });
+}
+
+var tabs = document.getElementById("tabs"), view = document.getElementById("view");
+function show(name, arg) {
+  Array.prototype.forEach.call(tabs.children, function (b) { b.setAttribute("aria-pressed", String(b.textContent === name)); });
+  views[name](view, arg);
+}
+Object.keys(views).forEach(function (name) {
+  var b = el("button", null, name);
+  b.type = "button";
+  b.addEventListener("click", function () { show(name); });
+  tabs.appendChild(b);
+});
+show("Memories");
+</script>
+</body>
+</html>

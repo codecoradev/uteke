@@ -430,11 +430,59 @@ impl super::Store {
             .unchecked_transaction()
             .map_err(|e| Error::db("begin transaction", e))?;
 
+        // The hash before the write, for the `updated` event below. Read in
+        // the transaction so the chain links the row that was overwritten.
+        let previous_hash: Option<String> = if content.is_some() {
+            tx.query_row(
+                "SELECT source_hash FROM memories WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("read source hash", e))?
+            .flatten()
+        } else {
+            None
+        };
+
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params_vec.iter().map(|b| b.as_ref()).collect();
         let rows = tx
             .execute(&sql, param_refs.as_slice())
             .map_err(|e| Error::db("update memory fields", e))?;
+
+        // A content write through the API refreshes `source_hash` and records
+        // an `updated` event that links the old hash to the new one (#1595,
+        // the same shape as uteke-cloud #354). Both happen in this
+        // transaction: if either fails, the content write rolls back, so a
+        // hash mismatch only ever means the content changed outside the API.
+        if let (Some(c), true) = (content, rows > 0) {
+            let new_hash = crate::provenance::content_hash(c);
+            tx.execute(
+                "UPDATE memories SET source_hash = ?1 WHERE id = ?2",
+                params![new_hash, id],
+            )
+            .map_err(|e| Error::db("refresh source hash", e))?;
+            let event_data = serde_json::json!({
+                "fields": ["content"],
+                "previous_hash": previous_hash,
+                "source_hash": new_hash,
+            });
+            let evidence = serde_json::json!([{ "memory": id, "relation": "subject" }]);
+            tx.execute(
+                "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at, actor, evidence_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    crate::timeline::TimelineEventType::Updated.as_str(),
+                    event_data.to_string(),
+                    updated_at.to_rfc3339(),
+                    "system:edit",
+                    evidence.to_string(),
+                ],
+            )
+            .map_err(|e| Error::db("record update event", e))?;
+        }
 
         // Dual-write: sync junction table tags if tags were provided
         if tags.is_some() {
@@ -853,7 +901,7 @@ impl super::Store {
     /// - `created_at <= point_in_time`
     /// - `valid_from IS NULL OR valid_from <= point_in_time`
     /// - `valid_until IS NULL OR valid_until > point_in_time`
-    /// - `deprecated = 0`
+    /// - not deprecated, or deprecated after `point_in_time` (#1598)
     pub fn list_at_time(
         &self,
         tag: Option<&str>,
@@ -861,6 +909,22 @@ impl super::Store {
         limit: usize,
         offset: usize,
         point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Memory>, Error> {
+        self.list_at_time_with(tag, namespace, limit, offset, point_in_time, true)
+    }
+
+    /// [`Self::list_at_time`], optionally in history mode (#1598): with
+    /// `history` a deprecated memory is kept when it was deprecated after
+    /// `point_in_time` (`deprecated_at` unset or later, the rule of
+    /// `memory_existed_at`), instead of every deprecated row being dropped.
+    pub fn list_at_time_with(
+        &self,
+        tag: Option<&str>,
+        namespace: Option<&str>,
+        limit: usize,
+        offset: usize,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+        history: bool,
     ) -> Result<Vec<Memory>, Error> {
         let pit = point_in_time.to_rfc3339();
 
@@ -880,14 +944,14 @@ impl super::Store {
                            AND m.created_at <= ?2 \
                            AND (m.valid_from IS NULL OR m.valid_from <= ?2) \
                            AND (m.valid_until IS NULL OR m.valid_until > ?2) \
-                           AND m.deprecated = 0 \
+                           AND (m.deprecated = 0 OR (?6 AND (m.deprecated_at IS NULL OR m.deprecated_at > ?2))) \
                            AND mt.tag = ?3 \
                          ORDER BY m.created_at DESC LIMIT ?4 OFFSET ?5"
                     ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
                     .query_map(
-                        params![ns, pit, t, limit as i64, offset as i64],
+                        params![ns, pit, t, limit as i64, offset as i64, history],
                         row_to_memory,
                     )
                     .map_err(|e| Error::db("database operation", e))?;
@@ -908,12 +972,15 @@ impl super::Store {
                            AND created_at <= ?2 \
                            AND (valid_from IS NULL OR valid_from <= ?2) \
                            AND (valid_until IS NULL OR valid_until > ?2) \
-                           AND deprecated = 0 \
+                           AND (deprecated = 0 OR (?5 AND (deprecated_at IS NULL OR deprecated_at > ?2))) \
                          ORDER BY created_at DESC LIMIT ?3 OFFSET ?4"
                     ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![ns, pit, limit as i64, offset as i64], row_to_memory)
+                    .query_map(
+                        params![ns, pit, limit as i64, offset as i64, history],
+                        row_to_memory,
+                    )
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     memories.push(row.map_err(|e| Error::db("database operation", e))?);
@@ -932,13 +999,16 @@ impl super::Store {
                          WHERE m.created_at <= ?1 \
                            AND (m.valid_from IS NULL OR m.valid_from <= ?1) \
                            AND (m.valid_until IS NULL OR m.valid_until > ?1) \
-                           AND m.deprecated = 0 \
+                           AND (m.deprecated = 0 OR (?5 AND (m.deprecated_at IS NULL OR m.deprecated_at > ?1))) \
                            AND mt.tag = ?2 \
                          ORDER BY m.created_at DESC LIMIT ?3 OFFSET ?4"
                     ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![pit, t, limit as i64, offset as i64], row_to_memory)
+                    .query_map(
+                        params![pit, t, limit as i64, offset as i64, history],
+                        row_to_memory,
+                    )
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     memories.push(row.map_err(|e| Error::db("database operation", e))?);
@@ -956,12 +1026,15 @@ impl super::Store {
                          WHERE created_at <= ?1 \
                            AND (valid_from IS NULL OR valid_from <= ?1) \
                            AND (valid_until IS NULL OR valid_until > ?1) \
-                           AND deprecated = 0 \
+                           AND (deprecated = 0 OR (?4 AND (deprecated_at IS NULL OR deprecated_at > ?1))) \
                          ORDER BY created_at DESC LIMIT ?2 OFFSET ?3"
                     ))
                     .map_err(|e| Error::db("database operation", e))?;
                 let rows = stmt
-                    .query_map(params![pit, limit as i64, offset as i64], row_to_memory)
+                    .query_map(
+                        params![pit, limit as i64, offset as i64, history],
+                        row_to_memory,
+                    )
                     .map_err(|e| Error::db("database operation", e))?;
                 for row in rows {
                     memories.push(row.map_err(|e| Error::db("database operation", e))?);
@@ -969,6 +1042,39 @@ impl super::Store {
             }
         }
         Ok(memories)
+    }
+
+    /// Deprecated memories that existed at `point_in_time` (#1598): written at
+    /// or before it, deprecated after it (`deprecated_at` unset counts as
+    /// after, like `memory_existed_at`). Deprecation removed their vector
+    /// from the index, so history-mode recall scores them from the embedding
+    /// kept in the row; rows without one are left out. `namespace` `None` =
+    /// every namespace. The validity bounds are checked by the caller.
+    pub fn deprecated_after(
+        &self,
+        namespace: Option<&str>,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Memory>, Error> {
+        let pit = point_in_time.to_rfc3339();
+        let mut stmt = self
+            .conn
+            .prepare(concat!(
+                "SELECT ",
+                memory_columns!(),
+                " \
+                 FROM memories \
+                 WHERE deprecated = 1 \
+                   AND (deprecated_at IS NULL OR deprecated_at > ?1) \
+                   AND created_at <= ?1 \
+                   AND (?2 IS NULL OR namespace = ?2) \
+                   AND length(embedding) > 0"
+            ))
+            .map_err(|e| Error::db("prepare deprecated_after", e))?;
+        let rows = stmt
+            .query_map(params![pit, namespace], row_to_memory)
+            .map_err(|e| Error::db("query deprecated_after", e))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read deprecated_after", e))
     }
 
     /// Get the underlying database path, if file-based.

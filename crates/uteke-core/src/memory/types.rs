@@ -168,6 +168,84 @@ pub fn validate_author_type(author_type: &str) -> Result<(), crate::Error> {
     }
 }
 
+/// When a fact holds in the world (valid time, #1598), as the caller states
+/// it. Separate from when the store learned it (`created_at`) and stopped
+/// believing it (`deprecated_at`). `None` on a side leaves the stored value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Validity {
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Validity {
+    /// Parse RFC3339 `from`/`until` (the CLI flags). `Ok(None)` when neither
+    /// is given. An interval that ends before it starts is refused here too,
+    /// so a bad value fails before anything is written.
+    pub fn parse(from: Option<&str>, until: Option<&str>) -> Result<Option<Self>, crate::Error> {
+        let parse = |flag: &str, v: Option<&str>| {
+            v.map(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .map(|t| t.with_timezone(&chrono::Utc))
+                    .map_err(|e| {
+                        crate::Error::Validation(format!(
+                            "Invalid {flag} '{s}': {e}. Use RFC3339 (e.g. 2026-06-01T12:00:00Z)"
+                        ))
+                    })
+            })
+            .transpose()
+        };
+        let v = Self {
+            from: parse("valid_from", from)?,
+            until: parse("valid_until", until)?,
+        };
+        if v.from.is_none() && v.until.is_none() {
+            return Ok(None);
+        }
+        v.check_against(None, None)?;
+        Ok(Some(v))
+    }
+
+    /// [`Self::parse`] for a new memory (a write over the wire, #1598). The
+    /// write time is the default `valid_from`, so an end at or before `now`
+    /// without a start would be an empty interval: refused here, before
+    /// anything is stored.
+    pub fn parse_for_write(
+        from: Option<&str>,
+        until: Option<&str>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<Self>, crate::Error> {
+        let validity = Self::parse(from, until)?;
+        if let Some(v) = &validity
+            && v.from.is_none()
+            && v.until.is_some_and(|u| u <= now)
+        {
+            return Err(crate::Error::Validation(
+                "valid_until is not after the write time; give valid_from as well".to_string(),
+            ));
+        }
+        Ok(validity)
+    }
+
+    /// Refuse an interval that does not start before it ends, after applying
+    /// this change to the stored `valid_from`/`valid_until`.
+    pub fn check_against(
+        &self,
+        stored_from: Option<chrono::DateTime<chrono::Utc>>,
+        stored_until: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), crate::Error> {
+        if let (Some(f), Some(u)) = (self.from.or(stored_from), self.until.or(stored_until))
+            && f >= u
+        {
+            return Err(crate::Error::Validation(format!(
+                "valid_from ({}) must be before valid_until ({})",
+                f.to_rfc3339(),
+                u.to_rfc3339()
+            )));
+        }
+        Ok(())
+    }
+}
+
 fn default_importance() -> f64 {
     0.5
 }
@@ -181,12 +259,47 @@ fn default_content_type() -> String {
 }
 
 /// A search result with relevance score.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// Serializes with two derived fields next to the stored ones: `similarity`
+/// (the vector-leg cosine, `null` when only full-text search found the hit,
+/// #1650) and `trust_tier` (the provenance tier of the memory, #1651).
+#[derive(Debug, Clone, Deserialize)]
 pub struct SearchResult {
     /// The matched memory.
     pub memory: Memory,
-    /// Cosine similarity score (0.0–1.0).
+    /// Ranking score. Its scale depends on the strategy (cosine for `vector`,
+    /// rank-based for `hybrid`/`fusion`, plus boosts); not a similarity.
     pub score: f32,
+    /// Cosine similarity of the vector leg (0.0–1.0), unboosted. `None` for a
+    /// hit that only the full-text leg found. `strict` filters on this field.
+    #[serde(default)]
+    pub similarity: Option<f32>,
+}
+
+impl SearchResult {
+    /// A result with no vector similarity (full-text, graph, LIKE search).
+    pub fn new(memory: Memory, score: f32) -> Self {
+        Self {
+            memory,
+            score,
+            similarity: None,
+        }
+    }
+}
+
+impl Serialize for SearchResult {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = serializer.serialize_struct("SearchResult", 4)?;
+        st.serialize_field("memory", &self.memory)?;
+        st.serialize_field("score", &self.score)?;
+        st.serialize_field("similarity", &self.similarity)?;
+        st.serialize_field(
+            "trust_tier",
+            &crate::provenance::TrustTier::of(&self.memory),
+        )?;
+        st.end()
+    }
 }
 
 /// Result type discriminator for unified search (#531).
@@ -210,6 +323,13 @@ pub struct UnifiedSearchResult {
     pub result_type: SearchResultType,
     /// Relevance score (0.0–1.0), normalized via RRF.
     pub score: f32,
+    /// Cosine similarity of the vector leg (0.0–1.0); `null` when the item
+    /// has none (found by full-text only, or a document) (#1650).
+    #[serde(default)]
+    pub similarity: Option<f32>,
+    /// Provenance tier of the memory (#1651); absent for documents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trust_tier: Option<crate::provenance::TrustTier>,
     /// Memory content (always populated for type=memory, excerpt for type=document).
     pub content: String,
     /// Memory ID (populated for type=memory).
@@ -284,6 +404,8 @@ impl UnifiedSearchResult {
         UnifiedSearchResult {
             result_type: SearchResultType::Memory,
             score: sr.score,
+            similarity: sr.similarity,
+            trust_tier: Some(crate::provenance::TrustTier::of(m)),
             content: m.content.clone(),
             memory_id: Some(m.id.clone()),
             tags: m.tags.clone(),
@@ -449,6 +571,42 @@ pub struct ExportEntry {
     /// to each room that exists in the target store.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rooms: Vec<String>,
+    /// The memory's id (#1633). Import keeps it, and skips the row when the
+    /// id is already stored. Absent on rows from older export files (a new id
+    /// is generated); a value that is not a UUID is dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Memory type (#1633). Absent or unknown: `fact`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_type: Option<String>,
+    /// Importance 0.0 to 1.0 (#1633). Absent or out of range: 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<f64>,
+    /// Pinned flag (#1633). Absent: false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
+    /// Content type (#1633). Absent or malformed: `text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    /// Memory slug (#1633). Absent or blank: none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    /// Soft-deleted at the source (#1633, rows of a Uteke Cloud export).
+    /// Import stores the row deprecated, without a vector. The OSS export
+    /// never writes it: it exports live rows only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deprecated: bool,
+    /// When the row was soft-deleted (#1633). Only read with `deprecated`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deprecated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the fact starts to hold (#1598). Absent on rows from older export
+    /// files: import falls back to `created_at`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the fact stops holding (#1598). Absent: no end. An end that is not
+    /// after the start is dropped on import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 fn default_metadata() -> serde_json::Value {
@@ -464,9 +622,24 @@ fn default_created_at() -> chrono::DateTime<chrono::Utc> {
 pub struct ImportResult {
     /// Number of memories imported.
     pub imported: usize,
-    /// Number of entries skipped (duplicate, invalid or rejected by the
-    /// privacy filter in strict mode).
+    /// Number of entries skipped because they were invalid, could not be
+    /// stored or were rejected (privacy filter in strict mode, tombstone).
+    /// Duplicates are counted apart, in the `*_skipped` fields below.
     pub skipped: usize,
+    /// Entries already stored (#1633): the same id with the same content,
+    /// the exact content, or for a row without an id a near-identical one
+    /// (cosine >= 0.95, #1005). The rooms of the entry are linked to the
+    /// stored memory.
+    #[serde(default)]
+    pub duplicates_skipped: usize,
+    /// Entries whose id is already stored with other content (#1633): not
+    /// merged, the stored memory is left unchanged.
+    #[serde(default)]
+    pub id_conflicts_skipped: usize,
+    /// Entries whose content (or id) is soft-deleted in this store (#1633):
+    /// a forgotten memory is not brought back by importing an old file.
+    #[serde(default)]
+    pub soft_deleted_skipped: usize,
     /// Imported memories in which the privacy filter masked a secret (#1464).
     #[serde(default)]
     pub redacted: usize,
@@ -482,6 +655,50 @@ pub struct ImportResult {
     /// links were not made. Create them and import again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rooms_missing: Vec<String>,
+    /// Entries skipped because the value was forgotten as wrong (#1597, a
+    /// rejected-value tombstone; also in `skipped`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_tombstone: usize,
+    /// Imported memories stored without a vector because the import deferred
+    /// embedding (#1608); `uteke repair --reembed` adds them.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub deferred_embedding: usize,
+    /// Documents created from `type: "document"` rows (#1632, a Uteke Cloud
+    /// export). This and the counts below are absent when zero, so the
+    /// result of a file of memories is unchanged.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub documents_imported: usize,
+    /// Stored documents (same slug) that the file changed, updated in place.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub documents_updated: usize,
+    /// Stored documents the file carries unchanged (no new version).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub documents_unchanged: usize,
+    /// Documents whose `parent` is neither in the file nor stored: stored at
+    /// the root (an existing document keeps its parent).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub parent_unresolved: usize,
+    /// Rooms created from `type: "room"` rows (#1632).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rooms_imported: usize,
+    /// Room rows whose room exists: left unchanged, documents still linked.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rooms_existing: usize,
+    /// New room-to-document links from the rooms' `doc_slugs`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub room_documents_linked: usize,
+    /// `doc_slugs` naming a document that is not stored, not linked.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub room_documents_missing: usize,
+}
+
+/// How [`crate::Uteke::import_with`] treats each row.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ImportOptions {
+    /// Store the rows without a vector (keyword-searchable at once) and leave
+    /// the embedding to `uteke repair --reembed` (#1608). Duplicates are then
+    /// caught by exact content only, not by the cosine check.
+    pub defer_embedding: bool,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1241,6 +1458,8 @@ mod tests {
         let result = UnifiedSearchResult {
             result_type: SearchResultType::Memory,
             score: 0.85,
+            similarity: None,
+            trust_tier: None,
             content: "test memory".to_string(),
             memory_id: Some("abc-123".to_string()),
             tags: vec!["test".to_string()],
@@ -1299,6 +1518,8 @@ mod tests {
         let result = UnifiedSearchResult {
             result_type: SearchResultType::Document,
             score: 0.92,
+            similarity: None,
+            trust_tier: None,
             content: "chunk excerpt here".to_string(),
             memory_id: None,
             tags: vec![],

@@ -3,7 +3,9 @@
 mod cli;
 mod commands;
 mod config;
+mod connect;
 mod extract;
+mod hook_run;
 mod init;
 mod logging;
 mod onboard;
@@ -95,6 +97,11 @@ fn main() {
             | Commands::Onboard { .. }
             | Commands::Bench { .. }
             | Commands::Upgrade { .. }
+            | Commands::Connect { .. }
+            | Commands::Disconnect { .. }
+            | Commands::HookRun { .. }
+            | Commands::HookStatus
+            | Commands::View { .. }
     );
     // Skip update check in subprocess/batch mode (e.g. benchmarks calling
     // `uteke recall` 1000× via subprocess). Env var set by benchmark scripts
@@ -132,6 +139,45 @@ fn main() {
         Commands::Bench { counts, json } => {
             // Bench creates its own temp stores — skip opening the user store.
             if let Err(e) = commands::bench::run_bench(*json, counts.clone()) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::HookRun { event, agent } => {
+            // Never fails the agent: errors are logged, the exit code is 0.
+            hook_run::run(event, agent);
+            std::process::exit(0);
+        }
+        Commands::View { port, host } => {
+            if let Err(e) = commands::view::run(*port, host.as_deref()) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::HookStatus => {
+            let hooks = connect::home_dir()
+                .map(|h| connect::hook_status(&h))
+                .unwrap_or_default();
+            output::print_json(&hooks);
+            std::process::exit(0);
+        }
+        Commands::Connect {
+            agent,
+            dry_run,
+            absolute_path,
+        } => {
+            let result = connect::run_connect(agent, *dry_run, *absolute_path, cli.json);
+            if let Err(e) = result {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
+        Commands::Disconnect { agent, dry_run } => {
+            let result = connect::run_disconnect(agent, *dry_run, cli.json);
+            if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

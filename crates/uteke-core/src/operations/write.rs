@@ -231,6 +231,9 @@ impl crate::Uteke {
         let tag_owned = prepared.tags.clone();
         let tags: Vec<&str> = tag_owned.iter().map(String::as_str).collect();
         let tags = tags.as_slice();
+        // A value forgotten as wrong (#1597): refuse before the embedding work
+        // (`commit_memory` checks again for the other write paths).
+        self.check_not_rejected(content)?;
         let content_type = crate::memory::crud::detect_content_type(content);
         let (embedding, generation_error) = self.embed_for_write(content, content_type)?;
 
@@ -430,6 +433,9 @@ impl crate::Uteke {
         memory: &Memory,
         embedding_error: Option<String>,
     ) -> Result<RememberOutcome, Error> {
+        // A value forgotten as wrong is refused on every write path (#1597).
+        self.check_not_rejected(&memory.content)?;
+
         let id = memory.id.clone();
         let content = memory.content.as_str();
         let embedding = memory.embedding.as_slice();
@@ -446,11 +452,7 @@ impl crate::Uteke {
 
         // Provenance: record the content hash at write time (#1172 Fase 1).
         // Best-effort — audits recompute this to detect post-write tampering.
-        use sha2::Digest;
-        let source_hash: String = sha2::Sha256::digest(content.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let source_hash = crate::provenance::content_hash(content);
         if let Err(e) = self.store.set_source_hash(&id, Some(source_hash.as_str())) {
             tracing::warn!("source_hash write failed for {id}: {e}");
         }

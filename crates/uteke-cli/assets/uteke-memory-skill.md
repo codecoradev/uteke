@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
+Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
 
 > This skill ships with each release — its version tracks the CLI version
 > (a CI gate fails when they drift, see `skill-version-parity` test).
@@ -34,7 +34,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | Command | Description | Key Options |
 |---------|-------------|-------------|
 | `uteke remember <TEXT>` | Store a new memory | `--tags`, `--type`, `--entity`, `--category`, `--meta`, `--room`, `--author`, `--source`, `--source-type`, `--detect-contradiction` |
-| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience`, `--recency`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter), `--explain` (real vector similarity), `--budget`, `--pack`, `--strict`, `--enrich`, `--exclude-ids`, `--content-format`, `--no-salience`, `--no-recency` |
+| `uteke recall <QUERY>` | Fusion search (default since 0.16.0 — weighted RRF of vector + hybrid rankings) | `--limit`, `--tags`, `--entity`, `--category`, `--min`, `--strategy` (fusion/vector/fts5/hybrid/graph), `--salience <true|false>`, `--recency <true|false>`, `--related`, `--depth`, `--context`, `--at` (time-travel), `--type` (all/memory/doc), `--where` (JSON field filter), `--explain` (real vector similarity), `--budget`, `--pack`, `--strict` (similarity floor, #1650), `--min-trust` (human/agent/external/untrusted, #1651), `--enrich`, `--exclude-ids`, `--content-format` |
 | `uteke search <QUERY>` | Keyword text search | `--limit`, `--tags` |
 | `uteke list` | List memories with filters | `--tag`, `--entity`, `--category`, `--limit`, `--offset`, `--at` |
 | `uteke get <ID>` | Get single memory by UUID | |
@@ -42,7 +42,12 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke context` | Project context summary (counts, top tags, recent activity) | `--namespace` |
 | `uteke guide` | Print the agent-facing memory tools guide for system-prompt injection | |
 | `uteke feedback <ID> <helpful\|unhelpful>` | Record usefulness (importance +0.05 / −0.10) | |
-| `uteke forget <ID>` | Delete memory by ID, tag, tier, or all | `--tag`, `--cold`, `--all`, `--confirm` |
+| `uteke forget <ID>` | Delete memory by ID, tag, tier, or all | `--tag`, `--cold`, `--all`, `--confirm`, `--reason wrong` (the value can never be stored again) |
+| `uteke capture --session <ID> --role <user\|assistant\|tool> [TEXT]` | Queue a conversation turn for later extraction (needs `[capture] enabled = true`) | `--source` |
+| `uteke extract-queue status` | Capture queue counts | |
+| `uteke extract-queue run` | Extract pending sessions into memories | `--budget N` |
+| `uteke tombstone list` | Values forgotten as wrong, which every write refuses | |
+| `uteke tombstone remove <HASH\|ID>` | Allow a rejected value again | |
 
 ### Documents (Wiki / Knowledge Base)
 
@@ -58,7 +63,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doc move <ID_OR_SLUG>` | Move to new parent or root | `--parent` |
 | `uteke doc breadcrumbs <ID_OR_SLUG>` | Show path from root | |
 | `uteke doc descendants <ID_OR_SLUG>` | List all descendants | `--max-depth`, `--limit` |
-| `uteke doc export` | Export all documents as JSON | `--output` |
+| `uteke doc export` | Export all documents as Markdown (JSON with `--json`) | `--output`, `--front-matter` |
 
 ### Knowledge Graph
 
@@ -140,6 +145,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke namespace move <ID> <NS>` | Move a memory to another namespace |
 | `uteke namespace rename <FROM> <TO>` | Rename a namespace (merges if the target exists) |
 | `uteke namespace delete <NAME>` | Delete with `--strategy refuse\|merge\|deprecate` (`--target` for merge, `--confirm` required) |
+| `uteke namespace migrate --map <FILE>` | Move namespaces into rooms, tags, author or source (dry run; `--apply` exports first, `--allow-drop` for `drop`) |
 
 ### Memory Aging
 
@@ -157,7 +163,7 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doctor` | Full health check: DB, index, embedding model, consistency |
 | `uteke verify` | Compare DB count vs vector index count |
 | `uteke verify-checksums` | Verify binary integrity against SHA256 checksums |
-| `uteke repair` | Rebuild vector index from SQLite (`--rebuild` deletes corrupt index files first, `--reembed` regenerates missing embeddings) |
+| `uteke repair` | Rebuild vector index from SQLite (`--rebuild` deletes corrupt index files first, `--reembed` regenerates missing embeddings, in portions with `--limit N` and `--pause-ms MS`) |
 
 > **Stale-index symptom:** a memory is recallable via
 > `--strategy fts5` but missing under the default fusion/hybrid — that is a
@@ -187,10 +193,10 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 
 ### Import / Export / Bench
 
-| Command | Description |
-|---------|-------------|
-| `uteke export [FILE]` | Export to JSONL (no embeddings). Default: stdout |
-| `uteke import [FILE]` | Import from JSONL/Markdown/text. Default: stdin |
+| Command | Description | Key Options |
+|---------|-------------|-------------|
+| `uteke export [FILE]` | Export to JSONL (no embeddings). Default: stdout | `--full` (whole store) |
+| `uteke import [FILE]` | Import from JSONL/Markdown/text. Default: stdin | `--defer-embed` (store now, embed later with `repair --reembed`) |
 | `uteke bench` | Performance benchmarks | `--counts`, `--json` |
 
 ### Setup & Upgrade
@@ -198,8 +204,10 @@ Version: **0.22.1** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | Command | Description |
 |---------|-------------|
 | `uteke init --agent <TYPE>` | Initialize integration (pi/claude/cursor/opencode/hermes) |
-| `uteke hook install <SHELL>` | Install shell hook (bash/zsh/fish) |
+| `uteke connect <AGENT>` | Install recall and capture lifecycle hooks in an agent app (claude/codex/cursor; pi/hermes get the memory-provider plugin); `--dry-run` shows the change |
+| `uteke disconnect <AGENT>` | Remove exactly the hooks `connect` installed |
 | `uteke completions <SHELL>` | Generate shell completions (bash/zsh/fish/powershell) |
+| `uteke view` | Open the read-only browser viewer (memories, namespaces, rooms, health); prints a tokenised loopback URL | `--port N` |
 | `uteke upgrade` | Check for updates and upgrade | `-y` (skip confirmation) |
 | `uteke onboard` | Interactive setup wizard: detect install, pick agent, toggle features, write config | `--yes --agent <TYPE>` |
 

@@ -26,11 +26,16 @@ const API_VERSIONS: &[&str] = &["v1", "v2"];
 
 #[cfg(test)]
 mod author_tests;
+mod capture;
+#[cfg(test)]
+mod capture_tests;
 mod docs;
 #[cfg(test)]
 mod error_tests;
 mod graph;
 mod health;
+#[cfg(test)]
+mod import_tests;
 #[cfg(test)]
 mod isolation_tests;
 mod maintenance;
@@ -39,6 +44,8 @@ mod memory;
 mod namespaces;
 #[cfg(test)]
 mod privacy_tests;
+#[cfg(test)]
+mod recall_similarity_tests;
 #[cfg(test)]
 mod room_link_tests;
 mod rooms;
@@ -188,6 +195,9 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/context", maintenance::post_context),
     // ── Dream Cycle (#442) ─────────────────────────────────────────────
     ("POST", "/dream", maintenance::post_dream),
+    // ── Capture queue (#1466) ────────────────────────────────────────
+    ("POST", "/capture", capture::post_capture),
+    ("GET", "/capture/status", capture::get_capture_status),
     ("POST", "/mcp", mcp::post_mcp),
     // ── Document: Create / Upsert ────────────────────────────────────
     ("POST", "/doc/create", docs::post_doc_create),
@@ -457,60 +467,6 @@ fn resolve_extraction_config(
     }
 }
 
-/// Point-in-time predicate for room time-travel (#1082).
-/// Mirrors the core `recall_at_time` temporal rules: memory must have been
-/// created at or before `pit`, not yet invalidated (valid_until), not
-/// deprecated, and valid_from must not be in the future relative to `pit`.
-///
-/// Known limitation (#1086): the schema stores no deprecation timestamp,
-/// so a memory deprecated *after* `pit` is also excluded here — time-travel
-/// treats `deprecated` as "never existed". Same rule as core `recall_at_time`.
-fn memory_exists_at(
-    memory: &uteke_core::memory::types::Memory,
-    pit: chrono::DateTime<chrono::Utc>,
-) -> bool {
-    if memory.created_at > pit {
-        return false;
-    }
-    if let Some(valid_until) = memory.valid_until {
-        if valid_until <= pit {
-            return false;
-        }
-    }
-    if memory.deprecated {
-        // Deprecated before the point-in-time → did not exist then;
-        // deprecated after it → existed (#1086). Matches core semantics:
-        // NULL deprecated_at is treated as "deprecated after the pit"
-        // (the v17 migration backfills a timestamp onto every deprecated
-        // row, so NULL + deprecated should not occur in practice).
-        let gone_by_then = match memory.deprecated_at {
-            Some(dep_at) => dep_at <= pit,
-            None => false,
-        };
-        if gone_by_then {
-            return false;
-        }
-    }
-    if let Some(valid_from) = memory.valid_from {
-        if valid_from > pit {
-            return false;
-        }
-    }
-    true
-}
-
-/// Apply the time-travel predicate to chronological room recall results
-/// (no-query path), preserving chronological order (#1082).
-fn filter_room_memories_at_time(
-    memories: Vec<uteke_core::memory::types::Memory>,
-    pit: chrono::DateTime<chrono::Utc>,
-) -> Vec<uteke_core::memory::types::Memory> {
-    memories
-        .into_iter()
-        .filter(|m| memory_exists_at(m, pit))
-        .collect()
-}
-
 /// Add the namespace deprecation `warning` (#1427) to a write response that
 /// has no warning field of its own. Nothing is added for the default
 /// namespace, so those responses stay byte-identical.
@@ -642,90 +598,6 @@ mod room_memories_namespace_tests {
 #[cfg(test)]
 mod room_recall_at_tests {
     use super::*;
-    use chrono::Utc;
-
-    fn mem(created_offset_secs: i64) -> uteke_core::memory::types::Memory {
-        uteke_core::memory::types::Memory {
-            id: uuid::Uuid::new_v4().to_string(),
-            content: format!("m{created_offset_secs}"),
-            embedding: Vec::new(),
-            tags: Vec::new(),
-            metadata: serde_json::Value::Object(serde_json::Map::new()),
-            created_at: Utc::now() + chrono::Duration::seconds(created_offset_secs),
-            updated_at: Utc::now(),
-            namespace: "default".into(),
-            access_count: 0,
-            recall_count: 0,
-            last_accessed: None,
-            deprecated: false,
-            deprecated_at: None,
-            valid_from: None,
-            valid_until: None,
-            memory_type: "fact".into(),
-            importance: 0.5,
-            pinned: false,
-            content_type: "text".into(),
-            slug: None,
-            source: None,
-            source_type: "user".into(),
-            author_type: "agent".into(),
-            author: None,
-        }
-    }
-
-    #[test]
-    fn at_time_excludes_future_and_invalidated() {
-        let now = Utc::now();
-        let old = mem(-3600); // created an hour ago — existed at `now`
-        let future = mem(3600); // created an hour from now — must be excluded
-        let mut invalidated = mem(-7200);
-        invalidated.valid_until = Some(now - chrono::Duration::seconds(60)); // expired before `now`
-        let mut not_yet_valid = mem(-7200);
-        not_yet_valid.valid_from = Some(now + chrono::Duration::seconds(60));
-
-        assert!(memory_exists_at(&old, now));
-        assert!(!memory_exists_at(&future, now));
-        assert!(!memory_exists_at(&invalidated, now));
-        assert!(!memory_exists_at(&not_yet_valid, now));
-    }
-
-    #[test]
-    fn at_time_excludes_deprecated() {
-        let now = Utc::now();
-        let mut dep = mem(-60);
-        dep.deprecated = true;
-        dep.deprecated_at = Some(now - chrono::Duration::seconds(30)); // deprecated before pit
-        assert!(!memory_exists_at(&dep, now));
-    }
-
-    #[test]
-    fn at_time_includes_deprecated_after_pit() {
-        // #1086: deprecated AFTER the pit — the memory existed then.
-        let now = Utc::now();
-        let mut dep = mem(-60);
-        dep.deprecated = true;
-        dep.deprecated_at = Some(now + chrono::Duration::seconds(30)); // deprecated after pit
-        assert!(memory_exists_at(&dep, now));
-    }
-
-    #[test]
-    fn at_time_boundary_inclusive_created_at() {
-        let exact = mem(0);
-        // created_at == pit: memory existed at that instant (inclusive, matches core recall_at_time rule `> pit → reject`)
-        assert!(memory_exists_at(&exact, exact.created_at));
-    }
-
-    #[test]
-    fn filter_room_memories_preserves_order() {
-        let now = Utc::now();
-        let older = mem(-100);
-        let newer = mem(-50);
-        let future = mem(100);
-        let out = filter_room_memories_at_time(vec![older, newer, future], now);
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0].content, "m-100");
-        assert_eq!(out[1].content, "m-50");
-    }
 
     #[test]
     fn room_recall_request_deserializes_at() {
@@ -2998,5 +2870,288 @@ mod forget_route_tests {
             resolve("ffff").unwrap_err().message(),
             "Memory not found: ffff"
         );
+    }
+}
+
+/// Rejected-value tombstones over HTTP (#1597): `reason=wrong` on
+/// `DELETE /forget`, 409 `rejected_value` on CORE writes, and the import count.
+#[cfg(test)]
+mod rejected_value_tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    fn call(
+        uteke: &Mutex<Uteke>,
+        method: Method,
+        url: &str,
+        body: &str,
+    ) -> (u16, serde_json::Value) {
+        let leaked: &'static str = Box::leak(body.to_string().into_boxed_str());
+        let mut req: Request = TestRequest::new()
+            .with_method(method)
+            .with_path(url)
+            .with_body(leaked)
+            .into();
+        let ctx = ReqCtx {
+            auth_token_hash: None,
+            read_only_token_hash: None,
+            cors_origins: Vec::new(),
+            recall_config: None,
+            extraction_config: None,
+            host_guard: Default::default(),
+            store_id: String::new(),
+            embed_warmer: Default::default(),
+        };
+        let resp = route(uteke, &ctx, &mut req);
+        let status = resp.status_code().0;
+        let bytes = resp.into_reader().into_inner();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    fn app() -> Mutex<Uteke> {
+        Mutex::new(Uteke::open_with_backend(":memory:", None).expect("open without embedder"))
+    }
+
+    #[test]
+    fn a_value_forgotten_as_wrong_is_refused_with_409() {
+        let u = app();
+        let text = "The server port is 9999";
+        let (s, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": text}).to_string(),
+        );
+        assert_eq!(s, 200, "{body}");
+        let id = body["id"].as_str().unwrap().to_string();
+
+        let (s, body) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={id}&reason=wrong%3A+it+is+8767"),
+            "",
+        );
+        assert_eq!(s, 200, "{body}");
+
+        // case and spacing do not matter
+        let again = serde_json::json!({"content": "the  SERVER port is 9999"}).to_string();
+        let (s, body) = call(&u, Method::Post, "/remember", &again);
+        assert_eq!(s, 409, "{body}");
+        assert_eq!(body["error"], "rejected_value");
+        assert_eq!(body["reason"], "wrong: it is 8767");
+        assert!(
+            !body.to_string().contains("9999"),
+            "the value is not echoed: {body}"
+        );
+
+        let import = serde_json::json!({"content": format!("{{\"content\":\"{text}\"}}\n{{\"content\":\"a new fact\"}}\n")}).to_string();
+        let (s, body) = call(&u, Method::Post, "/import", &import);
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(
+            (
+                body["imported"].as_u64(),
+                body["rejected_tombstone"].as_u64()
+            ),
+            (Some(1), Some(1))
+        );
+    }
+
+    /// #1598 (Amendment 3): caller validity goes into the columns on
+    /// `/remember` and `PUT /memory`, validated, 400 otherwise.
+    #[test]
+    fn remember_and_update_store_validity_in_the_columns() {
+        let u = app();
+        let post = |body: serde_json::Value| call(&u, Method::Post, "/remember", &body.to_string());
+        let (s, body) = post(serde_json::json!({
+            "content": "the office is in Bandung",
+            "valid_from": "2025-01-01T00:00:00Z",
+            "valid_until": "2026-01-01T00:00:00Z",
+        }));
+        assert_eq!(s, 200, "{body}");
+        let id = body["id"].as_str().unwrap().to_string();
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_from.unwrap().to_rfc3339(),
+            "2025-01-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2026-01-01T00:00:00+00:00"
+        );
+        // The metadata copy stays for one release.
+        assert_eq!(m.metadata["valid_from"], "2025-01-01T00:00:00Z");
+
+        for bad in [
+            serde_json::json!({"content": "a", "valid_from": "yesterday"}),
+            serde_json::json!({"content": "b", "valid_until": "2030"}),
+            serde_json::json!({"content": "c", "valid_from": "2027-01-01T00:00:00Z", "valid_until": "2026-01-01T00:00:00Z"}),
+        ] {
+            let (s, body) = post(bad.clone());
+            assert_eq!(s, 400, "{bad}: {body}");
+        }
+        assert_eq!(
+            u.lock().unwrap().count_active(None).unwrap(),
+            1,
+            "a refused write stores nothing"
+        );
+
+        let put = |b: serde_json::Value| call(&u, Method::Put, "/memory", &b.to_string());
+        let (s, body) = put(serde_json::json!({"id": id, "valid_until": "2027-06-01T00:00:00Z"}));
+        assert_eq!(s, 200, "{body}");
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2027-06-01T00:00:00+00:00"
+        );
+        assert_eq!(
+            m.valid_from.unwrap().to_rfc3339(),
+            "2025-01-01T00:00:00+00:00"
+        );
+
+        let (s, _) = put(serde_json::json!({"id": id, "valid_until": "2024-01-01T00:00:00Z"}));
+        assert_eq!(s, 400, "an end before the stored start");
+        let (s, _) = put(serde_json::json!({"id": id, "valid_from": "nope"}));
+        assert_eq!(s, 400);
+        let (s, _) = put(
+            serde_json::json!({"id": uuid::Uuid::new_v4().to_string(), "valid_from": "2025-01-01T00:00:00Z"}),
+        );
+        assert_eq!(s, 404);
+
+        // A field the update refuses leaves the validity as it was: it is
+        // written only after the other fields went through.
+        let (s, body) = put(serde_json::json!({
+            "id": id,
+            "valid_until": "2028-01-01T00:00:00Z",
+            "importance": 5.0
+        }));
+        assert_eq!(s, 400, "{body}");
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2027-06-01T00:00:00+00:00",
+            "a refused update must not move valid_until"
+        );
+        // The same request with a valid importance writes both.
+        let (s, body) = put(serde_json::json!({
+            "id": id,
+            "valid_until": "2028-01-01T00:00:00Z",
+            "importance": 0.9
+        }));
+        assert_eq!(s, 200, "{body}");
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2028-01-01T00:00:00+00:00"
+        );
+        assert!((m.importance - 0.9).abs() < 1e-9);
+    }
+
+    /// #1598 (Amendment 3): `at` on `/list` includes rows deprecated after
+    /// the instant, with no extra parameter; after it they are gone.
+    #[test]
+    fn list_at_includes_rows_deprecated_after_the_instant() {
+        let u = app();
+        let (_, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": "the port is 8080"}).to_string(),
+        );
+        let id = body["id"].as_str().unwrap().to_string();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let between = chrono::Utc::now().to_rfc3339();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        let (s, _) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={id}&reason=outdated"),
+            "",
+        );
+        assert_eq!(s, 200);
+        let list = |at: &str| {
+            call(
+                &u,
+                Method::Post,
+                "/list",
+                &serde_json::json!({"at": at}).to_string(),
+            )
+            .1
+        };
+        let then = list(&between);
+        assert_eq!(then.as_array().unwrap().len(), 1, "{then}");
+        assert_eq!(then[0]["id"], id.as_str());
+        let now = chrono::Utc::now().to_rfc3339();
+        assert!(list(&now).as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_and_room_remember_answer_409_too() {
+        let u = app();
+        let (_, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": "Max upload is 1 MB"}).to_string(),
+        );
+        let wrong = body["id"].as_str().unwrap().to_string();
+        call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={wrong}&reason=wrong"),
+            "",
+        );
+        let (_, body) = call(
+            &u,
+            Method::Post,
+            "/remember",
+            &serde_json::json!({"content": "other"}).to_string(),
+        );
+        let other = body["id"].as_str().unwrap().to_string();
+
+        let put = serde_json::json!({"id": other, "content": "max upload is 1 mb"}).to_string();
+        let (s, body) = call(&u, Method::Put, "/memory", &put);
+        assert_eq!(
+            (s, body["error"].as_str()),
+            (409, Some("rejected_value")),
+            "{body}"
+        );
+
+        call(
+            &u,
+            Method::Post,
+            "/room/create",
+            &serde_json::json!({"room_id": "r1"}).to_string(),
+        );
+        let rr = serde_json::json!({"room_id": "r1", "content": "Max upload is 1 MB"}).to_string();
+        let (s, body) = call(&u, Method::Post, "/room/remember", &rr);
+        assert_eq!(
+            (s, body["error"].as_str()),
+            (409, Some("rejected_value")),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_forget_leaves_the_value_writable_and_import_unchanged() {
+        let u = app();
+        let text = serde_json::json!({"content": "temporary note"}).to_string();
+        let (_, body) = call(&u, Method::Post, "/remember", &text);
+        let id = body["id"].as_str().unwrap().to_string();
+        let (s, _) = call(
+            &u,
+            Method::Delete,
+            &format!("/forget?id={id}&reason=outdated"),
+            "",
+        );
+        assert_eq!(s, 200);
+        let (s, body) = call(&u, Method::Post, "/remember", &text);
+        assert_eq!(s, 200, "{body}");
+
+        let import = serde_json::json!({"content": "{\"content\":\"plain\"}\n"}).to_string();
+        let (_, body) = call(&u, Method::Post, "/import", &import);
+        assert!(body.get("rejected_tombstone").is_none(), "{body}");
     }
 }

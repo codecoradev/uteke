@@ -148,7 +148,10 @@ impl crate::Uteke {
         // be deprecated on the next contradiction check. Non-fatal.
         if contradiction.contradicted {
             if let Some(ref deprecated_id) = contradiction.deprecated_id {
-                if let Err(e) = self.store.deprecate(deprecated_id) {
+                // With a reason, so the deprecation leaves a `deprecated`
+                // event next to the `consolidated` one above (#1595).
+                let reason = format!("contradiction: replaced by {id}");
+                if let Err(e) = self.store.deprecate_with_reason(deprecated_id, &reason) {
                     tracing::warn!(
                         "Failed to deprecate {deprecated_id} after contradiction (new id={id}): {e}. \
                          New memory is safe. Old memory may be deprecated on next check."

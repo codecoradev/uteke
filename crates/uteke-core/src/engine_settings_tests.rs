@@ -236,6 +236,8 @@ mod engine {
         e.recall.jaccard_weight = 0.25;
         e.dream.contradict_max_memories = 7;
         e.lifecycle.deprecated_ttl_days = 11;
+        e.capture.enabled = true;
+        e.capture.interval_minutes = 5;
         e.embed_fallback.api_key = "k".into();
         e.embed_fallback.base_url = "https://example.test".into();
         e.embed_fallback.model = "m".into();
@@ -243,6 +245,8 @@ mod engine {
         assert_eq!(u.jaccard_weight, 0.25);
         assert_eq!(u.dream_config.contradict_max_memories, 7);
         assert_eq!(u.lifecycle_config().deprecated_ttl_days, 11);
+        assert!(u.capture_settings().enabled);
+        assert_eq!(u.capture_settings().interval_minutes, 5);
         assert_eq!(u.fallback_settings.base_url, "https://example.test");
     }
 

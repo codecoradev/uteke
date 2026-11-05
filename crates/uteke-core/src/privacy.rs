@@ -95,6 +95,9 @@ pub struct PrivacyConfig {
     pub mode: PrivacyMode,
     /// Values matching any of these regexes are kept as they are.
     pub allowlist: Vec<Regex>,
+    /// Keep a rejected-value tombstone as a hash only: no preview of the
+    /// forgotten text (#1669). Off by default.
+    pub tombstone_hash_only: bool,
 }
 
 /// `[privacy]` in `uteke.toml`.
@@ -105,6 +108,9 @@ pub struct PrivacySettings {
     pub mode: Option<String>,
     /// Regexes; a value matching any of them is kept as it is.
     pub allowlist: Vec<String>,
+    /// Keep a preview (the first 120 characters, filtered) with a
+    /// rejected-value tombstone. `false` keeps the hash only. Default `true`.
+    pub tombstone_preview: Option<bool>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -124,6 +130,7 @@ impl PrivacyConfig {
                 None => PrivacyMode::default(),
             },
             allowlist: compile_allowlist(&settings.allowlist)?,
+            tombstone_hash_only: settings.tombstone_preview == Some(false),
         })
     }
 }
@@ -165,7 +172,11 @@ fn config_or_default(settings: &PrivacySettings) -> PrivacyConfig {
             }
         })
         .collect();
-    PrivacyConfig { mode, allowlist }
+    PrivacyConfig {
+        mode,
+        allowlist,
+        tombstone_hash_only: settings.tombstone_preview == Some(false),
+    }
 }
 
 /// Content and metadata ready to store, plus what the filter did.
@@ -241,6 +252,25 @@ impl PrivacyConfig {
             metadata: with_redaction_flags(metadata_out, &redactions),
             redactions,
         })
+    }
+
+    /// Mask a free-text note that is kept after a secret may have been typed
+    /// into it (a tombstone's reason or preview). Never refuses: `strict`
+    /// masks here too, since the forget itself must go through. `off` keeps
+    /// the text as given. Text the filter cannot process is withheld.
+    pub fn mask_note(&self, text: &str) -> String {
+        if self.mode == PrivacyMode::Off {
+            return text.to_string();
+        }
+        let redact = PrivacyConfig {
+            mode: PrivacyMode::Redact,
+            allowlist: self.allowlist.clone(),
+            tombstone_hash_only: self.tombstone_hash_only,
+        };
+        redact
+            .mask_text(text)
+            .map(|(t, _)| t)
+            .unwrap_or_else(|_| "[withheld]".to_string())
     }
 
     /// Filter one free-text field (the `source` of a memory). Same modes as
@@ -1537,6 +1567,7 @@ mod tests {
         PrivacyConfig {
             mode,
             allowlist: Vec::new(),
+            ..Default::default()
         }
     }
 
@@ -1657,6 +1688,7 @@ mod tests {
         let ok = PrivacyConfig::from_settings(&PrivacySettings {
             mode: Some("Strict".into()),
             allowlist: vec!["^dev-".into()],
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(ok.mode, PrivacyMode::Strict);
@@ -1665,6 +1697,7 @@ mod tests {
             PrivacyConfig::from_settings(&PrivacySettings {
                 mode: Some("maybe".into()),
                 allowlist: vec![],
+                ..Default::default()
             })
             .is_err()
         );
@@ -1674,13 +1707,26 @@ mod tests {
         let c = config_or_default(&PrivacySettings {
             mode: Some("none".into()),
             allowlist: vec!["^dev-".into()],
+            ..Default::default()
         });
         assert_eq!((c.mode, c.allowlist.len()), (PrivacyMode::Redact, 1));
         let c = config_or_default(&PrivacySettings {
             mode: Some("strict".into()),
             allowlist: vec!["(".into(), "^dev-".into()],
+            ..Default::default()
         });
         assert_eq!((c.mode, c.allowlist.len()), (PrivacyMode::Strict, 1));
+        assert!(!c.tombstone_hash_only, "previews are kept by default");
+        let hash_only = PrivacySettings {
+            tombstone_preview: Some(false),
+            ..Default::default()
+        };
+        assert!(config_or_default(&hash_only).tombstone_hash_only);
+        assert!(
+            PrivacyConfig::from_settings(&hash_only)
+                .unwrap()
+                .tombstone_hash_only
+        );
     }
 
     #[test]

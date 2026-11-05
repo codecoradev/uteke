@@ -87,6 +87,86 @@ impl crate::Uteke {
             .recall_room_scoped(room_id, author, namespace, limit)
     }
 
+    /// [`Self::recall_room`] as the room was at `point_in_time` (#1598): the
+    /// memories that existed then, those deprecated after it included, oldest
+    /// link first. `limit` 0 = all.
+    pub fn recall_room_at_time(
+        &self,
+        room_id: &str,
+        author: Option<&str>,
+        limit: usize,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Memory>, Error> {
+        let mut memories: Vec<Memory> = self
+            .store
+            .room_memories_at_time(room_id, author, point_in_time)?
+            .into_iter()
+            .filter(|m| crate::operations::memory_existed_at(m, point_in_time))
+            .collect();
+        if limit > 0 {
+            memories.truncate(limit);
+        }
+        Ok(memories)
+    }
+
+    /// [`Self::recall_room_semantic`] as the room was at `point_in_time`
+    /// (#1598). The live room memories are ranked as usual and filtered by
+    /// [`crate::operations::memory_existed_at`]; the room memories deprecated
+    /// after the instant (their vector left the index) are scored by cosine
+    /// similarity against the embedding kept in the row, with the hot boost,
+    /// and merged by score. `limit` 0 = all.
+    pub fn recall_room_semantic_at_time(
+        &self,
+        room_id: &str,
+        query: &str,
+        limit: usize,
+        author: Option<&str>,
+        min_score: f32,
+        point_in_time: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<SearchResult>, Error> {
+        let mut results: Vec<SearchResult> = self
+            .recall_room_semantic_filtered(room_id, query, 0, author, min_score, None)?
+            .into_iter()
+            .filter(|sr| crate::operations::memory_existed_at(&sr.memory, point_in_time))
+            .collect();
+        let retired: Vec<Memory> = self
+            .store
+            .room_memories_at_time(room_id, author, point_in_time)?
+            .into_iter()
+            .filter(|m| m.deprecated && !m.embedding.is_empty())
+            .filter(|m| crate::operations::memory_existed_at(m, point_in_time))
+            .collect();
+        if !retired.is_empty() {
+            let query_embedding = self.embed(query)?;
+            for memory in retired {
+                if memory.embedding.len() != query_embedding.len() {
+                    continue;
+                }
+                let similarity =
+                    crate::consolidate::cosine_similarity(&query_embedding, &memory.embedding)
+                        .clamp(0.0, 1.0);
+                let score = self.hot_boosted(&memory, similarity);
+                if min_score > 0.0 && score < min_score {
+                    continue;
+                }
+                results.push(SearchResult {
+                    memory,
+                    score,
+                    similarity: Some(similarity),
+                });
+            }
+        }
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        if limit > 0 {
+            results.truncate(limit);
+        }
+        Ok(results)
+    }
+
     /// Semantic recall within room context using hybrid search (vector + FTS5).
     ///
     /// Returns room memories ranked by relevance to query, with scores.
@@ -192,7 +272,11 @@ impl crate::Uteke {
 
                 for mem in missing_memories {
                     let score = crate::consolidate::cosine_similarity(&query_emb, &mem.embedding);
-                    results.push(SearchResult { memory: mem, score });
+                    results.push(SearchResult {
+                        memory: mem,
+                        score,
+                        similarity: Some(score.clamp(0.0, 1.0)),
+                    });
                 }
             }
         }

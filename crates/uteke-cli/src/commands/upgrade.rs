@@ -300,7 +300,53 @@ pub fn run(yes: bool) -> Result<(), String> {
 
     println!("[INFO] Update complete. ({current_version} → {latest_version})");
 
+    // Connected agent hooks (#1641): the NEW binary renders the entries, so it
+    // runs the check that `uteke doctor` reports.
+    for hint in hook_hints(&install_dir.join(BINARY_NAME)) {
+        println!("{hint}");
+    }
+
     Ok(())
+}
+
+/// Hints for connected agents whose hooks differ from what `binary` installs,
+/// from its `hook-status` output. Empty when every agent is up to date, none
+/// is connected, or the binary has no `hook-status` (releases before #1641).
+fn hook_hints(binary: &std::path::Path) -> Vec<String> {
+    let Ok(out) = std::process::Command::new(binary)
+        .arg("hook-status")
+        .env("UTEKE_NO_UPDATE_CHECK", "1")
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    serde_json::from_slice(&out.stdout)
+        .map(|v| hints_from_status(&v))
+        .unwrap_or_default()
+}
+
+/// One line per agent in a `hook-status` array whose state is not `ok`.
+fn hints_from_status(status: &serde_json::Value) -> Vec<String> {
+    let Some(agents) = status.as_array() else {
+        return Vec::new();
+    };
+    agents
+        .iter()
+        .filter_map(|a| {
+            let agent = a["agent"].as_str()?;
+            let why = match a["state"].as_str()? {
+                "stale" => "this version installs different hooks",
+                "missing" => "some of its hooks were removed",
+                _ => return None,
+            };
+            Some(format!(
+                "[WARN] {agent}: {why}; run `uteke connect {agent}` to refresh them."
+            ))
+        })
+        .collect()
 }
 
 /// Run `<binary> --version`, retrying while the kernel reports the freshly
@@ -863,6 +909,44 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn hook_hints_name_stale_and_missing_agents_only() {
+        let status = serde_json::json!([
+            {"agent": "claude", "state": "stale"},
+            {"agent": "codex", "state": "ok"},
+            {"agent": "cursor", "state": "missing"},
+        ]);
+        assert_eq!(
+            hints_from_status(&status),
+            [
+                "[WARN] claude: this version installs different hooks; run `uteke connect claude` to refresh them.",
+                "[WARN] cursor: some of its hooks were removed; run `uteke connect cursor` to refresh them.",
+            ]
+        );
+        assert!(hints_from_status(&serde_json::json!([])).is_empty());
+        assert!(hints_from_status(&serde_json::json!({"error": "x"})).is_empty());
+    }
+
+    #[test]
+    fn hook_hints_read_the_new_binary_and_stay_silent_when_it_cannot_tell() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let stale = script(
+            "stale",
+            r#"[ "$1" = hook-status ] && echo '[{"agent":"claude","state":"stale"}]'"#,
+        );
+        assert_eq!(hook_hints(&stale).len(), 1);
+        // A release without `hook-status` exits non-zero: nothing is printed.
+        let old = script("old", "echo 'unrecognized subcommand' >&2; exit 2");
+        assert!(hook_hints(&old).is_empty());
+        assert!(hook_hints(&dir.path().join("absent")).is_empty());
+    }
 
     #[test]
     fn parse_checksum_requires_exact_filename() {

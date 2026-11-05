@@ -170,6 +170,36 @@ CREATE TABLE IF NOT EXISTS room_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_room_documents_room ON room_documents(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_documents_slug ON room_documents(doc_slug);
+
+-- v23: rejected-value tombstones (#1597). Not touched by prune, TTL or forget.
+CREATE TABLE IF NOT EXISTS rejected_values (
+    hash       TEXT PRIMARY KEY,
+    memory_id  TEXT,
+    reason     TEXT NOT NULL,
+    preview    TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rejected_values_memory ON rejected_values(memory_id);
+
+-- v24: raw observation capture queue (#1466). Turns wait here, after the
+-- privacy filter, until an extraction run turns them into memories.
+CREATE TABLE IF NOT EXISTS observations (
+    id           TEXT PRIMARY KEY,
+    session_id   TEXT NOT NULL,
+    seq          INTEGER NOT NULL,
+    role         TEXT NOT NULL,
+    content      TEXT NOT NULL,
+    content_hash TEXT NOT NULL UNIQUE,
+    source       TEXT,
+    captured_at  TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    claimed_at   TEXT,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    finished_at  TEXT,
+    batch_id     TEXT,
+    namespace    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_observations_status ON observations(status, session_id);
 "#;
 
 /// Indexes that depend on migration-added columns.
@@ -179,15 +209,23 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);",
     "CREATE INDEX IF NOT EXISTS idx_memories_deprecated ON memories(deprecated);",
     "CREATE INDEX IF NOT EXISTS idx_memories_slug ON memories(slug) WHERE slug IS NOT NULL;",
+    // The session view matches `source` by equality and range (#1670).
+    "CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);",
+    // After the observations column check: an early build lacked batch_id.
+    "CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 22;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 25;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
     pub conn: Connection,
 }
+
+/// `(namespace, content hash)` -> `(id, deprecated)` of the stored memories
+/// (#1633, [`Store::content_hashes_with_state`]).
+pub type ContentHashes = std::collections::HashMap<(String, String), (String, bool)>;
 
 impl Store {
     /// Open or create a store at the given path.
@@ -209,6 +247,52 @@ impl Store {
 
         let store = Self { conn };
         store.init_schema()?;
+        Ok(store)
+    }
+
+    /// Open an existing store **read-only** (#1667): `SQLITE_OPEN_READ_ONLY`, no
+    /// WAL pragma, no schema migration, nothing created.
+    ///
+    /// Fails when the file does not exist or its schema is not the one this
+    /// build expects, so a reader never migrates a store behind a writer's back.
+    /// An older store is brought up by running any normal `uteke` command once.
+    pub fn open_read_only(path: &str) -> Result<Self, Error> {
+        use rusqlite::OpenFlags;
+
+        if path == ":memory:" || !std::path::Path::new(path).is_file() {
+            return Err(Error::db_msg(format!(
+                "No store at {path}; run any `uteke` command once to create it"
+            )));
+        }
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY
+                | OpenFlags::SQLITE_OPEN_URI
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| Error::db("Failed to open database read-only", e))?;
+        conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA query_only=ON;")
+            .map_err(|e| Error::db("Failed to configure read-only connection", e))?;
+
+        let store = Self { conn };
+        let found = store.schema_version().ok();
+        match found {
+            Some(v) if v == CURRENT_SCHEMA_VERSION => {}
+            Some(v) if v > CURRENT_SCHEMA_VERSION => {
+                return Err(Error::db_msg(format!(
+                    "The store schema (version {v}) is newer than this build understands \
+                     (version {CURRENT_SCHEMA_VERSION}); upgrade uteke"
+                )));
+            }
+            other => {
+                let found = other.map_or_else(|| "none".to_string(), |v| v.to_string());
+                return Err(Error::db_msg(format!(
+                    "The store schema (version {found}) is older than this build expects \
+                     (version {CURRENT_SCHEMA_VERSION}); run any normal `uteke` command once \
+                     (for example `uteke stats`) to bring it up to date, then try again"
+                )));
+            }
+        }
         Ok(store)
     }
 
@@ -306,6 +390,83 @@ impl Store {
             .map_err(|e| Error::db("get source hash", e))
     }
 
+    /// The hash of the CURRENT content of every active memory, mapped to its
+    /// id, optionally in one namespace (#1608). An import that defers
+    /// embedding has no vector for the cosine duplicate check, so it skips
+    /// exact copies with this map. Hashed from the content rather than read
+    /// from `source_hash`, so a row edited outside the API still matches
+    /// what it holds now.
+    pub fn active_content_hashes(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<std::collections::HashMap<String, String>, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT content, id FROM memories
+                 WHERE deprecated = 0 AND (?1 IS NULL OR namespace = ?1)",
+            )
+            .map_err(|e| Error::db("prepare active content hashes", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |row| {
+                Ok((
+                    crate::provenance::content_hash(&row.get::<_, String>(0)?),
+                    row.get::<_, String>(1)?,
+                ))
+            })
+            .map_err(|e| Error::db("query active content hashes", e))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read active content hashes", e))
+    }
+
+    /// The hash of the current content of every memory, live or soft-deleted,
+    /// keyed by `(namespace, hash)` and mapped to `(id, deprecated)`,
+    /// optionally in one namespace (#1633). Where a live and a deprecated row
+    /// share a key, the live one wins. Import uses it to skip exact copies of
+    /// rows that carry an id, and to leave soft-deleted content forgotten.
+    pub fn content_hashes_with_state(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<ContentHashes, Error> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT namespace, content, id, deprecated FROM memories
+                 WHERE (?1 IS NULL OR namespace = ?1)
+                 ORDER BY deprecated DESC",
+            )
+            .map_err(|e| Error::db("prepare content hashes", e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![namespace], |row| {
+                Ok((
+                    (
+                        row.get::<_, String>(0)?,
+                        crate::provenance::content_hash(&row.get::<_, String>(1)?),
+                    ),
+                    (row.get::<_, String>(2)?, row.get::<_, i64>(3)? != 0),
+                ))
+            })
+            .map_err(|e| Error::db("query content hashes", e))?;
+        // Deprecated rows come first, so a live row with the same key
+        // overwrites them.
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("read content hashes", e))
+    }
+
+    /// The namespace, content and soft-delete state of the memory with this
+    /// id, live or not (#1633).
+    pub fn content_and_state(&self, id: &str) -> Result<Option<(String, String, bool)>, Error> {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row(
+                "SELECT namespace, content, deprecated FROM memories WHERE id = ?1",
+                rusqlite::params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, i64>(2)? != 0)),
+            )
+            .optional()
+            .map_err(|e| Error::db("get content and state", e))
+    }
+
     /// Set author type on a memory (#1083): "human" or "agent".
     /// Returns false if the memory does not exist.
     pub fn set_author_type(&self, id: &str, author_type: &str) -> Result<bool, Error> {
@@ -336,8 +497,33 @@ impl Store {
         Ok(rows > 0)
     }
 
+    /// Write the caller's validity interval (#1598) on a live memory; `None`
+    /// on a side keeps the stored value. Returns false when no live memory
+    /// has this id (a deprecated row's `valid_until` is deprecation
+    /// bookkeeping and is not touched).
+    pub fn set_validity(
+        &self,
+        id: &str,
+        validity: &crate::memory::types::Validity,
+    ) -> Result<bool, Error> {
+        let rows = self
+            .conn
+            .execute(
+                "UPDATE memories SET valid_from = COALESCE(?1, valid_from), \
+                 valid_until = COALESCE(?2, valid_until) \
+                 WHERE id = ?3 AND deprecated = 0",
+                rusqlite::params![
+                    validity.from.map(|t| t.to_rfc3339()),
+                    validity.until.map(|t| t.to_rfc3339()),
+                    id
+                ],
+            )
+            .map_err(|e| Error::db("set validity", e))?;
+        Ok(rows > 0)
+    }
+
     /// Recalculate importance for all memories.
-    /// importance = 0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
+    /// importance =0.3*access_score + 0.3*recency_score + 0.2*connectivity + 0.2*is_pinned
     pub fn recompute_importance(&self) -> Result<usize, Error> {
         // Only the columns the formula needs: the old `load_all` pulled every
         // embedding blob into memory for no reason (#1332). Same predicate as
@@ -1593,6 +1779,44 @@ mod tests {
         store.touch_recall_batch(&[]).unwrap();
     }
 
+    /// #1670: a v24 store (no `idx_memories_source`) upgrades in place, keeps
+    /// its data and ends with the index, which the session lookup uses.
+    #[test]
+    fn test_migration_v25_adds_source_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v24.db");
+        let path = path.to_str().unwrap();
+        {
+            let store = Store::open(path).unwrap();
+            store
+                .insert(&make_test_memory("old", "legacy memory", &[]))
+                .unwrap();
+            store
+                .conn
+                .execute_batch(
+                    "DROP INDEX idx_memories_source;
+                     UPDATE schema_version SET version = 24;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert!(store.get_by_id("old").unwrap().is_some());
+        let n: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_memories_source'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        // Reopening at the current version is a no-op.
+        drop(store);
+        assert!(Store::open(path).is_ok());
+    }
+
     /// #1337: a v20 store (no `recall_count`) upgrades in place and keeps its
     /// data; the new column starts at 0.
     #[test]
@@ -2261,9 +2485,30 @@ mod tests {
             .insert(&make_temporal_memory("ok", "active", t0, None, None, false))
             .unwrap();
 
+        // Deprecated before the instant: gone then.
+        store
+            .conn
+            .execute(
+                "UPDATE memories SET deprecated_at = ?1 WHERE id = 'dep'",
+                rusqlite::params!["2026-03-01T00:00:00+00:00"],
+            )
+            .unwrap();
         let results = store.list_at_time(None, None, 100, 0, t1).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "ok");
+
+        // Deprecated after the instant (#1598): it existed then.
+        let t_early = chrono::DateTime::parse_from_rfc3339("2026-02-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut ids: Vec<String> = store
+            .list_at_time(None, None, 100, 0, t_early)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["dep".to_string(), "ok".to_string()]);
     }
 
     #[test]
@@ -2603,5 +2848,59 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fk_count, 0, "timeline_events must have no FK after v20");
+    }
+
+    // --- read-only open (#1667) ---
+
+    #[test]
+    fn open_read_only_does_not_touch_an_older_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE schema_version (version INTEGER NOT NULL, applied_at TEXT NOT NULL);
+                 INSERT INTO schema_version VALUES (19, '2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        let err = Store::open_read_only(path.to_str().unwrap())
+            .err()
+            .expect("an older schema is refused")
+            .to_string();
+        assert!(err.contains("run any normal `uteke` command"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "file changed");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "stray files: {names:?}");
+    }
+
+    #[test]
+    fn open_read_only_refuses_a_missing_store_without_creating_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("none.db");
+        assert!(Store::open_read_only(path.to_str().unwrap()).is_err());
+        assert!(!path.exists());
+        assert!(Store::open_read_only(":memory:").is_err());
+    }
+
+    #[test]
+    fn open_read_only_handle_cannot_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cur.db");
+        let path = path.to_str().unwrap();
+        drop(Store::open(path).unwrap());
+        let ro = Store::open_read_only(path).expect("current schema opens");
+        assert!(ro.conn.execute_batch("CREATE TABLE t (x INTEGER)").is_err());
+        assert!(
+            ro.conn
+                .execute("UPDATE memories SET pinned = 1", [])
+                .is_err()
+        );
+        assert!(ro.pin("nope").is_err());
+        assert_eq!(ro.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     }
 }

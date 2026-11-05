@@ -6,12 +6,66 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
-## v0.18.0 - Agent-Operable Memory Plumbing `Released 2026-09-13`
+## v0.23.0 — Capture, Honest Time Travel, Viewer, Agent Hooks `Release 2026-11-05`
+
+- **Raw capture with deferred extraction (#1466, schema v24)** — `uteke capture` queues conversation turns with no LLM call; `extract-queue run`, or `uteke-serve` on a schedule with backoff, turns them into memories on a budget. LAB `POST /capture`, `GET /capture/status`, MCP `uteke_capture`. Opt-in via `[capture] enabled`
+- **Rejected-value tombstones (#1597, schema v23)** — `forget --reason wrong` records a tombstone; every write path refuses that value again until `uteke tombstone remove`
+- **Fenced MCP output (#1599)** — read tools wrap stored text in `<uteke-stored-data>` so agents treat recalled memories as data, not instructions
+- **Store first, embed later (#1608)** — `import --defer-embed`, then `repair --reembed --limit` in portions
+- Removed: the `uteke hook` shell script (#1623)
+- **Honest time travel (#1598, Amendment 3 of the core contract)** — `at` also returns memories deprecated after that instant; `valid_from` / `valid_until` are accepted on write and update and stored in the columns `at` reads
+- **`similarity` and `min_trust` on recall (#1650, #1651)** — `strict` now compares the vector-leg cosine, so it works under the default fusion; `min_trust` and `trust_tier` expose the provenance tier
+- **`uteke view` (#1470)** — a read-only browser viewer on loopback with a per-launch token, plus a session timeline for captured conversations
+- **`uteke connect` / `disconnect` (#1465)** — lifecycle hooks for Claude Code, Codex and Cursor, and the memory-provider plugin for Pi and Hermes; `--absolute-path` pins the binary
+- **Cloud-export import (#1632, #1633, #1634)** — documents and rooms come across, row ids and fields are kept, `defer_embedding` on `POST /import`, bodies up to 64 MiB
+- **`uteke namespace migrate --map` (#1427 phase 3)** — moves whole namespaces into rooms, tags, author or source, with a dry run and an export first
+- **Hardening from a Cora scan (#1663–#1672)** — capture extraction in chunks and outside the store lock, owner-only exports, a read-only viewer store, and an explicit opt-in before conversations reach an LLM
+
+## Next
+
+- **Namespaces (#1427 phases 4–5)** — single-namespace mode (`ns:<x>` tags), then removing the namespace CRUD commands; each needs a contract issue to uteke-cloud first
+- **Benchmarks and the Atlas (#1600)** — one LoCoMo status everywhere, then a re-pin request to the Atlas report
+
+## v0.22.0–v0.22.1 — Privacy Everywhere, Full-Store Portability, Keyless Signing `✓ Released 2026-10-30`
+
+- **Privacy filter on every write field (#1464)** — tags, metadata, `source` and consolidation output are masked before embedding; `[privacy] mode = redact | strict | off`, `redacted` / `secret_detected` on every surface
+- **`author` on every write path (#1427)** — who wrote a memory, with or without a room
+- **Full-store moves (#1587, #1588, #1589)** — `import --full` restores documents with their vectors, room links travel with export/import, `uteke room link` adds an existing memory to a room
+- **One behaviour across CLI, HTTP and MCP (#1439, #1514–#1518)** — shared recall/list/remember/forget rules, default limit 10, server embeds outside the store lock
+- **Keyless-signed upgrades (#1610)** — `uteke upgrade` verifies the cosign bundle of the release; minisign removed
+- **Benchmark receipts standard (#1468)**
+
+## v0.21.0–v0.21.1 — Shared Request Types, Signed Checksums `✓ Released 2026-10-13–15`
+
+- **One typed request per operation (#1343)** — parsing, defaults, caps and validation shared by HTTP, MCP and the CLI; the API registry drives routing and the read-only gate (#1344)
+- **`recall_count` apart from `access_count` (#1337, schema v21)** — a recall is counted once, only for the memories it returns
+- **Read-only tokens can use MCP (#1441)**; `uteke_room_recall` reaches parity with `uteke_recall` (#1335)
+- **Signed release checksums (#1327)** and a stricter `uteke upgrade` (stable releases only, no downgrade)
+- **Namespaces deprecated (#1427, phase 1)** — organise with rooms, tags and author
+- CLI log lines go to stderr, so `--json` output stays parseable (#1461)
+
+## v0.20.0–v0.20.1 — Hardening Pass `✓ Released 2026-10-08–09`
+
+- **Security defaults** — CORS off by default, Host-header check against DNS rebinding (#1326), list limits capped, project-local `uteke.toml` cannot set credentials or endpoints
+- **Vector index reliability** — one module owns index writes (#1340), batched saves (#1322), sidecar consistency check (#1325), vecq compaction (#1324)
+- **Atomic document upsert (#1350)**; `GET /graph` speaks memory ids (#1370); `full_ids` on MCP list/recall (#1357)
+- `uteke-serve` honours the embedding configuration (#1399)
+
+## v0.19.0–v0.19.1 — Audit-Grade Timeline, CORE Contract `✓ Released 2026-09-29 – 2026-10-05`
+
+- **Timeline survives forget and deprecation (#1280, schema v20)**
+- **Verify/repair over HTTP and MCP (#1272)** — fix index desync without a restart
+- **Tier-tagged API registry and generated CORE contract (#1276)**; `GET /routes` (#1289)
+- **Budgeted context pack: `recall --pack` (#1281)**
+- Bundled skill ships in version lockstep with the CLI (#1274); Hermes plugin package committed (#1301)
+
+## v0.18.0–v0.18.1 — Agent-Operable Memory Plumbing `✓ Released 2026-09-13–15`
 
 - **Ingest date anchors (#1232/#1238)** - `remember --timestamp` + import timestamps; time-travel and audit no longer depend on ingest order
 - **Room lifecycle management (#1202/#1203)** - rename/update/move-memory across HTTP, CLI, and MCP (schema v19)
 - **Recall payload conformance tests (#1233/#1239)** - full-payload contract pinned across all surfaces
 - Fixes: dedup live-check (#1211), default min_score 0.0 (#1228), install.sh ORT libs (#1221), LoCoMo label mapping (#1222)
+- v0.18.1: `uteke upgrade` replaces the companion binaries and ORT libs (#1245), tokenless `GET /health` answers status only (#1252), HTTP writes reject unknown keys (#1251)
 
 ## v0.17.0 — Inspectable, Trustworthy Memory `✓ Released 2026-09-06`
 
@@ -23,7 +77,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 
 ## v0.16.0 — Fusion Default `✓ Released 2026-08-29`
 
-- **`fusion` is now the default recall strategy (#1123)** — weighted RRF of the vector and hybrid rankings; LongMemEval 500Q R@5 0.946 vs 0.854 hybrid (+9.2 pts), zero config needed
+- **`fusion` is now the default recall strategy (#1123)** — weighted RRF of the vector and hybrid rankings; LongMemEval 500Q R@5 0.946 vs 0.854 vector-only (+9.2 pts), zero config needed
 - Public benchmark page: dual-metric view (recall_any + strict recall_all) with comparison chart (#1141)
 - Full-release validation: 500Q pure-default run, binary built from the exact release SHA
 - Post-release fixes: `repair --reembed` handles NULL-embedding rows (#1146), CLA check bot allowlist (#1132), repair report reflects final index state (#1149)

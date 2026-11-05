@@ -62,7 +62,7 @@ uteke upgrade --yes
 |------|-------------|
 | `--yes` | Skip confirmation prompt |
 
-> **Note:** Renamed from `uteke update` in v0.7.0 to avoid conflict with `uteke doc update`. Verifies the cosign (Sigstore, keyless) signature of `checksums-sha256.txt` against roots built into the binary and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade, as does a release older than the installed version or a non-stable (pre-release) one; `uteke upgrade` installs only stable releases (see SECURITY.md). Only `uteke upgrade` checks the signature; `install.sh`, `install.ps1` and Homebrew do not. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
+> **Note:** Before v0.7.0 this command was called `uteke update`; that name now edits a memory in place. Verifies the cosign (Sigstore, keyless) signature of `checksums-sha256.txt` against roots built into the binary and then the archive's SHA-256 by default; a missing or invalid signature aborts the upgrade, as does a release older than the installed version or a non-stable (pre-release) one; `uteke upgrade` installs only stable releases (see SECURITY.md). Only `uteke upgrade` checks the signature; `install.sh`, `install.ps1` and Homebrew do not. Set `UTEKE_UPGRADE_SKIP_CHECKSUM=1` to skip both checks (not recommended).
 
 ## uteke remember
 
@@ -177,7 +177,9 @@ uteke list --at 2026-06-01T12:00:00Z   # Time-travel: list at point in time
 | `--category <cat>` | Filter by category |
 | `--limit <n>` | Max results (default: 10, at most 1000) |
 | `--offset <n>` | Skip first N results |
-| `--at <timestamp>` | Query memories at point in time (RFC3339) |
+| `--min-trust <tier>` | Lowest provenance tier to return: `human`, `agent`, `external` or `untrusted` (lowercase). Filters the tier (author_type + source_type) before `--limit`. `author_type` is self-declared, so this is a convenience filter, not a security boundary; it is not a trust state (#1651). Each result carries `trust_tier` in `--json` |
+| `--at <timestamp>` | Query memories at point in time (RFC3339), including those deprecated after it (#1598) |
+| `--history` | Deprecated, no effect: `--at` always includes memories deprecated after it. Needs `--at` |
 | `--json` | Output as JSON |
 
 ## uteke forget
@@ -208,6 +210,132 @@ uteke forget --tag stale --dry-run
 | `--all` | Delete all memories in namespace |
 | `--confirm` | Skip confirmation prompt |
 | `--dry-run` | Preview what would be deleted |
+| `--reason <text>` | Why the memory is forgotten (with an ID). `wrong` or `wrong: <note>` also rejects the value, see below |
+
+### Rejecting a wrong value (`--reason wrong`)
+
+Forgetting a memory does not stop the same text from being written again, by an
+agent, an import or a later extraction. When a memory is forgotten because it is
+**wrong**, say so:
+
+```bash
+uteke forget <id> --reason "wrong: the port is 8767" --confirm
+uteke supersede <old> <new> --reason wrong          # the old value is rejected
+```
+
+This records a tombstone: a hash of the text after normalisation (Unicode NFKC,
+letter case, whitespace and invisible characters do not matter). Every write
+refuses that text from then on: `remember`, room remember, `update`, `import`
+(the row is skipped and counted as `rejected_tombstone`), `import --full` and
+consolidation. The HTTP API answers `409 {"error": "rejected_value", "reason": ...}`,
+MCP a tool error starting with `rejected_value:`. The tombstone survives `prune`
+and is carried by `export --full`. A paraphrase is not caught. Any other reason
+(`--reason outdated`) is only kept on the forgotten memory.
+
+**What survives a forget as wrong (#1669).** The tombstone keeps the hash, the id of
+the memory, the date, the reason as you typed it and a preview (the first 120
+characters of the text), and all of it stays after the memory is pruned and travels in
+`export --full`. The reason and the preview pass the privacy filter first, so a secret
+in `wrong: the token is ...` is stored masked (also in `strict` mode, where the forget
+is never refused for it; with `[privacy] mode = "off"` they are kept as given). To keep
+no text at all, set `tombstone_preview = false` under `[privacy]`: new tombstones then
+hold the hash only (an empty preview), and the value is still refused. Tombstones
+recorded before the setting keep their preview; `uteke tombstone remove` drops one.
+
+## uteke capture / extract-queue
+
+Queue conversation turns now, turn them into memories later (#1466). Capture makes
+no LLM call and no network request (one SQLite insert per turn), so an agent hook
+can call it at the end of every session. Extraction runs when you choose, on a
+budget, one extractor call per session.
+
+```bash
+uteke capture --session sess-42 --role user "We moved billing to PostgreSQL"
+echo "Noted." | uteke capture --session sess-42 --role assistant
+uteke extract-queue status          # pending / extracting / done / failed
+uteke extract-queue run --budget 5  # extract up to 5 sessions now
+```
+
+- Capture is **off by default**: set `enabled = true` under `[capture]` in the global
+  `uteke.toml` (a project file cannot set it). See [Configuration](configuration.md#raw-capture-1466).
+- Roles are `user`, `assistant` and `tool`; a tool result is kept as a summary (its
+  first 2000 characters). The privacy filter runs before a turn is queued.
+- Capturing the same text from the same role in the same session again is a no-op.
+- A turn over `max_turn_bytes` (1 MiB) is refused, and so is any turn while the queue holds
+  `max_queue_turns` / `max_queue_bytes`. `status` shows the waiting bytes and warns from 80%
+  of a limit.
+- `run` extracts with the offline rules (no network) unless `[extraction] mode = "llm"`
+  is set: only that explicit mode sends the conversation turns to the LLM endpoint. An
+  API key alone does not (it may be there for `import --extract`). `run`, `uteke connect`
+  (when capture is on) and the `uteke-serve` schedule print or log one line saying which
+  extractor receives the turns (offline, or the endpoint host, never the key). Facts are stored like any other write (duplicate
+  check, rejected-value tombstones), tagged `capture`, with the source
+  `capture:<session>:<batch>`. An extractor error (rate limit, provider down)
+  stops the run and the session is retried next time; after `max_attempts` it is
+  marked failed. A session left mid-run by a crash is requeued after the lease.
+  A long session is extracted in chunks of `chunk_chars` (24000) characters, stored
+  as one batch; a provider refusal of the input size (HTTP 413, or a 4xx naming the context length) fails that
+  session only and the run goes on.
+- Done turns are deleted after `retention_days` (30).
+- `uteke-serve` extracts on its own every `interval_minutes` (60) when capture is
+  on, `budget_per_run` sessions per run, and doubles the wait after a run the
+  extractor stopped (up to 16 intervals). Over HTTP a turn is queued with
+  `POST /capture` and the counts read with `GET /capture/status`; over MCP with
+  the `uteke_capture` tool. Queueing is refused while capture is off (HTTP 409);
+  the status always answers.
+
+## uteke connect / disconnect
+
+Install the lifecycle hooks of an agent app (#1465): recall at session start,
+capture of each prompt and reply. Supported: `claude` (Claude Code), `codex`,
+`cursor`. For `pi` and `hermes`, whose hooks are a plugin, `connect` installs the
+memory-provider plugin (`uteke init <agent> --memory-provider`) and `disconnect`
+removes its files while they are unchanged.
+
+```bash
+uteke connect claude --dry-run   # what would be added; writes nothing
+uteke connect claude             # install or refresh
+uteke connect claude --absolute-path   # pin this binary's path instead of using PATH
+uteke disconnect claude          # remove exactly what connect added
+```
+
+By default the hook finds `uteke` through `PATH`, so a program named `uteke` in an earlier
+`PATH` directory would receive every prompt and reply. `--absolute-path` (the hook agents
+only, not `pi`/`hermes`) writes the running binary's path instead; `doctor` reports the
+install as stale when that file is gone, and `uteke connect <agent> --absolute-path`
+refreshes it. See [Claude Code](integrations/claude-code.md#which-uteke-runs-path-or-a-fixed-path).
+
+Each hook runs `uteke hook-run <event>` (hidden) through a guard that is a no-op
+when `uteke` is not on `PATH`; `hook-run` always exits 0 and logs errors to
+`~/.codecora/uteke/hook.log`. What was added is recorded in
+`~/.codecora/uteke/connect/<agent>.json`; the original file is backed up once to
+`<file>.uteke-bak`. `uteke doctor` reports hooks that a newer uteke would install
+differently, or that were removed. Capture hooks need `[capture] enabled = true`.
+Details: [Claude Code](integrations/claude-code.md), [Codex](integrations/codex.md),
+[Cursor](integrations/cursor.md).
+
+## uteke view
+
+Open the read-only browser viewer (#1470): memories, namespaces, rooms and health on
+a loopback page guarded by a per-launch token. Prints the URL; Ctrl+C stops it.
+
+```bash
+uteke view                 # http://127.0.0.1:8768/?token=...
+uteke view --port 9000     # 0 picks a free port
+```
+
+`--host` with a non-loopback address is refused unless `UTEKE_AUTH_TOKEN` is set.
+Read-only: only `GET`, only registry read routes, no CORS. Details:
+[Viewer](viewer.md).
+
+## uteke tombstone
+
+```bash
+uteke tombstone list                 # hash prefix, date, reason and the start of the text
+uteke tombstone remove <hash|id>     # allow the value again (8+ hash characters or the memory id)
+```
+
+`uteke promote <id>` (restoring the forgotten memory) also removes its tombstone.
 
 ## uteke consolidate
 
@@ -349,6 +477,44 @@ name), `merge` (move all memories to `--target`, the name vanishes), or
 `deprecate` (soft-delete — restorable via `uteke lifecycle`/promote, never
 hard-deleted). `--confirm` is required for `delete`.
 
+### uteke namespace migrate (#1427)
+
+Moves whole namespaces into `default`, carrying each namespace's meaning over to
+a room, a tag, an author and/or a source (namespaces are deprecated, see
+[Namespaces are deprecated](/multi-agent#namespaces-are-deprecated)).
+
+```toml
+# map.toml: one table per namespace
+[map."research-x"]
+room = "research-x"      # created when it does not exist
+author = "agent-a"       # targets compose: room, tag, author, source
+
+[map."hermes"]
+tag = "agent:hermes"
+
+[map."scratch"]
+drop = true              # soft-delete; needs --allow-drop
+```
+
+```bash
+uteke namespace migrate --map map.toml                  # dry run: report only
+uteke namespace migrate --map map.toml --apply          # export first, then migrate
+uteke namespace migrate --map map.toml --apply --allow-drop
+```
+
+- The dry run writes nothing. `--apply` first writes a full export
+  (`namespace-migrate-<UTC time>.ndjson` next to the database, created owner-only,
+  mode 0600 on Unix, since it holds every memory) and only then
+  migrates, one transaction per namespace. Restore it with
+  `uteke import --full` into a fresh store. Run it on a copy of the database first.
+- `default` cannot be named in the map. Namespaces the map does not name are
+  listed and left alone; a mapped namespace with no live memories is reported
+  and skipped, so re-running the same map changes nothing.
+- Only live memories move. Soft-deleted ones stay in their namespace (an export
+  does not carry them).
+- A memory that already has a different `author` or `source` keeps it; the
+  report counts it as a conflict. A tag already present is not added twice.
+
 Namespace resolution order: `--namespace flag` → `UTEKE_NAMESPACE` env → `uteke.toml` → `"default"`
 
 ## uteke tags
@@ -373,7 +539,7 @@ Additional flags not shown in the basic example above:
 ```bash
 # Minimum similarity score filter
 uteke recall "database config" --min 0.7
-uteke recall "database config" --strict    # uses min_score_strict (default 0.5)
+uteke recall "database config" --strict    # confident matches only: similarity >= min_score_strict (default 0.5)
 uteke recall "database config" --min 0.25  # opt-in similarity threshold (default 0.0 since #1223: fusion scores are rank-based)
 
 # Time-travel: query memories at specific point in time
@@ -420,16 +586,17 @@ uteke recall "api design" --context
 
 | Flag | Description |
 |------|-------------|
-| `--min <score>` | Minimum similarity score (0.0-1.0). `--min-score` is accepted as an alias (#1593) |
-| `--strict` | Use strict threshold (`min_score_strict`, default 0.5) |
-| `--min <score>` | Minimum similarity score threshold (default 0.0 since 0.17.x, #1223 — fusion scores are rank-based, not cosine) |
-| `--at <timestamp>` | Query memories at point in time (RFC3339) |
+| `--min <score>` | Minimum score (default 0.0 since 0.17.x, #1223: fusion scores are rank-based, not cosine). `--min-score` is accepted as an alias (#1593) |
+| `--strict` | Confident matches only: keep a hit when its `similarity` (the vector-leg cosine) reaches `min_score_strict` (default 0.5). Hits found by full-text search only have no similarity and are dropped. `score` and `--min` are unchanged, and `--strict` works under every strategy (#1650). See [the floor benchmark](../benchmarks/internal/STRICT_FLOOR.md) |
+| `--at <timestamp>` | Query memories at point in time (RFC3339), including those deprecated after it (#1598) |
+| `--history` | Deprecated, no effect: `--at` always includes memories deprecated after it. Needs `--at` |
 | `--related` | Follow relationship edges |
 | `--depth <n>` | Traversal depth for --related |
 | `--context` | AI-prompt formatted output |
-| `--salience` | Salience boost is on by default with weight 0.1; passing `--salience` uses the configured `[recall] salience_weight` (default 0.15) instead. `--no-salience` disables it |
-| `--recency` | Recency boost is on by default with weight 0.1; passing `--recency` uses the configured `[recall] recency_weight` (default 0.15) instead. `--no-recency` disables it |
-| `--jaccard` | Enable Jaccard token reranking signal (default: off, requires `jaccard_weight` > 0 in config) |
+| `--salience <true\|false>` | Without the flag the salience boost is on with weight 0.1. `--salience true` uses the configured `[recall] salience_weight` (default 0.15); `--salience false` turns it off |
+| `--recency <true\|false>` | Without the flag the recency boost is on with weight 0.1. `--recency true` uses the configured `[recall] recency_weight` (default 0.15); `--recency false` turns it off |
+
+The Jaccard reranking signal has no flag: set `[recall] jaccard_weight` above 0 to enable it.
 
 ### Reading recall scores (#1405)
 
@@ -510,6 +677,16 @@ uteke room stats "project-kickoff"
 
 # Recall within a room (semantic)
 uteke room recall "project-kickoff" --query "database decision"
+
+# Change the title or description, or rename the room (#1202)
+uteke room update "project-kickoff" --description "Kickoff decisions"
+uteke room rename "project-kickoff" "kickoff"
+
+# Add an existing memory to a room without copying it (#1589)
+uteke room link <memory-id> "project-kickoff" --author alice
+
+# Move a memory from one room to another (#1202)
+uteke room move-memory <memory-id> --from "project-kickoff" --to "kickoff"
 
 # Generate structured document from room
 uteke room document "project-kickoff"
@@ -622,18 +799,101 @@ uteke export --full bundle.ndjson          # on the source: memories, rooms, gra
 uteke import --full bundle.ndjson          # on the target
 ```
 
-The bundle restores documents with their slug, title, parent (hierarchy) and content, plus
-rooms, edges and the graph, keeping the original ids. It carries no vectors: `import`
+Export files (`--output` / the bundle) are created owner-only (mode 0600 on Unix), also over an
+existing file, because they hold the memories of the store.
+
+The bundle restores documents with their slug, title, parent (hierarchy), path and content,
+plus rooms (with each member's role), edges, the graph and the timeline, keeping the original
+ids. Memories keep their author, author type, provenance hash and recall count, and timeline
+events keep their actor and evidence. Deprecated memories are left out of the bundle, and a
+bundle row marked `deprecated` is restored deleted, never live. A bundle written by
+0.22.1 or earlier lacks these fields: import applies the defaults and rebuilds document paths
+from the parent chain. It carries no vectors: `import`
 regenerates them (memories are marked for `uteke repair --reembed`, document chunks are
 re-embedded right away). `--full` makes any other file an error instead of a plain import. The
 bundle is a file, so a large document does not pass through a tool response; `POST /import`
-stays JSONL-only and capped at 10 MB.
+stays JSONL-only.
 
 A JSONL export carries each memory's room ids. Import links the memory to every room that
 exists in the target store, also for a duplicate of a stored memory, and reports the new
 links (`room_links`) and the rooms the target lacks (`rooms_missing`). Create the missing
 rooms (`uteke room create <ID>`) and import the file again to finish the links; nothing is
 copied.
+
+A JSONL row keeps its identity: import stores it under its `id` and keeps its
+`memory_type`, `importance`, `pinned`, `content_type` and `slug`. A missing or invalid value
+falls back to the old default (a new id, `fact`, `0.5`, not pinned, `text`, no slug), so files
+from older versions import as before. Importing the same file again adds nothing. A copy into
+another namespace (`--namespace`) gets new ids, since an id is unique across the store. The result
+counts what was left out, apart from `skipped` (invalid or rejected rows):
+
+- `duplicates_skipped`: the row is already stored (same id and content, the same content in
+  the namespace, or for a row without an id a near-identical memory). Its rooms are linked to
+  the stored memory.
+- `id_conflicts_skipped`: the id is stored with other content. The stored memory is not
+  changed.
+- `soft_deleted_skipped`: the content (or id) was deleted in this store. Importing an old
+  export does not bring it back.
+
+A row marked `"deprecated": true` (a Uteke Cloud export carries deleted memories) is stored
+deleted, without a vector.
+
+### A Uteke Cloud export
+
+A Cloud export (`GET /export` on Uteke Cloud) imports with its documents and rooms:
+
+```bash
+uteke import cloud-export.ndjson                 # or --defer-embed for a large one
+```
+
+- The manifest (first line) is skipped.
+- `"type": "document"` rows become documents: slug, title, content, tags and the parent (a slug,
+  or the parent's id), whatever the order of the rows. A document with the same slug is updated
+  in place when it changed and left alone when it did not. A parent that is neither in the
+  file nor stored is counted in `parent_unresolved` and the document goes to the root.
+- `"type": "room"` rows create the rooms that do not exist (title, description; an existing
+  room is not changed) and link their `doc_slugs`. A slug that is not stored is counted in
+  `room_documents_missing`.
+- Documents and rooms are stored before the memories, so each memory's `rooms` find the rooms
+  of the same file.
+
+The result adds `documents_imported`, `documents_updated`, `documents_unchanged`,
+`parent_unresolved`, `rooms_imported`, `rooms_existing`, `room_documents_linked` and
+`room_documents_missing` (each only when non-zero). With `--defer-embed` the document chunks
+are stored without vectors as well. Over HTTP, `POST /import` takes a body of up to 64 MiB
+(`UTEKE_MAX_IMPORT_SIZE`, in bytes; the other routes keep 10 MB). A larger file gets a 413
+that names the limit: split it into several calls (with `"defer_embedding": true` each returns
+in seconds), raise the limit on the server, or run `uteke import` on the server host, which has
+no limit.
+
+### Store now, embed later (`--defer-embed`)
+
+A JSON/JSONL import embeds every row while it imports. With the local model that
+keeps the CPU busy for the whole file, and an embedding backend that is down stops
+the import at that row. `--defer-embed` stores the rows without a vector instead:
+the import does not wait on the embedder, the rows are found by keyword search at
+once, and the vectors are added later in portions you choose:
+
+```bash
+uteke import big-export.jsonl --defer-embed
+uteke repair --reembed --limit 500 --pause-ms 20   # repeat until nothing is left
+```
+
+`repair --reembed` only picks rows that have no vector, so each run continues where
+the last one stopped and reports how many it did not try. `--limit N` stops after N
+rows were embedded; a row that fails does not count, so rows the backend keeps
+rejecting cannot hold back the rest. Rows embedded this way also get
+the cosine links `remember` makes. Without vectors the cosine duplicate check
+(similarity of 0.95 or more) cannot run during the import, so only exact copies of
+a stored memory, or of an earlier row in the same file, are skipped; near-duplicates
+stay. `--defer-embed` works with JSON/JSONL input (not `--full`, `--extract` or
+`--batch-dir`).
+
+Over HTTP the same switch is `"defer_embedding": true` in the `POST /import` body; the
+response then adds `deferred_embedding`. That is the bulk-import runbook for a server: send
+the file with `defer_embedding` (each call returns in seconds because no row is embedded in
+the request, so a file larger than the body limit can be split into several calls), then run
+`uteke repair --reembed --limit N` on the server until nothing is left.
 
 ### LLM fact extraction (`--extract`)
 
@@ -878,8 +1138,8 @@ Find orphan memories — disconnected nodes with low importance and few accesses
 # Find orphans with default thresholds
 uteke orphans
 
-# Custom thresholds
-uteke orphans --min-age-days 14 --max-access-count 3
+# Custom threshold and result count
+uteke orphans --threshold 0.2 --limit 100
 
 # JSON output for scripting
 uteke orphans --json
@@ -887,9 +1147,8 @@ uteke orphans --json
 
 | Flag | Description |
 |------|-------------|
-| `--min-age-days <n>` | Minimum age in days (default: 7) |
-| `--max-access-count <n>` | Maximum access count (default: 2) |
-| `--limit <n>` | Max results (default: 50) |
+| `--threshold <n>` | Importance below which a memory is a candidate (default: 0.3) |
+| `--limit <n>` | Max results, 0 = all (default: 50) |
 | `--namespace <ns>` | Scope to namespace |
 | `--json` | JSON output |
 
@@ -913,7 +1172,7 @@ uteke timeline <memory-id> --json
 
 | Flag | Description |
 |------|-------------|
-| `--limit <n>` | Max events (default: 50) |
+| `--limit <n>` | Max events, 0 = all (default: 20) |
 | `--json` | JSON output |
 
 ## Other Commands
@@ -935,14 +1194,13 @@ uteke timeline <memory-id> --json
 | `uteke verify-checksums --binary <path>` | Verify binary integrity against SHA256 checksums |
 | `uteke repair` | Rebuild index from SQLite |
 | `uteke repair --rebuild` | Rebuild index from SQLite (explicit) |
-| `uteke repair --reembed` | Regenerate missing embeddings for memories without vectors (#906) |
+| `uteke repair --reembed` | Regenerate missing embeddings for memories without vectors (#906); `--limit N` stops after N rows were embedded and `--pause-ms MS` sleeps between rows (#1608) |
 | `uteke namespace list` | List all namespaces with memory counts |
 | `uteke namespace stats <name>` | Show stats for a namespace |
 | `uteke namespace switch <name>` | Set default namespace in config |
 | `uteke namespace move <id> <ns>` | Move a memory to another namespace, no re-embed (#1181) |
 | `uteke namespace rename <old> <new>` | Rename a namespace; existing target = merge (#1181) |
 | `uteke namespace delete <ns> --confirm` | Delete a namespace (`--strategy refuse\|merge\|deprecate`, #1181) |
-| `uteke hook <shell>` | Print shell hook script (bash/zsh/fish) |
 | `uteke init --agent <type>` | Initialize integration (opencode, pi, claude, cursor, hermes) |
 | `uteke init --agent hermes --memory-provider` | Install uteke as Hermes's default memory provider (auto recall + extraction). See [Hermes integration, Mode B](integrations/hermes.md). **Note:** Hermes Mode B deprecated — see [integrations/hermes.md](integrations/hermes.md) for migration. |
 | `uteke init --agent pi --memory-provider` | Install uteke as pi's default memory provider (auto recall + extraction, #575/#577) |
@@ -1035,14 +1293,12 @@ List all documents (global — not namespace-scoped, v0.7.0).
 ```bash
 uteke doc list --limit 20
 uteke doc list --tree          # Indented tree view
-uteke doc list --roots-only   # Root documents only
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--limit <n>` | Max results (default: 20) |
 | `--tree` | Show as indented tree (recursive children) |
-| `--roots-only` | Show only root documents (no parent) |
 
 ### `uteke doc search`
 
@@ -1116,9 +1372,36 @@ uteke doc delete <id>
 Export all documents as JSON or markdown.
 
 ```bash
-uteke doc export           # markdown to stdout
-uteke doc export --json    # JSON to stdout
+uteke doc export                          # markdown to stdout
+uteke doc export --json                   # JSON to stdout
+uteke doc export --front-matter           # markdown, each document with YAML front-matter
+uteke doc export --front-matter --output docs.md
 ```
+
+`--front-matter` (off by default, so the plain output is unchanged) puts a YAML
+block before each document body, so a vault or static-site import keeps the
+hierarchy:
+
+```yaml
+---
+slug: "chapter-1"
+title: "Chapter 1: \"Getting started\""
+tags: ["guide", "draft"]
+parent: "book"
+---
+```
+
+`parent` is the parent document's slug, or `""` for a root document. Values are
+written as double-quoted strings, so titles with `:`, `#`, quotes or newlines
+stay valid YAML. The body after the closing `---` is byte-for-byte what the
+export prints without the flag. With `--json` the flag is ignored, since each
+JSON document already carries these fields.
+
+There is no `uteke doc import` that reads this front-matter back:
+`uteke import --batch-dir <dir> --as-doc` stores a file's whole content,
+front-matter included, under a slug taken from the file path. For a lossless
+round trip of documents (slug, title, hierarchy, content) use
+`uteke export --full` and `uteke import --full`.
 
 ## Graph API (#408, #542)
 
@@ -1163,22 +1446,20 @@ curl -H "Authorization: Bearer viewer-key" http://127.0.0.1:8767/stats
 curl -X POST -H "Authorization: Bearer viewer-key" ...  # 403 Forbidden
 ```
 
-## Configurable Limits (#404)
+## Limits
 
-All limits can be overridden via env vars or `[limits]` config section:
+The input limits are fixed in this release:
 
-| Env Var | Config Key | Default | Description |
-|---------|-----------|---------|-------------|
-| `UTEKE_MAX_CONTENT_LENGTH` | `max_content_length` | 100000 | Max memory content (chars, 0=disable) |
-| `UTEKE_MAX_TAGS_COUNT` | `max_tags_count` | 20 | Max tags per memory |
-| `UTEKE_MAX_TAG_LENGTH` | `max_tag_length` | 50 | Max single tag length (chars) |
-| `UTEKE_MAX_PAYLOAD_SIZE` | `max_payload_size` | 10485760 | Max server payload (bytes) |
-| `UTEKE_DEFAULT_RECALL_LIMIT` | `default_recall_limit` | 5 | Default recall limit |
+| Limit | Value |
+|---------|-------|
+| Memory content | 100,000 characters |
+| Tags per memory | 20 |
+| Tag length | 50 characters |
+| Server request body | 10,485,760 bytes (10 MB) |
 
-## Changelog
+A `[limits]` section and the `UTEKE_MAX_*` variables are parsed but not applied
+yet, so changing them has no effect. The default `--limit` for recall, search and
+list is 10 on every surface.
 
-### v0.6.5
-- Room fixes (#545/#546/#547/#549/#550): Fixed room creation race conditions, room memory list pagination, room summary edge cases, room document generation for empty rooms, and room delete cascade consistency.
-
-### v0.6.6
-- Room summary Unicode fix (#565): Summary truncation now uses char boundaries instead of byte offsets, preventing mid-character cuts in multi-byte content.
+For the history of every command, see the
+[CHANGELOG](https://github.com/codecoradev/uteke/blob/main/CHANGELOG.md).

@@ -6,9 +6,11 @@
 // api_registry is runtime data now: GET /routes serves it (#1289),
 // in addition to its original docgen role.
 mod api_registry;
+mod capture_worker;
 mod context;
 mod handlers;
 mod types;
+mod viewer;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -31,6 +33,7 @@ fn main() {
     let mut cli_read_only_token: Option<String> = None;
     let mut cli_cors_origins: Vec<String> = Vec::new();
     let mut cli_allowed_hosts: Vec<String> = Vec::new();
+    let mut viewer_mode = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -92,6 +95,7 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            "--viewer" => viewer_mode = true,
             "--version" | "-V" => {
                 // Match the main CLI's format: `uteke v0.15.0` (see #1044)
                 println!("uteke-serve {}", env!("CARGO_PKG_VERSION"));
@@ -111,6 +115,9 @@ fn main() {
                     "  --allowed-host <H>   Extra accepted Host header value (repeatable, #1326)"
                 );
                 println!("  --read-only-token <T> Read-only API token (GET endpoints only) (#409)");
+                println!(
+                    "  --viewer             Run the read-only browser viewer instead (`uteke view`, #1470)"
+                );
                 println!("  -V, --version        Show version");
                 println!("  -h, --help           Show this help");
                 println!();
@@ -244,6 +251,16 @@ fn main() {
         )
         .init();
 
+    // `uteke view` (#1470): the read-only viewer is its own small listener.
+    if viewer_mode {
+        std::process::exit(viewer::run(viewer::Options {
+            host,
+            port: cli_port.unwrap_or(8768),
+            auth_token,
+            allowed_hosts,
+        }));
+    }
+
     // Open store
     let home = match uteke_core::uteke_home() {
         Ok(h) => h,
@@ -333,12 +350,19 @@ fn main() {
         warn!("  any website opened in a local browser can read and modify memories.");
         warn!("  Set an auth token or list explicit origins.");
     }
+    // `[extraction]` with the `UTEKE_EXTRACTION_*` variables on top, the same
+    // resolution as the CLI: `POST /extract` and the capture schedule use it.
+    let extraction = config
+        .extraction
+        .clone()
+        .unwrap_or_default()
+        .with_env_overrides();
     let ctx = context::ReqCtx {
         auth_token_hash,
         read_only_token_hash,
         cors_origins: cors_origins.clone(),
         recall_config: Some(engine.recall.clone()),
-        extraction_config: config.extraction.clone(),
+        extraction_config: Some(extraction.clone()),
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
         store_id: uteke_core::store_identity(&home),
         embed_warmer: Default::default(),
@@ -458,6 +482,24 @@ fn main() {
         });
     } else {
         info!("Auto-dream: disabled");
+    }
+
+    // Scheduled extraction of the capture queue (#1466). Opt-in: runs only
+    // when `[capture] enabled` is on in the global uteke.toml.
+    let capture = engine.capture;
+    if capture.enabled {
+        info!(
+            "Capture extraction: enabled (every {}min, {} session(s) per run)",
+            capture.interval_minutes.max(1),
+            capture.budget_per_run
+        );
+        let capture_uteke = Arc::clone(&uteke);
+        let worker_extraction = extraction.clone();
+        std::thread::spawn(move || {
+            capture_worker::run_forever(&capture_uteke, &worker_extraction, capture, &SHUTDOWN);
+        });
+    } else {
+        info!("Capture extraction: disabled");
     }
 
     // Update check — startup notification + periodic 24h re-check.

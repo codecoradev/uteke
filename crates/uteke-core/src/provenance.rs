@@ -31,6 +31,28 @@ pub enum TrustTier {
 }
 
 impl TrustTier {
+    /// The wire form: lowercase, the same string `serde` writes and the
+    /// `min_trust` parameter takes (`human`, `agent`, `external`, `untrusted`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrustTier::Human => "human",
+            TrustTier::Agent => "agent",
+            TrustTier::External => "external",
+            TrustTier::Untrusted => "untrusted",
+        }
+    }
+
+    /// Parse the lowercase wire form; anything else (including `Human`) is `None`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "human" => Some(TrustTier::Human),
+            "agent" => Some(TrustTier::Agent),
+            "external" => Some(TrustTier::External),
+            "untrusted" => Some(TrustTier::Untrusted),
+            _ => None,
+        }
+    }
+
     /// Classify a memory by its provenance fields.
     ///
     /// Non-amplification starts here: a memory recorded from an external
@@ -159,22 +181,28 @@ pub struct ProvenanceReport {
     pub events: Vec<crate::timeline::TimelineEvent>,
 }
 
+/// The provenance hash of a memory's content (#1172): hex SHA-256 of the text.
+/// Written as `source_hash` on every insert; also the exact duplicate key of an
+/// import that defers embedding (#1608).
+pub(crate) fn content_hash(content: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(content.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 impl crate::Uteke {
     /// Build the full provenance report for a memory (#1172 Fase 1).
     ///
     /// Returns `Ok(None)` when the memory does not exist.
     pub fn provenance(&self, id: &str) -> Result<Option<ProvenanceReport>, crate::Error> {
-        use sha2::Digest;
-
         let memory = match self.store.get_by_id(id)? {
             Some(m) => m,
             None => return Ok(None),
         };
         let source_hash = self.store.get_source_hash(id)?;
-        let content_hash_now: String = sha2::Sha256::digest(memory.content.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let content_hash_now = content_hash(&memory.content);
         let events = self.store.list_timeline_events(id, 0)?;
         let trust_tier = TrustTier::of(&memory);
         Ok(Some(ProvenanceReport {

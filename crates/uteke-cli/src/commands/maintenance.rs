@@ -10,10 +10,19 @@ use uteke_core::extraction::ExtractedFact;
 pub(crate) fn run_doctor(cli: &Cli, uteke: &Uteke) -> Result<(), String> {
     tracing::info!("Running doctor");
     let report = uteke.doctor().map_err(|e| format!("Doctor failed: {e}"))?;
+    // Agent hooks installed by `uteke connect` (#1465): stale or removed entries.
+    let hooks = crate::connect::home_dir()
+        .map(|h| crate::connect::hook_status(&h))
+        .unwrap_or_default();
     if cli.json {
-        output::print_json(&report);
+        let mut value = serde_json::to_value(&report).map_err(|e| e.to_string())?;
+        if !hooks.is_empty() {
+            value["agent_hooks"] = serde_json::to_value(&hooks).map_err(|e| e.to_string())?;
+        }
+        output::print_json(&value);
     } else {
         output::print_doctor_human(&report);
+        crate::connect::print_hook_status(&hooks);
     }
     Ok(())
 }
@@ -33,7 +42,7 @@ pub(crate) fn run_repair(
     cli: &Cli,
     uteke: &Uteke,
     rebuild: bool,
-    reembed: bool,
+    reembed: Option<uteke_core::ReembedOptions>,
     config: &crate::Config,
 ) -> Result<(), String> {
     if rebuild {
@@ -69,9 +78,9 @@ pub(crate) fn run_repair(
     // Runs BEFORE the Repair Report is printed so `index_after` and the
     // "still differs" warning reflect the final state, not the intermediate
     // rebuild that legitimately excludes NULL/empty-embedding rows (#1149).
-    let reembed_report = if reembed {
+    let reembed_report = if let Some(options) = reembed {
         tracing::info!("Running repair --reembed (regenerating missing embeddings)");
-        match uteke.reembed_missing() {
+        match uteke.reembed_missing_with(options) {
             Ok(r) => {
                 // Refresh the vector count to include newly appended vectors.
                 if let Ok(v) = uteke.verify() {
@@ -118,6 +127,12 @@ pub(crate) fn run_repair(
                     reembed_report.chunks_reembedded,
                     reembed_report.chunks_missing,
                     reembed_report.chunks_failed
+                );
+            }
+            if reembed_report.remaining > 0 {
+                println!(
+                    "{} rows were not tried (--limit reached) — run `uteke repair --reembed` again to continue.",
+                    reembed_report.remaining
                 );
             }
         }
@@ -203,6 +218,15 @@ pub(crate) fn run_consolidate(
     Ok(())
 }
 
+/// Write an export owner-only (0600 on Unix, tightened before any old content is
+/// replaced): it holds the memories of the store (#1668).
+fn write_export_file(output: &str, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    uteke_core::private_file::create_private(std::path::Path::new(output), true)
+        .and_then(|mut f| f.write_all(text.as_bytes()))
+        .map_err(|e| format!("Failed to write export file: {e}"))
+}
+
 pub(crate) fn run_export(
     cli: &Cli,
     uteke: &Uteke,
@@ -218,8 +242,7 @@ pub(crate) fn run_export(
         if output == "-" {
             println!("{ndjson}");
         } else {
-            std::fs::write(output, &ndjson)
-                .map_err(|e| format!("Failed to write export file: {e}"))?;
+            write_export_file(output, &ndjson)?;
             let count = ndjson.lines().filter(|l| !l.trim().is_empty()).count() - 1; // minus manifest
             if cli.json {
                 output::print_json(
@@ -240,7 +263,7 @@ pub(crate) fn run_export(
     if output == "-" {
         println!("{jsonl}");
     } else {
-        std::fs::write(output, &jsonl).map_err(|e| format!("Failed to write export file: {e}"))?;
+        write_export_file(output, &jsonl)?;
         let count = jsonl.lines().filter(|l| !l.trim().is_empty()).count();
         if cli.json {
             output::print_json(&serde_json::json!({"exported": count}));
@@ -278,6 +301,7 @@ pub(crate) fn run_import(
     format: &str,
     extract_opts: ExtractOpts<'_>,
     timestamp: Option<&str>,
+    defer_embed: bool,
 ) -> Result<(), String> {
     tracing::info!("Importing memories from {input} (format: {format})");
 
@@ -309,6 +333,12 @@ pub(crate) fn run_import(
     let first_line = content.lines().find(|l| !l.trim().is_empty());
     if let Some(fl) = first_line {
         if fl.contains("\"uteke_export\"") {
+            if defer_embed {
+                return Err(
+                    "--defer-embed works with JSON/JSONL memories; a full bundle is restored with `uteke import --full`"
+                        .to_string(),
+                );
+            }
             tracing::info!("Detected structural export manifest — full-store import");
             let mut result = uteke
                 .import_full(&content)
@@ -391,9 +421,20 @@ pub(crate) fn run_import(
         format.to_string()
     };
 
+    if defer_embed && !matches!(detected_format.as_str(), "jsonl" | "json") {
+        return Err(format!(
+            "--defer-embed works with JSON/JSONL input (got: {detected_format})"
+        ));
+    }
     let result = match detected_format.as_str() {
         "jsonl" | "json" => uteke
-            .import(&content, ns)
+            .import_with(
+                &content,
+                ns,
+                uteke_core::ImportOptions {
+                    defer_embedding: defer_embed,
+                },
+            )
             .map_err(|e| format!("Failed to import JSON: {e}"))?,
         "markdown" | "text" => {
             let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
@@ -413,6 +454,48 @@ pub(crate) fn run_import(
             "\u{2713} Imported {} memories ({} skipped) as {detected_format}",
             result.imported, result.skipped
         );
+        if result.documents_imported + result.documents_updated + result.documents_unchanged > 0 {
+            println!(
+                "  Documents: {} new, {} updated, {} unchanged",
+                result.documents_imported, result.documents_updated, result.documents_unchanged
+            );
+        }
+        if result.parent_unresolved > 0 {
+            println!(
+                "  \u{26a0} {} document(s) name a parent that is not there: stored at the root",
+                result.parent_unresolved
+            );
+        }
+        if result.rooms_imported + result.rooms_existing > 0 {
+            println!(
+                "  Rooms: {} created, {} already there; {} document link(s)",
+                result.rooms_imported, result.rooms_existing, result.room_documents_linked
+            );
+        }
+        if result.room_documents_missing > 0 {
+            println!(
+                "  \u{26a0} {} room document link(s) name a document that is not stored",
+                result.room_documents_missing
+            );
+        }
+        if result.duplicates_skipped > 0 {
+            println!(
+                "  {} entries already stored (duplicates skipped)",
+                result.duplicates_skipped
+            );
+        }
+        if result.id_conflicts_skipped > 0 {
+            println!(
+                "  \u{26a0} {} entries skipped: their id is stored with other content",
+                result.id_conflicts_skipped
+            );
+        }
+        if result.soft_deleted_skipped > 0 {
+            println!(
+                "  {} entries skipped: they were deleted in this store",
+                result.soft_deleted_skipped
+            );
+        }
         if result.redacted > 0 {
             println!("  \u{26a0} Secrets masked in {} memories", result.redacted);
         }
@@ -422,8 +505,20 @@ pub(crate) fn run_import(
                 result.rejected_secret
             );
         }
+        if result.rejected_tombstone > 0 {
+            println!(
+                "  \u{26a0} {} entries skipped: they were forgotten as wrong (`uteke tombstone list`)",
+                result.rejected_tombstone
+            );
+        }
         if result.room_links > 0 {
             println!("  Linked memories to rooms: {} link(s)", result.room_links);
+        }
+        if result.deferred_embedding > 0 {
+            println!(
+                "  {} memories stored without a vector (keyword search works now) — run `uteke repair --reembed` to embed them (add --limit N to spread the work)",
+                result.deferred_embedding
+            );
         }
         if !result.rooms_missing.is_empty() {
             println!(
@@ -1366,5 +1461,28 @@ mod extraction_bail_tests {
             b.record(false);
         }
         assert!(!b.should_stop(), "the run is partly working: keep going");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod export_file_tests {
+    use super::write_export_file;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// #1668: `uteke export --output` writes the memories owner-only, also
+    /// over an existing world-readable file.
+    #[test]
+    fn export_output_is_owner_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.jsonl");
+        let out = path.to_str().unwrap();
+        write_export_file(out, "{\"a\":1}\n").unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_export_file(out, "new\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new\n");
     }
 }

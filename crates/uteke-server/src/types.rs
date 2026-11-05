@@ -148,6 +148,10 @@ pub fn to_v1_flat(result: &uteke_core::memory::types::UnifiedSearchResult) -> se
         serde_json::Value::String(result.content.clone()),
     );
     map.insert("score".into(), serde_json::json!(result.score));
+    map.insert("similarity".into(), serde_json::json!(result.similarity));
+    if let Some(tier) = result.trust_tier {
+        map.insert("trust_tier".into(), serde_json::json!(tier));
+    }
     if let Some(id) = &result.memory_id {
         map.insert("id".into(), serde_json::Value::String(id.clone()));
     }
@@ -269,12 +273,22 @@ pub struct RecallRequest {
     #[serde(default)]
     pub category: Option<String>,
     /// Minimum similarity score (0.0-1.0). Results below are filtered.
-    /// Default: 0.0 (no filtering). Use `strict=true` for 0.5 default (#995).
+    /// Default: 0.0 (no filtering). Compares against `score`; `strict` compares against `similarity`.
     #[serde(default)]
     pub min_score: Option<f32>,
-    /// Use strict threshold (defaults to 0.5 if min_score not set).
+    /// Confident matches only (#1650): keep a hit when its `similarity` (the
+    /// vector-leg cosine) reaches `[recall] min_score_strict` (default 0.5).
+    /// Hits without a similarity (found by full-text search only) are
+    /// dropped. `score` and `min_score` keep their meaning.
     #[serde(default)]
     pub strict: bool,
+    /// Lowest provenance tier to return (#1651): `human`, `agent`, `external`
+    /// or `untrusted` (lowercase). Filters the tier (author_type +
+    /// source_type) only, before the limit is applied. author_type is
+    /// self-declared, so this is a convenience filter, not a security
+    /// boundary, and it is not a trust state.
+    #[serde(default)]
+    pub min_trust: Option<String>,
     /// Time-travel: query memories that existed at this RFC3339 timestamp.
     #[serde(default)]
     pub at: Option<String>,
@@ -333,6 +347,7 @@ impl RecallRequest {
             category: self.category.clone(),
             min_score: self.min_score,
             strict: self.strict,
+            min_trust: self.min_trust.clone(),
             at: self.at.clone(),
             after: self.after.clone(),
             before: self.before.clone(),
@@ -501,6 +516,55 @@ fn read_body_text(reader: &mut dyn IoRead) -> Result<String, String> {
     Ok(body)
 }
 
+/// Body limit of `POST /import` when `UTEKE_MAX_IMPORT_SIZE` is not set
+/// (#1632): 64 MiB, the `/import` limit of Uteke Cloud, so a Cloud export
+/// fits in one call. Every other route keeps `MAX_PAYLOAD_SIZE` (10 MB).
+pub const DEFAULT_MAX_IMPORT_SIZE: usize = 64 * 1024 * 1024;
+
+/// The body limit of `POST /import`: `UTEKE_MAX_IMPORT_SIZE` (bytes), read
+/// once, or [`DEFAULT_MAX_IMPORT_SIZE`].
+pub fn max_import_size() -> usize {
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| import_limit_from(std::env::var("UTEKE_MAX_IMPORT_SIZE").ok().as_deref()))
+}
+
+/// `UTEKE_MAX_IMPORT_SIZE` as a limit: a positive byte count, anything else
+/// is the default.
+pub fn import_limit_from(value: Option<&str>) -> usize {
+    value
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_MAX_IMPORT_SIZE)
+}
+
+/// Why an import body could not be read.
+pub enum ImportBodyError {
+    /// Longer than the limit (the size declared or read so far).
+    TooLarge(usize),
+    Read(String),
+}
+
+/// Read the body of `POST /import`, at most `limit` bytes (#1632). A declared
+/// `Content-Length` over the limit is refused before anything is read.
+pub fn read_import_body(
+    content_length: Option<usize>,
+    reader: &mut dyn IoRead,
+    limit: usize,
+) -> Result<String, ImportBodyError> {
+    if let Some(n) = content_length.filter(|n| *n > limit) {
+        return Err(ImportBodyError::TooLarge(n));
+    }
+    let mut body = String::new();
+    reader
+        .take(limit as u64 + 1)
+        .read_to_string(&mut body)
+        .map_err(|e| ImportBodyError::Read(format!("Failed to read body: {e}")))?;
+    if body.len() > limit {
+        return Err(ImportBodyError::TooLarge(body.len()));
+    }
+    Ok(body)
+}
+
 /// Read the body now and keep it for the handler's [`read_body`], returning it
 /// parsed as JSON for a peek. The router uses this to embed the text of a
 /// recall or a remember before it takes the store lock (#1518); the handler
@@ -643,6 +707,14 @@ pub struct MemoryUpdateRequest {
     /// Move the memory to this namespace (#1181). Plain column update — no re-embed.
     #[serde(default)]
     pub namespace: Option<String>,
+    /// When the fact starts to hold (RFC 3339, #1598). Stored in the
+    /// `valid_from` column that `at` reads. Must be before `valid_until`.
+    #[serde(default)]
+    pub valid_from: Option<String>,
+    /// When the fact stops holding (RFC 3339, #1598). Stored in the
+    /// `valid_until` column. Refused on a deprecated memory.
+    #[serde(default)]
+    pub valid_until: Option<String>,
 }
 
 // ── Namespace Management Types (#1181) ─────────────────────────────────────
@@ -721,6 +793,25 @@ pub struct GraphEdgeRequest {
     pub weight: Option<f64>,
 }
 
+// ── Capture Types (#1466) ──────────────────────────────────────────────────
+
+/// One turn for the capture queue (`POST /capture`, LAB).
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+pub struct CaptureRequest {
+    /// Conversation the turn belongs to; its turns are extracted together.
+    pub session_id: String,
+    /// `user`, `assistant` or `tool` (a tool output keeps its first 2000 characters).
+    pub role: String,
+    pub content: String,
+    /// Optional source label (e.g. the client name).
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Namespace the extracted facts are stored in.
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
 // ── Extract Types ──────────────────────────────────────────────────────────
 
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
@@ -753,6 +844,15 @@ pub struct ImportRequest {
     #[serde(default)]
     #[allow(dead_code)] // not yet merged into JSONL entries on import
     pub tags: Vec<String>,
+    /// Store the rows without a vector and return at once (#1634, default
+    /// false). The rows are keyword-searchable (`/search`) immediately and
+    /// found by `/recall` after `uteke repair --reembed` adds the vectors.
+    /// Duplicates are caught by exact content only, not by the cosine check.
+    /// The response then carries `deferred_embedding`: the rows waiting for
+    /// a vector. Use it for bulk imports, which otherwise embed every row
+    /// before the request returns.
+    #[serde(default)]
+    pub defer_embedding: bool,
 }
 
 // ── Room Remember Types (#762) ────────────────────────────────────────

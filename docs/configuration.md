@@ -204,6 +204,8 @@ calls; everything else stays offline.
 
 ```toml
 [extraction]
+mode = ""                    # "llm" sends captured conversations to the endpoint
+                             # (#1665); empty or "offline" keeps them local
 model = "gpt-4o-mini"        # chat model (or UTEKE_EXTRACTION_MODEL)
 api_key = ""                 # or UTEKE_EXTRACTION_API_KEY; falls back to the
                              # embedding / OPENAI_API_KEY credential
@@ -214,6 +216,7 @@ max_facts = 0                # cap facts per document. 0 = built-in default
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| `mode` | `""` | `"llm"` = also send captured conversations to the endpoint. `"offline"`, `""` or any other value = offline rules for capture (`import --extract` still uses the LLM when a key is set) |
 | `model` | `""` | Chat model used to distill facts |
 | `api_key` | `""` | API key (falls back to embedding/`OPENAI_API_KEY`) |
 | `base_url` | `""` | OpenAI-compatible base URL. Empty = OpenAI default |
@@ -222,6 +225,60 @@ max_facts = 0                # cap facts per document. 0 = built-in default
 
 Resolution order per field: CLI flag (`--extract-*`) > `UTEKE_EXTRACTION_*` env
 var > `[extraction]` config > built-in default.
+
+## Raw Capture (#1466)
+
+`uteke capture` (or `POST /capture`, or the MCP tool `uteke_capture`) queues
+conversation turns; `uteke extract-queue run`, or `uteke-serve` on its schedule, turns
+them into memories later ([CLI reference](cli-reference.md#uteke-capture--extract-queue)).
+Global file only: a project `.uteke/uteke.toml` cannot set this section.
+
+```toml
+[capture]
+enabled = false          # opt-in: capture refuses turns until this is true
+budget_per_run = 10      # sessions (extractor calls) per run
+retention_days = 30      # done turns are deleted after this many days
+max_attempts = 3         # a session that keeps failing is marked failed
+lease_minutes = 15       # a session left `extracting` by a crash is requeued
+chunk_chars = 24000      # most characters one extractor call receives (min 64)
+max_turn_bytes = 1048576 # a larger turn is refused (CLI, MCP and HTTP); 0 = the default
+max_queue_turns = 100000 # capture refuses past this many waiting turns; 0 = no limit
+max_queue_bytes = 536870912 # same, for the bytes of waiting text; 0 = no limit
+interval_minutes = 60    # uteke-serve extracts every N minutes (min 1)
+```
+
+**Where the turns go.** Capture extracts with the offline rules (no network) by default.
+The turns are sent to the LLM endpoint of `[extraction]` only when you set
+`mode = "llm"` there; an `api_key` with no mode keeps them local, because a key set for
+`import --extract` is not consent to send every conversation. `uteke connect`,
+`uteke extract-queue run` and the `uteke-serve` schedule print one line naming the
+extractor (offline, or the endpoint host; never the key). Turns pass the privacy filter
+before they are queued, whichever extractor runs.
+
+`uteke-serve` starts the schedule only when `enabled = true`. It holds the store lock
+only to claim a session's batch and to store its facts, never while the extractor
+request runs, so a slow or hung provider does not hold recall and writes back. A batch
+that is claimed and then lost (a crash) is requeued when its lease expires. A run the extractor stopped (rate limit,
+provider down) doubles the wait before the next one, up to 16 intervals; a run that
+goes through resets it.
+
+**Limits.** One turn may have at most `max_turn_bytes` (1 MiB): `Uteke::capture` refuses a
+larger one with a validation error on every surface (the CLI reads stdin only up to that
+size, HTTP answers 413), except a tool result, which is cut to 2000 characters first.
+The queue is bounded too, so a stuck extraction cannot fill the disk: capture refuses a
+new turn while the pending and extracting turns number `max_queue_turns` or hold
+`max_queue_bytes` of text, and `uteke extract-queue status` (and `GET /capture/status`)
+shows the waiting bytes and warns from 80% of either limit. Repeating a turn already in
+the queue is still a no-op.
+
+A session longer than `chunk_chars` is extracted in several calls: its turns are packed
+into chunks on turn boundaries, and a single turn larger than a chunk is split at a
+newline or whitespace. The facts of every chunk are stored together as one batch, with
+the source `capture:<session>:<batch>`, and the batch counts as one attempt. A provider
+answer of HTTP 413, or a 4xx (a 400 too) that names the context length, fails that session
+alone (it is retried, then marked failed after `max_attempts`) and the sessions behind
+it still run; a 429 or a 5xx still stops the run. Keep `lease_minutes` above the time
+the longest session takes: every chunk is one request of up to two minutes.
 
 ## Recall Threshold
 
@@ -232,16 +289,16 @@ Control minimum similarity score for recall results:
 ```toml
 [recall]
 # Minimum similarity score (0.0-1.0). Memories below this score are excluded.
-# Default: 0.3 (balanced). Use 0.0 to disable filtering.
+# Default: 0.0 (no filtering; fusion scores are rank-based, see below).
 min_score = 0.0
 
-# Strict-mode threshold (used with `--strict` flag)
+# Floor on `similarity` (the vector-leg cosine) for `strict` recalls (#1650)
 min_score_strict = 0.5
 
 # Default recall strategy for `uteke recall` when --strategy is not given.
 # One of: fusion | vector | fts5 | hybrid | graph.
 #   fusion — weighted RRF of the vector and hybrid rankings (default since 0.16.0;
-#            LongMemEval 500Q R@5 0.946 vs 0.854 hybrid, #1123)
+#            LongMemEval 500Q R@5 0.946 vs 0.854 vector-only, #1123)
 #   vector — vector similarity only (original behavior)
 #   fts5   — full-text search only
 #   hybrid — vector + FTS5 fused via Reciprocal Rank Fusion (k=60)
@@ -258,26 +315,36 @@ graph_rerank_enabled = true   # master switch; false → graph acts like hybrid
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `min_score` | 0.0 | Minimum similarity score (0.0-1.0). **CLI only.** |
-| `min_score_strict` | 0.5 | Strict-mode threshold (used with `--strict`). **CLI only.** |
+| `min_score` | 0.0 | Minimum score; results below it are dropped |
+| `min_score_strict` | 0.5 | Floor on a result's `similarity` (the vector-leg cosine, not `score`) for `strict` recalls. Hits without a similarity are dropped. Why 0.5: [benchmark note](../benchmarks/internal/STRICT_FLOOR.md) |
 | `default_strategy` | `fusion` | Default recall strategy (`vector\|fts5\|hybrid\|graph\|fusion`). Since 0.16.0 `fusion` (weighted RRF: vector×1.7 + hybrid×1, #1123) is the default — LongMemEval fast50 R@5 0.98 vs 0.9267 hybrid |
 | `graph_density_weight` | 0.1 | Edge-density boost weight (graph strategy only) |
 | `graph_authority_weight` | 0.1 | Incoming-edge authority boost weight (graph strategy only) |
 | `graph_rerank_enabled` | true | Master switch for graph reranking |
 
-> **⚠️ Threshold defaults differ across interfaces (#995)**
+> **Score scale (since 0.17.x, #1223):** under the default fusion strategy a
+> recall score is rank-based (RRF contribution plus salience/recency boosts,
+> typically about 0.0 to 0.2), not a cosine similarity. That is why the default
+> `min_score` is 0.0 on every surface. Set a threshold (config `min_score`,
+> `--min` or HTTP/MCP `min_score`) only when you know the score scale of the
+> active strategy. For benchmark evaluation pass `--min 0.0` explicitly.
 >
-> | Interface | Default `min_score` | Notes |
-> |-----------|---------------------|-------|
-> | **CLI** | `0.0` (from `[recall] min_score`) | Reads from `uteke.toml`. Set `--min` or `[recall] min_score` to enable. |
-> | **HTTP API / Server** | `0.0` (`DEFAULT_MIN_SCORE`) | Server has its own constant, ignores `[recall] min_score`. |
+> **`similarity` and `strict` (#1650):** every memory result also carries
+> `similarity`, the cosine of the vector leg (0 to 1, not boosted), or `null` when only
+> full-text search found it. `strict` and `min_score_strict` compare against it, so
+> "confident match only" works under fusion, where `score` never reaches 0.5. `score`
+> and `min_score` keep their meaning.
 >
-> **Note (since 0.17.x, #1223):** default recall scores under the fusion strategy are rank-based (RRF contribution + salience/recency boosts, typically ~0.0-0.2), not raw cosine similarity. A legacy cosine-era default threshold of 0.3 silently filtered out nearly all results, so the default is now 0.0 across every surface. Set a threshold explicitly (config `min_score`, `--min`, `--strict`, or HTTP `min_score`) only when you know the score scale of the active strategy.
-> | **MCP** | `0.0` | MCP server hardcodes 0.0. |
->
-> This means a score of 0.25 is returned by API/MCP but **filtered out** by CLI.
-> For benchmark/retrieval evaluation, always pass `--min 0.0` explicitly to
-> evaluate raw ranking quality without UX threshold filtering.
+> **`min_trust` and `trust_tier` (#1651):** every memory result carries `trust_tier`,
+> the provenance tier of the memory, as a lowercase string: `human` (author_type
+> `human` and source_type `user`), `agent`, `external` (url, file, import) or
+> `untrusted`. It is the string `uteke provenance` writes in its JSON, and the
+> string `min_trust` takes. `min_trust` keeps results at or above that tier and runs
+> before the limit; documents have no tier and are dropped when it is set. This is the
+> **provenance tier** only, a different axis from any future trust *state*
+> (candidate, stated, verified...), which will use another name. `author_type` is
+> self-declared (MCP `uteke_remember` accepts `human` from any agent), so the filter is
+> a convenience, **not a security boundary**.
 
 ### Salience + Recency Boost (#352)
 
@@ -286,15 +353,14 @@ Dual-axis recall ranking boost. Applied **after** the RRF merge and recall cache
 - **Salience** — higher score for high-value memory types (decision > insight > fact > note). Per-type decay rates are hardcoded in `type_half_life_days()`.
 - **Recency** — exponential decay `exp(-age/τ)` where τ is a per-type time constant.
 
-Opt-in per query via `--salience` / `--recency` CLI flags. The `dream` cycle's `compact` phase can use these for smarter pruning.
+Both boosts are on by default with weight 0.1. On the CLI, `--salience true` / `--recency true` switch to the configured weights below, and `--salience false` / `--recency false` turn a boost off. The `dream` cycle's `compact` phase can use these for smarter pruning.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `salience_weight` | 0.15 | Salience boost weight (0 = disable) |
-| `recency_weight` | 0.15 | Recency boost weight (0 = disable) |
+| `salience_weight` | 0.15 | Weight used with `--salience true` (0 = disable) |
+| `recency_weight` | 0.15 | Weight used with `--recency true` (0 = disable) |
 | `jaccard_weight` | 0.0 | Jaccard token-overlap reranking weight (0 = disable) |
 
-Enabled by default (0.15). Override per-query with `--strict`, `--min <score>`, or `--strategy <name>`.
 
 ## Environment Variables
 
@@ -322,6 +388,7 @@ Resolution order (highest priority first):
 | `UTEKE_GRAPH_DENSITY_WEIGHT` | `[recall] graph_density_weight` | `0.1` | Edge-density boost weight |
 | `UTEKE_GRAPH_AUTHORITY_WEIGHT` | `[recall] graph_authority_weight` | `0.1` | Incoming-edge authority boost weight |
 | `UTEKE_GRAPH_RERANK_ENABLED` | `[recall] graph_rerank_enabled` | `true` | Master switch for graph reranking |
+| `UTEKE_MCP_FENCE` | — | on | `0`, `false`, `off` or `no` stops `uteke-mcp` and `POST /mcp` from wrapping stored text in a `<uteke-stored-data>` block ([MCP](mcp.md#stored-text-is-fenced-as-data), #1599) |
 | `UTEKE_NO_UPDATE_CHECK` | `update_check = false` | unset | Any value turns the update check off in the CLI, `uteke-serve` and `uteke-mcp` (#1596) |
 | `UTEKE_EMBEDDING_BACKEND` | `[embedding] backend` | `onnx` | Embedding backend: onnx, openai, ollama |
 | `UTEKE_EMBEDDING_MODEL` | `[embedding] model` | backend-specific | Override model name |
@@ -343,7 +410,7 @@ docker run -d --name uteke \
   -v uteke-data:/data \
   -e UTEKE_LOG_LEVEL=info \
   -e UTEKE_RECALL_MIN_SCORE=0.5 \
-  ghcr.io/codecoradev/uteke:latest
+  codecoradev/uteke:latest --host 0.0.0.0
 ```
 
 ## Config Migration
@@ -393,7 +460,7 @@ namespace = "my-project"
 level = "warn"
 ```
 
-Combined with shell hooks, this enables automatic project-scoped memory — each project gets its own isolated memory store.
+Run `uteke` from that project root and it uses the project's store, so each project gets its own isolated memory. Only the current directory is checked, not its parents; from a subdirectory, pass `--store` or set `UTEKE_HOME`.
 
 ### Trust: what a project file may not set
 
@@ -415,11 +482,14 @@ Secrets in the content of a memory are masked before it is embedded or stored (`
 [privacy]
 mode = "redact"            # redact (default) | strict | off
 allowlist = ["^dev-"]      # regexes; a value matching any of them is kept as it is
+tombstone_preview = true   # false = a rejected-value tombstone keeps the hash only
 ```
 
 - `redact`: mask and store.
 - `strict`: refuse the write (`secret_detected`; import skips the row).
 - `off`: store as given.
+
+`tombstone_preview` (default `true`): `forget --reason wrong` keeps a 120-character preview and the reason with the tombstone, filtered like any other text (`redact` and `strict` both mask them; the forget is not refused). `false` keeps the hash only, so nothing of the forgotten text survives the prune or travels in `export --full`; the value is still refused ([CLI reference](cli-reference.md#uteke-forget)).
 
 `UTEKE_PRIVACY_MODE` overrides `mode`. An unknown mode or an invalid regex is logged and replaced by the default (`redact`) for that setting; the filter never turns itself off because of a typo. The filter covers the content, the tags, the strings inside the metadata and the `source` of `remember`, room remember, `update` and `import`, and the text written by room consolidation. Only the string values inside metadata are filtered, not its object keys. Importing a structural export (`uteke export --full`, restored by `uteke import`) puts a backup back as it was and does not filter; restore backups you trust.
 
@@ -459,28 +529,21 @@ Logs are written to `~/.codecora/uteke/logs/uteke.log` with daily rotation:
 
 Non-blocking async writer — logging never blocks memory operations. Rotated files are kept until manually deleted.
 
-## Configurable Limits (#404)
+## Limits
 
-All hardcoded limits can be overridden via env vars or the `[limits]` section:
+The input limits are fixed in this release: 100,000 characters of content, 20
+tags per memory, 50 characters per tag, and a 10 MB server request body. The
+default `--limit` for recall, search and list is 10 on every surface.
 
-```toml
-[limits]
-max_content_length = 100000   # Max memory content (chars). 0 = disable
-max_tags_count = 20           # Max tags per memory
-max_tag_length = 50           # Max single tag length (chars)
-max_payload_size = 10485760   # Max server payload (bytes, default 10MB)
-default_recall_limit = 5      # Default recall limit
-```
+`POST /import` is the exception to the 10 MB body: it takes up to 64 MiB, so a
+Uteke Cloud export fits in one call. `UTEKE_MAX_IMPORT_SIZE` (bytes, read when
+`uteke-serve` starts) sets another limit for that route; an empty, zero or
+unreadable value keeps 64 MiB. A larger body is refused with a 413 before it is
+read, and the message names the limit.
 
-Environment variables override config values:
-
-| Env Var | Default | Description |
-|---------|---------|-------------|
-| `UTEKE_MAX_CONTENT_LENGTH` | 100000 | Max memory content length |
-| `UTEKE_MAX_TAGS_COUNT` | 20 | Max tags per memory |
-| `UTEKE_MAX_TAG_LENGTH` | 50 | Max tag length |
-| `UTEKE_MAX_PAYLOAD_SIZE` | 10485760 | Max server payload |
-| `UTEKE_DEFAULT_RECALL_LIMIT` | 5 | Default recall limit |
+A `[limits]` section and the `UTEKE_MAX_CONTENT_LENGTH`, `UTEKE_MAX_TAGS_COUNT`,
+`UTEKE_MAX_TAG_LENGTH`, `UTEKE_MAX_PAYLOAD_SIZE` and `UTEKE_DEFAULT_RECALL_LIMIT`
+variables are parsed but not applied yet, so setting them has no effect.
 
 ## View-Only API Token (#409)
 

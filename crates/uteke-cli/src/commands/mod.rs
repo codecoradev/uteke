@@ -3,6 +3,7 @@
 mod aging;
 mod anchor;
 pub(crate) mod bench;
+mod capture;
 mod contradictions;
 mod doc;
 mod dream;
@@ -24,6 +25,7 @@ mod timeline;
 mod update;
 pub(crate) mod update_check;
 pub(crate) mod upgrade;
+pub(crate) mod view;
 
 use crate::Config;
 use crate::cli::Cli;
@@ -80,6 +82,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             source,
             source_type,
             timestamp,
+            valid_from,
+            valid_until,
         } => remember::run(
             cli,
             uteke,
@@ -97,6 +101,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             source.as_deref(),
             source_type.as_deref(),
             timestamp.as_deref(),
+            valid_from.as_deref(),
+            valid_until.as_deref(),
         ),
 
         Commands::Recall {
@@ -107,6 +113,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             category,
             min,
             strict,
+            min_trust,
             strategy,
             salience,
             recency,
@@ -114,6 +121,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             depth,
             context,
             at,
+            history: _,
             content_format,
             r#where,
             r#type,
@@ -133,6 +141,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             category.as_deref(),
             *min,
             *strict,
+            min_trust.as_deref(),
             strategy.as_deref(),
             config,
             *related,
@@ -173,6 +182,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             entity,
             category,
             at,
+            history: _,
         } => list::run_list(
             cli,
             uteke,
@@ -194,6 +204,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             importance,
             pinned,
             r#type,
+            valid_from,
+            valid_until,
         } => update::run(
             cli,
             uteke,
@@ -203,7 +215,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             *importance,
             *pinned,
             r#type.clone(),
+            valid_from.as_deref(),
+            valid_until.as_deref(),
         ),
+
+        Commands::Tombstone { command } => forget::run_tombstone(cli, uteke, command),
 
         Commands::Forget {
             id,
@@ -211,6 +227,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             cold,
             all,
             confirm,
+            reason,
         } => forget::run(
             cli,
             uteke,
@@ -221,10 +238,31 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 cold: *cold,
                 all: *all,
                 confirm: *confirm,
+                reason: reason.clone(),
             },
         ),
 
         Commands::Stats => list::run_stats(cli, uteke, ns),
+
+        Commands::Capture {
+            session,
+            role,
+            source,
+            text,
+        } => capture::run_capture(
+            cli,
+            uteke,
+            config,
+            ns,
+            session,
+            role,
+            source.as_deref(),
+            text.as_deref(),
+        ),
+
+        Commands::ExtractQueue { command } => {
+            capture::run_extract_queue(cli, uteke, config, command)
+        }
 
         Commands::Guide => {
             println!("{}", uteke_core::guide::default_guide());
@@ -235,8 +273,17 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
 
         Commands::Verify => maintenance::run_verify(cli, uteke),
 
-        Commands::Repair { rebuild, reembed } => {
-            maintenance::run_repair(cli, uteke, *rebuild, *reembed, config)
+        Commands::Repair {
+            rebuild,
+            reembed,
+            limit,
+            pause_ms,
+        } => {
+            let reembed = reembed.then(|| uteke_core::ReembedOptions {
+                limit: *limit,
+                pause: std::time::Duration::from_millis(*pause_ms),
+            });
+            maintenance::run_repair(cli, uteke, *rebuild, reembed, config)
         }
 
         Commands::Tags { command } => tags::run(cli, uteke, ns, command),
@@ -268,6 +315,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             max_size,
             recursive,
             timestamp,
+            defer_embed,
         } => {
             let opts = maintenance::ExtractOpts {
                 enabled: *extract,
@@ -317,6 +365,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 if *full { "full" } else { format },
                 opts,
                 timestamp.as_deref(),
+                *defer_embed,
             )
         }
 
@@ -330,18 +379,28 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             memory_provider,
         } => crate::init::run_init(agent, *memory_provider, cli.json),
 
-        Commands::Namespace { command } => namespace::run(cli, uteke, command),
+        Commands::Namespace { command } => namespace::run(cli, uteke, config, command),
 
         Commands::Aging { command } => aging::run(cli, uteke, ns, command),
 
-        Commands::Hook { shell } => {
-            use crate::cli::SupportedShell;
-            let script = match shell {
-                SupportedShell::Bash => include_str!("../../assets/shell/uteke-hook.bash"),
-                SupportedShell::Zsh => include_str!("../../assets/shell/uteke-hook.zsh"),
-                SupportedShell::Fish => include_str!("../../assets/shell/uteke-hook.fish"),
-            };
-            print!("{script}");
+        Commands::Connect { .. }
+        | Commands::Disconnect { .. }
+        | Commands::HookRun { .. }
+        | Commands::HookStatus
+        | Commands::View { .. } => {
+            // Handled in main() before the store opens.
+            Ok(())
+        }
+
+        Commands::Hook { .. } => {
+            // The hook only exported UTEKE_PROJECT_STORE, which nothing read.
+            // Print a comment (a no-op under eval or `| source`) and tell the
+            // user once per shell to drop the line.
+            println!("# uteke hook was removed; delete this line from your shell config");
+            eprintln!(
+                "uteke: `uteke hook` was removed and does nothing; remove it from your shell config. \
+                 For a per-project store, put `[store] path = \"./.uteke\"` in .uteke/uteke.toml."
+            );
             Ok(())
         }
 
@@ -486,11 +545,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                     println!("  Deprecated:   {}", report.deprecated);
                     match report.source_hash.as_deref() {
                         Some(h) if h == report.content_hash_now => {
-                            println!("  Content hash: {h} ✓ (matches write-time hash)");
+                            println!("  Content hash: {h} ✓ (matches the hash of the last write)");
                         }
                         Some(h) => {
                             println!(
-                                "  Content hash: {h} ✗ MISMATCH — content changed after write (now {})",
+                                "  Content hash: {h} ✗ MISMATCH — content changed outside the API (now {})",
                                 report.content_hash_now
                             );
                         }

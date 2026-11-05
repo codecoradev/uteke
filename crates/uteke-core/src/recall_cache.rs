@@ -235,6 +235,7 @@ mod tests {
                 author: None,
             },
             score: 0.95,
+            similarity: None,
         }];
 
         // Miss first

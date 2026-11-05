@@ -24,14 +24,14 @@ features:
     title: Single Binary
     details: Zero dependencies. No Docker, no database server, no Python, no API keys.
   - icon: 🏷️
-    title: Tags + Namespaces + Metadata
-    details: Multi-agent isolation built-in. Entity, category, and key:value metadata enrichment. Tag management with list/rename/delete.
+    title: Rooms + Tags + Metadata
+    details: Shared rooms with per-memory author for multi-agent work. Entity, category, and key:value metadata enrichment. Tag management with list/rename/delete.
   - icon: 🕰️
     title: Memory Aging
     details: Hot/Warm/Cold tier tracking. Auto-cleanup stale memories.
-  - icon: 🐚
-    title: Shell Hooks
-    details: Auto-load project context. bash/zsh/fish support.
+  - icon: 📁
+    title: Project Stores
+    details: A .uteke/uteke.toml in a project root gives that project its own memory store.
   - icon: 🔒
     title: Fully Offline
     details: Local ONNX embeddings. No telemetry, no cloud, no API calls.

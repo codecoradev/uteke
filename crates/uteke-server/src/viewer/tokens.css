@@ -1,0 +1,279 @@
+/* Vendored from @codecora/tokens 0.5.1 (Apache-2.0, codecoradev/codecora-ui): base, uteke and uteke-dark. Plain CSS, no build step. */
+@layer cc.base, cc.theme, cc.modifier;
+
+@layer cc.base {
+  :root {
+    --cc-space-1: 0.25rem;
+    --cc-space-2: 0.5rem;
+    --cc-space-3: 0.75rem;
+    --cc-space-4: 1rem;
+    --cc-space-5: 1.25rem;
+    --cc-space-6: 1.5rem;
+    --cc-space-8: 2rem;
+    --cc-space-10: 2.5rem;
+    --cc-space-12: 3rem;
+    --cc-space-16: 4rem;
+    --cc-font-size-xs: 0.75rem;
+    --cc-font-size-sm: 0.875rem;
+    --cc-font-size-md: 1rem;
+    --cc-font-size-lg: 1.125rem;
+    --cc-font-size-xl: 1.375rem;
+    --cc-font-size-2xl: 1.75rem;
+    --cc-font-size-3xl: 2.25rem;
+    --cc-leading-tight: 1.2;
+    --cc-leading-normal: 1.5;
+    --cc-duration-instant: 70ms;
+    --cc-duration-fast: 140ms;
+    --cc-duration-normal: 240ms;
+    --cc-duration-slow: 400ms;
+    --cc-layer-sticky: 40;
+    --cc-layer-overlay: 50;
+    --cc-layer-modal: 51;
+    --cc-layer-popover: 60;
+    --cc-layer-tooltip: 70;
+    --cc-layer-toast: 80;
+    --cc-layer-skip: 90;
+    --cc-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+    --cc-ease-in-out: cubic-bezier(0.33, 0, 0.67, 1);
+    --cc-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --cc-ease-spring: linear(0, 0.098, 0.306, 0.531, 0.726, 0.871, 0.965, 1.018, 1.042, 1.046, 1.04, 1.03, 1.02, 1.011, 1.005, 1.001, 0.999, 0.998, 0.998, 0.998, 1);
+    --cc-control-h: 2.75rem;
+    --cc-control-px: 0.875rem;
+    --cc-control-py: 0.5rem;
+    --cc-gap: 0.75rem;
+    --cc-cell-py: 0.625rem;
+    --cc-cell-px: 0.75rem;
+  }
+
+  :root, [data-theme], [data-accent] {
+    --cc-accent-soft: color-mix(in srgb, var(--cc-accent) 14%, var(--cc-surface));
+    --cc-danger-soft: color-mix(in srgb, var(--cc-danger) 14%, var(--cc-surface));
+    --cc-success-soft: color-mix(in srgb, var(--cc-success) 14%, var(--cc-surface));
+    --cc-warning-soft: color-mix(in srgb, var(--cc-warning) 14%, var(--cc-surface));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --cc-duration-instant: 0ms;
+      --cc-duration-fast: 0ms;
+      --cc-duration-normal: 0ms;
+      --cc-duration-slow: 0ms;
+      --cc-ease-spring: var(--cc-ease-out);
+    }
+  }
+}
+
+@layer cc.modifier {
+  [data-density='comfortable'] {
+    --cc-control-h: 2.75rem;
+    --cc-control-px: 0.875rem;
+    --cc-control-py: 0.5rem;
+    --cc-gap: 0.75rem;
+    --cc-cell-py: 0.625rem;
+    --cc-cell-px: 0.75rem;
+  }
+
+  [data-density='compact'] {
+    --cc-control-h: 2rem;
+    --cc-control-px: 0.625rem;
+    --cc-control-py: 0.25rem;
+    --cc-gap: 0.5rem;
+    --cc-cell-py: 0.375rem;
+    --cc-cell-px: 0.5rem;
+  }
+
+  [data-accent='blue'] {
+    --cc-accent: var(--cc-accent-blue);
+    --cc-accent-hover: var(--cc-accent-blue-hover);
+    --cc-accent-text: var(--cc-accent-blue-text);
+    --cc-focus: var(--cc-accent-blue-focus);
+  }
+
+  [data-accent='green'] {
+    --cc-accent: var(--cc-accent-green);
+    --cc-accent-hover: var(--cc-accent-green-hover);
+    --cc-accent-text: var(--cc-accent-green-text);
+    --cc-focus: var(--cc-accent-green-focus);
+  }
+
+  [data-accent='teal'] {
+    --cc-accent: var(--cc-accent-teal);
+    --cc-accent-hover: var(--cc-accent-teal-hover);
+    --cc-accent-text: var(--cc-accent-teal-text);
+    --cc-focus: var(--cc-accent-teal-focus);
+  }
+
+  [data-accent='violet'] {
+    --cc-accent: var(--cc-accent-violet);
+    --cc-accent-hover: var(--cc-accent-violet-hover);
+    --cc-accent-text: var(--cc-accent-violet-text);
+    --cc-focus: var(--cc-accent-violet-focus);
+  }
+
+  [data-accent='orange'] {
+    --cc-accent: var(--cc-accent-orange);
+    --cc-accent-hover: var(--cc-accent-orange-hover);
+    --cc-accent-text: var(--cc-accent-orange-text);
+    --cc-focus: var(--cc-accent-orange-focus);
+  }
+
+  [data-accent='indigo'] {
+    --cc-accent: var(--cc-accent-indigo);
+    --cc-accent-hover: var(--cc-accent-indigo-hover);
+    --cc-accent-text: var(--cc-accent-indigo-text);
+    --cc-focus: var(--cc-accent-indigo-focus);
+  }
+
+  [data-accent='cyan'] {
+    --cc-accent: var(--cc-accent-cyan);
+    --cc-accent-hover: var(--cc-accent-cyan-hover);
+    --cc-accent-text: var(--cc-accent-cyan-text);
+    --cc-focus: var(--cc-accent-cyan-focus);
+  }
+}
+
+@layer cc.theme {
+  [data-theme='uteke'] {
+    color-scheme: light;
+    --cc-surface: oklch(97.5% 0.008 150);
+    --cc-surface-raised: oklch(99% 0.004 150);
+    --cc-surface-sunken: oklch(94.6% 0.01 150);
+    --cc-surface-hover: oklch(92% 0.012 150);
+    --cc-border: oklch(88% 0.011 150);
+    --cc-border-strong: oklch(45% 0.013 152);
+    --cc-text: oklch(21% 0.015 155);
+    --cc-text-muted: oklch(45% 0.013 152);
+    --cc-danger: oklch(47% 0.18 27);
+    --cc-danger-text: oklch(99% 0.004 27);
+    --cc-success: oklch(46% 0.15 150);
+    --cc-success-text: oklch(98% 0.006 150);
+    --cc-warning: oklch(47% 0.1 70);
+    --cc-warning-text: oklch(99% 0.004 70);
+    --cc-scrim: oklch(21% 0.015 155 / 0.45);
+    --cc-accent-blue: oklch(50% 0.16 260);
+    --cc-accent-blue-hover: oklch(44% 0.16 260);
+    --cc-accent-blue-text: oklch(99% 0.003 260);
+    --cc-accent-blue-focus: oklch(50% 0.16 260);
+    --cc-accent-green: oklch(46% 0.15 150);
+    --cc-accent-green-hover: oklch(40% 0.14 150);
+    --cc-accent-green-text: oklch(98% 0.006 150);
+    --cc-accent-green-focus: oklch(46% 0.15 150);
+    --cc-accent-teal: oklch(47% 0.09 190);
+    --cc-accent-teal-hover: oklch(41% 0.085 190);
+    --cc-accent-teal-text: oklch(98.5% 0.005 190);
+    --cc-accent-teal-focus: oklch(47% 0.09 190);
+    --cc-accent-violet: oklch(50% 0.17 295);
+    --cc-accent-violet-hover: oklch(44% 0.17 295);
+    --cc-accent-violet-text: oklch(99% 0.004 295);
+    --cc-accent-violet-focus: oklch(50% 0.17 295);
+    --cc-accent-orange: oklch(47% 0.15 50);
+    --cc-accent-orange-hover: oklch(41% 0.14 50);
+    --cc-accent-orange-text: oklch(99% 0.004 50);
+    --cc-accent-orange-focus: oklch(47% 0.15 50);
+    --cc-accent-indigo: oklch(47% 0.17 275);
+    --cc-accent-indigo-hover: oklch(41% 0.16 275);
+    --cc-accent-indigo-text: oklch(99% 0.004 275);
+    --cc-accent-indigo-focus: oklch(47% 0.17 275);
+    --cc-accent-cyan: oklch(47% 0.1 215);
+    --cc-accent-cyan-hover: oklch(41% 0.095 215);
+    --cc-accent-cyan-text: oklch(98.5% 0.005 215);
+    --cc-accent-cyan-focus: oklch(47% 0.1 215);
+    --cc-accent: var(--cc-accent-green);
+    --cc-accent-hover: var(--cc-accent-green-hover);
+    --cc-accent-text: var(--cc-accent-green-text);
+    --cc-focus: var(--cc-accent-green-focus);
+    --cc-radius-sm: 4px;
+    --cc-radius-md: 6px;
+    --cc-radius-lg: 10px;
+    --cc-radius-pill: 999px;
+    --cc-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --cc-font-display: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --cc-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --cc-icon-stroke: 1.75;
+    --cc-icon-size: 1.25rem;
+    --cc-badge-radius: var(--cc-radius-sm);
+    --cc-badge-case: uppercase;
+    --cc-badge-tracking: 0.06em;
+    --cc-badge-font: var(--cc-font-sans);
+    --cc-focus-width: 2px;
+    --cc-focus-offset: 3px;
+    --cc-row-marker: 3px;
+    --cc-shadow-popover: 0 var(--cc-space-2) var(--cc-space-6) color-mix(in srgb, var(--cc-scrim) 50%, transparent);
+    --cc-shadow-modal: 0 var(--cc-space-4) var(--cc-space-10) color-mix(in srgb, var(--cc-scrim) 60%, transparent);
+    color: var(--cc-text);
+    background-color: var(--cc-surface);
+  }
+}
+
+@layer cc.theme {
+  [data-theme='uteke-dark'] {
+    color-scheme: dark;
+    --cc-surface: oklch(19% 0.012 155);
+    --cc-surface-raised: oklch(23% 0.012 155);
+    --cc-surface-sunken: oklch(15% 0.012 155);
+    --cc-surface-hover: oklch(28% 0.014 155);
+    --cc-border: oklch(32% 0.014 155);
+    --cc-border-strong: oklch(61% 0.02 150);
+    --cc-text: oklch(94% 0.012 150);
+    --cc-text-muted: oklch(74% 0.02 150);
+    --cc-danger: #F87171;
+    --cc-danger-text: #0E1015;
+    --cc-success: #34D399;
+    --cc-success-text: #0E1015;
+    --cc-warning: #E89B3C;
+    --cc-warning-text: #0E1015;
+    --cc-scrim: oklch(10% 0.012 155 / 0.6);
+    --cc-accent-blue: #7CB2FF;
+    --cc-accent-blue-hover: #A3C8FF;
+    --cc-accent-blue-text: #0E1015;
+    --cc-accent-blue-focus: #7CB2FF;
+    --cc-accent-green: #34D399;
+    --cc-accent-green-hover: #6EE7B7;
+    --cc-accent-green-text: #0E1015;
+    --cc-accent-green-focus: #34D399;
+    --cc-accent-teal: #4FD8D2;
+    --cc-accent-teal-hover: #7EE3DE;
+    --cc-accent-teal-text: #0E1015;
+    --cc-accent-teal-focus: #4FD8D2;
+    --cc-accent-violet: #C4A7FF;
+    --cc-accent-violet-hover: #D6C2FF;
+    --cc-accent-violet-text: #0E1015;
+    --cc-accent-violet-focus: #C4A7FF;
+    --cc-accent-orange: oklch(80% 0.14 50);
+    --cc-accent-orange-hover: oklch(86% 0.11 50);
+    --cc-accent-orange-text: #0E1015;
+    --cc-accent-orange-focus: oklch(80% 0.14 50);
+    --cc-accent-indigo: oklch(80% 0.12 275);
+    --cc-accent-indigo-hover: oklch(86% 0.09 275);
+    --cc-accent-indigo-text: #0E1015;
+    --cc-accent-indigo-focus: oklch(80% 0.12 275);
+    --cc-accent-cyan: oklch(80% 0.095 215);
+    --cc-accent-cyan-hover: oklch(86% 0.08 215);
+    --cc-accent-cyan-text: #0E1015;
+    --cc-accent-cyan-focus: oklch(80% 0.095 215);
+    --cc-accent: var(--cc-accent-green);
+    --cc-accent-hover: var(--cc-accent-green-hover);
+    --cc-accent-text: var(--cc-accent-green-text);
+    --cc-focus: var(--cc-accent-green-focus);
+    --cc-radius-sm: 4px;
+    --cc-radius-md: 6px;
+    --cc-radius-lg: 10px;
+    --cc-radius-pill: 999px;
+    --cc-font-sans: 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --cc-font-display: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --cc-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    --cc-icon-stroke: 1.75;
+    --cc-icon-size: 1.25rem;
+    --cc-badge-radius: var(--cc-radius-sm);
+    --cc-badge-case: uppercase;
+    --cc-badge-tracking: 0.06em;
+    --cc-badge-font: var(--cc-font-sans);
+    --cc-focus-width: 2px;
+    --cc-focus-offset: 3px;
+    --cc-row-marker: 3px;
+    --cc-shadow-popover: 0 var(--cc-space-2) var(--cc-space-6) color-mix(in srgb, var(--cc-scrim) 50%, transparent);
+    --cc-shadow-modal: 0 var(--cc-space-4) var(--cc-space-10) color-mix(in srgb, var(--cc-scrim) 60%, transparent);
+    color: var(--cc-text);
+    background-color: var(--cc-surface);
+  }
+}

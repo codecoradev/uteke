@@ -53,6 +53,9 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Err(uteke_core::Error::SecretDetected { kinds }) => {
                     ctx.secret_detected_response(req, &kinds)
                 }
+                Err(uteke_core::Error::RejectedValue { reason }) => {
+                    ctx.rejected_value_response(req, &reason)
+                }
                 Err(e) => {
                     error!("Internal error: {e}");
                     ctx.error_response_for(req, 500, "Internal server error")
@@ -209,12 +212,13 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let req = &mut *c.req;
     let path = c.path;
     let query = path.split('?').nth(1).unwrap_or("");
+    let input = uteke_core::ForgetInput::from_http_query(query);
+    let reason = input.reason.clone();
     // Typed request shared with MCP and the CLI (#1343).
-    let request =
-        match uteke_core::ForgetRequest::decode(uteke_core::ForgetInput::from_http_query(query)) {
-            Ok(r) => r,
-            Err(e) => return ctx.error_response_for(req, 400, e.message()),
-        };
+    let request = match uteke_core::ForgetRequest::decode(input) {
+        Ok(r) => r,
+        Err(e) => return ctx.error_response_for(req, 400, e.message()),
+    };
     match request {
         uteke_core::ForgetRequest::Id(_) => {
             // Accept full UUID or short ID prefix (#794); the
@@ -235,7 +239,8 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     };
                 }
             };
-            match uteke.forget(&resolved_id) {
+            // `reason=wrong[: note]` also records a tombstone (#1597).
+            match uteke.forget_with_reason(&resolved_id, reason.as_deref()) {
                 Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id})),
                 Err(e) => {
                     error!("Internal error: {e}");
@@ -494,6 +499,17 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     format!("Invalid UUID format: {}", req_data.id),
                 );
             }
+            // Caller validity (#1598): parsed and checked before anything is
+            // written, and written only after the other fields went through,
+            // so neither a bad interval nor a refused field leaves a partial
+            // update behind.
+            let validity = match uteke_core::memory::types::Validity::parse(
+                req_data.valid_from.as_deref(),
+                req_data.valid_until.as_deref(),
+            ) {
+                Ok(v) => v,
+                Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
+            };
             // Check that at least one field is provided
             if req_data.content.is_none()
                 && req_data.tags.is_none()
@@ -502,11 +518,62 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 && req_data.pinned.is_none()
                 && req_data.memory_type.is_none()
                 && req_data.namespace.is_none()
+                && validity.is_none()
             {
                 return ctx.error_response_for(
                     req,
                     400,
-                    "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type, namespace",
+                    "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type, namespace, valid_from, valid_until",
+                );
+            }
+            if let Some(v) = &validity {
+                match uteke.check_validity(&req_data.id, v) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return ctx.error_response_for(
+                            req,
+                            404,
+                            format!("Memory not found: {}", req_data.id),
+                        );
+                    }
+                    Err(e) => return ctx.core_error(req, &e),
+                }
+            }
+            // Write the checked validity; `None` when it went through.
+            let write_validity = |req: &Request| -> Option<Response<Cursor<Vec<u8>>>> {
+                let v = validity.as_ref()?;
+                match uteke.set_validity(&req_data.id, v) {
+                    Ok(true) => None,
+                    Ok(false) => Some(ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Memory not found: {}", req_data.id),
+                    )),
+                    Err(e) => Some(ctx.core_error(req, &e)),
+                }
+            };
+            let only_validity = validity.is_some()
+                && req_data.content.is_none()
+                && req_data.tags.is_none()
+                && req_data.metadata.is_none()
+                && req_data.importance.is_none()
+                && req_data.pinned.is_none()
+                && req_data.memory_type.is_none();
+            if only_validity {
+                if let Some(refused) = write_validity(&*req) {
+                    return refused;
+                }
+                if let Some(ns) = req_data.namespace.as_deref() {
+                    if let Err(e) = uteke.move_memory(&req_data.id, ns) {
+                        return ctx.core_error(req, &e);
+                    }
+                }
+                return ctx.ok_response_for(
+                    req,
+                    &with_namespace_warning(
+                        serde_json::json!({"updated": req_data.id, "redacted": false}),
+                        req_data.namespace.as_deref(),
+                    ),
                 );
             }
             let tag_refs: Option<Vec<String>> = req_data.tags;
@@ -521,6 +588,9 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 req_data.memory_type.as_deref(),
             ) {
                 Ok(outcome) if outcome.updated => {
+                    if let Some(refused) = write_validity(&*req) {
+                        return refused;
+                    }
                     // Namespace move (#1181): separate op after the field
                     // update — plain column change, no re-embed needed.
                     if let Some(ns) = req_data.namespace.as_deref() {

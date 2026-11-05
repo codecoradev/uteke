@@ -28,6 +28,7 @@ export default createConfig({
     {
       text: 'Features',
       items: [
+        { text: 'Viewer', link: '/viewer' },
         { text: 'Rooms', link: '/rooms' },
         { text: 'Time-Travel', link: '/time-travel' },
         { text: 'Multi-Agent', link: '/multi-agent' },
@@ -35,7 +36,6 @@ export default createConfig({
         { text: 'Memory Lifecycle', link: '/memory-lifecycle' },
         { text: 'Relationship Graph', link: '/relationship-graph' },
         { text: 'Benchmarks', link: '/benchmarks' },
-        { text: 'Shell Hooks', link: '/shell-hooks' },
         { text: 'MCP Server', link: '/mcp' },
       ],
     },
@@ -46,6 +46,9 @@ export default createConfig({
         { text: 'HTTP API Reference', link: '/api-reference' },
         { text: 'Comparison', link: '/comparison' },
         { text: 'Architecture', link: '/architecture' },
+        { text: 'Claude Code Hooks', link: '/integrations/claude-code' },
+        { text: 'Codex Hooks', link: '/integrations/codex' },
+        { text: 'Cursor Hooks', link: '/integrations/cursor' },
         { text: 'Hermes Integration', link: '/integrations/hermes' },
         { text: 'Pi Extension', link: '/extensions' },
         { text: 'TLS & Reverse Proxy', link: '/tls' },

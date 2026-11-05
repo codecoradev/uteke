@@ -22,8 +22,8 @@ Caddy automatically provisions and renews TLS certificates.
 version: "3"
 services:
   uteke:
-    image: ghcr.io/codecoradev/uteke:latest
-    command: uteke-serve --host 0.0.0.0 --auth-token YOUR_SECRET_TOKEN
+    image: codecoradev/uteke:latest
+    command: ["--host", "0.0.0.0"]
     volumes:
       - uteke-data:/data
     environment:

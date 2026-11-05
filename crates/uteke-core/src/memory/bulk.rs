@@ -153,12 +153,13 @@ impl super::Store {
         Ok(ids)
     }
 
-    /// Deprecate a memory by ID. Sets deprecated=1 and valid_until=now.
+    /// Deprecate a memory by ID. Sets deprecated=1 and valid_until=now; a live
+    /// memory whose caller-set valid_until is already earlier keeps it (#1598).
     pub fn deprecate(&self, id: &str) -> Result<(), Error> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
-                "UPDATE memories SET deprecated = 1, valid_until = ?1, updated_at = ?1, deprecated_at = ?1 WHERE id = ?2",
+                "UPDATE memories SET deprecated = 1, valid_until = CASE WHEN deprecated = 0 AND valid_until < ?1 THEN valid_until ELSE ?1 END, updated_at = ?1, deprecated_at = ?1 WHERE id = ?2",
                 params![now, id],
             )
             .map_err(|e| Error::db("database operation", e))?;
@@ -167,14 +168,15 @@ impl super::Store {
 
     /// Deprecate a memory with a human-readable reason (#929).
     ///
-    /// Sets deprecated=1, valid_until=now, deprecate_reason=reason.
+    /// Sets deprecated=1, valid_until=now (an earlier caller-set valid_until
+    /// is kept, #1598), deprecate_reason=reason.
     /// The reason is stored for audit trail and pending-review display.
     pub fn deprecate_with_reason(&self, id: &str, reason: &str) -> Result<(), Error> {
         let now = chrono::Utc::now().to_rfc3339();
         let rows = self
             .conn
             .execute(
-                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id = ?3 AND deprecated = 0",
+                "UPDATE memories SET deprecated = 1, valid_until = CASE WHEN deprecated = 0 AND valid_until < ?1 THEN valid_until ELSE ?1 END, deprecate_reason = ?2, updated_at = ?1, deprecated_at = ?1 WHERE id = ?3 AND deprecated = 0",
                 params![now, reason, id],
             )
             .map_err(|e| Error::db("database operation", e))?;
@@ -218,16 +220,42 @@ impl super::Store {
         // json_each(): no dynamic SQL and no bound-parameter limit.
         let ids_json =
             serde_json::to_string(ids).map_err(|e| Error::db("database operation", e))?;
-        let count = self
+        // Each memory this call deprecates gets a `deprecated` event with the
+        // reason (#1595: aging and bulk forget left no history). The events
+        // go in the same transaction as the flag, so a deprecation without
+        // its event never lands. Already-deprecated ids are skipped and get
+        // no duplicate event, as in `deprecate_with_reason`.
+        let tx = self
             .conn
-            .execute(
-                "UPDATE memories SET deprecated = 1, valid_until = ?1, deprecate_reason = ?2, \
-                 updated_at = ?1, deprecated_at = ?1 \
-                 WHERE id IN (SELECT value FROM json_each(?3)) AND deprecated = 0",
-                params![now, reason, ids_json],
+            .unchecked_transaction()
+            .map_err(|e| Error::db("begin transaction", e))?;
+        let deprecated: Vec<String> = {
+            let mut stmt = tx
+                .prepare(
+                    "UPDATE memories SET deprecated = 1, valid_until = CASE WHEN deprecated = 0 AND valid_until < ?1 THEN valid_until ELSE ?1 END, deprecate_reason = ?2, \
+                     updated_at = ?1, deprecated_at = ?1 \
+                     WHERE id IN (SELECT value FROM json_each(?3)) AND deprecated = 0 \
+                     RETURNING id",
+                )
+                .map_err(|e| Error::db("database operation", e))?;
+            let rows = stmt
+                .query_map(params![now, reason, ids_json], |row| row.get(0))
+                .map_err(|e| Error::db("database operation", e))?;
+            rows.collect::<Result<_, _>>()
+                .map_err(|e| Error::db("database operation", e))?
+        };
+        let event_data = serde_json::json!({ "reason": reason }).to_string();
+        for id in &deprecated {
+            tx.execute(
+                "INSERT INTO timeline_events (memory_id, event_type, event_data, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![id, TimelineEventType::Deprecated.as_str(), event_data, now],
             )
-            .map_err(|e| Error::db("database operation", e))?;
-        Ok(count)
+            .map_err(|e| Error::db("record deprecated event", e))?;
+        }
+        tx.commit()
+            .map_err(|e| Error::db("commit transaction", e))?;
+        Ok(deprecated.len())
     }
 
     /// Restore a deprecated memory to active state (#929).

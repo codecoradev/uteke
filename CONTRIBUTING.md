@@ -9,14 +9,14 @@ This document helps you decide *whether* and *how* to contribute in a way that's
 - Uteke has one active maintainer ([@ajianaz](https://github.com/ajianaz)).
 - Review bandwidth is limited.
 - Not every contribution can be accepted, even if it's technically correct. Alignment with project direction matters as much as code quality.
-- For scope and direction, check open issues and [ROADMAP.md](ROADMAP.md) if available. Read them before opening anything non-trivial.
+- For scope and direction, check open issues and the [roadmap](docs/roadmap.md). Read them before opening anything non-trivial.
 
 This is normal for a solo project. A "no" on a PR is not personal.
 
 ## Quick start
 
 ```bash
-# Prerequisites: Rust 1.75+ (via https://rustup.rs), Git
+# Prerequisites: Rust 1.85+ (via https://rustup.rs), Git
 git clone https://github.com/codecoradev/uteke.git
 cd uteke
 cargo build --workspace
@@ -74,7 +74,7 @@ Every PR is reviewed against:
 - `cargo fmt --all -- --check` — must be clean
 - `cargo clippy --workspace --all-targets -- -D warnings` — must be clean
 - `cargo test --workspace` — must pass
-- [Cora review](https://github.com/codecoradev/cora-cli) — run locally before pushing (`cora review --base origin/develop`)
+- [Cora review](https://github.com/codecoradev/cora-code) — run locally before pushing (`cora review --base origin/develop`)
 - `cargo build --release --workspace` — must compile
 - No new heavy dependencies without justification
 - No perf regressions in hot paths: embedding, vector search, FTS5, server response latency
@@ -123,8 +123,10 @@ Branch off `develop`. Use these prefixes (kebab-case):
 | `security/`   | Security fix or hardening                |
 | `refactor/`   | Code restructuring                       |
 | `test/`       | Test additions/changes                   |
+| `build/`      | Build system, packaging                  |
+| `ci/`         | CI workflows                             |
 
-Examples: `feat/namespace-memory`, `fix/rrf-normalization`, `security/path-guard`.
+Examples: `feat/room-summary`, `fix/rrf-normalization`, `security/path-guard`. CI rejects any other prefix and bare branch names.
 
 Don't open PRs from your fork's `develop` or `main` branch. Work on a feature branch.
 
@@ -144,7 +146,7 @@ Types: `feat`, `fix`, `chore`, `docs`, `perf`, `refactor`, `test`, `build`, `ci`
 
 Common scopes: `recall`, `remember`, `server`, `cli`, `fts5`, `vector`, `embed`, `schema`, `store`, `consolidate`, `search`.
 
-**Fill out the PR template.** Include: what changed, why, how you tested. The more specific, the faster the review.
+**Fill out the PR template.** The body must contain `## What`, `## Why` and `## Testing` headers (CI checks for them). The more specific, the faster the review.
 
 **Open a draft PR early** if you want feedback mid-flight. Mark "Ready for review" when done.
 
@@ -167,16 +169,15 @@ Common scopes: `recall`, `remember`, `server`, `cli`, `fts5`, `vector`, `embed`,
 
 ## Code Review with Cora CLI
 
-[Cora](https://github.com/codecoradev/cora-cli) is an AI-powered code review tool that runs automatically on every PR via CI. It uses SARIF output and posts review comments directly on the PR.
+[Cora](https://github.com/codecoradev/cora-code) is an AI-powered code review tool that runs automatically on every PR via CI and posts its review on the PR.
 
 ### CI (Automatic)
 
 Every PR to `develop` or `main` triggers the `Cora Review` CI job:
 
-- Downloads the latest `cora-cli` binary
-- Runs `cora review --base origin/develop --format sarif --severity major`
-- Posts results as a PR comment (grouped by severity)
-- **Blocks merge** if any Error-level issues are found
+- Runs [`cora-review-action`](https://github.com/codecoradev/cora-review-action) against the PR's own base branch
+- Posts the result as a PR comment (updated on every push)
+- A merge needs a real verdict: "No issues found" or concrete findings. A comment saying the review could not complete is a blocker, not a pass
 
 ### Local (Recommended)
 
@@ -207,22 +208,26 @@ Uteke is a Cargo workspace:
 |-------|---------|
 | `uteke-core` | Library — storage, embedding, vector search, FTS5 |
 | `uteke-cli` | CLI binary — clap commands, JSON output |
-| `uteke-server` | HTTP server — persistent daemon for fast agent access |
+| `uteke-server` | HTTP server (`uteke-serve`) — persistent daemon for fast agent access |
+| `uteke-mcp` | MCP server — stdio and Streamable HTTP |
+| `docgen` | Generates `docs/api-reference.md` (never edit that file by hand) |
 
 ```
 crates/
 ├── uteke-core/             # Memory engine library
 │   └── src/
 │       ├── lib.rs          # Uteke struct — main API
-│       ├── memory/         # SQLite store + usearch vector index
+│       ├── memory/         # SQLite store + vector index (usearch or vecq)
 │       ├── embed/          # ONNX embedding engine
 │       └── ...
 ├── uteke-cli/              # CLI binary
 │   └── src/
 │       └── commands/       # Per-command modules
-└── uteke-server/           # HTTP server binary
-    └── src/
-        └── main.rs         # Actix-web server
+├── uteke-server/           # HTTP server binary (uteke-serve)
+│   └── src/
+│       └── main.rs         # tiny_http server
+├── uteke-mcp/              # MCP server binary
+└── docgen/                 # API reference generator
 ```
 
 ### Key Design Decisions

@@ -310,10 +310,17 @@ impl Uteke {
                     s.fts_rank = fts_rank.get(id).copied();
                     s.rrf_score = Some(normalized);
                     s.jaccard_boost = jb;
+                    // Only a hit of the vector leg has a similarity (#1650).
+                    let similarity = if vec_rank.contains_key(id) {
+                        s.vector_similarity
+                    } else {
+                        None
+                    };
                     sigs.insert(id.clone(), s);
                     results.push(SearchResult {
                         memory,
                         score: base,
+                        similarity,
                     });
                 }
                 results.sort_by(|a, b| {

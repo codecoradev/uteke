@@ -57,10 +57,6 @@ crates/uteke-cli/src/
 ├── output.rs           # Print helpers (human + JSON formatters)
 ├── init.rs             # Agent init (pi, claude, cursor, copilot, codex)
 ├── bench.rs            # Benchmark helpers
-├── assets/shell/       # Shell hook scripts (include_str! at compile time)
-│   ├── uteke-hook.bash
-│   ├── uteke-hook.zsh
-│   └── uteke-hook.fish
 └── commands/
     ├── mod.rs           # Command dispatch
     ├── remember.rs      # --entity, --category, --meta flags

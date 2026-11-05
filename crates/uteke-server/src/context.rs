@@ -351,6 +351,9 @@ impl ReqCtx {
         if let Error::SecretDetected { kinds } = e {
             return self.secret_detected_response(req, kinds);
         }
+        if let Error::RejectedValue { reason } = e {
+            return self.rejected_value_response(req, reason);
+        }
         match e.class() {
             ErrorClass::BadRequest => self.error_response_for(req, 400, e.to_string()),
             ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
@@ -363,6 +366,30 @@ impl ReqCtx {
                 self.error_response_for(req, 500, body)
             }
         }
+    }
+
+    /// The value was forgotten as wrong (#1597): 409 `rejected_value` with the
+    /// recorded reason, never the value.
+    pub fn rejected_value_response(
+        &self,
+        req: &Request,
+        reason: &str,
+    ) -> Response<Cursor<Vec<u8>>> {
+        let data = serde_json::json!({
+            "error": "rejected_value",
+            "message": "this value was forgotten as wrong and cannot be stored again; remove its tombstone (`uteke tombstone remove`) to allow it",
+            "reason": reason,
+        })
+        .to_string();
+        let mut headers = self.cors_headers_for(req);
+        headers.push(json_header());
+        Response::new(
+            StatusCode::from(409),
+            headers,
+            Cursor::new(data.into_bytes()),
+            None,
+            None,
+        )
     }
 
     /// The privacy filter rejected the write in strict mode (#1464): 400 with

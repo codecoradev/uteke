@@ -3,23 +3,62 @@
 use crate::Config;
 use crate::cli::{Cli, DocCommands};
 use crate::output;
+use std::collections::HashMap;
 use uteke_core::Uteke;
 
 /// Documents fetched per round trip by `doc export`.
 const EXPORT_PAGE_SIZE: usize = 500;
 
 /// JSON mode: one array of full documents. Text mode: each document body
-/// followed by a blank line (the historical format).
-fn render_export(docs: &[uteke_core::Document], json: bool) -> String {
+/// followed by a blank line (the historical format). With `front_matter`
+/// (text mode only, #1470) each body is preceded by a YAML block naming its
+/// slug, title, tags and parent slug; the map resolves parent IDs to slugs.
+fn render_export(
+    docs: &[uteke_core::Document],
+    json: bool,
+    front_matter: Option<&HashMap<String, String>>,
+) -> String {
     if json {
         let mut out = serde_json::to_string_pretty(docs).unwrap_or_else(|_| "[]".to_string());
         out.push('\n');
         out
     } else {
         docs.iter()
-            .map(|d| format!("{}\n\n", d.content))
+            .map(|d| match front_matter {
+                Some(parent_slugs) => {
+                    format!("{}{}\n\n", render_front_matter(d, parent_slugs), d.content)
+                }
+                None => format!("{}\n\n", d.content),
+            })
             .collect::<String>()
     }
+}
+
+/// YAML front-matter for one document. Every value is written as a JSON
+/// string, which is a valid YAML double-quoted scalar, so `:`, `#`, quotes and
+/// newlines in titles and tags need no further escaping.
+fn render_front_matter(
+    doc: &uteke_core::Document,
+    parent_slugs: &HashMap<String, String>,
+) -> String {
+    let quote = |s: &str| serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string());
+    let tags = doc
+        .tags
+        .iter()
+        .map(|t| quote(t))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let parent = doc
+        .parent_id
+        .as_deref()
+        .and_then(|id| parent_slugs.get(id))
+        .map_or("", String::as_str);
+    format!(
+        "---\nslug: {}\ntitle: {}\ntags: [{tags}]\nparent: {}\n---\n",
+        quote(&doc.slug),
+        quote(&doc.title),
+        quote(parent)
+    )
 }
 
 /// Render the document forest as indented lines: one line per document, roots
@@ -474,7 +513,10 @@ pub(crate) fn run(
             }
         }
 
-        DocCommands::Export { output } => {
+        DocCommands::Export {
+            output,
+            front_matter,
+        } => {
             // Every document of the namespace (the old export stopped at 1000
             // rows, ignored the namespace and ignored --output; #1332).
             let ns = cli.namespace.as_deref();
@@ -497,7 +539,23 @@ pub(crate) fn run(
                     break;
                 }
             }
-            let rendered = render_export(&docs, cli.json);
+            let parent_slugs = front_matter.then(|| {
+                let mut slugs: HashMap<String, String> = docs
+                    .iter()
+                    .map(|d| (d.id.clone(), d.slug.clone()))
+                    .collect();
+                // A parent outside the exported set (another namespace) is
+                // looked up once so the hierarchy is still named.
+                for parent_id in docs.iter().filter_map(|d| d.parent_id.as_deref()) {
+                    if !slugs.contains_key(parent_id)
+                        && let Some(parent) = uteke.doc_get(parent_id).ok().flatten()
+                    {
+                        slugs.insert(parent.id, parent.slug);
+                    }
+                }
+                slugs
+            });
+            let rendered = render_export(&docs, cli.json, parent_slugs.as_ref());
             match output.as_deref() {
                 Some(path) if path != "-" => {
                     std::fs::write(path, &rendered)
@@ -578,6 +636,8 @@ mod doc_tree_tests {
 #[cfg(test)]
 mod doc_export_tests {
     use super::render_export;
+    use std::collections::HashMap;
+    use yaml_rust2::{Yaml, YamlLoader};
 
     fn doc(slug: &str, content: &str) -> uteke_core::Document {
         serde_json::from_value(serde_json::json!({
@@ -590,19 +650,109 @@ mod doc_export_tests {
         .unwrap()
     }
 
+    fn no_parents() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
+    /// Splits front-matter output into (front-matter YAML, body) per document.
+    fn split_front_matter(out: &str) -> Vec<(String, String)> {
+        let mut docs = Vec::new();
+        let mut rest = out;
+        while let Some(after_open) = rest.strip_prefix("---\n") {
+            let end = after_open.find("\n---\n").expect("closing fence");
+            let yaml = after_open[..end].to_string();
+            let after_close = &after_open[end + "\n---\n".len()..];
+            let next = after_close
+                .find("\n\n---\n")
+                .map_or(after_close.len(), |i| i + 2);
+            docs.push((yaml, after_close[..next].to_string()));
+            rest = &after_close[next..];
+        }
+        assert!(rest.is_empty(), "unparsed tail: {rest:?}");
+        docs
+    }
+
+    fn parse(yaml: &str) -> Yaml {
+        let mut docs = YamlLoader::load_from_str(yaml).expect("front-matter is valid YAML");
+        assert_eq!(docs.len(), 1);
+        docs.remove(0)
+    }
+
     #[test]
     fn text_export_is_the_bodies_separated_by_blank_lines() {
-        let out = render_export(&[doc("a", "# A"), doc("b", "# B")], false);
+        let out = render_export(&[doc("a", "# A"), doc("b", "# B")], false, None);
         assert_eq!(out, "# A\n\n# B\n\n");
-        assert_eq!(render_export(&[], false), "");
+        assert_eq!(render_export(&[], false, None), "");
     }
 
     #[test]
     fn json_export_is_a_parseable_array_of_full_documents() {
-        let out = render_export(&[doc("a", "# A")], true);
+        let out = render_export(&[doc("a", "# A")], true, None);
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v[0]["slug"], "a");
         assert_eq!(v[0]["content"], "# A");
-        assert_eq!(render_export(&[], true).trim(), "[]");
+        assert_eq!(render_export(&[], true, None).trim(), "[]");
+    }
+
+    #[test]
+    fn front_matter_keeps_the_bodies_byte_identical() {
+        let docs = [doc("a", "# A\n\ntext"), doc("b", "# B")];
+        let plain = render_export(&docs, false, None);
+        let with = render_export(&docs, false, Some(&no_parents()));
+        assert!(with.starts_with("---\nslug: "), "{with}");
+        let bodies: String = split_front_matter(&with)
+            .into_iter()
+            .map(|(_, body)| body)
+            .collect();
+        assert_eq!(bodies, plain);
+    }
+
+    #[test]
+    fn front_matter_parses_as_yaml_with_awkward_titles() {
+        let mut d = doc("tricky", "body");
+        d.title = "Note: \"quoted\" 'single' # not a comment\nsecond line\t\\".to_string();
+        d.tags = vec!["a:b".to_string(), "#hash".to_string(), "- dash".to_string()];
+        let out = render_export(std::slice::from_ref(&d), false, Some(&no_parents()));
+        let parts = split_front_matter(&out);
+        assert_eq!(parts.len(), 1);
+        let y = parse(&parts[0].0);
+        assert_eq!(y["slug"].as_str(), Some("tricky"));
+        assert_eq!(y["title"].as_str(), Some(d.title.as_str()));
+        let tags: Vec<&str> = y["tags"]
+            .as_vec()
+            .unwrap()
+            .iter()
+            .filter_map(Yaml::as_str)
+            .collect();
+        assert_eq!(tags, ["a:b", "#hash", "- dash"]);
+        assert_eq!(y["parent"].as_str(), Some(""), "a root has an empty parent");
+    }
+
+    #[test]
+    fn front_matter_names_the_parent_slug_for_nested_documents() {
+        let root = doc("book", "# Book");
+        let mut chapter = doc("chapter-1", "# One");
+        chapter.parent_id = Some("id-book".to_string());
+        let mut section = doc("section-1", "# 1.1");
+        section.parent_id = Some("id-chapter".to_string());
+        let parents = HashMap::from([
+            ("id-book".to_string(), "book".to_string()),
+            ("id-chapter".to_string(), "chapter-1".to_string()),
+        ]);
+        let out = render_export(&[root, chapter, section], false, Some(&parents));
+        let parents: Vec<String> = split_front_matter(&out)
+            .iter()
+            .map(|(yaml, _)| parse(yaml)["parent"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(parents, ["", "book", "chapter-1"]);
+    }
+
+    #[test]
+    fn json_export_ignores_the_front_matter_flag() {
+        let docs = [doc("a", "# A")];
+        assert_eq!(
+            render_export(&docs, true, Some(&no_parents())),
+            render_export(&docs, true, None)
+        );
     }
 }

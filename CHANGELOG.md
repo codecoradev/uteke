@@ -2,6 +2,420 @@
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-05
+
+Capture, tombstones, honest time travel, a read-only viewer, agent hooks and a Cloud-export import path. Three schema steps (v23 `rejected_values`, v24 `observations`, v25 `idx_memories_source`), all forward-only: an older binary ignores the new tables and the index.
+
+**Upgrade notes**
+
+- `at` on recall and list now also returns memories deprecated after that instant (history is the default; no wire parameter). See "Changed".
+- `recall --strict` now compares against the new `similarity` field instead of `score`, so it returns hits again.
+- Capture (`[capture] enabled`) is off by default and sends turns to an LLM only with `[extraction] mode = "llm"`.
+- MCP read tools wrap their text in `<uteke-stored-data>`; set `UTEKE_MCP_FENCE=0` if a client parses the text.
+- `POST /import` keeps row ids and fields, takes `defer_embedding`, and accepts bodies up to 64 MiB.
+- Contract notes for uteke-cloud: #437 (tombstone 409), #458 (time travel), #459 (similarity, strict), #460 (min_trust, trust_tier), #489 (`POST /import`), #490 (MCP fence).
+
+### Added
+
+- **`uteke connect <agent> --absolute-path` (#1672)** - writes the path of the running
+  `uteke` into the hook commands (quoted for `sh -c` and for the PowerShell
+  `commandWindows`) instead of resolving it through `PATH`, for users who do not want an
+  earlier `PATH` entry named `uteke` to receive every prompt and reply. The manifest
+  records the path; `doctor` reports the install as stale once that file is gone and
+  `uteke connect <agent> --absolute-path` refreshes it; `disconnect` removes the entries by
+  the manifest as before. Without the flag the entries and manifests are byte-identical to
+  before. The integration pages now document the `PATH` trade-off. `connect` is unreleased
+  (only on `develop`), so this adds a flag with no compatibility shim.
+
+- **`similarity` on recall results, and `strict` that works (#1650)** - every memory
+  result on the CLI (`--json`), `POST /recall` and `uteke_recall` (explain and pack
+  JSON, the `sim` field of the text lines) carries `similarity`: the unboosted cosine
+  of the vector leg (0 to 1), or `null` when only full-text search found the hit.
+  Pack and unified results carry it too (`null` for documents). `strict` and
+  `[recall] min_score_strict` now compare against `similarity` and drop hits with
+  none; before they compared the 0.5 floor against `score`, which under the default
+  fusion strategy is at most about 0.25, so `recall --strict` returned nothing.
+  `score`, `--min` and the ranking are unchanged for every strategy. The filter runs
+  before the limit, so up to N rows come back when N qualify. MCP `uteke_recall`
+  already accepted `strict`. Why 0.5 fits EmbeddingGemma cosine, and what it costs:
+  `benchmarks/internal/STRICT_FLOOR.md`. Wire names (`similarity`, `strict`,
+  `min_score_strict`) are those agreed with uteke-cloud#459.
+
+- **`recall --min-trust` and `trust_tier` on results (#1651)** - `min_trust`
+  (`human`, `agent`, `external` or `untrusted`, lowercase) on the CLI, `POST /recall`
+  and `uteke_recall` keeps results whose provenance tier is at least that, before the
+  limit, so up to N rows still come back. Each memory result carries `trust_tier`, the
+  same lowercase string `uteke provenance` writes in JSON and `min_trust` takes (the
+  MCP text lines show `tier <x>`). Omitting `min_trust` changes nothing. It filters the
+  provenance tier only, not a trust state, and `author_type` is self-declared, so it is
+  a convenience filter, not a security boundary. Documents have no tier and are dropped
+  when it is set. Wire names agreed in uteke-cloud#460.
+
+- **Validity in columns on HTTP and MCP (#1598)** - `POST /remember`, `PUT /memory`
+  and the MCP tools `uteke_remember` and `uteke_update` accept `valid_from` and
+  `valid_until` (RFC 3339) and store them in the columns that `at` reads, as
+  agreed in Amendment 3 of the core contract (uteke-cloud#458). A value that is not
+  RFC 3339, an interval that does not start before it ends, or (on `/remember`) an
+  end at or before the write time without a start is refused with 400 and nothing
+  is written. `POST /remember` keeps the metadata copy of both values for one
+  release. `uteke remember` with these flags now goes through a running server
+  instead of falling back to the local store. `uteke export` writes `valid_from`
+  and `valid_until` and `import` reads them (an old file starts at `created_at`; an
+  end that does not follow the start is dropped), so a round trip keeps the
+  interval. Rows that carry the values only in metadata are not migrated: the
+  metadata is free text. Docs: `docs/time-travel.md`.
+
+- **Session timeline in the viewer (#1470 c)** - the `uteke view` page gets a
+  Sessions tab: the captured sessions, and for one session its turns in `seq` order
+  and the memories whose source is `capture:<session>:<batch>` or
+  `observation:<session>`; each memory with such a source links back to it. Core:
+  `Uteke::capture_sessions`, `session_timeline`, `session_memories` (read-only).
+  Same token, `Host` and `GET`-only rules; the two new paths are viewer-only, not API
+  routes. Docs: `docs/viewer.md`.
+
+- **`uteke view`: a read-only browser viewer (#1470 b)** - lists memories (with a
+  namespace filter), namespaces, rooms and health on a loopback page. It is a
+  separate listener (`uteke-serve --viewer`), not an API route, so CORE and LAB are
+  unchanged. Every request needs a random per-launch token (401 without it) and a
+  loopback `Host` with the right port (403, the API's host guard); only `GET` is
+  served (405 otherwise) and only registry rows with `writes = false`; no CORS
+  headers; a non-loopback bind is refused unless the server auth token is set.
+  Stored text is rendered with `textContent`, never as markup. Plain HTML plus the
+  vendored `@codecora/tokens` CSS, no build step. Docs: `docs/viewer.md`.
+
+- **Caller-supplied validity: `uteke remember/update --valid-from/--valid-until`
+  (#1598)** - say when a fact became true and when it stopped, as RFC3339. The
+  values go into the `valid_from`/`valid_until` columns that `recall --at` and
+  `list --at` read (until now `valid_from` was always the write time). The
+  interval is checked before anything is written: it must start before it
+  ends, and since a new memory starts at the write time, a past
+  `--valid-until` needs `--valid-from` too. A deprecated memory is refused
+  (restore it first). Core: `Uteke::set_validity` and
+  `RememberRequest::validity`. Deprecation now keeps a caller end that is
+  already in the past instead of overwriting it with the deprecation time;
+  rows without a caller end deprecate exactly as before. Restore still clears
+  `valid_until`. The wire followed in the "Validity in columns on
+  HTTP and MCP" entry above. Design: `docs/plans/2026-11-03-time-travel-1598.md`.
+
+- **History mode for time travel: `uteke recall --at T --history`, `uteke list
+  --at T --history` (#1598)** - also returns the memories deprecated after `T`
+  (forgotten, superseded, replaced by a contradiction), i.e. what was believed
+  at `T`, corrections included. This is the meaning #1086 gave `at`, which the
+  default never delivered: deprecation removes the memory's vector from the
+  index, so the index-based candidates could not contain those rows. History
+  recall merges the index results with the memories deprecated after `T`,
+  scored by cosine similarity against the embedding kept in the row (one extra
+  query and one dot product per such memory, a set `prune` bounds); history
+  list relaxes the SQL's `deprecated = 0`. Core:
+  `Uteke::recall_at_time_history`, `Uteke::list_at_time_with`. Opt-in when it
+  landed; history became the default in the "Changed" entry above. Design:
+  `docs/plans/2026-11-03-time-travel-1598.md`.
+
+- **`uteke doc export --front-matter` (#1470)** - prefixes each Markdown
+  document with YAML front-matter (`slug`, `title`, `tags`, `parent` as the
+  parent slug or `""`), values double-quoted so `:`, `#`, quotes and newlines
+  stay valid YAML. Off by default: the plain export is byte-identical, and the
+  flag is ignored with `--json`. No `doc import` reads it back; the lossless
+  round trip stays `uteke export --full` / `import --full`.
+
+- **`uteke namespace migrate --map <file>` (#1427 phase 3)** - moves whole
+  namespaces into `default` from a TOML map (`[map."<ns>"]` with `room`, `tag`,
+  `author` and/or `source`, or `drop = true`). Dry run by default with a
+  per-namespace report (counts, a room that will be created, kept authors or
+  sources, soft-deleted rows left in place, unmapped namespaces); `--apply`
+  writes a full export next to the database first, then migrates one
+  transaction per namespace. `drop` soft-deletes and needs `--allow-drop`;
+  `default` cannot be mapped; a re-run is a no-op. Logic in
+  `uteke_core::namespace_migrate`.
+
+- **`uteke connect codex|cursor|pi|hermes` (#1465)** - Codex: hooks in
+  `~/.codex/hooks.json` (`$CODEX_HOME`), the Claude Code shape plus a PowerShell
+  `commandWindows`; `connect` prints the one-time `/hooks` trust step. Cursor:
+  `~/.cursor/hooks.json` (`version: 1`); `sessionStart` returns the recalled pack
+  as `additional_context`, and capture uses `beforeSubmitPrompt` and
+  `afterAgentResponse` (Cursor's `stop`/`sessionEnd` carry no text), grouped by
+  `conversation_id`; the prompt hook always answers `{"continue": true}`, also
+  without `uteke` on `PATH`. `connect pi|hermes` installs the memory-provider
+  plugin (`init <agent> --memory-provider`; a plugin file you changed is kept as
+  `<file>.uteke-bak` first), and `disconnect` removes its files while unchanged. Docs: `docs/integrations/codex.md`, `docs/integrations/cursor.md`
+  (with the Cursor 3.2.7 `additional_context` bug).
+
+- **`uteke connect` / `disconnect`: agent lifecycle hooks, Claude Code first
+  (#1465)** - `uteke connect claude` adds `SessionStart`, `UserPromptSubmit` and
+  `Stop` hooks to `~/.claude/settings.json`: the session starts with the project's
+  memories as context (a budgeted recall pack), and each prompt and reply is queued
+  with `uteke capture` (needs `[capture] enabled = true`). Each hook runs the hidden
+  `uteke hook-run <event>` through a guard that does nothing when `uteke` is not
+  on `PATH`; `hook-run` always exits 0 and logs errors to
+  `~/.codecora/uteke/hook.log`. What was added is recorded in
+  `~/.codecora/uteke/connect/<agent>.json`, so a re-run changes nothing and
+  `uteke disconnect claude` removes exactly those entries (an entry you edited is
+  left alone and reported). The user's keys keep their order, the original is
+  backed up once to `settings.json.uteke-bak`, and `--dry-run` writes nothing.
+  `uteke doctor` reports hooks that are stale or were removed; `uteke init
+  claude` now ends with a hint to run `connect`. `uteke capture` goes through a
+  running `uteke-serve` (`POST /capture`) instead of opening its store. Docs:
+  `docs/integrations/claude-code.md`.
+
+- **A Uteke Cloud export imports with its documents and rooms (#1632)** - `uteke import`
+  and `POST /import` store `type: "document"` rows as documents (slug, title, content, tags,
+  parent by slug or id in any row order; a changed document is updated in place, an
+  unchanged one left alone, an unknown parent counted in `parent_unresolved` and stored at
+  the root) and `type: "room"` rows as rooms (created when missing, an existing room left
+  unchanged, `doc_slugs` linked), both before the memories' `rooms` links, and skip the
+  manifest line without a warning. The result adds `documents_imported`,
+  `documents_updated`, `documents_unchanged`, `parent_unresolved`, `rooms_imported`,
+  `rooms_existing`, `room_documents_linked` and `room_documents_missing`, each only when
+  non-zero. With deferred embedding the document chunks are stored without vectors too.
+  `import --full` reads the Cloud room-object shape (with `doc_slugs`) and a slug `parent`,
+  and derives depth and `has_children`. `POST /import` takes bodies up to 64 MiB (the Cloud
+  `/import` limit; `UTEKE_MAX_IMPORT_SIZE` sets another, other routes keep 10 MB), refuses a
+  larger declared body before reading it, and its 413 names the limit and the ways around
+  it. Additive on a CORE endpoint.
+
+- **`POST /import` takes `defer_embedding` (#1634)** - `"defer_embedding": true` (default
+  false) stores the rows without a vector, like `uteke import --defer-embed` (#1608), so a
+  bulk import returns in seconds instead of embedding every row inside the request; the
+  response adds `deferred_embedding`. Run `uteke repair --reembed` afterwards so `/recall`
+  finds the rows (`/search` finds them at once). Additive on a CORE endpoint: a request
+  without the field behaves and answers as before. The API reference documents the runbook,
+  and `docgen` now keeps a multi-line field description on one table row.
+
+- **Raw capture with deferred extraction (#1466, schema v24)** - `uteke capture
+  --session <id> --role user|assistant|tool [TEXT]` queues one conversation turn
+  (no LLM call, no network: one SQLite insert after the privacy filter; the same
+  turn twice is one row; a tool result is kept as a 2000-character summary).
+  `uteke extract-queue run [--budget N]` turns pending sessions into memories, one
+  extractor call per session (LLM when `[extraction]` names one, otherwise the
+  offline rules), through `remember`, so duplicates and rejected values are
+  refused; `extract-queue status` shows the counts. An extractor error stops the
+  run and the session is retried (failed after `max_attempts`); a session left
+  by a crash is requeued after a lease, and a re-run never stores its facts
+  twice. Done turns are deleted after 30 days. Off by default: `[capture]
+  enabled = true` in the global `uteke.toml` (a project file cannot set it).
+  `uteke-serve` extracts on its own every `interval_minutes`, taking the store
+  lock per session, and doubles the wait after a run the extractor stopped (up
+  to 16 intervals). LAB surfaces: `POST /capture`, `GET /capture/status` and the
+  MCP tool `uteke_capture`; `POST /capture` (HTTP 409) and `uteke_capture` are
+  refused while capture is off, `GET /capture/status` always answers. `uteke-serve`
+  now applies the `UTEKE_EXTRACTION_*` variables over `[extraction]` like the CLI
+  (for the schedule and `POST /extract`).
+
+- **Rejected-value tombstones (#1597, schema v23)** - forgetting a memory with
+  `--reason wrong` (or `wrong: <note>`; also `supersede --reason wrong`,
+  `DELETE /forget?id=..&reason=..` and the MCP `uteke_forget` `reason`) records a
+  hash of its normalised text (NFKC, letter case, whitespace, invisible
+  characters). Every write refuses that text from then on: `remember`, room
+  remember, `update`, consolidation and `import` (the row is skipped and counted
+  as `rejected_tombstone`). The HTTP API answers `409 rejected_value` with the
+  recorded reason, never the value; MCP a `rejected_value:` tool error. Tombstones
+  survive `prune`, travel with `export --full` / `import --full`, and are managed
+  with `uteke tombstone list|remove`; `uteke promote` removes the tombstone of the
+  memory it restores. An ordinary forget records nothing. CORE contract issue:
+  uteke-cloud#437 (`POST /remember`, `/room/remember`, `/import` and
+  `/consolidate/pair` gain the 409; `/import` gains `rejected_tombstone` when
+  non-zero). Design: `docs/plans/2026-11-01-rejected-value-tombstone-1597.md`.
+
+- **`uteke import --defer-embed`: store first, embed later (#1608)** - a JSON/JSONL
+  import can store its rows without a vector, so it does not wait on the
+  embedder (a CPU-heavy local model, a backend that is down or rate-limited).
+  The rows are keyword-searchable at once; exact copies of a stored memory or of
+  an earlier row are skipped by the hash of the current content (the cosine
+  duplicate check needs a vector). `uteke repair --reembed` adds the vectors
+  later, now with `--limit N` (stop after N rows were embedded, memories first,
+  then document chunks; a failing row does not count; run again to continue,
+  the report says how many were not tried) and `--pause-ms MS` (sleep between
+  rows).
+  Rows it embeds also get the cosine links `remember` makes. The Rust API gains
+  `Uteke::import_with` / `ImportOptions` and `Uteke::reembed_missing_with` /
+  `ReembedOptions`. `POST /import` and `POST /repair` are unchanged.
+
+### Changed
+
+- **A recall filter no one satisfies costs two passes, not five (#1671)** - with `strict` or
+  `min_trust` active, a first pass that keeps no row now widens once, straight to the
+  largest window (1000 candidates), instead of re-running the strategy at 4x each time. The
+  rows returned and their order are unchanged. The capture worker's housekeeping once per
+  cycle and its shutdown check between sessions were already in place (#1663).
+
+- **Behaviour change for callers who pass `at`: history is the default (#1598)** -
+  `at` on `POST /recall`, `POST /list`, `POST /room/recall`, MCP `uteke_recall` and
+  `uteke_list`, and `uteke recall/list --at` now also returns the memories that were
+  deprecated (forgotten, superseded, replaced by a contradiction) **after** `at`:
+  `created_at <= at < deprecated_at` and `valid_from <= at < valid_until`. This is
+  the meaning #1086 documented but never delivered, since deprecation removes a
+  memory's vector from the index. Agreed in Amendment 3 of the core contract
+  (uteke-cloud#458); there is no `history` wire parameter. An `at` taken before a
+  correction now returns more rows than before. Room recall with `at` follows the
+  same rule (it used to look only at live room memories). `uteke recall/list --at T
+  --history` (0.22.x) is still accepted as a deprecated no-op alias. Core:
+  `Uteke::recall_at_time` and `list_at_time` are history queries; the
+  `recall_at_time_history` and `list_at_time_with` methods are gone, new
+  `recall_room_at_time` and `recall_room_semantic_at_time`. Docs:
+  `docs/time-travel.md`.
+
+- `recall --strict` with `--min` now applies both: `--min` to `score` as before, and
+  the strict floor to `similarity`. `--strict` alone no longer sets a floor on
+  `score`.
+
+### Security
+
+- **An extraction API key alone no longer sends captured conversations to the LLM (#1665)** -
+  the raw capture queue extracts with the offline rules unless `[extraction] mode = "llm"`
+  is set; a key with no mode (set for `import --extract`) keeps the turns local. The queue
+  is unreleased (develop only, after v0.22.1), so there is no shim for the earlier
+  "key means send" rule. `uteke connect` (capture on), `uteke extract-queue run` and the
+  `uteke-serve` schedule print one line naming the extractor: offline, or the endpoint
+  host (never the key).
+
+- **A tombstone no longer keeps a secret typed in its reason (#1669)** - the reason and
+  the 120-character preview of a `forget --reason wrong` tombstone pass the privacy
+  filter before they are stored (masked in `redact` and `strict` alike; the forget is not
+  refused). New `[privacy] tombstone_preview = false` keeps the hash only: no preview, the
+  value is still refused, and `export --full` carries nothing of the text. The docs now
+  list what a forget as wrong leaves behind. The tombstones are unreleased (develop only,
+  after v0.22.1), so there is no migration; rows stored before this change keep what they
+  hold.
+
+- **MCP tools fence stored text as data (#1599)** - every MCP read tool (the set a
+  read-only token may call: recall, search, list, get, context, the doc, room, tag
+  and graph read tools, provenance, timeline, contradictions, stats) wraps its
+  result in a `<uteke-stored-data>` block that says the content is data, not
+  instructions, so a memory, title or tag that reads like a command is not taken
+  as one. The tag name inside stored text is escaped in any form, so it cannot end
+  or nest the block. The tool descriptions, the
+  `initialize` instructions and `uteke guide` say the same. Write tools, errors and
+  the HTTP JSON API are unchanged. A client that parses the MCP text can turn it
+  off with `UTEKE_MCP_FENCE=0`.
+
+### Removed
+
+- The `uteke hook <shell>` script. It exported `UTEKE_PROJECT_STORE` on `cd`, but
+  no uteke binary ever read that variable, so it never switched stores. For a
+  per-project store, put `[store] path = "./.uteke"` in the project's
+  `.uteke/uteke.toml` (read from the current directory), or use `--store` /
+  `UTEKE_HOME`. The command stays as a hidden no-op so an existing
+  `eval "$(uteke hook zsh)"` line does not fail; it prints a note to remove it.
+
+### Fixed
+
+- **An update that a field refuses no longer leaves a new validity behind** - `PUT /memory`,
+  MCP `uteke_update` and `uteke update` wrote `valid_from` / `valid_until` before the other
+  fields were validated, so a request refused for another field (for example
+  `importance: 5.0`, an unknown `memory_type`, or content forgotten as wrong) still moved
+  the validity. The interval is now checked first (new `Uteke::check_validity`, the checks
+  of `set_validity` without the write) and written only after the other fields went
+  through. Found by the Cora review of the v0.23.0 release PR.
+
+- **The session view matches a session exactly and uses an index (#1670)** -
+  `session_memories` matched `source` with a `substr` prefix, so the view of session `a`
+  also listed the memories of session `a:b` (source `capture:a:b:<batch>`), and the
+  condition scanned every memory. After the `capture:<session>:` prefix only the batch id
+  (no `:`) may follow; the lookup is an equality plus a range on `source`, so a session id
+  with `%`, `_` or a quote is taken literally. Schema v25 adds `idx_memories_source`
+  (forward-only; an older binary ignores the index; a fresh store gets it at open). The
+  session view (#1470 c) is unreleased (only on `develop`), so this changes its behaviour
+  with no compatibility shim.
+
+- **The viewer never writes the store, and its non-loopback bind authenticates (#1667)** -
+  `uteke view` opens the database `SQLITE_OPEN_READ_ONLY` (new `Uteke::open_read_only`):
+  no WAL pragma, no schema migration, no vector-index or cache file. A store whose
+  schema is older than the binary expects is refused with a message to run any normal
+  `uteke` command once, instead of being migrated from the viewer. A non-loopback
+  `--host` still needs the server auth token, and now every request must also carry it
+  as `Authorization: Bearer` on top of the launch token (the bearer slot is no longer a
+  launch-token source on such a bind); a one-line warning says the viewer speaks plain
+  HTTP and TLS must be terminated in front; the printed launch URL uses `127.0.0.1` /
+  `[::1]` for a wildcard bind instead of `0.0.0.0`. The viewer is unreleased (only on
+  `develop`), so this changes its behaviour with no compatibility shim. Docs:
+  `docs/viewer.md`.
+
+- **Exports are owner-only and `connect` no longer exposes or clobbers a config (#1668)** -
+  the pre-migration export of `uteke namespace migrate` and the files written by
+  `uteke export` (plain and `--full`) are created with mode 0600 on Unix (new
+  `uteke_core::private_file::create_private`; an existing export file is tightened
+  before it is truncated). `connect`/`disconnect` create the temp config with the
+  original file's mode (0600 when there is none) from the start, instead of copying the
+  mode afterwards, and compare the file with what was read before the rename: if another
+  program changed it in between, nothing is written and the error says so. `namespace
+  migrate` and `connect` are unreleased (only on `develop`), so this changes their
+  behaviour with no compatibility shim; the `uteke export` mode change applies to a
+  released command and only tightens permissions.
+
+- **Capture extraction no longer holds the store lock across the LLM call (#1663)** -
+  `uteke-serve` claims a batch under the lock, releases it for the extractor request
+  (up to two minutes per chunk), and takes it again to store the facts and mark the
+  batch done, so recall and writes are not stalled by a slow or hung provider. The
+  lease and the `capture:<session>:<batch>` source work as before, so a crash between
+  the steps hands the batch back whole. Housekeeping (retention, lease reclaim) now
+  runs once per scheduled cycle, each session is tried once per cycle, and a shutdown
+  is seen between sessions. `uteke extract-queue run` goes through the same steps.
+
+- **Capture turns and the capture queue are bounded (#1666)** - `Uteke::capture` refuses a
+  turn over `[capture] max_turn_bytes` (1 MiB, the limit `POST /capture` already had) on
+  every surface, and `uteke capture` reads stdin only up to that size. It also refuses new
+  turns while the waiting queue holds `max_queue_turns` (100000) or `max_queue_bytes`
+  (512 MiB), and `extract-queue status` and `GET /capture/status` show `pending_bytes` and
+  a `warning` from 80% of a limit, so a stuck extraction cannot fill the disk. The run
+  report counters are exact: `reclaimed` counts the batches an expired lease handed back,
+  those it failed at `max_attempts` are added to `sessions_failed`, and `facts_refused` is
+  not counted again when an attempt is retried. The raw capture queue (#1466) is not
+  released yet, so these limits and counters change without a compatibility shim.
+
+- **A long capture session no longer starves the extraction queue (#1664)** - a
+  session is extracted in chunks of at most `[capture] chunk_chars` (24000)
+  characters instead of one request, and its facts are stored as one batch. A
+  provider refusal of the input size (HTTP 413, or a 4xx such as a 400 that names the context length)
+  fails that session alone, counting an attempt, instead of stopping the run for
+  the sessions behind it; a 429 or 5xx still stops the run.
+
+- **`uteke upgrade` says when connected agent hooks are out of date (#1641)** -
+  After installing, `upgrade` runs the new binary's check (the one `uteke doctor`
+  reports as `agent_hooks`, through the hidden `uteke hook-status`) and prints
+  one line per agent that is `stale` or `missing`, with the `uteke connect
+  <agent>` command that refreshes it. Nothing is printed when every agent is up
+  to date or none is connected.
+
+- **`uteke recall --context` works without a memory-only flag (#1642)** - The
+  default (unified) path printed the normal listing and ignored `--context`. It
+  now prints the `[Relevant Memories (...)]` layout (a document hit adds
+  `(doc: <title>)`) and `[No relevant memories found for: <query>]` when nothing
+  matches. Through the server, `--context` still runs on the local store, so both
+  give the same output.
+
+- **Timeline gaps and the stale provenance hash (#1595)** - a content update
+  through the API (`update`, `PUT /memory`, MCP `uteke_update`) now refreshes
+  `source_hash` and records an `updated` event `{"fields":["content"],
+  "previous_hash":…,"source_hash":…}` with the memory as `subject` evidence, in
+  the same transaction as the write (as uteke-cloud does since #354). `uteke
+  provenance` no longer reports every edited memory as `✗ MISMATCH`; a mismatch now
+  means the content changed outside the API. Bulk deprecations (aging, lifecycle
+  cycle, bulk forget) record a `deprecated` event per memory with the reason, in
+  the same transaction, and a contradiction on write deprecates the old memory
+  with the reason `contradiction: replaced by <id>`, which records the event too.
+  A prune keeps the history of the memories it deletes (schema v20, #1280); a test
+  now covers it. `/provenance` fields are unchanged.
+
+- **A JSONL import keeps each row's identity and does not bring deleted memories back
+  (#1633)** - `uteke import` and `POST /import` store a row under its `id` and keep its
+  `memory_type`, `importance`, `pinned`, `content_type` and `slug` (a missing or invalid
+  value falls back to the old default, so older files import as before); `uteke export`
+  now writes these fields. A stored id is never overwritten: the same content is a
+  duplicate, other content an id conflict; a copy into another namespace (`--namespace`)
+  gets new ids. A row whose content (or id) is deleted in the
+  target is skipped instead of coming back live, and a row marked `deprecated` (a Uteke
+  Cloud export) is stored deleted without a vector. Rows without an id keep the cosine
+  duplicate check (#1005). The result and the `POST /import` response add
+  `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped` (additive; the
+  names follow the Cloud importer). `import --full` restores a bundle row marked
+  `deprecated` deleted instead of always live.
+
+- `export --full` / `import --full` dropped the columns added since the format was
+  introduced: a memory's `author`, `author_type`, `source_hash` and `recall_count`,
+  the room member `role`, the timeline `actor` and `evidence_json`, and the
+  document `path` (an empty path made a later `doc move` skip the subtree). They
+  now round-trip; older bundles import with the schema defaults and rebuilt paths.
+
 ## [0.22.1] - 2026-10-30
 
 Patch release. Theme: **`uteke upgrade` verifies the cosign signature itself**, so

@@ -11,6 +11,7 @@
 
 #[cfg(test)]
 mod accessor_tests;
+pub mod capture;
 pub mod chunker;
 pub mod config_layers;
 mod consolidate;
@@ -22,6 +23,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod embedding;
+pub mod session_view;
 pub use embedding::EmbeddingWarmer;
 pub mod embedding_config;
 #[cfg(test)]
@@ -46,6 +48,9 @@ pub mod memory;
 #[cfg(test)]
 mod mutation_gap_tests;
 pub mod namespace_deprecation;
+pub mod namespace_migrate;
+#[cfg(test)]
+mod namespace_migrate_tests;
 pub mod offline_extraction;
 mod operations;
 pub mod pack_mode;
@@ -54,7 +59,10 @@ pub mod privacy;
 mod privacy_field_tests;
 #[cfg(test)]
 mod privacy_write_tests;
+pub mod private_file;
 mod redaction_flags;
+#[cfg(test)]
+mod timeline_write_tests;
 #[cfg(test)]
 mod write_path_tests;
 
@@ -66,6 +74,7 @@ pub use list_request::{
     ListRequest, ListRequestError,
 };
 pub use operations::{RememberOutcome, UpdateOutcome};
+pub use recall_filter::ResultFilter;
 pub use recall_request::{
     RECALL_DEFAULT_BUDGET_CHARS, RECALL_DEFAULT_LIMIT, RECALL_DEFAULT_MIN_SCORE,
     RECALL_HTTP_MAX_LIMIT, RECALL_STRICT_MIN_SCORE, RecallInput, RecallRequest, RecallRequestError,
@@ -82,6 +91,7 @@ pub mod provenance;
 mod recall_cache;
 pub mod recall_exec;
 pub mod recall_explain;
+mod recall_filter;
 mod recall_request;
 pub mod recall_settings;
 pub mod remember_exec;
@@ -94,6 +104,7 @@ pub mod structural_export;
 #[doc(hidden)]
 pub mod test_support;
 mod timeline;
+pub mod tombstone;
 mod types;
 pub mod update_check;
 
@@ -112,7 +123,7 @@ pub use graph_rerank::{GraphRerankConfig, GraphSignals, compute_graph_signals, r
 pub use memory::aging::DeprecatedMemoryInfo;
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
-    DEFAULT_NAMESPACE, ExportEntry, ImportResult, Memory, MemoryTier, MemoryType,
+    DEFAULT_NAMESPACE, ExportEntry, ImportOptions, ImportResult, Memory, MemoryTier, MemoryType,
     NamespaceDeleteResult, NamespaceRenameResult, PruneResult, RecallStrategy, SearchResult,
     SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo, UnifiedSearchResult,
 };
@@ -127,6 +138,7 @@ pub use salience_recency::{
     SalienceRecencyConfig, apply_boosts, recency_score, salience_score, type_half_life_days,
 };
 pub use timeline::{TimelineEvent, TimelineEventType};
+pub use tombstone::Tombstone;
 
 pub use embed::Embedder;
 #[cfg(feature = "onnx")]
@@ -135,8 +147,8 @@ pub use engine_settings::EngineSettings;
 pub use error::{Error, ErrorClass, format_bytes};
 pub use recall_settings::RecallSettings;
 pub use types::{
-    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedReport, RepairReport,
-    VerifyReport,
+    CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedOptions, ReembedReport,
+    RepairReport, VerifyReport,
 };
 
 /// Maximum memory content length (characters) — default, overridable via config (#404).
@@ -707,8 +719,14 @@ pub struct Uteke {
     /// Memory lifecycle configuration (#928). Controls soft-delete behavior,
     /// dynamic deprecation caps, and TTL-based pruning.
     lifecycle_config: LifecycleConfig,
+    /// `[capture]` (#1466): read by the HTTP and MCP surfaces (opt-in gate)
+    /// and the server's scheduled extraction.
+    capture_settings: capture::CaptureSettings,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
+    /// While non-zero, recalls do not touch what they return (access count,
+    /// hot boost). Held by [`ResultFilter::fetch`] over its widened passes.
+    touch_hold: std::sync::atomic::AtomicUsize,
     /// Path to the persistent embedding cache DB (`embed_cache.db`).
     /// `None` for in-memory stores (tests).
     embed_cache_path: Option<std::path::PathBuf>,
@@ -1116,7 +1134,34 @@ impl Uteke {
             }
         });
 
-        Ok(Self {
+        Ok(Self::assemble(
+            store,
+            index,
+            embedder,
+            embedder_backend,
+            embedding_settings,
+            tier_config,
+            recall_config,
+            graph_rerank_config,
+            embed_cache_path,
+        ))
+    }
+
+    /// The one place the struct is built, so the read-write and read-only
+    /// open paths cannot drift apart (#1667).
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        store: Store,
+        index: VectorIndex,
+        embedder: Option<Box<dyn Embedder>>,
+        embedder_backend: String,
+        embedding_settings: EmbeddingSettings,
+        tier_config: TierConfig,
+        recall_config: RecallConfig,
+        graph_rerank_config: graph_rerank::GraphRerankConfig,
+        embed_cache_path: Option<PathBuf>,
+    ) -> Self {
+        Self {
             store,
             index: RwLock::new(index),
             embedder: Mutex::new(embedder.map(std::sync::Arc::from)),
@@ -1130,13 +1175,44 @@ impl Uteke {
             graph_rerank_config: graph_rerank_config.sanitized(),
             salience_recency_config: salience_recency::SalienceRecencyConfig::default(),
             recall_cache: recall_cache::RecallCache::new(recall_cache::RecallCacheConfig::default()),
+            touch_hold: std::sync::atomic::AtomicUsize::new(0),
             jaccard_weight: 0.0,
             recall_settings: RecallSettings::default(),
             dream_config: DreamConfig::default(),
             privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),
+            capture_settings: capture::CaptureSettings::default(),
             embed_cache_path,
-        })
+        }
+    }
+
+    /// Open an existing store **read-only** for a reader that never writes
+    /// (the viewer, #1667): the database is opened `SQLITE_OPEN_READ_ONLY`
+    /// with no migration, and no embedder, vector-index file or embedding cache
+    /// is touched, so nothing on disk can change. Keyword (FTS) reads and plain
+    /// listing work; semantic recall does not (the index is empty).
+    ///
+    /// Fails when the store is missing or its schema is not the one this build
+    /// expects (run any normal `uteke` command once to migrate it).
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let db_path = path.as_ref();
+        let db_str = if db_path.is_dir() {
+            db_path.join("uteke.db").to_string_lossy().to_string()
+        } else {
+            db_path.to_string_lossy().to_string()
+        };
+        let store = Store::open_read_only(&db_str)?;
+        Ok(Self::assemble(
+            store,
+            VectorIndex::new(DEFAULT_EMBEDDING_DIMS)?,
+            None,
+            String::new(),
+            EmbeddingSettings::default(),
+            TierConfig::default(),
+            RecallConfig::default(),
+            graph_rerank::GraphRerankConfig::default(),
+            None,
+        ))
     }
 
     /// Override the salience/recency dual-axis boost config (#352).
@@ -1200,6 +1276,17 @@ impl Uteke {
     /// Get the current lifecycle configuration (#928).
     pub fn lifecycle_config(&self) -> LifecycleConfig {
         self.lifecycle_config
+    }
+
+    /// Set the `[capture]` settings (#1466). Called from `apply_settings`.
+    pub fn set_capture_settings(&mut self, settings: capture::CaptureSettings) {
+        self.capture_settings = settings;
+    }
+
+    /// The `[capture]` settings (#1466): off unless the global file turns
+    /// capture on.
+    pub fn capture_settings(&self) -> capture::CaptureSettings {
+        self.capture_settings
     }
 
     /// Configure cloud embedding fallback.
@@ -1419,6 +1506,44 @@ impl Uteke {
     /// room. Returns false if the memory does not exist.
     pub fn set_author(&self, id: &str, author: Option<&str>) -> Result<bool, Error> {
         self.store.set_author(id, author)
+    }
+
+    /// Say when a memory's fact holds (#1598): `valid_from`/`valid_until`,
+    /// which `recall --at` and `list --at` read. A side left `None` keeps
+    /// its stored value. Refused when the interval would not start before it
+    /// ends, and on a deprecated memory (restore it first). Returns false if
+    /// the memory does not exist.
+    pub fn set_validity(
+        &self,
+        id: &str,
+        validity: &crate::memory::types::Validity,
+    ) -> Result<bool, Error> {
+        if !self.check_validity(id, validity)? {
+            return Ok(false);
+        }
+        self.store.set_validity(id, validity)
+    }
+
+    /// The checks of [`set_validity`](Self::set_validity) without the write:
+    /// false when the memory does not exist, an error on a deprecated memory
+    /// or an interval that would not start before it ends. An update that
+    /// changes other fields too runs this first, then the field update, then
+    /// `set_validity`, so a refused field never leaves a new validity behind.
+    pub fn check_validity(
+        &self,
+        id: &str,
+        validity: &crate::memory::types::Validity,
+    ) -> Result<bool, Error> {
+        let Some(existing) = self.store.get_by_id(id)? else {
+            return Ok(false);
+        };
+        if existing.deprecated {
+            return Err(Error::Validation(format!(
+                "Memory {id} is deprecated; restore it before changing its validity"
+            )));
+        }
+        validity.check_against(existing.valid_from, existing.valid_until)?;
+        Ok(true)
     }
 
     /// Stamp the writer of a room write on the memory itself (#1427 phase 2),
@@ -1642,6 +1767,23 @@ impl Uteke {
         author: Option<&str>,
         parent_slug: Option<&str>,
     ) -> Result<String, Error> {
+        self.doc_upsert_inner(slug, title, content, tags, author, parent_slug, false)
+    }
+
+    /// [`Self::doc_upsert_with_parent`]; with `defer_embedding` the chunks are
+    /// stored without vectors (keyword-searchable at once), and
+    /// `uteke repair --reembed` embeds them later (import, #1632).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn doc_upsert_inner(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        author: Option<&str>,
+        parent_slug: Option<&str>,
+        defer_embedding: bool,
+    ) -> Result<String, Error> {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Resolve parent if specified.
@@ -1704,7 +1846,11 @@ impl Uteke {
             .map(|existing| existing.id)
             .unwrap_or_else(|| doc.id.clone());
         let tag_strings: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-        let chunks = self.embed_document_chunks(&chunk_doc_id, content, &tag_strings)?;
+        let chunks = if defer_embedding {
+            Self::unembedded_document_chunks(&chunk_doc_id, content, &tag_strings)
+        } else {
+            self.embed_document_chunks(&chunk_doc_id, content, &tag_strings)?
+        };
 
         // Old chunk ids must be read BEFORE the upsert replaces them.
         let old_chunk_ids = self
@@ -1717,6 +1863,35 @@ impl Uteke {
         tracing::info!("Document '{slug}' upserted: {} chunks", chunks.len());
 
         Ok(doc_id)
+    }
+
+    /// Chunk `content` without embedding it: every chunk has an empty vector,
+    /// which `uteke repair --reembed` fills. The chunk size is the one of the
+    /// smallest model window (512 tokens), so no chunk outgrows the model.
+    fn unembedded_document_chunks(
+        doc_id: &str,
+        content: &str,
+        tags: &[String],
+    ) -> Vec<(DocumentChunk, Vec<f32>)> {
+        crate::chunker::chunk_markdown(content, 2048)
+            .iter()
+            .enumerate()
+            .map(|(i, chunk)| {
+                (
+                    DocumentChunk {
+                        id: uuid::Uuid::now_v7().to_string(),
+                        document_id: doc_id.to_string(),
+                        chunk_index: i as i64,
+                        heading: chunk.heading.clone(),
+                        content: chunk.content.clone(),
+                        char_start: chunk.char_start as i64,
+                        char_end: chunk.char_end as i64,
+                        tags: tags.to_vec(),
+                    },
+                    Vec::new(),
+                )
+            })
+            .collect()
     }
 
     /// Chunk `content` and embed every chunk.
@@ -1774,6 +1949,10 @@ impl Uteke {
             index_sync::remove_unsaved(&mut *index, &format!("chunk:{old_id}"));
         }
         for (chunk, embedding) in new_chunks {
+            // A deferred chunk has no vector yet (#1632).
+            if embedding.is_empty() {
+                continue;
+            }
             let key = format!("chunk:{}", chunk.id);
             if let Err(e) = index_sync::insert_unsaved(&mut *index, &key, embedding, &policy) {
                 tracing::warn!("Failed to insert chunk {} into vector index: {e}", chunk.id);
@@ -2423,6 +2602,8 @@ impl Uteke {
             .map(|dr| UnifiedSearchResult {
                 result_type: SearchResultType::Document,
                 score: dr.score,
+                similarity: None,
+                trust_tier: None,
                 content: if dr.chunk_snippet.is_empty() {
                     dr.document.title.clone()
                 } else {
@@ -2545,6 +2726,8 @@ impl Uteke {
                     UnifiedSearchResult {
                         result_type: SearchResultType::Memory,
                         score: sr.score,
+                        similarity: sr.similarity,
+                        trust_tier: Some(TrustTier::of(m)),
                         content: m.content.clone(),
                         memory_id: Some(m.id.clone()),
                         tags: m.tags.clone(),
@@ -2575,6 +2758,8 @@ impl Uteke {
                         // semantic). NOT a cosine — do not threshold it like
                         // one.
                         score: dr.score,
+                        similarity: None,
+                        trust_tier: None,
                         content: if dr.chunk_snippet.is_empty() {
                             dr.document.title.clone()
                         } else {
@@ -3321,10 +3506,7 @@ mod tests {
             author: None,
         };
 
-        let sr = SearchResult {
-            memory: m,
-            score: 0.95,
-        };
+        let sr = SearchResult::new(m, 0.95);
         assert_eq!(sr.score, 0.95);
         assert_eq!(sr.memory.id, "sr-test");
     }
@@ -3380,6 +3562,37 @@ mod tests {
         resolve_db_path(&fresh).unwrap();
         let mode = std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    /// #1667: the read-only open reads the rows and leaves the directory as it
+    /// was: no index file, no embedding cache, no migration.
+    #[test]
+    fn open_read_only_reads_and_creates_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let u = Uteke::open_with_backend(dir.path(), None).unwrap();
+            u.stats(None).unwrap();
+        }
+        let snapshot = |d: &Path| {
+            let mut v: Vec<_> = std::fs::read_dir(d)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+                .filter(|n| !n.ends_with("-wal") && !n.ends_with("-shm"))
+                .collect();
+            v.sort();
+            v
+        };
+        let before = snapshot(dir.path());
+        let db_bytes = std::fs::read(dir.path().join("uteke.db")).unwrap();
+        let u = Uteke::open_read_only(dir.path()).expect("current store opens");
+        assert!(u.stats(None).is_ok());
+        drop(u);
+        assert_eq!(snapshot(dir.path()), before);
+        assert_eq!(
+            std::fs::read(dir.path().join("uteke.db")).unwrap(),
+            db_bytes
+        );
+        assert!(Uteke::open_read_only(dir.path().join("missing")).is_err());
     }
 
     #[test]

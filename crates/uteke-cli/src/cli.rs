@@ -36,12 +36,38 @@ pub struct Cli {
     pub command: Commands,
 }
 
-/// Supported shell types for completions and hooks.
+/// Shell names accepted by the removed `hook` command.
 #[derive(Clone, Copy, clap::ValueEnum)]
 pub enum SupportedShell {
     Bash,
     Zsh,
     Fish,
+}
+
+/// `uteke tombstone` subcommands (#1597).
+#[derive(Subcommand)]
+pub enum TombstoneCommands {
+    /// List the rejected values, newest first
+    List,
+    /// Allow a rejected value again: give a hash prefix (8+ characters) or
+    /// the id of the forgotten memory
+    Remove {
+        /// Hash prefix or memory id
+        key: String,
+    },
+}
+
+/// `uteke extract-queue` subcommands (#1466).
+#[derive(Subcommand)]
+pub enum ExtractQueueCommands {
+    /// Counts of captured turns: pending, extracting, done, failed
+    Status,
+    /// Extract up to N pending sessions now (one extractor call each)
+    Run {
+        /// Sessions to extract (default: [capture] budget_per_run, 10)
+        #[arg(long)]
+        budget: Option<usize>,
+    },
 }
 
 /// All top-level CLI subcommands.
@@ -94,6 +120,14 @@ pub enum Commands {
         /// "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
         #[arg(long)]
         timestamp: Option<String>,
+        /// When the fact became true (RFC3339). Read by `recall --at` and
+        /// `list --at`; defaults to the write time (#1598)
+        #[arg(long)]
+        valid_from: Option<String>,
+        /// When the fact stopped being true (RFC3339). Without --valid-from it
+        /// must be later than now (#1598)
+        #[arg(long)]
+        valid_until: Option<String>,
     },
     /// Recall memories relevant to a query (semantic search)
     Recall {
@@ -115,23 +149,32 @@ pub enum Commands {
         /// `--min-score` is accepted as an alias (#1593).
         #[arg(long, alias = "min-score")]
         min: Option<f32>,
-        /// Use strict threshold from config (min_score_strict)
+        /// Confident matches only: keep a result when its vector similarity
+        /// (the `similarity` field) reaches `[recall] min_score_strict`
+        /// (default 0.5). Hits found by full-text search only have no
+        /// similarity and are dropped. `score` and `--min` are unchanged.
         #[arg(long)]
         strict: bool,
+        /// Lowest provenance tier to return: human, agent, external or
+        /// untrusted. Filters the tier (author_type + source_type) before
+        /// the limit; author_type is self-declared, so this is a convenience
+        /// filter, not a security boundary.
+        #[arg(long)]
+        min_trust: Option<String>,
         /// Recall strategy: vector, fts5, hybrid, graph, or fusion (fusion =
         /// weighted RRF of vector×1.7 + hybrid×1, #1123; graph = hybrid +
         /// graph-signal reranking, #378). Defaults to config's
         /// `[recall].default_strategy` (fusion).
         #[arg(long)]
         strategy: Option<String>,
-        /// Enable salience boost (how much each result matters) (#352).
-        /// Uses the configured `[recall].salience_weight` (default 0.15).
-        /// When absent, salience uses the default weight (0.1). Use --no-salience to disable (#721).
+        /// Salience boost (how much each result matters) (#352, #721).
+        /// Absent: weight 0.1. `--salience true`: the configured
+        /// `[recall].salience_weight` (default 0.15). `--salience false`: off.
         #[arg(long)]
         salience: Option<bool>,
-        /// Enable recency boost (how fresh each result is) (#352).
-        /// Uses the configured `[recall].recency_weight` (default 0.15).
-        /// When absent, recency uses the default weight (0.1). Use --no-recency to disable (#721).
+        /// Recency boost (how fresh each result is) (#352, #721).
+        /// Absent: weight 0.1. `--recency true`: the configured
+        /// `[recall].recency_weight` (default 0.15). `--recency false`: off.
         #[arg(long)]
         recency: Option<bool>,
         /// Explain each result: show the ranking signals behind it (#1160)
@@ -149,6 +192,10 @@ pub enum Commands {
         /// Query memories as they existed at this timestamp (RFC3339, e.g. 2026-06-01T12:00:00Z)
         #[arg(long)]
         at: Option<String>,
+        /// Deprecated, no effect: --at always includes memories deprecated
+        /// after that time (#1598). Kept so existing scripts keep working.
+        #[arg(long, requires = "at")]
+        history: bool,
         /// Content display format: 'auto' (detect), 'text' (force text), 'json' (pretty-print JSON)
         #[arg(long, default_value = "auto")]
         content_format: String,
@@ -216,6 +263,10 @@ pub enum Commands {
         /// List memories as they existed at this timestamp (RFC3339)
         #[arg(long)]
         at: Option<String>,
+        /// Deprecated, no effect: --at always includes memories deprecated
+        /// after that time (#1598). Kept so existing scripts keep working.
+        #[arg(long, requires = "at")]
+        history: bool,
     },
     /// Get a single memory by ID
     Get {
@@ -241,6 +292,12 @@ pub enum Commands {
         /// Memory type: fact, procedure, preference, decision, context, note, insight, reference, event
         #[arg(long = "type")]
         r#type: Option<String>,
+        /// When the fact became true (RFC3339, #1598)
+        #[arg(long)]
+        valid_from: Option<String>,
+        /// When the fact stopped being true (RFC3339, #1598)
+        #[arg(long)]
+        valid_until: Option<String>,
     },
     /// Delete a memory by ID
     Forget {
@@ -259,6 +316,37 @@ pub enum Commands {
         /// the y/N prompt; scripts and cron jobs must pass this)
         #[arg(long)]
         confirm: bool,
+        /// Why the memory is forgotten (with an ID). `wrong` or `wrong: <note>`
+        /// also records the value as rejected, so it cannot be stored again
+        /// (#1597; see `uteke tombstone`). Other text is kept on the memory.
+        #[arg(long, requires = "id", conflicts_with_all = ["tag", "cold", "all"])]
+        reason: Option<String>,
+    },
+    /// Values forgotten as wrong, which writes refuse (#1597)
+    Tombstone {
+        #[command(subcommand)]
+        command: TombstoneCommands,
+    },
+    /// Queue one conversation turn for later extraction (#1466). Reads the
+    /// text from the argument or stdin. Needs `[capture] enabled = true`.
+    Capture {
+        /// Session the turn belongs to (an agent's conversation id)
+        #[arg(long)]
+        session: String,
+        /// Who said it: user, assistant or tool (a tool result is kept as a
+        /// summary of its first 2000 characters)
+        #[arg(long)]
+        role: String,
+        /// Where it came from (agent or machine name)
+        #[arg(long)]
+        source: Option<String>,
+        /// The text; read from stdin when omitted
+        text: Option<String>,
+    },
+    /// Turn captured sessions into memories, on a budget (#1466)
+    ExtractQueue {
+        #[command(subcommand)]
+        command: ExtractQueueCommands,
     },
     /// Show memory store statistics
     Stats,
@@ -290,6 +378,17 @@ pub enum Commands {
         /// Makes previously invisible memories searchable via semantic recall.
         #[arg(long)]
         reembed: bool,
+
+        /// With --reembed: stop after N rows were embedded (memories first, then
+        /// document chunks; a row that fails does not count). Run it again to
+        /// continue; the report says how many were not tried (#1608).
+        #[arg(long, requires = "reembed")]
+        limit: Option<usize>,
+
+        /// With --reembed: pause this many milliseconds between rows, to leave
+        /// the CPU to other work (#1608).
+        #[arg(long, requires = "reembed", default_value_t = 0)]
+        pause_ms: u64,
     },
     /// Export all memories to JSONL file (no embeddings — portable)
     Export {
@@ -363,6 +462,12 @@ pub enum Commands {
         /// (#1232). Accepts RFC 3339, "YYYY-MM-DD HH:MM:SS", or "YYYY-MM-DD".
         #[arg(long)]
         timestamp: Option<String>,
+        /// JSON/JSONL only: store the rows without a vector and embed them
+        /// later with `uteke repair --reembed [--limit N]` (#1608). The import
+        /// does not wait on the embedder; rows are keyword-searchable at once,
+        /// and only exact copies are skipped as duplicates.
+        #[arg(long, conflicts_with_all = ["full", "extract", "batch_dir"])]
+        defer_embed: bool,
     },
     /// Generate shell completions
     Completions {
@@ -385,11 +490,63 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgingCommands,
     },
-    /// Output shell hook script for auto-context loading
+    /// Removed: prints a no-op so an existing `eval "$(uteke hook zsh)"` in a
+    /// shell config keeps working; a project store is set with `.uteke/uteke.toml`.
+    #[command(hide = true)]
     Hook {
         /// Shell type: bash, zsh, fish
         shell: SupportedShell,
     },
+    /// Install the capture and recall hooks of an agent app (#1465):
+    /// claude, codex, cursor; pi and hermes get their memory-provider plugin.
+    /// Run again to refresh them; `disconnect` removes exactly them.
+    Connect {
+        /// Agent app: claude, codex, cursor, pi, hermes
+        agent: String,
+        /// Show what would change and write nothing
+        #[arg(long)]
+        dry_run: bool,
+        /// Write this binary's absolute path into the hook commands instead of
+        /// resolving `uteke` through PATH (re-run after the binary moves)
+        #[arg(long)]
+        absolute_path: bool,
+    },
+    /// Remove the hooks `uteke connect` installed, leaving everything else
+    Disconnect {
+        /// Agent app: claude, codex, cursor, pi, hermes
+        agent: String,
+        /// Show what would change and write nothing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Run one agent hook event (what `uteke connect` installs). Reads the
+    /// agent's payload from stdin; always exits 0 and logs errors to
+    /// ~/.codecora/uteke/hook.log.
+    #[command(hide = true)]
+    HookRun {
+        /// session-start, prompt or stop
+        event: String,
+        /// The agent the payload comes from
+        #[arg(long, default_value = "claude")]
+        agent: String,
+    },
+    /// Open the read-only browser viewer: lists memories, namespaces, rooms and
+    /// health on a loopback page guarded by a per-launch token (printed as the
+    /// URL). Runs `uteke-serve --viewer`; Ctrl+C stops it.
+    View {
+        /// Port to listen on (default 8768; 0 picks a free one)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Address to bind (default 127.0.0.1). A non-loopback address is
+        /// refused unless the server auth token (UTEKE_AUTH_TOKEN) is set.
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// Print the state of every connected agent's hooks as JSON (what `uteke
+    /// doctor` reports under `agent_hooks`). Run by `uteke upgrade` on the new
+    /// binary; needs no store.
+    #[command(hide = true)]
+    HookStatus,
     /// Namespace management: list, stats
     Namespace {
         #[command(subcommand)]
@@ -669,11 +826,15 @@ pub enum DocCommands {
         /// Document ID
         id: String,
     },
-    /// Export all documents as JSON
+    /// Export all documents as Markdown (or JSON with --json)
     Export {
         /// Output file (default: stdout)
         #[arg(long)]
         output: Option<String>,
+        /// Prefix each Markdown document with YAML front-matter (slug, title,
+        /// tags, parent slug) so the hierarchy survives; ignored with --json
+        #[arg(long)]
+        front_matter: bool,
     },
 }
 
@@ -806,6 +967,20 @@ pub enum NamespaceCommands {
         /// Confirm the deletion (required)
         #[arg(long)]
         confirm: bool,
+    },
+    /// Move namespaces into rooms, tags, author or source from a TOML map (#1427).
+    /// Dry run by default; --apply writes a full export next to the store first.
+    Migrate {
+        /// TOML map file: one `[map."<namespace>"]` table per namespace with
+        /// room, tag, author and/or source, or `drop = true`
+        #[arg(long)]
+        map: std::path::PathBuf,
+        /// Apply the map (default: dry run, nothing is written)
+        #[arg(long)]
+        apply: bool,
+        /// Allow `drop = true` entries to soft-delete their memories
+        #[arg(long)]
+        allow_drop: bool,
     },
 }
 
@@ -1035,7 +1210,8 @@ mod skill_coverage {
         let mut missing = Vec::new();
         for cmd in root.get_subcommands() {
             let name = cmd.get_name();
-            if EXEMPT.contains(&name) {
+            // Hidden commands (e.g. the removed `hook`) are not offered to agents.
+            if EXEMPT.contains(&name) || cmd.is_hide_set() {
                 continue;
             }
             if !skill.contains(&format!("uteke {name}")) {

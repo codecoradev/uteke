@@ -21,7 +21,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 Pin a specific version:
 
 ```bash
-UTEKE_VERSION=v0.18.1 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.23.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ## Install via Homebrew (macOS Apple Silicon & Linux)
@@ -49,27 +49,31 @@ This compiles uteke from source and installs it to Cargo's binary directory (typ
 
 ## Pre-built Binary
 
-Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases):
+Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases).
+Asset names carry the version, so set it once (see the releases page for the latest):
 
 ```bash
+V=v0.23.0
+BASE=https://github.com/codecoradev/uteke/releases/download/$V
+
 # Linux (x86_64) — tarball also contains libonnxruntime.so* (required for embeddings)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-v0.18.1.tar.gz | tar xz
+curl -sL $BASE/uteke-x86_64-unknown-linux-gnu-$V.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
 # Linux (x86_64, legacy — no AVX2/SSE4.2)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-x86_64-unknown-linux-gnu-legacy-v0.18.1.tar.gz | tar xz
+curl -sL $BASE/uteke-x86_64-unknown-linux-gnu-legacy-$V.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* ~/.local/bin/
 mkdir -p ~/.local/bin/ort-legacy && mv ort-legacy/libonnxruntime.so* ~/.local/bin/ort-legacy/
 
 # Linux (aarch64 / ARM)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-unknown-linux-gnu-v0.18.1.tar.gz | tar xz
+curl -sL $BASE/uteke-aarch64-unknown-linux-gnu-$V.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
 # macOS (Apple Silicon)
-curl -sL https://github.com/codecoradev/uteke/releases/latest/download/uteke-aarch64-apple-darwin-v0.18.1.tar.gz | tar xz
+curl -sL $BASE/uteke-aarch64-apple-darwin-$V.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime*.dylib ~/.local/bin/
 ```
@@ -97,7 +101,7 @@ Or download the `.zip` binary from [Releases](https://github.com/codecoradev/ute
 ## Docker
 
 ```bash
-docker pull ghcr.io/codecoradev/uteke:latest
+docker pull codecoradev/uteke:latest
 ```
 
 > 💡 See the [Docker guide](/docker) for `docker compose` setup, environment variables, and volume persistence.
@@ -115,7 +119,7 @@ uteke --version
 
 ```bash
 $ uteke --version
-uteke 0.14.3
+uteke 0.23.0
 
 $ uteke doctor
 ✓ Database     OK

@@ -122,6 +122,10 @@ impl crate::Uteke {
         // The same text as what is stored is not a content change: no new vector
         // and no embedding call, only the other fields are updated.
         let content: Option<&str> = masked_content.as_deref().filter(|c| *c != existing.content);
+        // New content that was forgotten as wrong is refused (#1597).
+        if let Some(c) = content {
+            self.check_not_rejected(c)?;
+        }
         let flagged_metadata =
             crate::redaction_flags::resolve(content, metadata, &existing.metadata, &redactions);
         let metadata: Option<&serde_json::Value> = flagged_metadata.as_ref().or(metadata);

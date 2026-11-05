@@ -14,6 +14,7 @@ fn store(mode: PrivacyMode) -> Uteke {
     u.set_privacy_config(PrivacyConfig {
         mode,
         allowlist: Vec::new(),
+        ..Default::default()
     });
     u
 }

@@ -28,6 +28,16 @@ Behaviour:
 
 Tests: dry run changes nothing (row hash before/after); apply moves counts as reported; export + import restores the original; each target kind; a conflicting target is reported.
 
+**Done.** Questions the plan left open, settled on the safe side when task I was built:
+
+- **Where the memories go:** to `default`. The namespace's meaning moves to the targets; phase 4 makes `default` the only namespace anyway.
+- **Which export:** the full structural export (`export_full`, with rooms and documents), written as `namespace-migrate-<UTC time>.ndjson` in the store directory. Apply refuses to overwrite an existing file. Restore with `uteke import --full` into a fresh store.
+- **Soft-deleted rows:** an export does not carry them, so they are not moved either; they stay in their namespace and the report counts them. Everything that changes is in the export.
+- **Conflicts:** a memory that already has a different `author` or `source` keeps it and is counted (`author_conflicts`, `source_conflicts`); the map never overwrites a value. A tag already present is not added twice.
+- **`drop`:** soft-delete (restorable), never a hard delete. Without `--allow-drop` the whole run is refused before the export or any write.
+- **`default` in the map:** rejected when the map is parsed. A mapped namespace with no live memories (unknown, or already migrated) is reported with `found: false` and skipped, which makes a re-run a no-op: no write and no new export.
+- **Room target:** created in `default` when missing (only when the namespace has memories to move); memories are linked with their author, or `unknown`.
+
 ### Task J: single-namespace mode (phase 4)
 
 As specified in the plan: every write goes to `default`, a non-default value is recorded as the tag `ns:<x>`, reads ignore the parameter and carry a `warning`, `GET /namespaces` returns `["default"]`, `rename`/`delete` return `namespace_deprecated`, import maps namespace to the `ns:<x>` tag and export reports `"default"`. This also removes the namespace items of #1439.

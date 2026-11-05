@@ -279,30 +279,79 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let uteke = c.uteke;
     let ctx = c.ctx;
     let req = &mut *c.req;
-    match read_body::<ImportRequest>(req.as_reader()) {
+    // `/import` has its own, larger limit (#1632): a Uteke Cloud export is
+    // one file, and other routes keep the 10 MB of `read_body`.
+    let limit = max_import_size();
+    let content_length = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Content-Length"))
+        .and_then(|h| h.value.as_str().trim().parse::<usize>().ok());
+    let body = match read_import_body(content_length, req.as_reader(), limit) {
+        Ok(body) => body,
+        Err(ImportBodyError::TooLarge(n)) => {
+            return ctx.error_response_for(
+                req,
+                413,
+                format!(
+                    "Import body too large: {n} bytes, the limit is {limit} bytes ({} MiB). \
+                     Split the file into several calls (with \"defer_embedding\": true each \
+                     call returns in seconds), raise UTEKE_MAX_IMPORT_SIZE on the server, \
+                     or run `uteke import <file>` on the server host (no limit).",
+                    limit / 1_048_576
+                ),
+            );
+        }
+        Err(ImportBodyError::Read(e)) => return ctx.error_response_for(req, 400, e),
+    };
+    match serde_json::from_str::<ImportRequest>(&body).map_err(|e| format!("Invalid JSON: {e}")) {
         Ok(req_data) => {
-            // Same ceiling `read_body` enforces on the whole request, so the
-            // limit the caller is told about is the limit that applies (#1328).
-            let max_import = uteke_core::MAX_PAYLOAD_SIZE;
-            if validate_content_size(&req_data.content, max_import).is_err() {
-                return ctx.error_response_for(
-                    req,
-                    413,
-                    format!("Content too large (max {}MB)", max_import / 1_048_576),
-                );
-            }
-
             // Merge request tags into the JSONL entries.
             // The core import method handles re-embedding.
             let import_ns = ns(&req_data.namespace);
-            match uteke.import(&req_data.content, import_ns) {
+            let options = uteke_core::ImportOptions {
+                defer_embedding: req_data.defer_embedding,
+            };
+            match uteke.import_with(&req_data.content, import_ns, options) {
                 Ok(result) => {
                     let mut body = serde_json::json!({
                         "imported": result.imported,
                         "skipped": result.skipped,
                         "redacted": result.redacted,
                         "rejected_secret": result.rejected_secret,
+                        // Per-category skips (#1633), so a caller can audit
+                        // what an import kept.
+                        "duplicates_skipped": result.duplicates_skipped,
+                        "id_conflicts_skipped": result.id_conflicts_skipped,
+                        "soft_deleted_skipped": result.soft_deleted_skipped,
                     });
+                    // Rows waiting for a vector (#1634): only when the caller
+                    // deferred embedding, so a default import is unchanged.
+                    if req_data.defer_embedding {
+                        body["deferred_embedding"] = result.deferred_embedding.into();
+                    }
+                    // Rows forgotten as wrong (#1597): only when there were any,
+                    // so the response is unchanged for every other import.
+                    if result.rejected_tombstone > 0 {
+                        body["rejected_tombstone"] = result.rejected_tombstone.into();
+                    }
+                    // Documents and rooms of a Uteke Cloud export (#1632):
+                    // each count only when non-zero, so a file of memories
+                    // answers as before.
+                    for (key, n) in [
+                        ("documents_imported", result.documents_imported),
+                        ("documents_updated", result.documents_updated),
+                        ("documents_unchanged", result.documents_unchanged),
+                        ("parent_unresolved", result.parent_unresolved),
+                        ("rooms_imported", result.rooms_imported),
+                        ("rooms_existing", result.rooms_existing),
+                        ("room_documents_linked", result.room_documents_linked),
+                        ("room_documents_missing", result.room_documents_missing),
+                    ] {
+                        if n > 0 {
+                            body[key] = n.into();
+                        }
+                    }
                     // Room links (#1588): only when the file named rooms.
                     if result.room_links > 0 || !result.rooms_missing.is_empty() {
                         body["room_links"] = result.room_links.into();

@@ -11,6 +11,8 @@ pub(crate) struct Flags {
     pub cold: bool,
     pub all: bool,
     pub confirm: bool,
+    /// `wrong[: note]` also records a rejected-value tombstone (#1597).
+    pub reason: Option<String>,
 }
 
 /// The y/N prompt of a single delete, skipped with `--confirm`. `true` = go on.
@@ -46,10 +48,18 @@ pub(crate) fn run(
         }
         tracing::info!("Forgetting memory: {id}");
         uteke
-            .forget(id.as_str())
+            .forget_with_reason(id.as_str(), flags.reason.as_deref())
             .map_err(|e| format!("Failed to delete memory: {e}"))?;
+        let rejected = flags
+            .reason
+            .as_deref()
+            .is_some_and(uteke_core::tombstone::is_wrong_reason);
         if cli.json {
-            output::print_json(&serde_json::json!({"forgotten": id}));
+            output::print_json(&serde_json::json!({"forgotten": id, "rejected": rejected}));
+        } else if rejected {
+            println!(
+                "\u{2713} Memory forgotten: {id}\n  Rejected as wrong: this value cannot be stored again (`uteke tombstone list`)."
+            );
         } else {
             println!("\u{2713} Memory forgotten: {id}");
         }
@@ -106,6 +116,51 @@ pub(crate) fn run(
         }
     } else {
         return Err("Provide an ID, --tag, --cold, or --all".into());
+    }
+    Ok(())
+}
+
+/// `uteke tombstone list|remove` (#1597).
+pub(crate) fn run_tombstone(
+    cli: &Cli,
+    uteke: &Uteke,
+    command: &crate::cli::TombstoneCommands,
+) -> Result<(), String> {
+    use crate::cli::TombstoneCommands;
+    match command {
+        TombstoneCommands::List => {
+            let list = uteke
+                .tombstones()
+                .map_err(|e| format!("Failed to list tombstones: {e}"))?;
+            if cli.json {
+                output::print_json(&list);
+            } else if list.is_empty() {
+                println!("No rejected values.");
+            } else {
+                println!("{} rejected value(s):", list.len());
+                for t in &list {
+                    println!(
+                        "  {}  {}  {}\n      {}",
+                        t.hash.get(..12).unwrap_or(&t.hash),
+                        t.created_at.get(..10).unwrap_or(&t.created_at),
+                        t.reason,
+                        t.preview
+                    );
+                }
+            }
+        }
+        TombstoneCommands::Remove { key } => {
+            let removed = uteke
+                .remove_tombstone(key)
+                .map_err(|e| format!("Failed to remove tombstone: {e}"))?;
+            if cli.json {
+                output::print_json(&serde_json::json!({"removed": removed}));
+            } else if removed == 0 {
+                return Err(format!("No tombstone matches '{key}'"));
+            } else {
+                println!("\u{2713} Tombstone removed: the value can be stored again");
+            }
+        }
     }
     Ok(())
 }

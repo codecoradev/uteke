@@ -17,6 +17,7 @@ impl App {
         u.set_privacy_config(PrivacyConfig {
             mode,
             allowlist: Vec::new(),
+            ..Default::default()
         });
         Self {
             uteke: Mutex::new(u),

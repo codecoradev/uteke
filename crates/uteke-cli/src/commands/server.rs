@@ -195,6 +195,8 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             source,
             source_type,
             timestamp,
+            valid_from,
+            valid_until,
         } => {
             // `POST /remember` takes no `room` (a room write is a separate
             // operation). Say so here instead of sending a key the server
@@ -230,6 +232,10 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 source_type: source_type.clone(),
                 author_type: author_type.clone(),
                 author: author.clone(),
+                // Validity goes into the columns on the server (#1598); the
+                // server validates it, and so does the local path.
+                valid_from: valid_from.clone(),
+                valid_until: valid_until.clone(),
                 ..uteke_core::RememberInput::default()
             }
             .to_http_body();
@@ -259,9 +265,11 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             tags,
             min,
             strict,
+            min_trust,
             entity,
             category,
             at,
+            history: _,
             strategy,
             salience,
             recency,
@@ -310,6 +318,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 category: category.clone(),
                 min_score: *min,
                 strict: *strict,
+                min_trust: min_trust.clone(),
                 at: at.clone(),
                 search_type: r#type.clone(),
                 enrich: *enrich,
@@ -349,6 +358,52 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 output::print_json(&results);
             } else {
                 output::print_recall_human(&results);
+            }
+        }
+        Commands::Capture {
+            session,
+            role,
+            source,
+            text,
+        } => {
+            // Queued by the server, which holds the store (#1465: a local
+            // open would wait on its lock). It refuses while capture is off.
+            let content = match text {
+                Some(t) => t.clone(),
+                None => {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_to_string(&mut buf)
+                        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+                    buf
+                }
+            };
+            let body = serde_json::json!({
+                "session_id": session,
+                "role": role,
+                "content": content,
+                "source": source,
+                "namespace": ns,
+            });
+            let resp = client
+                .post(format!("{server_url}/capture"))
+                .json(&body)
+                .send()
+                .map_err(|e| format!("Server error: {e}"))?;
+            let data = parse_json_value(resp)?;
+            if cli.json {
+                println!("{data}");
+            } else if data["duplicate"].as_bool() == Some(true) {
+                println!(
+                    "Already captured: {}",
+                    data["id"].as_str().unwrap_or_default()
+                );
+            } else {
+                println!(
+                    "\u{2713} Captured: {}",
+                    data["id"].as_str().unwrap_or_default()
+                );
             }
         }
         Commands::Search {
@@ -430,6 +485,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
             cold,
             all,
             confirm,
+            reason,
         } => {
             // `DELETE /forget` takes an id or a tag only. `--cold` and `--all`
             // are local operations: say so instead of dropping them, and do
@@ -462,6 +518,7 @@ pub(crate) fn run_via_server(cli: &Cli, server_url: &str) -> Result<(), String> 
                 id: id.clone(),
                 tag: tag.clone(),
                 namespace: Some(ns.to_string()),
+                reason: reason.clone(),
             };
             let Some(path) = input.to_http_path(|v| urlencoding::encode(v).into_owned()) else {
                 return Err("Provide an ID, --tag, --cold, or --all".into());
@@ -503,6 +560,7 @@ mod tests {
             id: Some("ab cd/1".into()),
             tag: Some("t".into()),
             namespace: Some("default".into()),
+            reason: None,
         };
         assert_eq!(
             by_id.to_http_path(enc).as_deref(),
@@ -512,6 +570,7 @@ mod tests {
             id: None,
             tag: Some("my tag&x".into()),
             namespace: Some("work space".into()),
+            reason: None,
         };
         assert_eq!(
             by_tag.to_http_path(enc).as_deref(),

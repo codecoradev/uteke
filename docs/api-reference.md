@@ -138,6 +138,20 @@ Undo a contradiction resolution (#1172): restore the retired memory to active, r
 
 *Related: `1172`*
 
+#### 🟡 `POST` `/capture`
+
+Queue one raw conversation turn for deferred, budgeted fact extraction. Refused (409) unless [capture] enabled is on.
+
+**Request body**: [`CaptureRequest`](#capturerequest)
+
+*Related: `#1466`*
+
+#### 🟢 `GET` `/capture/status`
+
+Capture queue counts: pending, extracting, done, failed turns and pending sessions.
+
+*Related: `#1466`*
+
 #### 🟡 `POST` `/lifecycle/cycle`
 
 Run lifecycle aging cycle: deprecate old memories, optionally prune expired ones.
@@ -167,7 +181,7 @@ List deprecated memories with TTL metadata.
 
 #### 🟡 `POST` `/import`
 
-Import memories from a JSON array.
+Import memories from JSONL (or a JSON array) in `content`. Each row keeps its `id`, type, importance, pinned flag and slug; the response counts `imported`, `skipped`, `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped`. A Uteke Cloud export imports whole: `type: "document"` rows become documents (`parent` by slug), `type: "room"` rows become rooms with their `doc_slugs` linked, both before the memories' `rooms`, and the manifest line is skipped; the response then adds `documents_imported`, `documents_updated`, `documents_unchanged`, `parent_unresolved`, `rooms_imported`, `rooms_existing`, `room_documents_linked` and `room_documents_missing` (each only when non-zero). The body limit of this route is 64 MiB (`UTEKE_MAX_IMPORT_SIZE`, bytes; other routes keep 10 MB); a larger body gets a 413 that names the limit. Bulk runbook: send `defer_embedding: true` (rows are stored without a vector and the call returns in seconds; split a large file into several calls under the body limit), then run `uteke repair --reembed` (add `--limit N` to spread the work) so `/recall` finds them.
 
 **Request body**: [`ImportRequest`](#importrequest)
 
@@ -561,6 +575,19 @@ Detailed field definitions for each request type.
 | `older_than_days` | any | No | Days threshold for preview/cleanup (default: warm_days from config, fallback 90). |
 
 
+### `CaptureRequest`
+
+One turn for the capture queue (`POST /capture`, LAB).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `content` | `string` | Yes |  |
+| `namespace` | any | No | Namespace the extracted facts are stored in. |
+| `role` | `string` | Yes | `user`, `assistant` or `tool` (a tool output keeps its first 2000 characters). |
+| `session_id` | `string` | Yes | Conversation the turn belongs to; its turns are extracted together. |
+| `source` | any | No | Optional source label (e.g. the client name). |
+
+
 ### `ConsolidateRequest`
 
 | Field | Type | Required | Description |
@@ -637,10 +664,8 @@ Detailed field definitions for each request type.
 | `memories` | `integer` | Yes |  |
 | `namespaces` | `integer` | Yes |  |
 | `status` | `string` | Yes |  |
-| `update_available` | any | No | Latest version available on GitHub, if newer than current.
-Populated from cache (24h TTL) — may be `None` if cache is stale. |
-| `version` | `string` | Yes | Server version (uteke-server crate version), so HTTP clients can gate
-features on the actual server capability rather than a local CLI probe. |
+| `update_available` | any | No | Latest version available on GitHub, if newer than current. Populated from cache (24h TTL) — may be `None` if cache is stale. |
+| `version` | `string` | Yes | Server version (uteke-server crate version), so HTTP clients can gate features on the actual server capability rather than a local CLI probe. |
 
 
 ### `ImportRequest`
@@ -648,6 +673,7 @@ features on the actual server capability rather than a local CLI probe. |
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `content` | `string` | Yes | JSONL content to import. |
+| `defer_embedding` | `boolean` | No | Store the rows without a vector and return at once (#1634, default false). The rows are keyword-searchable (`/search`) immediately and found by `/recall` after `uteke repair --reembed` adds the vectors. Duplicates are caught by exact content only, not by the cosine check. The response then carries `deferred_embedding`: the rows waiting for a vector. Use it for bulk imports, which otherwise embed every row before the request returns. |
 | `namespace` | any | No |  |
 | `tags` | ``string``[] | No |  |
 
@@ -664,11 +690,7 @@ features on the actual server capability rather than a local CLI probe. |
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `at` | any | No | Time-travel: list memories that existed at this RFC3339 timestamp. |
-| `include_meta` | `boolean` | No | Pagination metadata (#1188): when true, respond with an envelope
-`{memories, total, has_more, next_offset}` instead of the bare array.
-Default false — the bare-array shape is unchanged for existing
-clients. Not supported with `at` (point-in-time listing returns the
-bare array regardless). |
+| `include_meta` | `boolean` | No | Pagination metadata (#1188): when true, respond with an envelope `{memories, total, has_more, next_offset}` instead of the bare array. Default false — the bare-array shape is unchanged for existing clients. Not supported with `at` (point-in-time listing returns the bare array regardless). |
 | `limit` | `integer` | No |  |
 | `namespace` | any | No |  |
 | `offset` | `integer` | No |  |
@@ -713,6 +735,8 @@ Request for memory feedback / trust scoring (#718).
 | `namespace` | any | No | Move the memory to this namespace (#1181). Plain column update — no re-embed. |
 | `pinned` | any | No | Set pinned state. |
 | `tags` | any | No | Replace tags entirely with this list. |
+| `valid_from` | any | No | When the fact starts to hold (RFC 3339, #1598). Stored in the `valid_from` column that `at` reads. Must be before `valid_until`. |
+| `valid_until` | any | No | When the fact stops holding (RFC 3339, #1598). Stored in the `valid_until` column. Refused on a deprecated memory. |
 
 
 ### `OrphansRequest`
@@ -744,37 +768,24 @@ Request for memory feedback / trust scoring (#718).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `after` | any | No | Temporal range filter: only return memories created at or after this
-RFC3339 timestamp (#902). |
+| `after` | any | No | Temporal range filter: only return memories created at or after this RFC3339 timestamp (#902). |
 | `at` | any | No | Time-travel: query memories that existed at this RFC3339 timestamp. |
-| `before` | any | No | Temporal range filter: only return memories created at or before this
-RFC3339 timestamp (#902). |
+| `before` | any | No | Temporal range filter: only return memories created at or before this RFC3339 timestamp (#902). |
 | `budget_chars` | any | No | Character budget for `pack` (default 4000). |
 | `category` | any | No | Filter by category metadata. |
-| `enrich` | `boolean` | No | Enrich results with cross-entity links (doc↔memory) (#689).
-When true, populates `linked_doc_slugs` on memory results and
-`linked_memory_ids` on document results. |
+| `enrich` | `boolean` | No | Enrich results with cross-entity links (doc↔memory) (#689). When true, populates `linked_doc_slugs` on memory results and `linked_memory_ids` on document results. |
 | `entity` | any | No | Filter by entity metadata. |
-| `exclude_ids` | any | No | Memory IDs already injected this turn; excluded from pack results
-(reported as `skipped` with reason `excluded`). |
-| `explain` | `boolean` | No | Explain mode (#1160): return per-result ranking signals alongside
-each memory. Memory-only recall — rejected (400) together with
-search_type/unified, at, before/after. |
+| `exclude_ids` | any | No | Memory IDs already injected this turn; excluded from pack results (reported as `skipped` with reason `excluded`). |
+| `explain` | `boolean` | No | Explain mode (#1160): return per-result ranking signals alongside each memory. Memory-only recall — rejected (400) together with search_type/unified, at, before/after. |
 | `limit` | `integer` | No |  |
-| `min_score` | any | No | Minimum similarity score (0.0-1.0). Results below are filtered.
-Default: 0.0 (no filtering). Use `strict=true` for 0.5 default (#995). |
+| `min_score` | any | No | Minimum similarity score (0.0-1.0). Results below are filtered. Default: 0.0 (no filtering). Compares against `score`; `strict` compares against `similarity`. |
+| `min_trust` | any | No | Lowest provenance tier to return (#1651): `human`, `agent`, `external` or `untrusted` (lowercase). Filters the tier (author_type + source_type) only, before the limit is applied. author_type is self-declared, so this is a convenience filter, not a security boundary, and it is not a trust state. |
 | `namespace` | any | No |  |
-| `pack` | `boolean` | No | Budgeted context pack (#1281 Phase 1): return a ContextPack
-(selected/skipped/budget_used) instead of a bare ranked list.
-Deterministic, LLM-free, rank-order preserving. |
+| `pack` | `boolean` | No | Budgeted context pack (#1281 Phase 1): return a ContextPack (selected/skipped/budget_used) instead of a bare ranked list. Deterministic, LLM-free, rank-order preserving. |
 | `query` | `string` | Yes |  |
 | `search_type` | any | No | Search type filter: "all" (default, unified), "memory", or "doc" (#531). |
-| `strategy` | any | No | Recall strategy: "fusion" (default since 0.16.0), "vector", "fts5",
-"hybrid", or "graph" (#900, #1034, #1123).
-When absent, the server falls back to `[recall] default_strategy` from
-uteke.toml, then to "fusion" — matching the CLI default.
-Invalid values return HTTP 400. |
-| `strict` | `boolean` | No | Use strict threshold (defaults to 0.5 if min_score not set). |
+| `strategy` | any | No | Recall strategy: "fusion" (default since 0.16.0), "vector", "fts5", "hybrid", or "graph" (#900, #1034, #1123). When absent, the server falls back to `[recall] default_strategy` from uteke.toml, then to "fusion" — matching the CLI default. Invalid values return HTTP 400. |
+| `strict` | `boolean` | No | Confident matches only (#1650): keep a hit when its `similarity` (the vector-leg cosine) reaches `[recall] min_score_strict` (default 0.5). Hits without a similarity (found by full-text search only) are dropped. `score` and `min_score` keep their meaning. |
 | `tags` | ``string``[] | No |  |
 
 
@@ -782,22 +793,18 @@ Invalid values return HTTP 400. |
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `author` | any | No | Who wrote the memory (#1427 phase 2): free text, trimmed, 1 to 128
-characters. Optional, with or without a room; returned on the memory. |
+| `author` | any | No | Who wrote the memory (#1427 phase 2): free text, trimmed, 1 to 128 characters. Optional, with or without a room; returned on the memory. |
 | `author_type` | any | No | Author type: "human" | "agent" (#1083). Defaults to "agent" when omitted. |
 | `category` | any | No | Category — stored as metadata key "category". |
 | `content` | `string` | Yes |  |
 | `detect_contradiction` | `boolean` | No |  |
 | `entity` | any | No | Entity name — stored as metadata key "entity". |
-| `metadata` | any | No | Extra metadata key=value pairs, merged into the metadata map.
-Accepts an object (e.g. {"project": "uteke"}). |
+| `metadata` | any | No | Extra metadata key=value pairs, merged into the metadata map. Accepts an object (e.g. {"project": "uteke"}). |
 | `namespace` | any | No |  |
 | `source` | any | No | Source provenance — set via set_source() after storage. |
 | `source_type` | any | No | Source type (defaults to "user"). |
 | `tags` | ``string``[] | No |  |
-| `type` | any | No | Memory type — validated against the MemoryType vocabulary and stored
-as-is (no silent normalization, #1302). Unknown values are rejected
-with 400 listing the valid types. Omit to let auto-inference decide. |
+| `type` | any | No | Memory type — validated against the MemoryType vocabulary and stored as-is (no silent normalization, #1302). Unknown values are rejected with 400 listing the valid types. Omit to let auto-inference decide. |
 | `valid_from` | any | No |  |
 | `valid_until` | any | No |  |
 
@@ -806,13 +813,11 @@ with 400 listing the valid types. Omit to let auto-inference decide. |
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `at` | any | No | Time-travel: recall room state as of this RFC3339 timestamp (#1082).
-Memories created after `at` (or invalidated before it) are excluded. |
+| `at` | any | No | Time-travel: recall room state as of this RFC3339 timestamp (#1082). Memories created after `at` (or invalidated before it) are excluded. |
 | `author` | any | No |  |
 | `limit` | `integer` | No |  |
 | `min_score` | any | No |  |
-| `query` | any | No | Semantic search query. When `None` or empty, falls back to
-chronological recall (equivalent to `GET /room/memories`) (#785). |
+| `query` | any | No | Semantic search query. When `None` or empty, falls back to chronological recall (equivalent to `GET /room/memories`) (#785). |
 | `room_id` | `string` | Yes |  |
 
 
