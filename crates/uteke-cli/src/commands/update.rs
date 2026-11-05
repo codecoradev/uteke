@@ -19,13 +19,14 @@ pub(crate) fn run(
     valid_until: Option<&str>,
 ) -> Result<(), String> {
     tracing::info!("Updating memory: {id}");
-    // #1598: the validity is checked and written first, so a refused interval
-    // (or a deprecated memory) leaves every other field untouched.
+    // #1598: the validity is checked first and written only after the other
+    // fields went through, so neither a refused interval (or a deprecated
+    // memory) nor a refused field leaves a partial update behind.
     let validity = uteke_core::memory::types::Validity::parse(valid_from, valid_until)
         .map_err(|e| e.to_string())?;
     if let Some(v) = &validity {
         let found = uteke
-            .set_validity(id, v)
+            .check_validity(id, v)
             .map_err(|e| format!("Failed to update memory: {e}"))?;
         if !found {
             return Err(format!("Memory not found: {id}"));
@@ -57,6 +58,14 @@ pub(crate) fn run(
             .map_err(|e| format!("Failed to update memory: {e}"))?;
     if !updated {
         return Err(format!("Memory not found: {id}"));
+    }
+    if let Some(v) = &validity {
+        let found = uteke
+            .set_validity(id, v)
+            .map_err(|e| format!("Failed to update memory: {e}"))?;
+        if !found {
+            return Err(format!("Memory not found: {id}"));
+        }
     }
 
     if cli.json {

@@ -499,8 +499,10 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     format!("Invalid UUID format: {}", req_data.id),
                 );
             }
-            // Caller validity (#1598): validated before anything is written,
-            // so a bad interval leaves every other field untouched.
+            // Caller validity (#1598): parsed and checked before anything is
+            // written, and written only after the other fields went through,
+            // so neither a bad interval nor a refused field leaves a partial
+            // update behind.
             let validity = match uteke_core::memory::types::Validity::parse(
                 req_data.valid_from.as_deref(),
                 req_data.valid_until.as_deref(),
@@ -525,7 +527,7 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 );
             }
             if let Some(v) = &validity {
-                match uteke.set_validity(&req_data.id, v) {
+                match uteke.check_validity(&req_data.id, v) {
                     Ok(true) => {}
                     Ok(false) => {
                         return ctx.error_response_for(
@@ -537,6 +539,19 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     Err(e) => return ctx.core_error(req, &e),
                 }
             }
+            // Write the checked validity; `None` when it went through.
+            let write_validity = |req: &Request| -> Option<Response<Cursor<Vec<u8>>>> {
+                let v = validity.as_ref()?;
+                match uteke.set_validity(&req_data.id, v) {
+                    Ok(true) => None,
+                    Ok(false) => Some(ctx.error_response_for(
+                        req,
+                        404,
+                        format!("Memory not found: {}", req_data.id),
+                    )),
+                    Err(e) => Some(ctx.core_error(req, &e)),
+                }
+            };
             let only_validity = validity.is_some()
                 && req_data.content.is_none()
                 && req_data.tags.is_none()
@@ -545,6 +560,9 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 && req_data.pinned.is_none()
                 && req_data.memory_type.is_none();
             if only_validity {
+                if let Some(refused) = write_validity(&*req) {
+                    return refused;
+                }
                 if let Some(ns) = req_data.namespace.as_deref() {
                     if let Err(e) = uteke.move_memory(&req_data.id, ns) {
                         return ctx.core_error(req, &e);
@@ -570,6 +588,9 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 req_data.memory_type.as_deref(),
             ) {
                 Ok(outcome) if outcome.updated => {
+                    if let Some(refused) = write_validity(&*req) {
+                        return refused;
+                    }
                     // Namespace move (#1181): separate op after the field
                     // update — plain column change, no re-embed needed.
                     if let Some(ns) = req_data.namespace.as_deref() {

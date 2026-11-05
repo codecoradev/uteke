@@ -1835,8 +1835,9 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tags_ref = tags.as_deref();
     let metadata = args.get("metadata").filter(|m| !m.is_null());
 
-    // Caller validity (#1598): checked and written first, so a refused
-    // interval (or a deprecated memory) leaves every other field untouched.
+    // Caller validity (#1598): checked first and written only after the other
+    // fields went through, so neither a refused interval (or a deprecated
+    // memory) nor a refused field leaves a partial update behind.
     let valid_from = str_arg(args, "valid_from")?;
     let valid_until = str_arg(args, "valid_until")?;
     let validity =
@@ -1850,7 +1851,7 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         && pinned.is_none()
         && memory_type.is_none();
     if let Some(v) = &validity
-        && !uteke.set_validity(&id, v).map_err(write_error)?
+        && !uteke.check_validity(&id, v).map_err(write_error)?
     {
         return Ok(ToolResult {
             content: vec![McpContent::Text {
@@ -1880,7 +1881,12 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             .map_err(write_error)?
     };
 
-    if !outcome.updated {
+    let found = outcome.updated
+        && match &validity {
+            Some(v) => uteke.set_validity(&id, v).map_err(write_error)?,
+            None => true,
+        };
+    if !found {
         return Ok(ToolResult {
             content: vec![McpContent::Text {
                 r#type: "text".to_string(),

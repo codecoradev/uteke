@@ -299,6 +299,14 @@ Capture, tombstones, honest time travel, a read-only viewer, agent hooks and a C
 
 ### Fixed
 
+- **An update that a field refuses no longer leaves a new validity behind** - `PUT /memory`,
+  MCP `uteke_update` and `uteke update` wrote `valid_from` / `valid_until` before the other
+  fields were validated, so a request refused for another field (for example
+  `importance: 5.0`, an unknown `memory_type`, or content forgotten as wrong) still moved
+  the validity. The interval is now checked first (new `Uteke::check_validity`, the checks
+  of `set_validity` without the write) and written only after the other fields went
+  through. Found by the Cora review of the v0.23.0 release PR.
+
 - **The session view matches a session exactly and uses an index (#1670)** -
   `session_memories` matched `source` with a `substr` prefix, so the view of session `a`
   also listed the memories of session `a:b` (source `capture:a:b:<batch>`), and the
