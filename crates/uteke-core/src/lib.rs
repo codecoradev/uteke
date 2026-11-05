@@ -1518,6 +1518,22 @@ impl Uteke {
         id: &str,
         validity: &crate::memory::types::Validity,
     ) -> Result<bool, Error> {
+        if !self.check_validity(id, validity)? {
+            return Ok(false);
+        }
+        self.store.set_validity(id, validity)
+    }
+
+    /// The checks of [`set_validity`](Self::set_validity) without the write:
+    /// false when the memory does not exist, an error on a deprecated memory
+    /// or an interval that would not start before it ends. An update that
+    /// changes other fields too runs this first, then the field update, then
+    /// `set_validity`, so a refused field never leaves a new validity behind.
+    pub fn check_validity(
+        &self,
+        id: &str,
+        validity: &crate::memory::types::Validity,
+    ) -> Result<bool, Error> {
         let Some(existing) = self.store.get_by_id(id)? else {
             return Ok(false);
         };
@@ -1527,7 +1543,7 @@ impl Uteke {
             )));
         }
         validity.check_against(existing.valid_from, existing.valid_until)?;
-        self.store.set_validity(id, validity)
+        Ok(true)
     }
 
     /// Stamp the writer of a room write on the memory itself (#1427 phase 2),

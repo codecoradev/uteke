@@ -3019,6 +3019,34 @@ mod rejected_value_tests {
             serde_json::json!({"id": uuid::Uuid::new_v4().to_string(), "valid_from": "2025-01-01T00:00:00Z"}),
         );
         assert_eq!(s, 404);
+
+        // A field the update refuses leaves the validity as it was: it is
+        // written only after the other fields went through.
+        let (s, body) = put(serde_json::json!({
+            "id": id,
+            "valid_until": "2028-01-01T00:00:00Z",
+            "importance": 5.0
+        }));
+        assert_eq!(s, 400, "{body}");
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2027-06-01T00:00:00+00:00",
+            "a refused update must not move valid_until"
+        );
+        // The same request with a valid importance writes both.
+        let (s, body) = put(serde_json::json!({
+            "id": id,
+            "valid_until": "2028-01-01T00:00:00Z",
+            "importance": 0.9
+        }));
+        assert_eq!(s, 200, "{body}");
+        let m = u.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        assert_eq!(
+            m.valid_until.unwrap().to_rfc3339(),
+            "2028-01-01T00:00:00+00:00"
+        );
+        assert!((m.importance - 0.9).abs() < 1e-9);
     }
 
     /// #1598 (Amendment 3): `at` on `/list` includes rows deprecated after
