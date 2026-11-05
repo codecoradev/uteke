@@ -6,13 +6,25 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
-## Next — Capture, Rejected Values, Fenced Output `In develop, unreleased`
+## v0.23.0 — Capture, Honest Time Travel, Viewer, Agent Hooks `Release 2026-11-05`
 
 - **Raw capture with deferred extraction (#1466, schema v24)** — `uteke capture` queues conversation turns with no LLM call; `extract-queue run`, or `uteke-serve` on a schedule with backoff, turns them into memories on a budget. LAB `POST /capture`, `GET /capture/status`, MCP `uteke_capture`. Opt-in via `[capture] enabled`
 - **Rejected-value tombstones (#1597, schema v23)** — `forget --reason wrong` records a tombstone; every write path refuses that value again until `uteke tombstone remove`
 - **Fenced MCP output (#1599)** — read tools wrap stored text in `<uteke-stored-data>` so agents treat recalled memories as data, not instructions
 - **Store first, embed later (#1608)** — `import --defer-embed`, then `repair --reembed --limit` in portions
 - Removed: the `uteke hook` shell script (#1623)
+- **Honest time travel (#1598, Amendment 3 of the core contract)** — `at` also returns memories deprecated after that instant; `valid_from` / `valid_until` are accepted on write and update and stored in the columns `at` reads
+- **`similarity` and `min_trust` on recall (#1650, #1651)** — `strict` now compares the vector-leg cosine, so it works under the default fusion; `min_trust` and `trust_tier` expose the provenance tier
+- **`uteke view` (#1470)** — a read-only browser viewer on loopback with a per-launch token, plus a session timeline for captured conversations
+- **`uteke connect` / `disconnect` (#1465)** — lifecycle hooks for Claude Code, Codex and Cursor, and the memory-provider plugin for Pi and Hermes; `--absolute-path` pins the binary
+- **Cloud-export import (#1632, #1633, #1634)** — documents and rooms come across, row ids and fields are kept, `defer_embedding` on `POST /import`, bodies up to 64 MiB
+- **`uteke namespace migrate --map` (#1427 phase 3)** — moves whole namespaces into rooms, tags, author or source, with a dry run and an export first
+- **Hardening from a Cora scan (#1663–#1672)** — capture extraction in chunks and outside the store lock, owner-only exports, a read-only viewer store, and an explicit opt-in before conversations reach an LLM
+
+## Next
+
+- **Namespaces (#1427 phases 4–5)** — single-namespace mode (`ns:<x>` tags), then removing the namespace CRUD commands; each needs a contract issue to uteke-cloud first
+- **Benchmarks and the Atlas (#1600)** — one LoCoMo status everywhere, then a re-pin request to the Atlas report
 
 ## v0.22.0–v0.22.1 — Privacy Everywhere, Full-Store Portability, Keyless Signing `✓ Released 2026-10-30`
 

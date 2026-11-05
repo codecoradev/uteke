@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-05
+
+Capture, tombstones, honest time travel, a read-only viewer, agent hooks and a Cloud-export import path. Three schema steps (v23 `rejected_values`, v24 `observations`, v25 `idx_memories_source`), all forward-only: an older binary ignores the new tables and the index.
+
+**Upgrade notes**
+
+- `at` on recall and list now also returns memories deprecated after that instant (history is the default; no wire parameter). See "Changed".
+- `recall --strict` now compares against the new `similarity` field instead of `score`, so it returns hits again.
+- Capture (`[capture] enabled`) is off by default and sends turns to an LLM only with `[extraction] mode = "llm"`.
+- MCP read tools wrap their text in `<uteke-stored-data>`; set `UTEKE_MCP_FENCE=0` if a client parses the text.
+- `POST /import` keeps row ids and fields, takes `defer_embedding`, and accepts bodies up to 64 MiB.
+- Contract notes for uteke-cloud: #437 (tombstone 409), #458 (time travel), #459 (similarity, strict), #460 (min_trust, trust_tier), #489 (`POST /import`), #490 (MCP fence).
+
 ### Added
 
 - **`uteke connect <agent> --absolute-path` (#1672)** - writes the path of the running
@@ -13,115 +26,6 @@
   the manifest as before. Without the flag the entries and manifests are byte-identical to
   before. The integration pages now document the `PATH` trade-off. `connect` is unreleased
   (only on `develop`), so this adds a flag with no compatibility shim.
-
-### Fixed
-
-- **The session view matches a session exactly and uses an index (#1670)** -
-  `session_memories` matched `source` with a `substr` prefix, so the view of session `a`
-  also listed the memories of session `a:b` (source `capture:a:b:<batch>`), and the
-  condition scanned every memory. After the `capture:<session>:` prefix only the batch id
-  (no `:`) may follow; the lookup is an equality plus a range on `source`, so a session id
-  with `%`, `_` or a quote is taken literally. Schema v25 adds `idx_memories_source`
-  (forward-only; an older binary ignores the index; a fresh store gets it at open). The
-  session view (#1470 c) is unreleased (only on `develop`), so this changes its behaviour
-  with no compatibility shim.
-
-- **The viewer never writes the store, and its non-loopback bind authenticates (#1667)** -
-  `uteke view` opens the database `SQLITE_OPEN_READ_ONLY` (new `Uteke::open_read_only`):
-  no WAL pragma, no schema migration, no vector-index or cache file. A store whose
-  schema is older than the binary expects is refused with a message to run any normal
-  `uteke` command once, instead of being migrated from the viewer. A non-loopback
-  `--host` still needs the server auth token, and now every request must also carry it
-  as `Authorization: Bearer` on top of the launch token (the bearer slot is no longer a
-  launch-token source on such a bind); a one-line warning says the viewer speaks plain
-  HTTP and TLS must be terminated in front; the printed launch URL uses `127.0.0.1` /
-  `[::1]` for a wildcard bind instead of `0.0.0.0`. The viewer is unreleased (only on
-  `develop`), so this changes its behaviour with no compatibility shim. Docs:
-  `docs/viewer.md`.
-
-- **Exports are owner-only and `connect` no longer exposes or clobbers a config (#1668)** -
-  the pre-migration export of `uteke namespace migrate` and the files written by
-  `uteke export` (plain and `--full`) are created with mode 0600 on Unix (new
-  `uteke_core::private_file::create_private`; an existing export file is tightened
-  before it is truncated). `connect`/`disconnect` create the temp config with the
-  original file's mode (0600 when there is none) from the start, instead of copying the
-  mode afterwards, and compare the file with what was read before the rename: if another
-  program changed it in between, nothing is written and the error says so. `namespace
-  migrate` and `connect` are unreleased (only on `develop`), so this changes their
-  behaviour with no compatibility shim; the `uteke export` mode change applies to a
-  released command and only tightens permissions.
-
-- **Capture extraction no longer holds the store lock across the LLM call (#1663)** -
-  `uteke-serve` claims a batch under the lock, releases it for the extractor request
-  (up to two minutes per chunk), and takes it again to store the facts and mark the
-  batch done, so recall and writes are not stalled by a slow or hung provider. The
-  lease and the `capture:<session>:<batch>` source work as before, so a crash between
-  the steps hands the batch back whole. Housekeeping (retention, lease reclaim) now
-  runs once per scheduled cycle, each session is tried once per cycle, and a shutdown
-  is seen between sessions. `uteke extract-queue run` goes through the same steps.
-
-- **Capture turns and the capture queue are bounded (#1666)** - `Uteke::capture` refuses a
-  turn over `[capture] max_turn_bytes` (1 MiB, the limit `POST /capture` already had) on
-  every surface, and `uteke capture` reads stdin only up to that size. It also refuses new
-  turns while the waiting queue holds `max_queue_turns` (100000) or `max_queue_bytes`
-  (512 MiB), and `extract-queue status` and `GET /capture/status` show `pending_bytes` and
-  a `warning` from 80% of a limit, so a stuck extraction cannot fill the disk. The run
-  report counters are exact: `reclaimed` counts the batches an expired lease handed back,
-  those it failed at `max_attempts` are added to `sessions_failed`, and `facts_refused` is
-  not counted again when an attempt is retried. The raw capture queue (#1466) is not
-  released yet, so these limits and counters change without a compatibility shim.
-
-- **A long capture session no longer starves the extraction queue (#1664)** - a
-  session is extracted in chunks of at most `[capture] chunk_chars` (24000)
-  characters instead of one request, and its facts are stored as one batch. A
-  provider refusal of the input size (HTTP 413, or a 4xx such as a 400 that names the context length)
-  fails that session alone, counting an attempt, instead of stopping the run for
-  the sessions behind it; a 429 or 5xx still stops the run.
-
-### Security
-
-- **An extraction API key alone no longer sends captured conversations to the LLM (#1665)** -
-  the raw capture queue extracts with the offline rules unless `[extraction] mode = "llm"`
-  is set; a key with no mode (set for `import --extract`) keeps the turns local. The queue
-  is unreleased (develop only, after v0.22.1), so there is no shim for the earlier
-  "key means send" rule. `uteke connect` (capture on), `uteke extract-queue run` and the
-  `uteke-serve` schedule print one line naming the extractor: offline, or the endpoint
-  host (never the key).
-
-- **A tombstone no longer keeps a secret typed in its reason (#1669)** - the reason and
-  the 120-character preview of a `forget --reason wrong` tombstone pass the privacy
-  filter before they are stored (masked in `redact` and `strict` alike; the forget is not
-  refused). New `[privacy] tombstone_preview = false` keeps the hash only: no preview, the
-  value is still refused, and `export --full` carries nothing of the text. The docs now
-  list what a forget as wrong leaves behind. The tombstones are unreleased (develop only,
-  after v0.22.1), so there is no migration; rows stored before this change keep what they
-  hold.
-
-### Changed
-
-- **A recall filter no one satisfies costs two passes, not five (#1671)** - with `strict` or
-  `min_trust` active, a first pass that keeps no row now widens once, straight to the
-  largest window (1000 candidates), instead of re-running the strategy at 4x each time. The
-  rows returned and their order are unchanged. The capture worker's housekeeping once per
-  cycle and its shutdown check between sessions were already in place (#1663).
-
-- **Behaviour change for callers who pass `at`: history is the default (#1598)** -
-  `at` on `POST /recall`, `POST /list`, `POST /room/recall`, MCP `uteke_recall` and
-  `uteke_list`, and `uteke recall/list --at` now also returns the memories that were
-  deprecated (forgotten, superseded, replaced by a contradiction) **after** `at`:
-  `created_at <= at < deprecated_at` and `valid_from <= at < valid_until`. This is
-  the meaning #1086 documented but never delivered, since deprecation removes a
-  memory's vector from the index. Agreed in Amendment 3 of the core contract
-  (uteke-cloud#458); there is no `history` wire parameter. An `at` taken before a
-  correction now returns more rows than before. Room recall with `at` follows the
-  same rule (it used to look only at live room memories). `uteke recall/list --at T
-  --history` (0.22.x) is still accepted as a deprecated no-op alias. Core:
-  `Uteke::recall_at_time` and `list_at_time` are history queries; the
-  `recall_at_time_history` and `list_at_time_with` methods are gone, new
-  `recall_room_at_time` and `recall_room_semantic_at_time`. Docs:
-  `docs/time-travel.md`.
-
-### Added
 
 - **`similarity` on recall results, and `strict` that works (#1650)** - every memory
   result on the CLI (`--json`), `POST /recall` and `uteke_recall` (explain and pack
@@ -328,11 +232,50 @@
 
 ### Changed
 
+- **A recall filter no one satisfies costs two passes, not five (#1671)** - with `strict` or
+  `min_trust` active, a first pass that keeps no row now widens once, straight to the
+  largest window (1000 candidates), instead of re-running the strategy at 4x each time. The
+  rows returned and their order are unchanged. The capture worker's housekeeping once per
+  cycle and its shutdown check between sessions were already in place (#1663).
+
+- **Behaviour change for callers who pass `at`: history is the default (#1598)** -
+  `at` on `POST /recall`, `POST /list`, `POST /room/recall`, MCP `uteke_recall` and
+  `uteke_list`, and `uteke recall/list --at` now also returns the memories that were
+  deprecated (forgotten, superseded, replaced by a contradiction) **after** `at`:
+  `created_at <= at < deprecated_at` and `valid_from <= at < valid_until`. This is
+  the meaning #1086 documented but never delivered, since deprecation removes a
+  memory's vector from the index. Agreed in Amendment 3 of the core contract
+  (uteke-cloud#458); there is no `history` wire parameter. An `at` taken before a
+  correction now returns more rows than before. Room recall with `at` follows the
+  same rule (it used to look only at live room memories). `uteke recall/list --at T
+  --history` (0.22.x) is still accepted as a deprecated no-op alias. Core:
+  `Uteke::recall_at_time` and `list_at_time` are history queries; the
+  `recall_at_time_history` and `list_at_time_with` methods are gone, new
+  `recall_room_at_time` and `recall_room_semantic_at_time`. Docs:
+  `docs/time-travel.md`.
+
 - `recall --strict` with `--min` now applies both: `--min` to `score` as before, and
   the strict floor to `similarity`. `--strict` alone no longer sets a floor on
   `score`.
 
 ### Security
+
+- **An extraction API key alone no longer sends captured conversations to the LLM (#1665)** -
+  the raw capture queue extracts with the offline rules unless `[extraction] mode = "llm"`
+  is set; a key with no mode (set for `import --extract`) keeps the turns local. The queue
+  is unreleased (develop only, after v0.22.1), so there is no shim for the earlier
+  "key means send" rule. `uteke connect` (capture on), `uteke extract-queue run` and the
+  `uteke-serve` schedule print one line naming the extractor: offline, or the endpoint
+  host (never the key).
+
+- **A tombstone no longer keeps a secret typed in its reason (#1669)** - the reason and
+  the 120-character preview of a `forget --reason wrong` tombstone pass the privacy
+  filter before they are stored (masked in `redact` and `strict` alike; the forget is not
+  refused). New `[privacy] tombstone_preview = false` keeps the hash only: no preview, the
+  value is still refused, and `export --full` carries nothing of the text. The docs now
+  list what a forget as wrong leaves behind. The tombstones are unreleased (develop only,
+  after v0.22.1), so there is no migration; rows stored before this change keep what they
+  hold.
 
 - **MCP tools fence stored text as data (#1599)** - every MCP read tool (the set a
   read-only token may call: recall, search, list, get, context, the doc, room, tag
@@ -355,6 +298,68 @@
   `eval "$(uteke hook zsh)"` line does not fail; it prints a note to remove it.
 
 ### Fixed
+
+- **The session view matches a session exactly and uses an index (#1670)** -
+  `session_memories` matched `source` with a `substr` prefix, so the view of session `a`
+  also listed the memories of session `a:b` (source `capture:a:b:<batch>`), and the
+  condition scanned every memory. After the `capture:<session>:` prefix only the batch id
+  (no `:`) may follow; the lookup is an equality plus a range on `source`, so a session id
+  with `%`, `_` or a quote is taken literally. Schema v25 adds `idx_memories_source`
+  (forward-only; an older binary ignores the index; a fresh store gets it at open). The
+  session view (#1470 c) is unreleased (only on `develop`), so this changes its behaviour
+  with no compatibility shim.
+
+- **The viewer never writes the store, and its non-loopback bind authenticates (#1667)** -
+  `uteke view` opens the database `SQLITE_OPEN_READ_ONLY` (new `Uteke::open_read_only`):
+  no WAL pragma, no schema migration, no vector-index or cache file. A store whose
+  schema is older than the binary expects is refused with a message to run any normal
+  `uteke` command once, instead of being migrated from the viewer. A non-loopback
+  `--host` still needs the server auth token, and now every request must also carry it
+  as `Authorization: Bearer` on top of the launch token (the bearer slot is no longer a
+  launch-token source on such a bind); a one-line warning says the viewer speaks plain
+  HTTP and TLS must be terminated in front; the printed launch URL uses `127.0.0.1` /
+  `[::1]` for a wildcard bind instead of `0.0.0.0`. The viewer is unreleased (only on
+  `develop`), so this changes its behaviour with no compatibility shim. Docs:
+  `docs/viewer.md`.
+
+- **Exports are owner-only and `connect` no longer exposes or clobbers a config (#1668)** -
+  the pre-migration export of `uteke namespace migrate` and the files written by
+  `uteke export` (plain and `--full`) are created with mode 0600 on Unix (new
+  `uteke_core::private_file::create_private`; an existing export file is tightened
+  before it is truncated). `connect`/`disconnect` create the temp config with the
+  original file's mode (0600 when there is none) from the start, instead of copying the
+  mode afterwards, and compare the file with what was read before the rename: if another
+  program changed it in between, nothing is written and the error says so. `namespace
+  migrate` and `connect` are unreleased (only on `develop`), so this changes their
+  behaviour with no compatibility shim; the `uteke export` mode change applies to a
+  released command and only tightens permissions.
+
+- **Capture extraction no longer holds the store lock across the LLM call (#1663)** -
+  `uteke-serve` claims a batch under the lock, releases it for the extractor request
+  (up to two minutes per chunk), and takes it again to store the facts and mark the
+  batch done, so recall and writes are not stalled by a slow or hung provider. The
+  lease and the `capture:<session>:<batch>` source work as before, so a crash between
+  the steps hands the batch back whole. Housekeeping (retention, lease reclaim) now
+  runs once per scheduled cycle, each session is tried once per cycle, and a shutdown
+  is seen between sessions. `uteke extract-queue run` goes through the same steps.
+
+- **Capture turns and the capture queue are bounded (#1666)** - `Uteke::capture` refuses a
+  turn over `[capture] max_turn_bytes` (1 MiB, the limit `POST /capture` already had) on
+  every surface, and `uteke capture` reads stdin only up to that size. It also refuses new
+  turns while the waiting queue holds `max_queue_turns` (100000) or `max_queue_bytes`
+  (512 MiB), and `extract-queue status` and `GET /capture/status` show `pending_bytes` and
+  a `warning` from 80% of a limit, so a stuck extraction cannot fill the disk. The run
+  report counters are exact: `reclaimed` counts the batches an expired lease handed back,
+  those it failed at `max_attempts` are added to `sessions_failed`, and `facts_refused` is
+  not counted again when an attempt is retried. The raw capture queue (#1466) is not
+  released yet, so these limits and counters change without a compatibility shim.
+
+- **A long capture session no longer starves the extraction queue (#1664)** - a
+  session is extracted in chunks of at most `[capture] chunk_chars` (24000)
+  characters instead of one request, and its facts are stored as one batch. A
+  provider refusal of the input size (HTTP 413, or a 4xx such as a 400 that names the context length)
+  fails that session alone, counting an attempt, instead of stopping the run for
+  the sessions behind it; a 429 or 5xx still stops the run.
 
 - **`uteke upgrade` says when connected agent hooks are out of date (#1641)** -
   After installing, `upgrade` runs the new binary's check (the one `uteke doctor`
