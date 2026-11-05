@@ -112,8 +112,10 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    follow the tap's rules since #1384, and the job already re-verified every SHA256
    against `checksums-sha256.txt`; Cora there was fixed in homebrew-tap#6), then
    `brew update && brew upgrade codecoradev/tap/uteke`. Verify crates.io and the
-   Docker tags, upgrade the production server and run `uteke verify` (repair if
-   `consistent` is false). Do not run `uteke-mcp --version` / `uteke-serve --version`
+   Docker tags. There is no self-hosted production server to upgrade: the owner's
+   agents use the Uteke Cloud MCP (owner decision 2026-11-05), and the legacy
+   `uteke.ajianaz.dev` server is a read-only fallback for old memories that is not
+   upgraded per release. Do not run `uteke-mcp --version` / `uteke-serve --version`
    in a shell: they start a server and hang.
 
 ## CORE/LAB contract — source of truth (MUST READ before API-surface work)
