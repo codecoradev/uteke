@@ -83,7 +83,8 @@ if UTEKE_GIT_REF:
     # from the binary and versioned identically to official releases.
     # build-essential: cargo needs a native linker (cc) on the base image.
     image = image.apt_install("build-essential", "pkg-config").run_commands(
-        "curl -sL https://github.com/codecoradev/uteke/releases/download/"
+        "curl -sL --retry 5 --retry-delay 15 --retry-all-errors "
+        "https://github.com/codecoradev/uteke/releases/download/"
         f"{UTEKE_VERSION}/uteke-x86_64-unknown-linux-gnu-legacy-{UTEKE_VERSION}.tar.gz"
         " | tar xz -C /tmp && "
         "cp /tmp/libonnxruntime* /usr/local/bin/ && "
