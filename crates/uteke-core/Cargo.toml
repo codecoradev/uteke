@@ -33,7 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
 rusqlite = { version = "0.41", features = ["bundled"] }
-usearch = { version = "2", optional = true }
+usearch = { version = "=2.26.5", optional = true }
 vecq-core = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 # Secret detection in the write path (#1464). Already in the graph via tokenizers.

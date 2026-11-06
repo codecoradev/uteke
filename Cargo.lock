@@ -1570,9 +1570,9 @@ dependencies = [
 
 [[package]]
 name = "numkong"
-version = "7.8.7"
+version = "7.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "431a7e50171e9b47035d5dcb57e802186688a9e0a878a62beedfcc6afcb43ebd"
+checksum = "81601dc994296baed2968db046b01589be7898837c31f2b073704c6e65ff8f04"
 dependencies = [
  "cc",
 ]
@@ -2089,9 +2089,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.41.1"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da9bba6f3506135e120a6586df05be18b48d18896600646a4bec8f993d91a594"
+checksum = "9c026b4444579e8d754556c6c75d040d69c4a44283cdb648ab8a8d5965c2cfa8"
 dependencies = [
  "bitflags",
  "fallible-iterator",
@@ -2906,9 +2906,9 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usearch"
-version = "2.26.6"
+version = "2.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0b5eeb9d30a9be03057a1fa6b0096b6d02a42169fb300e096501aa48ee03ce5"
+checksum = "caf2c7d2696bad5e99d1d722e371afd83937a6c53d7032caa1c46380210aa6ba"
 dependencies = [
  "cxx",
  "cxx-build",
