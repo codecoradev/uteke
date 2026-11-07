@@ -8,6 +8,7 @@ results/*
 !results/default-500q-v017.jsonl
 !results/default-500q-v0.19.0.jsonl
 !results/default-500q-v0.20.0.jsonl
+!results/default-500q-fix32a5cf3b.jsonl
 !results/fts5-500q.jsonl
 !results/contradiction-f3-metrics.json
 results_*/
