@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`import` no longer skips content that was only forgotten (#1689)** - since #1633/#1636 a
+  row whose content matched a soft-deleted memory was counted as `soft_deleted_skipped`
+  and never stored, so re-importing after a plain `forget` (a restored backup, a benchmark
+  that forgets after every question) lost the rows. A plain forget is recoverable: an
+  anonymous row over a forgotten copy now imports as a new live row (new id) and the old
+  row stays deprecated. Still skipped: a row that carries the forgotten memory's own id,
+  a row marked `deprecated` in the file, and anything blocked by `forget --reason`
+  (`rejected_values`, #1627, unchanged).
+
 ## [0.23.0] - 2026-11-05
 
 Capture, tombstones, honest time travel, a read-only viewer, agent hooks and a Cloud-export import path. Three schema steps (v23 `rejected_values`, v24 `observations`, v25 `idx_memories_source`), all forward-only: an older binary ignores the new tables and the index.
