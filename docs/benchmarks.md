@@ -106,18 +106,21 @@ re-validated again on the v0.19.0 release tree (2026-09-29).
 Full 500-question basis, all three validated releases (scored from the committed
 raw artifacts):
 
-| Metric | v0.16.0 | v0.17.0 | v0.19.0 | What it means |
-|---|---|---|---|---|
-| **recall_any@5** | 98.2% | 98.4% | **98.2%** | At least one gold session in top-5 — the metric competitor benchmarks publish |
-| recall_any@10 | 98.8% | 98.8% | 98.8% | |
-| strict recall_all@5 | 88.0% | 88.0% | 88.0% | **Strict:** every gold session in top-5 (mathematical ceiling 99.4% — 3 questions have 6 gold sessions) |
-| strict recall_all@10 | 95.4% | 95.4% | 95.4% | Every gold session in top-10 |
-| coverage@5 | 94.3% | 94.4% | 94.3% | Partial credit per question |
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 | fix 32a5cf3b | What it means |
+|---|---|---|---|---|---|
+| **recall_any@5** | 98.2% | 98.4% | **98.2%** | 98.2% | At least one gold session in top-5 — the metric competitor benchmarks publish |
+| recall_any@10 | 98.8% | 98.8% | 98.8% | — | |
+| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | **Strict:** every gold session in top-5 (mathematical ceiling 99.4% — 3 questions have 6 gold sessions) |
+| strict recall_all@10 | 95.4% | 95.4% | 95.4% | 95.4% | Every gold session in top-10 |
+| coverage@5 | 94.3% | 94.4% | 94.3% | — | Partial credit per question |
 
 The strict family (88.0 / 95.4) is bit-stable across all three releases;
 recall_any@5 sits in a ±0.2pp band (98.2–98.4) with zero flips @10/@50 and one
 rank-boundary flip @5 between v0.17.0 and v0.19.0
-([details](../benchmarks/longmemeval/RESULTS.md#three-release-stability-full-500-question-basis-scored-from-committed-raw)).
+([details](../benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)).
+
+Re-validated 2026-11-08 after the #1690 import fix: strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence
+([post-regression validation](../benchmarks/longmemeval/RESULTS.md#post-regression-validation-2026-11-08)).
 
 On the 470 non-abstention questions (the 30 `_abs` abstention questions are
 reported separately), strict recall_all@5 is 88.3% and coverage@5 is 94.6%.
