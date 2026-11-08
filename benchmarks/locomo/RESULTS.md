@@ -108,3 +108,59 @@ print("cov@5   :", sum(m["recall_all@5"] for m in s) / len(s))         # 0.776
 `recall_any@k` recomputes from `retrieved_session_ids` vs the dataset's
 `answer_session_ids` (0.840 @5). Same commands work for `vector-1536.jsonl` /
 `fts5-1536.jsonl`.
+
+## End-to-end QA accuracy (answer + judge)
+
+First end-to-end QA run (2026-11-08, tracked as #1691) — layers ON TOP of the
+retrieval benchmark above: adapter (full recall payload as context, session-date
+anchors) → answerer → judge. Retrieval metrics and QA accuracy are different
+claims and are reported separately.
+
+**Setup.** Binary built from develop `3bc72c1c` (v0.23.0 + the #1690
+import-tombstone fix — exercised by this harness's per-question forget+re-import
+cycle). Harness: external answer+judge runkit (agent-memory-benchmark) via the
+internal uteke provider patch series; artifacts stay out of the product repo per
+the #1230/#1235 governance. Answerer `claude-sonnet-5-5`, judge
+`claude-haiku-4-5`, Anthropic OpenAI-compat layer, strict JSON schema, temp 1
+(Sonnet 5.x rejects <1), max_tokens 4000. Local box, zero LLM in the retrieval
+path; wall ~1.5 h for the full run.
+
+**Result — 1,540/1,540 answerable QA: 80.4% (1,238 correct).**
+
+| Category | n | QA accuracy | retrieval any@5 (ref) |
+|---|---|---|---|
+| open-domain | 841 | 0.854 | 0.855 |
+| single-hop | 282 | 0.770 | 0.894 |
+| temporal | 321 | 0.748 | 0.816 |
+| multi-hop | 92 | 0.656 | 0.630 |
+
+Per-conversation range 73.8%–95.1% (best conv-30 95.1%, conv-26 92.8%) — no
+single-unit anomaly.
+
+**Reading.** Multi-hop and temporal QA land at-or-above their retrieval
+any@5 — answers are often recoverable even when not all gold sessions reach
+top-5. Single-hop shows the largest QA-vs-retrieval gap (0.770 vs 0.894): most
+single-hop questions cite ~2.7 gold sessions and the judge is strict about
+enumeration completeness. Not apples-to-apples with any single-conversation or
+different-provider runs (e.g. earlier GLM answerer experiments at 86.0–86.8%).
+
+**Adversarial abstention (446 no-evidence QA, excluded above).** Custom pass
+reusing the run's store: regex-classified refusals 211/446 (47.3%); judge audit
+of 75 sampled answers (seed 42) — 80% regex precision, and 44% of
+regex-"concrete" answers were also refusals — yielding a corrected estimate of
+**~61% proper abstention (~272/446)**. The remaining ~39% fabricated answers are
+the abstention-layer headroom (prompt v2 teaches qualified abstention but does
+not enforce it).
+
+**Raw artifacts (committed):** `results/qa-e2e-2026-11-08.jsonl` (per-question
+receipts), `results/adversarial-results.json` (446 answers + classification),
+`results/adversarial-audit.json` (75 judge audits).
+
+Audit snippet:
+
+```python
+import json
+rows = [json.loads(l) for l in open("results/qa-e2e-2026-11-08.jsonl")]
+print(len(rows), sum(r["correct"] for r in rows) / len(rows))  # 1540 0.804
+```
+
