@@ -30,7 +30,7 @@ on one dataset.
 
 ## Non-goals (for now)
 
-- LoCoMo end-to-end QA accuracy (LLM judge) — retrieval-layer only, same boundary as
-  our LongMemEval reporting. Unmeasured layers are stated as unmeasured.
+- ~~LoCoMo end-to-end QA accuracy (LLM judge)~~ — **done 2026-11-08**, see
+  [`RESULTS.md`](RESULTS.md) § "End-to-end QA accuracy (answer + judge)".
 - -M-variant LongMemEval — also still open, tracked in
   [`../longmemeval/RESULTS.md`](../longmemeval/RESULTS.md).

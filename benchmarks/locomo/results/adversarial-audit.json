@@ -1,0 +1,452 @@
+[
+ {
+  "id": "conv-48_q230",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clearly explaining that the information is not available in the context. "
+ },
+ {
+  "id": "conv-41_q158",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about Jo"
+ },
+ {
+  "id": "conv-26_q168",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not decline to answer the unanswerable question. Instead, it provided a concrete answer about Melanie's s"
+ },
+ {
+  "id": "conv-50_q164",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not show Calvin opening anything"
+ },
+ {
+  "id": "conv-42_q242",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context doesn't provide this information. It "
+ },
+ {
+  "id": "conv-42_q222",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about th"
+ },
+ {
+  "id": "conv-42_q208",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer the unanswerable question by clarifying that the context does not state Nate"
+ },
+ {
+  "id": "conv-41_q165",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not decline to answer the question. Instead, it fabricated information by asserting that 'the three-times"
+ },
+ {
+  "id": "conv-50_q163",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by stating that the context does not contain information about the necklace "
+ },
+ {
+  "id": "conv-41_q155",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system fabricated information by asserting concrete details about John running for office in late April 2023 and his"
+ },
+ {
+  "id": "conv-49_q165",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not mention Sam getting a bonsai"
+ },
+ {
+  "id": "conv-50_q195",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about wh"
+ },
+ {
+  "id": "conv-48_q192",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about De"
+ },
+ {
+  "id": "conv-30_q100",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about Gi"
+ },
+ {
+  "id": "conv-48_q206",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clearly stating that the context does not contain information about Jolen"
+ },
+ {
+  "id": "conv-44_q124",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clearly stating that the context does not provide information about Andre"
+ },
+ {
+  "id": "conv-26_q180",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the provided context does not contain information"
+ },
+ {
+  "id": "conv-26_q176",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer the unanswerable question by clearly distinguishing between what the context"
+ },
+ {
+  "id": "conv-30_q103",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer the question by clarifying that the premise was incorrect. It explicitly sta"
+ },
+ {
+  "id": "conv-42_q202",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context doesn't contain information about Joa"
+ },
+ {
+  "id": "conv-42_q212",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by stating that the context does not contain information about Joanna choosi"
+ },
+ {
+  "id": "conv-47_q152",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not decline to answer. Instead, it fabricated specific details that are not verifiable in the context, in"
+ },
+ {
+  "id": "conv-48_q209",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by stating that the context does not provide information about Deborah findi"
+ },
+ {
+  "id": "conv-50_q199",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain the requested inform"
+ },
+ {
+  "id": "conv-48_q197",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not appropriately decline to answer the unanswerable question. Instead, it fabricated details by assertin"
+ },
+ {
+  "id": "conv-41_q189",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not appropriately decline to answer. Instead, it provided speculative information and made assumptions ab"
+ },
+ {
+  "id": "conv-49_q188",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clearly stating that the context does not contain information about a pai"
+ },
+ {
+  "id": "conv-48_q233",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not decline to answer the unanswerable question. Instead, it fabricated a detailed narrative about Debora"
+ },
+ {
+  "id": "conv-49_q179",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer the unanswerable question about Evan's digestive issue. Rather than fabricat"
+ },
+ {
+  "id": "conv-50_q183",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system fabricated an answer by asserting specific details about Dave (that he restores rather than destroys cars, an"
+ },
+ {
+  "id": "conv-44_q123",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by stating that the context doesn't contain information about which bird mes"
+ },
+ {
+  "id": "conv-42_q205",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about wh"
+ },
+ {
+  "id": "conv-44_q139",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about Au"
+ },
+ {
+  "id": "conv-48_q204",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clearly stating that the context doesn't mention Jolene going for a morni"
+ },
+ {
+  "id": "conv-42_q245",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not decline to answer. Instead, it fabricated a specific answer by asserting that Joanna had a dog named "
+ },
+ {
+  "id": "conv-26_q158",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer the question by stating that the context does not provide information about "
+ },
+ {
+  "id": "conv-41_q172",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context doesn't contain information about Mar"
+ },
+ {
+  "id": "conv-50_q179",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain information about wh"
+ },
+ {
+  "id": "conv-43_q201",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain the requested inform"
+ },
+ {
+  "id": "conv-49_q175",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer the question about Evan's writing preferences by clarifying that this inform"
+ },
+ {
+  "id": "conv-41_q171",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context contains no information about Maria's"
+ },
+ {
+  "id": "conv-50_q168",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not indicate Calvin owns a cloth"
+ },
+ {
+  "id": "conv-43_q200",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context contains no information about Tim's e"
+ },
+ {
+  "id": "conv-50_q186",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not contain the requested inform"
+ },
+ {
+  "id": "conv-50_q171",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clarifying that the context does not indicate Calvin worked on a car in a"
+ },
+ {
+  "id": "conv-43_q217",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by clearly stating that the context does not contain information about Tim's"
+ },
+ {
+  "id": "conv-41_q152",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by noting that the context does not contain information about John's focus o"
+ },
+ {
+  "id": "conv-43_q210",
+  "kind": "refusal",
+  "judge_correct": false,
+  "reason": "The system did not decline to answer the unanswerable question. Instead, it provided specific information about John men"
+ },
+ {
+  "id": "conv-43_q202",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by stating that the context does not provide information about what Tim is e"
+ },
+ {
+  "id": "conv-50_q187",
+  "kind": "refusal",
+  "judge_correct": true,
+  "reason": "The system appropriately declined to answer by explicitly stating that the context does not mention a music festival att"
+ },
+ {
+  "id": "conv-42_q214",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly declined to answer the question by clarifying that Nate isn't in a writers group in the provided c"
+ },
+ {
+  "id": "conv-49_q184",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly stated that the context does not show Sam planning a family event, and instead identified that it "
+ },
+ {
+  "id": "conv-26_q170",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about what Melanie said regarding running, rather than explicitly declining to ans"
+ },
+ {
+  "id": "conv-48_q227",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer ('Yoga classes') to an unanswerable question, even though it added a note acknowle"
+ },
+ {
+  "id": "conv-43_q223",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer ('the violin') rather than explicitly declining to answer or stating that the info"
+ },
+ {
+  "id": "conv-44_q137",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer ('Agility classes at a dog park') rather than declining to answer or stating the i"
+ },
+ {
+  "id": "conv-26_q197",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly declined to answer the question by stating that the context doesn't show Caroline relaxing after t"
+ },
+ {
+  "id": "conv-42_q259",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a fabricated answer with specific details about Joanna's feelings toward turtles (symbolizing streng"
+ },
+ {
+  "id": "conv-26_q182",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system properly acknowledged that the question is unanswerable from the context and explicitly declined to provide a"
+ },
+ {
+  "id": "conv-44_q153",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about Audrey's dogs and their outdoor companionship rather than declining to answe"
+ },
+ {
+  "id": "conv-42_q225",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly acknowledged that the context doesn't mention a book by Nate and clarified that the book with thos"
+ },
+ {
+  "id": "conv-49_q192",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly declined to answer by stating 'The context contains no high-impact exercise suggestions from Evan'"
+ },
+ {
+  "id": "conv-47_q176",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about where John gets his ideas from (game design book, online tutorials, develope"
+ },
+ {
+  "id": "conv-47_q174",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly declined to answer the question by stating that John did not take a cooking class and that the con"
+ },
+ {
+  "id": "conv-50_q170",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about Dave's modifications (engine swaps, suspension modifications, body modificat"
+ },
+ {
+  "id": "conv-42_q254",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer claiming 'Joanna didn't start making gaming videos' and 'It was Nate who did...' i"
+ },
+ {
+  "id": "conv-47_q155",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about what they did with the money (buy groceries and cook food for the homeless) "
+ },
+ {
+  "id": "conv-41_q167",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly acknowledged that the context doesn't mention a dinner with her father and correctly noted that th"
+ },
+ {
+  "id": "conv-48_q218",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system appropriately recognized that the question is unanswerable from the conversation. It explicitly stated 'The c"
+ },
+ {
+  "id": "conv-26_q177",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about Melanie's motivations (being obsessed with colors and patterns, wanting to m"
+ },
+ {
+  "id": "conv-50_q198",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly declined to answer the unanswerable question by stating 'The context contains no vegan recipes blo"
+ },
+ {
+  "id": "conv-47_q185",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer (James and Samantha rented an apartment near McGee's bar) rather than declining to"
+ },
+ {
+  "id": "conv-41_q192",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about Maria's puppy (Shadow) instead of explicitly stating that information about "
+ },
+ {
+  "id": "conv-49_q167",
+  "kind": "concrete",
+  "judge_correct": true,
+  "reason": "The system explicitly acknowledged that the information is not available in the context, stating 'The context doesn't me"
+ },
+ {
+  "id": "conv-42_q224",
+  "kind": "concrete",
+  "judge_correct": false,
+  "reason": "The system provided a concrete answer about Joanna visiting a library and finding a book, rather than explicitly declini"
+ }
+]

@@ -1,0 +1,4016 @@
+[
+ {
+  "id": "conv-26_q152",
+  "conv": "conv-26",
+  "question": "What did Caroline realize after her charity race?",
+  "answer": "",
+  "sys_answer": "Caroline didn't run the charity race; Melanie did. After the race (a mental health charity run, around May 20, 2023), Melanie realized that self-care is really important and that looking after herself helps her better look after her family.",
+  "refusal": false,
+  "secs": 11.1
+ },
+ {
+  "id": "conv-26_q153",
+  "conv": "conv-26",
+  "question": "What are Melanie's plans for the summer with respect to adoption?",
+  "answer": "",
+  "sys_answer": "Melanie has no stated summer adoption plans; her summer plan was a family camping trip. It was Caroline who said she would spend the summer researching adoption agencies (including LGBTQ+-inclusive ones) to adopt kids as a single parent.",
+  "refusal": false,
+  "secs": 7.6
+ },
+ {
+  "id": "conv-26_q154",
+  "conv": "conv-26",
+  "question": "What type of individuals does the adoption agency Melanie is considering support?",
+  "answer": "",
+  "sys_answer": "The agency supports LGBTQ+ individuals (it helps LGBTQ+ folks with adoption). Note that the context shows this was the agency Caroline, not Melanie, was considering.",
+  "refusal": false,
+  "secs": 8.9
+ },
+ {
+  "id": "conv-26_q155",
+  "conv": "conv-26",
+  "question": "Why did Melanie choose the adoption agency?",
+  "answer": "",
+  "sys_answer": "Melanie didn't choose an adoption agency; it was Caroline. Caroline chose her agency because it helps LGBTQ+ people with adoption, and its inclusivity and support spoke to her.",
+  "refusal": false,
+  "secs": 5.6
+ },
+ {
+  "id": "conv-26_q156",
+  "conv": "conv-26",
+  "question": "What is Melanie excited about in her adoption process?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Melanie is in an adoption process. It is Caroline who is adopting, and she is thrilled to make a family and give a loving home to kids who need one. Melanie has only said she might consider adopting someday.",
+  "refusal": true,
+  "secs": 13.7
+ },
+ {
+  "id": "conv-26_q157",
+  "conv": "conv-26",
+  "question": "What does Melanie's necklace symbolize?",
+  "answer": "",
+  "sys_answer": "The context says nothing about a necklace belonging to Melanie. The necklace in the conversation is Caroline's, a gift from her grandmother in Sweden, and it symbolizes love, faith and strength.",
+  "refusal": false,
+  "secs": 22.8
+ },
+ {
+  "id": "conv-26_q158",
+  "conv": "conv-26",
+  "question": "What country is Melanie's grandma from?",
+  "answer": "",
+  "sys_answer": "The context does not say where Melanie's grandma is from. The only grandma mentioned is Caroline's, who is from Sweden.",
+  "refusal": true,
+  "secs": 21.4
+ },
+ {
+  "id": "conv-26_q159",
+  "conv": "conv-26",
+  "question": "What was grandma's gift to Melanie?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention any gift from a grandma to Melanie. It was Caroline whose grandma gave her a necklace (symbolizing love, faith and strength) from her home country, Sweden.",
+  "refusal": false,
+  "secs": 17.3
+ },
+ {
+  "id": "conv-26_q160",
+  "conv": "conv-26",
+  "question": "What was grandpa's gift to Caroline?",
+  "answer": "",
+  "sys_answer": "The context does not mention any gift from Caroline's grandpa. It only says her grandma gave her a necklace (symbolizing love, faith and strength) in Sweden.",
+  "refusal": true,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-26_q161",
+  "conv": "conv-26",
+  "question": "What is Caroline's hand-painted bowl a reminder of?",
+  "answer": "",
+  "sys_answer": "Art and self-expression.",
+  "refusal": false,
+  "secs": 5.4
+ },
+ {
+  "id": "conv-26_q162",
+  "conv": "conv-26",
+  "question": "What did Caroline and her family do while camping?",
+  "answer": "",
+  "sys_answer": "The context describes Melanie (not Caroline) camping with her family: they roasted marshmallows, told stories around the campfire, explored nature and forests, hiked in the mountains, and once watched the Perseid meteor shower. Caroline has no camping trip with her family mentioned.",
+  "refusal": false,
+  "secs": 5.8
+ },
+ {
+  "id": "conv-26_q163",
+  "conv": "conv-26",
+  "question": "What kind of counseling and mental health services is Melanie interested in pursuing?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Melanie is pursuing counseling or mental health services. That is Caroline, who wants to work in counseling and mental health, especially with transgender people, to help them accept themselves and support their mental health. Melanie only supports this and uses pottery, painting, running and music for her own self-care.",
+  "refusal": true,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-26_q164",
+  "conv": "conv-26",
+  "question": "What kind of counseling workshop did Melanie attend recently?",
+  "answer": "",
+  "sys_answer": "The context does not say Melanie attended a counseling workshop. It was Caroline who attended one, an LGBTQ+ counseling workshop on working with trans people (the Friday before 2023-06-27, about June 23, 2023). The question appears to mix up the two people.",
+  "refusal": true,
+  "secs": 14.8
+ },
+ {
+  "id": "conv-26_q165",
+  "conv": "conv-26",
+  "question": "What motivated Melanie to pursue counseling?",
+  "answer": "",
+  "sys_answer": "The context gives no indication that Melanie pursued counseling. It was Caroline who wanted to pursue counseling and mental health, motivated by her own journey, the support she received, and how counseling and support groups improved her life, so she wants to help others, especially trans people.",
+  "refusal": false,
+  "secs": 10.1
+ },
+ {
+  "id": "conv-26_q166",
+  "conv": "conv-26",
+  "question": "What kind of place does Melanie want to create for people?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Melanie wants to create a particular place. The matching statement is Caroline's: she wants to create a safe, inviting, supportive place for people to grow (through counseling, especially for trans people) and a safe, loving home for adopted kids.",
+  "refusal": true,
+  "secs": 12.2
+ },
+ {
+  "id": "conv-26_q167",
+  "conv": "conv-26",
+  "question": "Did Caroline make the black and white bowl in the photo?",
+  "answer": "No",
+  "sys_answer": "No. Melanie made the black and white bowl in her pottery class; Caroline only admired it and has said she hasn't tried pottery.",
+  "refusal": false,
+  "secs": 20.4
+ },
+ {
+  "id": "conv-26_q168",
+  "conv": "conv-26",
+  "question": "What are the new shoes that Caroline got used for?",
+  "answer": "",
+  "sys_answer": "The new shoes were Melanie's, not Caroline's. They are purple running shoes, used for running (to de-stress and clear her mind). The context does not say that Caroline got new shoes.",
+  "refusal": true,
+  "secs": 16.2
+ },
+ {
+  "id": "conv-26_q169",
+  "conv": "conv-26",
+  "question": "What is Caroline's reason for getting into running?",
+  "answer": "",
+  "sys_answer": "The context gives no reason for Caroline getting into running, because she is never said to run. It is Melanie who runs, to de-stress, clear her mind, and support her mental health and self-care.",
+  "refusal": false,
+  "secs": 8.1
+ },
+ {
+  "id": "conv-26_q170",
+  "conv": "conv-26",
+  "question": "What does Caroline say running has been great for?",
+  "answer": "",
+  "sys_answer": "Caroline didn't say this; Melanie did. Melanie said running has been great for her headspace and mental health, as a way to de-stress and clear her mind. Caroline only replied that running can boost your mood.",
+  "refusal": false,
+  "secs": 17.5
+ },
+ {
+  "id": "conv-26_q171",
+  "conv": "conv-26",
+  "question": "What did Melanie see at the council meeting for adoption?",
+  "answer": "",
+  "sys_answer": "Melanie did not attend the council meeting; Caroline did (around July 7, 2023). Caroline said it was inspiring and emotional because she saw many people who wanted to create loving homes for children in need.",
+  "refusal": false,
+  "secs": 5.7
+ },
+ {
+  "id": "conv-26_q172",
+  "conv": "conv-26",
+  "question": "What inspired Melanie's painting for the art show?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Melanie painting for an art show. It was Caroline's painting for the LGBTQ art show that was inspired by her visit to an LGBTQ center, where she wanted to capture everyone's unity and strength.",
+  "refusal": false,
+  "secs": 5.5
+ },
+ {
+  "id": "conv-26_q173",
+  "conv": "conv-26",
+  "question": "What inspired Caroline's sculpture for the art show?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention any sculpture by Caroline for the art show. She planned to show paintings; the painting she previewed for the LGBTQ art show was inspired by a visit to an LGBTQ center, capturing the community's unity and strength.",
+  "refusal": false,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-26_q174",
+  "conv": "conv-26",
+  "question": "How often does Caroline go to the beach with her kids?",
+  "answer": "",
+  "sys_answer": "Caroline doesn't have kids and no beach trips with kids are mentioned for her. She is only in the process of applying to adopt. It was Melanie who said she takes her kids to the beach about once or twice a year.",
+  "refusal": false,
+  "secs": 12.5
+ },
+ {
+  "id": "conv-26_q175",
+  "conv": "conv-26",
+  "question": "What did Caroline and her family see during their camping trip last year?",
+  "answer": "",
+  "sys_answer": "The camping trip in question was Melanie's family's, not Caroline's. They saw the Perseid meteor shower during that trip in 2022, the year before the July 2023 conversation.",
+  "refusal": false,
+  "secs": 35.4
+ },
+ {
+  "id": "conv-26_q176",
+  "conv": "conv-26",
+  "question": "How did Caroline feel while watching the meteor shower?",
+  "answer": "",
+  "sys_answer": "The context does not say Caroline watched a meteor shower herself. It was Melanie who saw the Perseid meteor shower, and she felt tiny, in awe of the universe, and at one with it. Caroline only said it must have been breathtaking.",
+  "refusal": true,
+  "secs": 14.1
+ },
+ {
+  "id": "conv-26_q177",
+  "conv": "conv-26",
+  "question": "Why did Caroline choose to use colors and patterns in her pottery project?",
+  "answer": "",
+  "sys_answer": "Caroline didn't make a pottery project; Melanie did. Melanie chose the colors and patterns because she's obsessed with them and wanted to make something eye-catching that would make people smile, and because painting lets her express her feelings and be creative.",
+  "refusal": false,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-26_q178",
+  "conv": "conv-26",
+  "question": "Is Oscar Melanie's pet?",
+  "answer": "No",
+  "sys_answer": "No. Oscar is Caroline's guinea pig. Melanie's pets are Luna, Oliver, and Bailey.",
+  "refusal": false,
+  "secs": 5.3
+ },
+ {
+  "id": "conv-26_q179",
+  "conv": "conv-26",
+  "question": "Where did Oscar hide his bone once?",
+  "answer": "",
+  "sys_answer": "In a slipper. Note that it was Melanie's pet Oliver who hid his bone in her slipper; Oscar is Caroline's guinea pig.",
+  "refusal": false,
+  "secs": 13.7
+ },
+ {
+  "id": "conv-26_q180",
+  "conv": "conv-26",
+  "question": "What activity did Melanie used to do with her dad?",
+  "answer": "",
+  "sys_answer": "The provided context does not say what activity Melanie used to do with her dad; her father is never mentioned.",
+  "refusal": true,
+  "secs": 9.9
+ },
+ {
+  "id": "conv-26_q181",
+  "conv": "conv-26",
+  "question": "What did Melanie make for a local church?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Melanie made anything for a local church. It was Caroline who made a stained glass window for a local church (mentioned in the 2023-08-25 session).",
+  "refusal": true,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-26_q182",
+  "conv": "conv-26",
+  "question": "What did Melanie find in her neighborhood during her walk?",
+  "answer": "",
+  "sys_answer": "The context has no record of Melanie finding anything on a neighborhood walk. The walk it does describe was Caroline's, and she found a rainbow sidewalk for Pride Month.",
+  "refusal": false,
+  "secs": 14.3
+ },
+ {
+  "id": "conv-26_q183",
+  "conv": "conv-26",
+  "question": "Which song motivates Melanie to be courageous?",
+  "answer": "",
+  "sys_answer": "\"Brave\" by Sara Bareilles is the song about courage, but the context shows it is Caroline's meaningful song, not Melanie's. Melanie's stated favorites are Bach, Mozart and Ed Sheeran's \"Perfect\", and she said her family motivates her to be courageous.",
+  "refusal": false,
+  "secs": 21.2
+ },
+ {
+  "id": "conv-26_q184",
+  "conv": "conv-26",
+  "question": "What type of instrument does Caroline play?",
+  "answer": "",
+  "sys_answer": "Caroline plays acoustic guitar (started about five years before Aug 2023). She also mentioned in July 2023 that she was just learning the piano.",
+  "refusal": false,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-26_q185",
+  "conv": "conv-26",
+  "question": "Which classical musicians does Caroline enjoy listening to?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Caroline listens to any classical musicians. Bach and Mozart were mentioned as favorites of Melanie, not Caroline. Caroline only mentioned the song \"Brave\" by Sara Bareilles.",
+  "refusal": true,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-26_q186",
+  "conv": "conv-26",
+  "question": "Who is Caroline a fan of in terms of modern music?",
+  "answer": "",
+  "sys_answer": "The memories don't say Caroline is a fan of any modern artist. The modern-music fan in the conversation is Melanie, who likes Ed Sheeran (\"Perfect\"). Caroline only mentions that \"Brave\" by Sara Bareilles is meaningful to her.",
+  "refusal": false,
+  "secs": 9.3
+ },
+ {
+  "id": "conv-26_q187",
+  "conv": "conv-26",
+  "question": "What precautionary sign did Caroline see at the caf\u00e9?",
+  "answer": "",
+  "sys_answer": "The context does not say what the sign said. It was Melanie (not Caroline) who went to the caf\u00e9 and shared a picture of a sign, which she described only as 'just a precaution'.",
+  "refusal": true,
+  "secs": 7.8
+ },
+ {
+  "id": "conv-26_q188",
+  "conv": "conv-26",
+  "question": "What setback did Caroline face recently?",
+  "answer": "",
+  "sys_answer": "Caroline had a bad experience on a hike in August 2023, when she ran into a group of religious conservatives who said something upsetting about LGBTQ rights. It left her shaken, though she said her supportive people would help her be okay.",
+  "refusal": false,
+  "secs": 8.7
+ },
+ {
+  "id": "conv-26_q189",
+  "conv": "conv-26",
+  "question": "What does Caroline do to keep herself busy during her pottery break?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Caroline took a pottery break; it was Melanie who got hurt and paused pottery, and she kept busy by reading the book Caroline recommended and painting. Caroline herself has never done pottery, but she keeps busy with art, such as painting abstract pieces and making drawings.",
+  "refusal": true,
+  "secs": 18.7
+ },
+ {
+  "id": "conv-26_q190",
+  "conv": "conv-26",
+  "question": "What was the poetry reading that Melanie attended about?",
+  "answer": "",
+  "sys_answer": "Melanie didn't attend a poetry reading; she said she'd never been to one. It was Caroline who attended, around Friday before Oct 13, 2023. It was a transgender poetry reading where transgender people shared their stories through poetry.",
+  "refusal": false,
+  "secs": 7.6
+ },
+ {
+  "id": "conv-26_q191",
+  "conv": "conv-26",
+  "question": "What happened to Caroline's son on their road trip?",
+  "answer": "",
+  "sys_answer": "Caroline didn't have a son on the trip; it was Melanie's son. He got into an accident during their road trip (the weekend before Oct 20, 2023), but he turned out to be okay. It was scary for the family, and they later enjoyed the Grand Canyon.",
+  "refusal": false,
+  "secs": 8.6
+ },
+ {
+  "id": "conv-26_q192",
+  "conv": "conv-26",
+  "question": "How did Caroline's son handle the accident?",
+  "answer": "",
+  "sys_answer": "The question has a mistaken premise: it was Melanie's son, not Caroline's, who was in the accident (on a road trip, mentioned 2023-10-20). He turned out to be okay, and his siblings were scared but were reassured that their brother would be OK. The context doesn't say how he personally handled it beyond being okay.",
+  "refusal": true,
+  "secs": 14.3
+ },
+ {
+  "id": "conv-26_q193",
+  "conv": "conv-26",
+  "question": "How did Caroline feel about her family after the accident?",
+  "answer": "",
+  "sys_answer": "Caroline didn't have an accident; it was Melanie's son who was in a road-trip accident (session of Oct 20, 2023). Caroline responded that family is everything, that loved ones give us strength and are a rock to lean on in tough times. It was Melanie who said the accident made her realize how much she needs and cherishes her family.",
+  "refusal": false,
+  "secs": 17.7
+ },
+ {
+  "id": "conv-26_q194",
+  "conv": "conv-26",
+  "question": "How did Caroline's children handle the accident?",
+  "answer": "",
+  "sys_answer": "The question has a mistaken premise: Caroline has no children (she is still pursuing adoption). It was Melanie's children who dealt with the accident, when Melanie's son was in a road trip accident. They were scared, but the family reassured them and explained their brother would be OK, and Melanie called them tough, resilient kids.",
+  "refusal": false,
+  "secs": 5.7
+ },
+ {
+  "id": "conv-26_q195",
+  "conv": "conv-26",
+  "question": "How did Caroline feel after the accident?",
+  "answer": "",
+  "sys_answer": "Caroline wasn't in the accident; it was Melanie's son's accident on the road trip. On hearing about it, Caroline felt sympathetic and relieved that he was okay, saying it must have been traumatizing and that it reminds us how important loved ones are.",
+  "refusal": false,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-26_q196",
+  "conv": "conv-26",
+  "question": "What was Caroline's reaction to her children enjoying the Grand Canyon?",
+  "answer": "",
+  "sys_answer": "The premise is mistaken: the Grand Canyon kids are Melanie's, not Caroline's. Caroline has no children yet and wants to adopt. When Melanie said her kids enjoyed the Grand Canyon, Caroline said the kids looked so cute and must bring lots of joy, and she asked how they handled the accident.",
+  "refusal": false,
+  "secs": 16.1
+ },
+ {
+  "id": "conv-26_q197",
+  "conv": "conv-26",
+  "question": "What did Caroline do after the road trip to relax?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Caroline relaxing after the road trip; it was Melanie who did so. After the road trip (the one with her son's accident, around mid-October 2023), Melanie and her family went camping on about 2023-10-19, which she said was a nice way to relax.",
+  "refusal": false,
+  "secs": 8.5
+ },
+ {
+  "id": "conv-26_q198",
+  "conv": "conv-26",
+  "question": "What does Caroline love most about camping with her family?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Caroline goes camping with her family; that is Melanie. Melanie's favorite part is being present and together as a family, bonding over stories and campfires in nature, and waking up to birdsong and fresh air.",
+  "refusal": true,
+  "secs": 14.4
+ },
+ {
+  "id": "conv-30_q79",
+  "conv": "conv-30",
+  "question": "What temporary job did Jon take to cover expenses?",
+  "answer": "",
+  "sys_answer": "The context doesn't say what the temporary job was. Jon only mentions on 2023-07-21 that he got a temp job to cover expenses while looking for investors for his dance studio.",
+  "refusal": true,
+  "secs": 17.1
+ },
+ {
+  "id": "conv-30_q82",
+  "conv": "conv-30",
+  "question": "What is Jon's favorite style of painting?",
+  "answer": "",
+  "sys_answer": "The context does not say what Jon's favorite style of painting is. It only says his favorite dance style is contemporary.",
+  "refusal": true,
+  "secs": 5.3
+ },
+ {
+  "id": "conv-30_q83",
+  "conv": "conv-30",
+  "question": "What was Jon's favorite dancing memory?",
+  "answer": "",
+  "sys_answer": "Jon's most highlighted dancing memory was when his dance crew took first place in a local competition in 2022 - he said it was amazing being up on that stage. (He never explicitly labeled it his 'favorite'.)",
+  "refusal": false,
+  "secs": 16.7
+ },
+ {
+  "id": "conv-30_q84",
+  "conv": "conv-30",
+  "question": "What kind of dance piece did Jon's team perform to win first place?",
+  "answer": "",
+  "sys_answer": "The context doesn't say what piece Jon's crew performed to win first place in the local competition. The \"Finding Freedom\" contemporary piece was Gina's team's win at regionals. Jon only mentions contemporary as his favorite style and that his group does contemporary to hip-hop.",
+  "refusal": true,
+  "secs": 26.9
+ },
+ {
+  "id": "conv-30_q85",
+  "conv": "conv-30",
+  "question": "What is Gina's attitude towards participating in the dance festival?",
+  "answer": "",
+  "sys_answer": "Gina is enthusiastic and supportive about the festival. She said she couldn't wait to see Jon's dancers 'rock the festival' and that it was 'gonna be awesome.' The context doesn't show her participating herself, only cheering Jon's group on.",
+  "refusal": false,
+  "secs": 7.4
+ },
+ {
+  "id": "conv-30_q86",
+  "conv": "conv-30",
+  "question": "What kind of flooring is Gina looking for in her dance studio?",
+  "answer": "",
+  "sys_answer": "Gina isn't looking for flooring. It's Jon who is opening a dance studio, and he wants Marley flooring, the type dance studios usually use, because it's grippy but still lets you move, and it's durable and easy to clean. Gina has a clothing store.",
+  "refusal": false,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-30_q87",
+  "conv": "conv-30",
+  "question": "What did Jon find for his clothing store on 1 February, 2023?",
+  "answer": "",
+  "sys_answer": "Jon didn't have a clothing store; Gina did. On 1 Feb 2023 Gina found a wholesaler who said yes to supplying her clothing store (she also designed the space with a chandelier and comfy furniture). Jon was still searching for a dance studio location.",
+  "refusal": false,
+  "secs": 12.7
+ },
+ {
+  "id": "conv-30_q88",
+  "conv": "conv-30",
+  "question": "What did Jon design for his store?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Jon designing anything for a store. Jon has a dance studio, not a store. It was Gina who designed her clothing store's space, with comfy furniture, decor and a chandelier. If the question means Gina, that is the answer.",
+  "refusal": false,
+  "secs": 7.4
+ },
+ {
+  "id": "conv-30_q89",
+  "conv": "conv-30",
+  "question": "What did Jon want his customers to feel in her store?",
+  "answer": "",
+  "sys_answer": "Cozy and comfortable, like they're in a cool oasis, with an inviting experience that makes them want to come back. This was actually Gina's goal for her clothing store, not Jon's; Jon owns the dance studio.",
+  "refusal": false,
+  "secs": 14.2
+ },
+ {
+  "id": "conv-30_q90",
+  "conv": "conv-30",
+  "question": "What made Jon choose the furniture and decor for his store?",
+  "answer": "",
+  "sys_answer": "Jon didn't choose furniture or decor for a store; that was Gina, who owns the clothing store. Gina picked comfy, good-looking furniture and a glam chandelier to match her own style and make customers feel cozy. Jon is still searching for a spot for his dance studio.",
+  "refusal": false,
+  "secs": 9.6
+ },
+ {
+  "id": "conv-30_q91",
+  "conv": "conv-30",
+  "question": "How is Jon's store doing?",
+  "answer": "",
+  "sys_answer": "Jon doesn't have a store; Gina has the clothing store. Jon's business is a dance studio, which as of July 2023 is on tenuous grounds. He took a temp job to cover expenses while looking for investors, and he is networking, refining his business plan and pitch, and building an online platform, while staying positive. (Gina's clothing store, by contrast, is going well.)",
+  "refusal": false,
+  "secs": 16.2
+ },
+ {
+  "id": "conv-30_q92",
+  "conv": "conv-30",
+  "question": "What does Jon's tattoo symbolize?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Jon having a tattoo. The tattoo mentioned is Gina's, and it symbolizes freedom - dancing without worrying what people think, and a reminder to follow her passions and express herself.",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-30_q93",
+  "conv": "conv-30",
+  "question": "Why did Gina shut down her bank account?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Gina shut down a bank account. It was Jon who closed his bank account (on 2023-04-03), because he thought it would help his business grow.",
+  "refusal": true,
+  "secs": 13.2
+ },
+ {
+  "id": "conv-30_q94",
+  "conv": "conv-30",
+  "question": "Why did Jon combine his clothing business with dance?",
+  "answer": "",
+  "sys_answer": "Jon didn't combine a clothing business with dance. It was Gina who has the online clothing store, and she combined it with dance because she's passionate about both fashion and dance, which lets her show her creativity, share her love with others, and add dance-inspired items to her store. Jon runs a dance studio.",
+  "refusal": false,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-30_q95",
+  "conv": "conv-30",
+  "question": "What did Gina receive from a dance contest?",
+  "answer": "",
+  "sys_answer": "A trophy",
+  "refusal": false,
+  "secs": 14.0
+ },
+ {
+  "id": "conv-30_q96",
+  "conv": "conv-30",
+  "question": "What kind of professional experience did Jon get accepted for on May 23, 2023?",
+  "answer": "",
+  "sys_answer": "It was Gina, not Jon, who was accepted: a part-time fashion internship in the fashion department of an international company (mentioned in the 2023-05-27 conversation). The context does not show Jon being accepted for any professional experience.",
+  "refusal": true,
+  "secs": 10.2
+ },
+ {
+  "id": "conv-30_q97",
+  "conv": "conv-30",
+  "question": "Where is Gina's HR internship?",
+  "answer": "",
+  "sys_answer": "The context does not mention an HR internship. Gina's internship was a part-time position in the fashion department of an international company (accepted May 2023), but no specific location is given.",
+  "refusal": true,
+  "secs": 9.6
+ },
+ {
+  "id": "conv-30_q98",
+  "conv": "conv-30",
+  "question": "Where is Jon's fashion internship?",
+  "answer": "",
+  "sys_answer": "Jon doesn't have a fashion internship; it's Gina's. Gina's internship is a part-time position in the fashion department of an international company (no specific company or location is named).",
+  "refusal": false,
+  "secs": 13.8
+ },
+ {
+  "id": "conv-30_q99",
+  "conv": "conv-30",
+  "question": "What book is Gina currently reading?",
+  "answer": "",
+  "sys_answer": "The context does not say Gina is reading any book. The only book mentioned is \"The Lean Startup\", which Jon (not Gina) is reading.",
+  "refusal": true,
+  "secs": 7.1
+ },
+ {
+  "id": "conv-30_q100",
+  "conv": "conv-30",
+  "question": "How does Gina use the clipboard with a notepad attached to it?",
+  "answer": "",
+  "sys_answer": "The context does not contain any information about Gina using a clipboard with a notepad attached. (The only similar item mentioned is Jon's whiteboard for tracking goals and color-coding achievements.)",
+  "refusal": true,
+  "secs": 27.3
+ },
+ {
+  "id": "conv-30_q101",
+  "conv": "conv-30",
+  "question": "What did Jon take a trip to Barcelona for?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention a trip to Barcelona by Jon. It only mentions his trips to Paris (around Jan 28, 2023) and Rome (around June 2023, to clear his mind).",
+  "refusal": false,
+  "secs": 5.7
+ },
+ {
+  "id": "conv-30_q102",
+  "conv": "conv-30",
+  "question": "What did Jon make a limited edition line of?",
+  "answer": "",
+  "sys_answer": "Jon didn't make a limited edition line. It was Gina who made one (around mid-June 2023), and it was a limited edition line of hoodies from her own collection.",
+  "refusal": false,
+  "secs": 16.7
+ },
+ {
+  "id": "conv-30_q103",
+  "conv": "conv-30",
+  "question": "What temporary job did Gina take to cover expenses?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Gina took a temporary job. It was Jon who said (July 21, 2023) he got a temp job to cover expenses, and the job type isn't specified. Gina lost her Door Dash job and started an online clothing store.",
+  "refusal": true,
+  "secs": 8.5
+ },
+ {
+  "id": "conv-30_q104",
+  "conv": "conv-30",
+  "question": "What plans does Gina have after receiving advice at the networking event?",
+  "answer": "",
+  "sys_answer": "Gina didn't attend the networking event; Jon did. After the advice he got there, Jon planned to polish his business plan, tweak his investor pitch, and build an online platform for the dance studio. Gina's own plans were to help him by creating content and managing his social media accounts (Instagram/TikTok) to market the studio.",
+  "refusal": false,
+  "secs": 9.0
+ },
+ {
+  "id": "conv-41_q152",
+  "conv": "conv-41",
+  "question": "What is John's main focus in international politics?",
+  "answer": "",
+  "sys_answer": "The context does not mention any focus by John on international politics. His stated political focus is local: improving education and infrastructure in his community (plus support for veterans).",
+  "refusal": true,
+  "secs": 10.5
+ },
+ {
+  "id": "conv-41_q153",
+  "conv": "conv-41",
+  "question": "What did Maria donate to a luxury store in December 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say Maria donated anything to a luxury store in December 2023. The only related donation is her old car, given to a homeless shelter she volunteers at around December 21, 2022.",
+  "refusal": true,
+  "secs": 5.8
+ },
+ {
+  "id": "conv-41_q154",
+  "conv": "conv-41",
+  "question": "Who inspired John to start volunteering?",
+  "answer": "",
+  "sys_answer": "The context doesn't explicitly say who inspired John to start volunteering. The closest hints are his family, who he says keep him motivated, and his experiences growing up in a neighborhood hurt by poor education and infrastructure. Neither is stated as the inspiration for his volunteering.",
+  "refusal": false,
+  "secs": 11.0
+ },
+ {
+  "id": "conv-41_q155",
+  "conv": "conv-41",
+  "question": "Why did Maria decide to run for office again?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Maria ran for office. It was John who decided to run again (around late April 2023), because he couldn't let go of his dream of making a difference in his community. Maria only supported him.",
+  "refusal": true,
+  "secs": 17.7
+ },
+ {
+  "id": "conv-41_q156",
+  "conv": "conv-41",
+  "question": "What activity did Maria's colleague, Rob, invite her to?",
+  "answer": "",
+  "sys_answer": "The context does not say. Rob is never mentioned, so there is no information about what activity he invited Maria to.",
+  "refusal": true,
+  "secs": 18.9
+ },
+ {
+  "id": "conv-41_q157",
+  "conv": "conv-41",
+  "question": "What is the name of Maria's one-year-old child?",
+  "answer": "",
+  "sys_answer": "Maria does not have a one-year-old child in the context. The one-year-old named Kyle is John's son. Maria's newly adopted pup is named Shadow.",
+  "refusal": false,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-41_q158",
+  "conv": "conv-41",
+  "question": "How often does John take his kids to the library?",
+  "answer": "",
+  "sys_answer": "The context does not say how often John takes his kids to the library; it never mentions a library. It only says he takes them to the park a few times a week.",
+  "refusal": true,
+  "secs": 10.1
+ },
+ {
+  "id": "conv-41_q159",
+  "conv": "conv-41",
+  "question": "What did Maria make for her home to remind her of a trip to France?",
+  "answer": "",
+  "sys_answer": "The context does not say. It contains no mention of Maria making anything for her home to remind her of a trip to France; it only mentions trips to Spain and Oregon.",
+  "refusal": true,
+  "secs": 5.0
+ },
+ {
+  "id": "conv-41_q160",
+  "conv": "conv-41",
+  "question": "Where did John get the idea for the castle shadow box in his home?",
+  "answer": "",
+  "sys_answer": "The context does not say where John got the idea for the castle shadow box in his home.",
+  "refusal": true,
+  "secs": 15.7
+ },
+ {
+  "id": "conv-41_q161",
+  "conv": "conv-41",
+  "question": "What did Maria receive a certificate for?",
+  "answer": "",
+  "sys_answer": "The context does not mention Maria receiving a certificate. The closest item is a medal she received for volunteering at the homeless shelter (mentioned on 2023-08-09, for the previous week).",
+  "refusal": true,
+  "secs": 10.0
+ },
+ {
+  "id": "conv-41_q162",
+  "conv": "conv-41",
+  "question": "What areas is John particularly interested in for art appreciation?",
+  "answer": "",
+  "sys_answer": "The context does not say. It contains no information about John's interests in art appreciation. His documented interests are education, infrastructure, politics, veterans' support, fitness, and family and community activities.",
+  "refusal": true,
+  "secs": 8.4
+ },
+ {
+  "id": "conv-41_q163",
+  "conv": "conv-41",
+  "question": "Why did Maria start blogging about politics and policies?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Maria started blogging about politics; it was John who did. John blogged to raise awareness, start conversations, and make a positive impact, particularly on education and infrastructure in his community.",
+  "refusal": true,
+  "secs": 10.1
+ },
+ {
+  "id": "conv-41_q164",
+  "conv": "conv-41",
+  "question": "What was the focus of John's recent travel and photography blog?",
+  "answer": "",
+  "sys_answer": "The context contains no mention of a travel and photography blog by John. It only says he blogged about politics and government (education reform and infrastructure development) as of April 2023.",
+  "refusal": true,
+  "secs": 18.0
+ },
+ {
+  "id": "conv-41_q165",
+  "conv": "conv-41",
+  "question": "How often does Maria work out with her family?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Maria works out with her family. The three-times-a-week family boot camp workouts are John's, not Maria's.",
+  "refusal": true,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-41_q166",
+  "conv": "conv-41",
+  "question": "How has John's artistic skills improved since starting boot camps with his family?",
+  "answer": "",
+  "sys_answer": "The context does not say anything about John's artistic skills improving. It only says that since starting family boot camps (around April 2023), John and his family gained more energy, strength, and endurance, and his kids got more excited about staying active.",
+  "refusal": true,
+  "secs": 11.8
+ },
+ {
+  "id": "conv-41_q167",
+  "conv": "conv-41",
+  "question": "What kind of food did Maria have on her dinner spread with her father?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention a dinner with her father. Maria did describe a dinner spread made with her mom: salads, sandwiches, and homemade desserts (including a banana split sundae, her favorite).",
+  "refusal": false,
+  "secs": 34.9
+ },
+ {
+  "id": "conv-41_q168",
+  "conv": "conv-41",
+  "question": "What did John do to feel closer to a community and his faith?",
+  "answer": "",
+  "sys_answer": "The context attributes this to Maria, not John: Maria joined a nearby church (around May 5, 2023) to feel closer to her community and faith. No memory says John did this.",
+  "refusal": false,
+  "secs": 6.1
+ },
+ {
+  "id": "conv-41_q169",
+  "conv": "conv-41",
+  "question": "Why did John join a nearby church recently?",
+  "answer": "",
+  "sys_answer": "The context does not say John joined a church. It was Maria who joined a nearby church (around 2023-05-05) to feel closer to a community and her faith.",
+  "refusal": true,
+  "secs": 14.0
+ },
+ {
+  "id": "conv-41_q170",
+  "conv": "conv-41",
+  "question": "How long was Max a part of Maria's family?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. Max appears to have been John's pet, not Maria's, and no memory states how long he was part of anyone's family.",
+  "refusal": true,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-41_q171",
+  "conv": "conv-41",
+  "question": "How does Maria plan to honor the memories of her beloved pet?",
+  "answer": "",
+  "sys_answer": "The context does not say. It has no information about Maria planning to honor a deceased pet. The only pet loss mentioned is John's pet Max, and no memorial plans are described.",
+  "refusal": true,
+  "secs": 12.9
+ },
+ {
+  "id": "conv-41_q172",
+  "conv": "conv-41",
+  "question": "What important values does Maria want to teach her kids through adopting a rescue dog?",
+  "answer": "",
+  "sys_answer": "The context doesn't say this. Maria has no mentioned kids and never states she wants to teach kids values by adopting a rescue dog; she only says she adopted Shadow from a shelter, feels blessed to give her a home, and that pets bring joy and love.",
+  "refusal": true,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-41_q173",
+  "conv": "conv-41",
+  "question": "What did Maria say it was like being at the desert in Oregon?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention a desert in Oregon. Maria described a hike on her Oregon family road trip, with a waterfall and bridge, as feeling like being in a fairy tale: the water sounded calming, the surroundings were beautiful, and it was truly magical.",
+  "refusal": false,
+  "secs": 31.1
+ },
+ {
+  "id": "conv-41_q174",
+  "conv": "conv-41",
+  "question": "What does John say she feels when doing upside-down yoga poses?",
+  "answer": "",
+  "sys_answer": "The feeling is actually stated by Maria, not John: upside-down yoga poses make her feel free and light.",
+  "refusal": false,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-41_q175",
+  "conv": "conv-41",
+  "question": "What did Maria recently get promoted to?",
+  "answer": "",
+  "sys_answer": "The context does not say Maria was promoted. It was John who got promoted, to assistant manager, per the 2023-06-16 conversation. Maria's news in that session was that she joined a gym.",
+  "refusal": true,
+  "secs": 5.5
+ },
+ {
+  "id": "conv-41_q176",
+  "conv": "conv-41",
+  "question": "What was one of the biggest challenges Maria faced in her journey to becoming assistant manager?",
+  "answer": "",
+  "sys_answer": "The context does not say Maria became an assistant manager; it was John who was promoted. John said one of his biggest challenges on that journey was self-doubt (along with tech and workplace hurdles).",
+  "refusal": true,
+  "secs": 8.5
+ },
+ {
+  "id": "conv-41_q177",
+  "conv": "conv-41",
+  "question": "Why did John need to help his cousin find a new place to live?",
+  "answer": "",
+  "sys_answer": "The context does not say John helped a cousin. It was Maria who was helping her cousin, who had to leave her place in a hurry and find a new one. The specific reason is not stated.",
+  "refusal": true,
+  "secs": 7.5
+ },
+ {
+  "id": "conv-41_q178",
+  "conv": "conv-41",
+  "question": "What event did Maria participate in to show support for veterans' rights?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Maria joining a veterans' rights event. It was John who took part in a marching event for veterans' rights, mentioned on 2023-07-03. Maria only said she would help with his veterans project and petition (May 2023).",
+  "refusal": false,
+  "secs": 8.7
+ },
+ {
+  "id": "conv-41_q179",
+  "conv": "conv-41",
+  "question": "How did the drought impact the homes in John's old area?",
+  "answer": "",
+  "sys_answer": "The context does not say how a drought affected homes in John's old area. A drought is never mentioned in the conversations.",
+  "refusal": true,
+  "secs": 10.6
+ },
+ {
+  "id": "conv-41_q180",
+  "conv": "conv-41",
+  "question": "What does John criticize about the veteran's hospital visit?",
+  "answer": "",
+  "sys_answer": "The context does not mention John visiting a veteran's hospital or criticizing anything about such a visit, so this cannot be answered from the provided information.",
+  "refusal": true,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-41_q181",
+  "conv": "conv-41",
+  "question": "What did John take away from visiting the orphanage?",
+  "answer": "",
+  "sys_answer": "The context does not say that John visited an orphanage, so what he took away from it cannot be determined.",
+  "refusal": true,
+  "secs": 11.5
+ },
+ {
+  "id": "conv-41_q182",
+  "conv": "conv-41",
+  "question": "Why did Maria feel inspired to join the military after the visit to the hospital?",
+  "answer": "",
+  "sys_answer": "The context does not say this. There is no record of Maria visiting a hospital or being inspired to join the military. Maria volunteers at a homeless shelter, and it is John who is involved in supporting veterans and military causes.",
+  "refusal": true,
+  "secs": 6.8
+ },
+ {
+  "id": "conv-41_q183",
+  "conv": "conv-41",
+  "question": "How did Maria describe her kids' reaction at the military memorial?",
+  "answer": "",
+  "sys_answer": "Maria didn't describe her kids' reaction; it was John who visited the military memorial with his kids (last week before Aug 3, 2023), and he said they were \"awestruck and humbled.\" Maria only said that imagining the visit made her feel humble.",
+  "refusal": false,
+  "secs": 12.2
+ },
+ {
+  "id": "conv-41_q184",
+  "conv": "conv-41",
+  "question": "Why does Maria think it's important for younger generations to visit art galleries?",
+  "answer": "",
+  "sys_answer": "The context does not say. Maria never mentions art galleries; she only says that visiting a military memorial is important so younger generations remember and appreciate those who served.",
+  "refusal": true,
+  "secs": 12.6
+ },
+ {
+  "id": "conv-41_q185",
+  "conv": "conv-41",
+  "question": "What happened to Maria's job in August 2023?",
+  "answer": "",
+  "sys_answer": "The context says nothing about Maria's job in August 2023. The job loss in that period was John's: he lost his job at a mechanical engineering company and then found a position on a tech company's hardware team.",
+  "refusal": false,
+  "secs": 6.5
+ },
+ {
+  "id": "conv-41_q186",
+  "conv": "conv-41",
+  "question": "What cause did the 5K charity run organized by Maria support?",
+  "answer": "",
+  "sys_answer": "The 5K charity run was actually organized by John, not Maria, and it supported veterans and their families. (Maria's work was at a homeless shelter.)",
+  "refusal": false,
+  "secs": 11.2
+ },
+ {
+  "id": "conv-41_q187",
+  "conv": "conv-41",
+  "question": "Who did John work with to raise awareness and funds for animal welfare?",
+  "answer": "",
+  "sys_answer": "The context does not mention John working on animal welfare. The closest match is that he worked with a local organization helping victims of domestic abuse to raise awareness and funds, but no animal welfare partner is mentioned.",
+  "refusal": true,
+  "secs": 21.0
+ },
+ {
+  "id": "conv-41_q188",
+  "conv": "conv-41",
+  "question": "What recognition did John receive at the homeless shelter in August 2023?",
+  "answer": "",
+  "sys_answer": "John did not receive recognition at a homeless shelter. It was Maria who got a medal for volunteering at the homeless shelter (around early August 2023). John instead organized a 5K charity run for veterans and their families.",
+  "refusal": false,
+  "secs": 9.6
+ },
+ {
+  "id": "conv-41_q189",
+  "conv": "conv-41",
+  "question": "What is the name of John's puppy he got two weeks before August 11, 2023?",
+  "answer": "",
+  "sys_answer": "The context doesn't say John got a puppy. Maria adopted a pup named Shadow in early August 2023, and John only said he planned to look into shelters. If the question means the puppy adopted around that time, its name is Shadow, but that was Maria's dog.",
+  "refusal": true,
+  "secs": 10.8
+ },
+ {
+  "id": "conv-41_q190",
+  "conv": "conv-41",
+  "question": "How does Maria describe the camping trip with Max?",
+  "answer": "",
+  "sys_answer": "The context does not contain Maria describing a camping trip with Max. Max appears to be John's pet that passed away. Maria only described a camping trip with friends from church, calling it a blast and a nice way to take her mind off things.",
+  "refusal": true,
+  "secs": 10.3
+ },
+ {
+  "id": "conv-41_q191",
+  "conv": "conv-41",
+  "question": "What is the name of Maria's second kitten?",
+  "answer": "",
+  "sys_answer": "The context does not mention any kittens for Maria. It only says she has dogs, including a newly adopted pup named Shadow, so the name of a second kitten cannot be determined.",
+  "refusal": true,
+  "secs": 18.6
+ },
+ {
+  "id": "conv-41_q192",
+  "conv": "conv-41",
+  "question": "How is John's new puppy adjusting to its new home?",
+  "answer": "",
+  "sys_answer": "The memories don't show John having a new puppy; he only said he'd look into shelters. It's Maria who adopted a puppy named Shadow, and she is adjusting well: she gets along with Maria's other dog, is full of energy, and is learning commands and house training.",
+  "refusal": false,
+  "secs": 26.7
+ },
+ {
+  "id": "conv-42_q199",
+  "conv": "conv-42",
+  "question": "What color did Joanna choose for her hair?",
+  "answer": "",
+  "sys_answer": "The context does not say that Joanna dyed her hair or chose a hair color. It was Nate who dyed his hair a bright, bold color (no specific color is given).",
+  "refusal": true,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-42_q200",
+  "conv": "conv-42",
+  "question": "What is Joanna's favorite movie trilogy?",
+  "answer": "",
+  "sys_answer": "The Lord of the Rings trilogy. It is the only trilogy Joanna mentions, and she called it awesome after watching it on Nate's recommendation. The context never explicitly says it is her favorite.",
+  "refusal": false,
+  "secs": 6.1
+ },
+ {
+  "id": "conv-42_q201",
+  "conv": "conv-42",
+  "question": "What is Joanna's favorite book series about?",
+  "answer": "",
+  "sys_answer": "The context doesn't say what Joanna's favorite book series is about. She only recommends fantasy series in general, and the series details described (adventures, magic, battles, characters) come from Nate's recommendations.",
+  "refusal": true,
+  "secs": 16.8
+ },
+ {
+  "id": "conv-42_q202",
+  "conv": "conv-42",
+  "question": "What kind of lighting does Joanna's gaming room have?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. Joanna has no gaming room mentioned (Nate is the gamer); she only recommended dimmable lights for a cozy living room/movie-watching space.",
+  "refusal": true,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-42_q203",
+  "conv": "conv-42",
+  "question": "What game was the second tournament that Joanna won based on?",
+  "answer": "",
+  "sys_answer": "Street Fighter. The tournament winner was Nate, not Joanna. He won his second tournament, a local one, in late April 2022, and it was based on Street Fighter.",
+  "refusal": false,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-42_q204",
+  "conv": "conv-42",
+  "question": "What is Nate's third screenplay about?",
+  "answer": "",
+  "sys_answer": "Nate doesn't write screenplays; Joanna does. If the question means Joanna's third screenplay, the context suggests it's the love story full of challenges, inspired by a dream (Nov 2022), but the context doesn't explicitly confirm which one is the third.",
+  "refusal": false,
+  "secs": 8.3
+ },
+ {
+  "id": "conv-42_q205",
+  "conv": "conv-42",
+  "question": "What type of movies does Nate hate watching the most?",
+  "answer": "",
+  "sys_answer": "The context does not say what type of movies Nate hates watching. It only shows he likes action, sci-fi, and fantasy movies, plus classics.",
+  "refusal": true,
+  "secs": 9.4
+ },
+ {
+  "id": "conv-42_q206",
+  "conv": "conv-42",
+  "question": "What genre is Joanna's first novella?",
+  "answer": "",
+  "sys_answer": "The context never mentions a 'novella' explicitly. Her first full screenplay is described as a mix of drama and romance; her book started in July 2022 is described only as a deep, emotional story about loss, redemption and forgiveness (no genre named). So the best answer is drama/romance.",
+  "refusal": false,
+  "secs": 12.7
+ },
+ {
+  "id": "conv-42_q207",
+  "conv": "conv-42",
+  "question": "What are Nate's plans for his finished screenplay in January 2022?",
+  "answer": "",
+  "sys_answer": "Nate didn't have a screenplay; it was Joanna. Her plan in January 2022 was to submit her finished screenplay to film festivals and hopefully get producers and directors to see it.",
+  "refusal": false,
+  "secs": 12.1
+ },
+ {
+  "id": "conv-42_q208",
+  "conv": "conv-42",
+  "question": "For how long has Nate had his snakes?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Nate has snakes. He has turtles, which he said (Jan 2022) he'd had for 3 years.",
+  "refusal": true,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-42_q209",
+  "conv": "conv-42",
+  "question": "What did Nate think of the caramel ice cream he made?",
+  "answer": "",
+  "sys_answer": "The context does not mention Nate making caramel ice cream, so his opinion on it can't be determined. He did make coconut milk ice cream (which he said was rich and creamy, 'super good'), chocolate and vanilla swirl ice cream, and coconut ice cream with sprinkles, but not caramel.",
+  "refusal": true,
+  "secs": 15.2
+ },
+ {
+  "id": "conv-42_q210",
+  "conv": "conv-42",
+  "question": "What flavor of cake did Nate make for his friend on 25 February, 2022?",
+  "answer": "",
+  "sys_answer": "The memory from 25 Feb 2022 says Nate made ice cream, not cake, for his friend. It was a chocolate and vanilla swirl.",
+  "refusal": false,
+  "secs": 16.4
+ },
+ {
+  "id": "conv-42_q211",
+  "conv": "conv-42",
+  "question": "What was Nate's audition for?",
+  "answer": "",
+  "sys_answer": "Nate didn't have an audition in the context. It was Joanna who had an audition (around March 23, 2022) for a writing gig.",
+  "refusal": false,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-42_q212",
+  "conv": "conv-42",
+  "question": "Why did Joanna choose the hair color she did?",
+  "answer": "",
+  "sys_answer": "The context does not say Joanna chose a hair color. It was Nate who dyed his hair, choosing a bright, bold shade to stand out from regular options.",
+  "refusal": true,
+  "secs": 7.4
+ },
+ {
+  "id": "conv-42_q213",
+  "conv": "conv-42",
+  "question": "What are the main ingredients of the ice cream recipe shared by Joanna?",
+  "answer": "",
+  "sys_answer": "Joanna didn't share an ice cream recipe; Nate did. His dairy-free ice cream recipe is based on coconut milk, and the context gives no other ingredients. Joanna only shared dairy-free desserts such as a vanilla cake with strawberry filling and coconut cream frosting.",
+  "refusal": false,
+  "secs": 17.1
+ },
+ {
+  "id": "conv-42_q214",
+  "conv": "conv-42",
+  "question": "What is Nate's project called in the writers group?",
+  "answer": "",
+  "sys_answer": "Nate isn't in a writers group in the context. It was Joanna who joined one, and her project there is the script \"Finding Home\".",
+  "refusal": false,
+  "secs": 27.0
+ },
+ {
+  "id": "conv-42_q215",
+  "conv": "conv-42",
+  "question": "Which activity helps Nate escape and numbs his mind?",
+  "answer": "",
+  "sys_answer": "Playing video games (gaming) is the activity Nate says is his escape from life struggles. He also unwinds by watching movies.",
+  "refusal": false,
+  "secs": 8.7
+ },
+ {
+  "id": "conv-42_q216",
+  "conv": "conv-42",
+  "question": "What filling did Nate use in the cake he made recently in May 2022?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Nate making a cake in May 2022. The May 2, 2022 cake was Joanna's: dairy-free vanilla with strawberry filling and coconut cream frosting. (Nate's own cake, mentioned in Feb 2022, was a dairy-free chocolate cake topped with berries.)",
+  "refusal": false,
+  "secs": 8.3
+ },
+ {
+  "id": "conv-42_q217",
+  "conv": "conv-42",
+  "question": "Who did Joanna plan to invite to her gaming party in June 2022?",
+  "answer": "",
+  "sys_answer": "Joanna did not plan the gaming party; Nate did. Nate planned to invite the friends he met at his regional tournament, plus old friends and teammates from other tournaments.",
+  "refusal": false,
+  "secs": 10.5
+ },
+ {
+  "id": "conv-42_q218",
+  "conv": "conv-42",
+  "question": "What special items did Joanna get for everyone at her gaming party?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of Joanna hosting a gaming party or getting special items for everyone, so the question can't be answered from the provided memories.",
+  "refusal": true,
+  "secs": 15.1
+ },
+ {
+  "id": "conv-42_q219",
+  "conv": "conv-42",
+  "question": "What supervillain is Joanna a fan of?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. No supervillain is mentioned as one Joanna is a fan of; only that she likes Spider-Man (a superhero) and superheroes in general.",
+  "refusal": true,
+  "secs": 20.6
+ },
+ {
+  "id": "conv-42_q220",
+  "conv": "conv-42",
+  "question": "Which superhero toy figure does Joanna share a photo of?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Joanna sharing a photo of a superhero toy figure. The Iron Man figure belongs to Nate; Joanna only has a Spider-Man pin on her purse and shared a photo of her cork board.",
+  "refusal": false,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-42_q221",
+  "conv": "conv-42",
+  "question": "What did Joanna make and share with her vegan diet group?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention a vegan diet group. It only says Joanna makes dairy-free desserts (e.g., a dairy-free vanilla cake with strawberry filling and coconut cream frosting, a dairy-free tart) for family and friends, and a bookmark for a writing club member.",
+  "refusal": false,
+  "secs": 7.1
+ },
+ {
+  "id": "conv-42_q222",
+  "conv": "conv-42",
+  "question": "How many people attended the gaming party hosted by Joanna in June 2022?",
+  "answer": "",
+  "sys_answer": "The context does not contain any information about a gaming party hosted by Joanna in June 2022, so the number of attendees cannot be determined.",
+  "refusal": true,
+  "secs": 8.0
+ },
+ {
+  "id": "conv-42_q223",
+  "conv": "conv-42",
+  "question": "Where did Nate go for a road trip for research?",
+  "answer": "",
+  "sys_answer": "Nate did not take a research road trip; Joanna did. She went to Woodhaven, a small town in the Midwest, as research for her next movie, around July 8, 2022.",
+  "refusal": false,
+  "secs": 9.9
+ },
+ {
+  "id": "conv-42_q224",
+  "conv": "conv-42",
+  "question": "What did Joanna discover at the museum in Woodhaven?",
+  "answer": "",
+  "sys_answer": "The context mentions no museum in Woodhaven. Joanna visited the town's library, where she found a super cool book from the 1900s with stories and sketches about the town and its people.",
+  "refusal": false,
+  "secs": 14.9
+ },
+ {
+  "id": "conv-42_q225",
+  "conv": "conv-42",
+  "question": "What specific themes are explored in Nate's new book?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention a book by Nate. The book with themes belongs to Joanna, and it explores loss, redemption, and forgiveness (mentioned July 10, 2022).",
+  "refusal": false,
+  "secs": 11.8
+ },
+ {
+  "id": "conv-42_q226",
+  "conv": "conv-42",
+  "question": "How did Nate feel when someone wrote him a letter after reading his blog post?",
+  "answer": "",
+  "sys_answer": "The context doesn't contain this information. There is no mention of Nate writing a blog post or receiving a letter from a reader, so how he felt cannot be determined.",
+  "refusal": true,
+  "secs": 8.6
+ },
+ {
+  "id": "conv-42_q227",
+  "conv": "conv-42",
+  "question": "What kind of impact does Joanna hope to have with her painting?",
+  "answer": "",
+  "sys_answer": "The context does not say. It never mentions Joanna painting or any impact she hopes a painting will have; it only covers her writing (screenplays and a book).",
+  "refusal": true,
+  "secs": 22.3
+ },
+ {
+  "id": "conv-42_q228",
+  "conv": "conv-42",
+  "question": "What did Nate share with his writers group in August 2022?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Nate sharing anything with a writers group in August 2022. It was Joanna who shared her book with her writers group (the week before Aug 22, 2022) and got great feedback. Nate won an international tournament and showed a new tank for his turtles.",
+  "refusal": false,
+  "secs": 10.5
+ },
+ {
+  "id": "conv-42_q229",
+  "conv": "conv-42",
+  "question": "How did Nate celebrate after sharing his book with a writers group?",
+  "answer": "",
+  "sys_answer": "The context says Joanna, not Nate, shared her book with a writers group. After getting great feedback she celebrated by making a delicious treat (around August 2022). Nothing in the context says Nate shared a book or celebrated this way.",
+  "refusal": false,
+  "secs": 12.4
+ },
+ {
+  "id": "conv-42_q230",
+  "conv": "conv-42",
+  "question": "How did Joanna celebrate winning the international tournament?",
+  "answer": "",
+  "sys_answer": "Joanna did not win an international tournament; Nate did (around 2022-08-21). Joanna celebrated her own success, good feedback from her writers group on her book, by making a delicious treat. The context has no record of her celebrating a tournament win.",
+  "refusal": false,
+  "secs": 14.4
+ },
+ {
+  "id": "conv-42_q231",
+  "conv": "conv-42",
+  "question": "What substitution does Nate suggest for sugar in dairy-free baking?",
+  "answer": "",
+  "sys_answer": "The context does not say Nate suggests any sugar substitution. He only recommends coconut milk as a dairy substitute (e.g., for dairy-free ice cream), not a replacement for sugar.",
+  "refusal": true,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-42_q232",
+  "conv": "conv-42",
+  "question": "What type of show did Joanna host where she taught vegan ice cream recipes?",
+  "answer": "",
+  "sys_answer": "The context does not say Joanna hosted any show teaching vegan ice cream recipes. It only shows that she makes dairy-free desserts and that Nate shared a coconut milk ice cream recipe.",
+  "refusal": true,
+  "secs": 8.3
+ },
+ {
+  "id": "conv-42_q233",
+  "conv": "conv-42",
+  "question": "What is Joanna's favorite dish from the cooking show she hosted?",
+  "answer": "",
+  "sys_answer": "The context does not say that Joanna hosted a cooking show, so her favorite dish from one cannot be determined. She only bakes dairy-free desserts for friends and family as a hobby.",
+  "refusal": true,
+  "secs": 34.9
+ },
+ {
+  "id": "conv-42_q234",
+  "conv": "conv-42",
+  "question": "What dessert did Nate share a photo of that has an almond flour crust, chocolate ganache, and fresh raspberries?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. No memory describes Nate sharing a photo of a dessert with an almond flour crust, chocolate ganache, and fresh raspberries.",
+  "refusal": true,
+  "secs": 18.9
+ },
+ {
+  "id": "conv-42_q235",
+  "conv": "conv-42",
+  "question": "What two main ingredients are part of the dessert Nate shared a photo of with blueberries, coconut milk, and a gluten-free crust?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. No dessert with blueberries, coconut milk, and a gluten-free crust is described, so the two main ingredients can't be determined.",
+  "refusal": true,
+  "secs": 12.0
+ },
+ {
+  "id": "conv-42_q236",
+  "conv": "conv-42",
+  "question": "What movie did Joanna recently watch and enjoy on October 6, 2022?",
+  "answer": "",
+  "sys_answer": "Little Women. In the October 6, 2022 conversation, Nate said he recently watched and enjoyed it, and Joanna said she had recommended it and had also watched it and loved it.",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-42_q237",
+  "conv": "conv-42",
+  "question": "What did Nate make for one of the ladies at his writing club?",
+  "answer": "",
+  "sys_answer": "Nate didn't make anything for a writing club lady; it was Joanna who made a bookmark for one of the ladies at her writing club (Oct 2022).",
+  "refusal": false,
+  "secs": 5.6
+ },
+ {
+  "id": "conv-42_q238",
+  "conv": "conv-42",
+  "question": "What game has Joanna been playing nonstop with a futuristic setting and gameplay on October 9, 2022?",
+  "answer": "",
+  "sys_answer": "Cyberpunk 2077 \u2014 although it was Nate (not Joanna) who said he was playing it nonstop on October 9, 2022.",
+  "refusal": false,
+  "secs": 7.8
+ },
+ {
+  "id": "conv-42_q239",
+  "conv": "conv-42",
+  "question": "How did Nate describe the classic movie he watched?",
+  "answer": "",
+  "sys_answer": "The context contains no description by Nate of a classic movie. The classic movie described as awesome, with a gripping story and great actors, rated 9 or 10 out of 10, was watched by Joanna. Nate's own recent movie was \"Inception\", which he said blew his mind with all the twists and dream stuff.",
+  "refusal": false,
+  "secs": 11.3
+ },
+ {
+  "id": "conv-42_q240",
+  "conv": "conv-42",
+  "question": "What does Nate recommend to make a living room comfy like his?",
+  "answer": "",
+  "sys_answer": "Nate doesn't make this recommendation; he asks Joanna for pointers. Joanna suggests a big, fluffy couch that seats several people so you can lie down, a slightly weighted blanket, and dimmable lights.",
+  "refusal": false,
+  "secs": 16.8
+ },
+ {
+  "id": "conv-42_q241",
+  "conv": "conv-42",
+  "question": "What helps Joanna stay distracted and brings her sadness?",
+  "answer": "",
+  "sys_answer": "Writing (her screenplays and creative projects) is what helps Joanna cope and stay distracted, and it often centers on sad themes like loss and identity. Her stuffed dog Tilly also keeps her focused while she writes, though it reminds her of the dog she had to give up due to allergies.",
+  "refusal": false,
+  "secs": 29.6
+ },
+ {
+  "id": "conv-42_q242",
+  "conv": "conv-42",
+  "question": "What does Nate do while he writes?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. Nate isn't described as writing anything (Joanna is the writer), so there's no information about what he does while writing.",
+  "refusal": true,
+  "secs": 6.5
+ },
+ {
+  "id": "conv-42_q243",
+  "conv": "conv-42",
+  "question": "What does Nate do after receiving a rejection from a production company?",
+  "answer": "",
+  "sys_answer": "Nate offers encouragement and support: he sympathizes, tells Joanna that rejections don't define her or mean she lacks talent, urges her to keep going and not give up, and says she has people cheering her on (e.g., on 2022-10-21 and 2022-06-03).",
+  "refusal": false,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-42_q244",
+  "conv": "conv-42",
+  "question": "What does Joanna rely on for cheer and joy?",
+  "answer": "",
+  "sys_answer": "Joanna relies mainly on writing and creative projects (including DIYs and recipes), and on supportive friends like Nate. Her stuffed animal dog Tilly, which Nate gave her, also brings her joy, since she can't have real pets because of allergies. Family encouragement, shown on her cork board, keeps her going too.",
+  "refusal": false,
+  "secs": 5.6
+ },
+ {
+  "id": "conv-42_q245",
+  "conv": "conv-42",
+  "question": "What does Nate use to remember his dog from Michigan?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Nate had a dog in Michigan. It was Joanna who had a dog named Tilly in Michigan, and she remembers her with a stuffed animal dog that Nate gave her, which she also named Tilly.",
+  "refusal": true,
+  "secs": 8.6
+ },
+ {
+  "id": "conv-42_q246",
+  "conv": "conv-42",
+  "question": "What inspires Joanna to create music for her characters?",
+  "answer": "",
+  "sys_answer": "The context doesn't say that Joanna creates music for her characters. It only shows her writing scripts and screenplays, which she says are inspired by personal experiences, loss and self-discovery, dreams, and emotionally-driven films.",
+  "refusal": true,
+  "secs": 11.6
+ },
+ {
+  "id": "conv-42_q247",
+  "conv": "conv-42",
+  "question": "What type of diet do Joanna's turtles have?",
+  "answer": "",
+  "sys_answer": "Joanna doesn't have turtles because she's allergic to reptiles. Nate's turtles have a varied diet of vegetables, fruits, and insects.",
+  "refusal": false,
+  "secs": 7.3
+ },
+ {
+  "id": "conv-42_q248",
+  "conv": "conv-42",
+  "question": "What did Nate find in old notebooks last week that prompted him to reflect on her progress as a writer?",
+  "answer": "",
+  "sys_answer": "It was actually Joanna, not Nate, who found the old notebooks (a week before 2022-11-04). They held her early writings, including a story from when she was 10 about a brave little turtle who was scared but explored the world anyway. Seeing them showed her how far she had come as a writer.",
+  "refusal": false,
+  "secs": 12.1
+ },
+ {
+  "id": "conv-42_q249",
+  "conv": "conv-42",
+  "question": "What game is Joanna currently playing and recommends to others on November 7, 2022?",
+  "answer": "",
+  "sys_answer": "Xenoblade Chronicles (written \"Xeonoblade Chronicles\" in the context), a fantasy RPG. It is Nate who is playing and recommending it on Nov 7, 2022, not Joanna, who says she isn't into games.",
+  "refusal": false,
+  "secs": 8.1
+ },
+ {
+  "id": "conv-42_q250",
+  "conv": "conv-42",
+  "question": "What did Nate receive from his brother that brought back childhood memories?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Nate received anything from his brother. It was Joanna whose brother wrote a letter (cute notes like those from childhood) that she included at the start of her new movie script and that brought back childhood memories.",
+  "refusal": true,
+  "secs": 14.0
+ },
+ {
+  "id": "conv-42_q251",
+  "conv": "conv-42",
+  "question": "What is the type of game \"Xenoblade Chronicles\" that Joanna is playing?",
+  "answer": "",
+  "sys_answer": "It's a fantasy RPG. Note that it is Nate, not Joanna, who is playing it.",
+  "refusal": false,
+  "secs": 16.8
+ },
+ {
+  "id": "conv-42_q252",
+  "conv": "conv-42",
+  "question": "What project is Nate working on in his notebook on November 9, 2022?",
+  "answer": "",
+  "sys_answer": "The notebook project in that conversation is Joanna's, not Nate's: she is writing a suspenseful thriller set in a small Midwestern town. Nate's own project that day is making gaming content for YouTube.",
+  "refusal": false,
+  "secs": 12.2
+ },
+ {
+  "id": "conv-42_q253",
+  "conv": "conv-42",
+  "question": "What is Joanna creating for YouTube on 9 November, 2022?",
+  "answer": "",
+  "sys_answer": "The context does not say Joanna is creating anything for YouTube. On 9 November 2022 it was Nate who said he was creating gaming content for YouTube. Joanna was working on a suspenseful thriller script.",
+  "refusal": true,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-42_q254",
+  "conv": "conv-42",
+  "question": "What inspired Joanna to start making gaming videos?",
+  "answer": "",
+  "sys_answer": "Joanna didn't start making gaming videos. It was Nate who did, because he was a big fan of gaming videos and wanted to share his love of gaming and connect with other gamers. Joanna writes scripts and books.",
+  "refusal": false,
+  "secs": 18.2
+ },
+ {
+  "id": "conv-42_q255",
+  "conv": "conv-42",
+  "question": "What new content is Nate creating for television?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Nate creating content for television. The closest match is that he is making gaming videos for YouTube (mentioned 2022-11-09), a way to share his love of gaming and connect with other gamers.",
+  "refusal": false,
+  "secs": 9.0
+ },
+ {
+  "id": "conv-42_q256",
+  "conv": "conv-42",
+  "question": "What did Nate take a picture of near Fort Wayne last summer?",
+  "answer": "",
+  "sys_answer": "Nate didn't take that picture. Joanna took a sunset photo on a hike near Fort Wayne last summer (2022), and Nate only admired it.",
+  "refusal": false,
+  "secs": 11.8
+ },
+ {
+  "id": "conv-42_q257",
+  "conv": "conv-42",
+  "question": "Why did Joanna get a third turtle?",
+  "answer": "",
+  "sys_answer": "Joanna didn't get a third turtle; Nate did (she is allergic to reptiles). Nate got it because turtles bring him joy and peace, he saw another at a pet store and had to have it, and his tank was big enough for three.",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-42_q258",
+  "conv": "conv-42",
+  "question": "What did Joanna take to the beach in Tampa?",
+  "answer": "",
+  "sys_answer": "The context does not say. It contains no mention of Joanna going to a beach in Tampa or taking anything there.",
+  "refusal": true,
+  "secs": 11.8
+ },
+ {
+  "id": "conv-42_q259",
+  "conv": "conv-42",
+  "question": "What does Joanna love most about having turtles?",
+  "answer": "",
+  "sys_answer": "Joanna doesn't have turtles because she's allergic to reptiles (they're Nate's). What she loves about them is that they symbolize strength, perseverance and courage, which motivates her in tough times. She also finds them calming and peaceful, and says she would get two if she could.",
+  "refusal": false,
+  "secs": 12.6
+ },
+ {
+  "id": "conv-43_q178",
+  "conv": "conv-43",
+  "question": "Which team did Tim sign with on 21 May, 2023?",
+  "answer": "",
+  "sys_answer": "Tim did not sign with a team on 21 May 2023; it was John who signed with the Minnesota Wolves.",
+  "refusal": false,
+  "secs": 12.3
+ },
+ {
+  "id": "conv-43_q179",
+  "conv": "conv-43",
+  "question": "What is Tim's position on the team he signed with?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Tim signing with a team. It was John who signed with the Minnesota Wolves, and he plays shooting guard. Tim has no team position.",
+  "refusal": false,
+  "secs": 12.2
+ },
+ {
+  "id": "conv-43_q180",
+  "conv": "conv-43",
+  "question": "What challenge did Tim encounter during pre-season training?",
+  "answer": "",
+  "sys_answer": "The context shows it was John, not Tim, who faced the pre-season challenge: fitting into his new team's (Minnesota Wolves) style of play. Tim only asked about it, and no pre-season challenge is recorded for Tim.",
+  "refusal": false,
+  "secs": 12.4
+ },
+ {
+  "id": "conv-43_q181",
+  "conv": "conv-43",
+  "question": "What cult did Tim join recently?",
+  "answer": "",
+  "sys_answer": "The context does not mention Tim joining any cult. He joined a fantasy literature forum (June 2023) and a travel club (December 2023), and was accepted into a study abroad program in Ireland (January 2024).",
+  "refusal": true,
+  "secs": 11.8
+ },
+ {
+  "id": "conv-43_q182",
+  "conv": "conv-43",
+  "question": "What was the highest number of points Tim scored in a game recently?",
+  "answer": "",
+  "sys_answer": "Tim has no recorded points total. The context shows he does not play basketball. The 40-point game, a career high, was John's, mentioned on 2023-07-16.",
+  "refusal": false,
+  "secs": 18.3
+ },
+ {
+  "id": "conv-43_q183",
+  "conv": "conv-43",
+  "question": "What did Tim celebrate at a restaurant with teammates?",
+  "answer": "",
+  "sys_answer": "It was John (not Tim) who celebrated at a restaurant with teammates, in July 2023: after scoring a career-high 40 points and winning a tough game. The context does not show Tim celebrating at a restaurant with teammates.",
+  "refusal": true,
+  "secs": 20.0
+ },
+ {
+  "id": "conv-43_q184",
+  "conv": "conv-43",
+  "question": "What kind of deals did Tim sign with Nike and Gatorade?",
+  "answer": "",
+  "sys_answer": "Tim did not sign these deals; John did. John signed a Nike deal for a basketball shoe and gear, and was in talks with Gatorade about a potential sponsorship.",
+  "refusal": false,
+  "secs": 8.0
+ },
+ {
+  "id": "conv-43_q185",
+  "conv": "conv-43",
+  "question": "How does Tim feel while surfing?",
+  "answer": "",
+  "sys_answer": "Tim doesn't surf, so the context gives no feelings of his about it. John is the one who surfs; he finds it exciting, free-feeling, and a connection to nature. Tim gets a similar sense of freedom and bliss from reading fantasy books.",
+  "refusal": false,
+  "secs": 27.1
+ },
+ {
+  "id": "conv-43_q186",
+  "conv": "conv-43",
+  "question": "What kind of articles has John been writing about for the online magazine?",
+  "answer": "",
+  "sys_answer": "John hasn't been writing articles for an online magazine; Tim has. Tim writes about fantasy novels, covering characters, themes, and book recommendations.",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-43_q187",
+  "conv": "conv-43",
+  "question": "Which two mystery novels does Tim particularly enjoy writing about?",
+  "answer": "",
+  "sys_answer": "The context does not mention any mystery novels. Tim writes about fantasy novels; the ones he particularly loves are Harry Potter and Game of Thrones, but no mystery novels are mentioned.",
+  "refusal": true,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-43_q188",
+  "conv": "conv-43",
+  "question": "What did Anthony and Tim end up playing during the charity event?",
+  "answer": "",
+  "sys_answer": "A Harry Potter trivia contest (note: it was John and Anthony who took part at the charity event, not Tim).",
+  "refusal": false,
+  "secs": 12.3
+ },
+ {
+  "id": "conv-43_q189",
+  "conv": "conv-43",
+  "question": "How did Tim get introduced to basketball?",
+  "answer": "",
+  "sys_answer": "The context does not say how Tim was introduced to basketball. Tim is a fan who admires LeBron James and has a signed basketball. It was John who got into basketball by watching NBA games with his dad, who signed him up for a local league at age ten.",
+  "refusal": true,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-43_q190",
+  "conv": "conv-43",
+  "question": "What is Tim's number one goal in his basketball career?",
+  "answer": "",
+  "sys_answer": "Tim has no basketball career in the context; he is a writer and reader. The goal you describe belongs to John, whose number one goal is winning a championship.",
+  "refusal": false,
+  "secs": 22.8
+ },
+ {
+  "id": "conv-43_q191",
+  "conv": "conv-43",
+  "question": "What organization is Tim teaming up with for his charity work?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Tim is teaming up with any organization for charity work. It is John who is teaming up with an unnamed local organization that helps disadvantaged kids with sports and school (mentioned 2023-08-11).",
+  "refusal": true,
+  "secs": 32.8
+ },
+ {
+  "id": "conv-43_q192",
+  "conv": "conv-43",
+  "question": "What did Tim's teammates give him when they met on Aug 15th?",
+  "answer": "",
+  "sys_answer": "It was John, not Tim, who met his teammates on Aug 15th. They gave John a basketball signed by the teammates as a sign of their friendship and appreciation.",
+  "refusal": false,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-43_q193",
+  "conv": "conv-43",
+  "question": "Why did John's teammates sign the football they gave him?",
+  "answer": "",
+  "sys_answer": "They signed it to show their friendship and appreciation for John, as a reminder of their bond. (The ball is described in the context as related to basketball, not football.)",
+  "refusal": false,
+  "secs": 5.8
+ },
+ {
+  "id": "conv-43_q194",
+  "conv": "conv-43",
+  "question": "What is the main intention behind John wanting to attend the book conference?",
+  "answer": "",
+  "sys_answer": "The context does not say John plans to attend a book conference. It was Tim who said he wanted to attend one, to learn more about literature and build a stronger bond with it by meeting authors, publishers and fellow book lovers. John only remarked that it would be awesome to go with Tim.",
+  "refusal": true,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-43_q195",
+  "conv": "conv-43",
+  "question": "What new activity has John started learning in August 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say John started learning any new activity in August 2023. The August 11, 2023 conversation only covers his Chicago trip, his lucky basketball shoes, and his planned charity work.",
+  "refusal": true,
+  "secs": 16.3
+ },
+ {
+  "id": "conv-43_q196",
+  "conv": "conv-43",
+  "question": "What special memory does \"Fifty Shades of Grey\" bring to Tim?",
+  "answer": "",
+  "sys_answer": "The context does not say. It never mentions \"Fifty Shades of Grey\" or any special memory it brings to Tim.",
+  "refusal": true,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-43_q197",
+  "conv": "conv-43",
+  "question": "Which movie does John mention they enjoy watching during Thanksgiving?",
+  "answer": "",
+  "sys_answer": "Home Alone. Tim says his family watches it at Thanksgiving, and John calls it a classic.",
+  "refusal": false,
+  "secs": 6.1
+ },
+ {
+  "id": "conv-43_q198",
+  "conv": "conv-43",
+  "question": "What tradition does Tim mention they love during Halloween?",
+  "answer": "",
+  "sys_answer": "The context does not mention any Halloween tradition from Tim. He only talks about Thanksgiving (prepping the feast, sharing what they're thankful for, watching movies) and Christmas/holiday traditions (holiday movies, Harry Potter-themed tree).",
+  "refusal": true,
+  "secs": 7.8
+ },
+ {
+  "id": "conv-43_q199",
+  "conv": "conv-43",
+  "question": "How long did Tim and his high school basketball teammates play together?",
+  "answer": "",
+  "sys_answer": "The context does not say. Tim is not described as playing high school basketball, and no duration is given for any high school teammates.",
+  "refusal": true,
+  "secs": 10.0
+ },
+ {
+  "id": "conv-43_q200",
+  "conv": "conv-43",
+  "question": "How was Tim's experience in New York City?",
+  "answer": "",
+  "sys_answer": "The context contains no information about Tim's experience in New York City, so this cannot be answered.",
+  "refusal": true,
+  "secs": 20.3
+ },
+ {
+  "id": "conv-43_q201",
+  "conv": "conv-43",
+  "question": "What spice did Tim add to the soup for flavor?",
+  "answer": "",
+  "sys_answer": "The context does not say. It never mentions Tim adding a spice to soup.",
+  "refusal": true,
+  "secs": 7.5
+ },
+ {
+  "id": "conv-43_q202",
+  "conv": "conv-43",
+  "question": "What is Tim excited to see at Disneyland?",
+  "answer": "",
+  "sys_answer": "The context does not say what Tim is excited to see at Disneyland. Disneyland is never mentioned.",
+  "refusal": true,
+  "secs": 12.3
+ },
+ {
+  "id": "conv-43_q203",
+  "conv": "conv-43",
+  "question": "Where are John and his teammates planning to avoid on a team trip?",
+  "answer": "",
+  "sys_answer": "The context does not say they are avoiding any place. It only says they are still choosing a destination for a trip next month, and Tim suggested Edinburgh, Scotland, which John liked.",
+  "refusal": true,
+  "secs": 7.1
+ },
+ {
+  "id": "conv-43_q204",
+  "conv": "conv-43",
+  "question": "What does Tim want to do after his basketball career?",
+  "answer": "",
+  "sys_answer": "The context gives no post-basketball plans for Tim, because Tim isn't a basketball player. John is the player, and he says he wants to use his platform to make a positive difference, possibly starting a foundation and doing charity work, and to build his brand through endorsements.",
+  "refusal": false,
+  "secs": 17.0
+ },
+ {
+  "id": "conv-43_q205",
+  "conv": "conv-43",
+  "question": "What type of venue did John and his girlfriend choose for their breakup?",
+  "answer": "",
+  "sys_answer": "The context contains no breakup. John and his girlfriend had a wedding (late September 2023), and they chose a greenhouse venue for it.",
+  "refusal": false,
+  "secs": 8.5
+ },
+ {
+  "id": "conv-43_q206",
+  "conv": "conv-43",
+  "question": "What passion does John mention connects him with people from all over the world?",
+  "answer": "",
+  "sys_answer": "The quote 'people from all over the world' is actually Tim's, about his passion for fantasy (Harry Potter). John's own equivalent is basketball, which connects him with his teammates, and he also says traveling connects him with different cultures.",
+  "refusal": false,
+  "secs": 9.5
+ },
+ {
+  "id": "conv-43_q207",
+  "conv": "conv-43",
+  "question": "How does Tim say his team handles tough opponents?",
+  "answer": "",
+  "sys_answer": "Tim doesn't actually say this; it was John (the basketball player) on 2023-10-13. John said his team faces tough opponents, which drives them to get better, and they back each other up and don't quit.",
+  "refusal": false,
+  "secs": 19.5
+ },
+ {
+  "id": "conv-43_q208",
+  "conv": "conv-43",
+  "question": "Where did Tim capture the painting of the sunset over the mountain range?",
+  "answer": "",
+  "sys_answer": "The context does not mention a painting of a sunset over a mountain range. The nearest match is a photo Tim took on his trip to the Smoky Mountains (shared 2023-10-17), but it is not described as a painting or a sunset.",
+  "refusal": true,
+  "secs": 12.0
+ },
+ {
+  "id": "conv-43_q209",
+  "conv": "conv-43",
+  "question": "What does Tim find rewarding about mentoring the younger players?",
+  "answer": "",
+  "sys_answer": "Tim isn't the one mentoring; John is. John finds it rewarding to share his skills and knowledge, to watch the younger players grow, improve, gain confidence and reach their goals, and to be a positive role model who makes a positive impact on their lives.",
+  "refusal": false,
+  "secs": 16.4
+ },
+ {
+  "id": "conv-43_q210",
+  "conv": "conv-43",
+  "question": "What has Tim been able to help the younger players achieve?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Tim mentors younger players; it's John who does. John mentors younger players on his team and has helped them develop, grow in skill and confidence, and reach their goals, giving advice and support on and off the court.",
+  "refusal": true,
+  "secs": 6.5
+ },
+ {
+  "id": "conv-43_q211",
+  "conv": "conv-43",
+  "question": "What genre is the novel that John is writing?",
+  "answer": "",
+  "sys_answer": "The context does not say John is writing a novel. It is Tim who writes (fantasy-related articles and stories), while John is a basketball player. So the genre of a novel by John is not stated.",
+  "refusal": true,
+  "secs": 7.6
+ },
+ {
+  "id": "conv-43_q212",
+  "conv": "conv-43",
+  "question": "Who is one of Tim's sources of inspiration for painting?",
+  "answer": "",
+  "sys_answer": "The context doesn't say who inspires Tim's painting. It never mentions Tim painting. The only painting mentioned is John's painting of Aragorn from Lord of the Rings.",
+  "refusal": true,
+  "secs": 11.7
+ },
+ {
+  "id": "conv-43_q213",
+  "conv": "conv-43",
+  "question": "What does Tim write on the whiteboard to help him stay motivated?",
+  "answer": "",
+  "sys_answer": "The context does not say what Tim writes on the whiteboard to stay motivated. A whiteboard is never mentioned.",
+  "refusal": true,
+  "secs": 24.2
+ },
+ {
+  "id": "conv-43_q214",
+  "conv": "conv-43",
+  "question": "What hobby is a therapy for Tim when away from the court?",
+  "answer": "",
+  "sys_answer": "Reading (especially fantasy books like Harry Potter, Game of Thrones, and Patrick Rothfuss's The Name of the Wind).",
+  "refusal": false,
+  "secs": 9.9
+ },
+ {
+  "id": "conv-43_q215",
+  "conv": "conv-43",
+  "question": "What type of meal does Tim often cook using a slow cooker?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of Tim using a slow cooker or of what he cooks with one.",
+  "refusal": true,
+  "secs": 12.1
+ },
+ {
+  "id": "conv-43_q216",
+  "conv": "conv-43",
+  "question": "How will Tim share the honey garlic chicken recipe with the other person?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. There is no mention of a honey garlic chicken recipe or of how Tim would share it.",
+  "refusal": true,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-43_q217",
+  "conv": "conv-43",
+  "question": "What is one of Tim's favorite crime TV shows, as mentioned on November 11, 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say. In the November 11, 2023 conversation Tim mentions a favorite fantasy show, written only as \"That\", not a crime show, and no crime TV show is named.",
+  "refusal": true,
+  "secs": 18.1
+ },
+ {
+  "id": "conv-43_q218",
+  "conv": "conv-43",
+  "question": "What was the setback Tim faced in his coding project on 21 November, 2023?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention any coding project. On 21 November 2023, Tim said his setback was that he tried writing a story based on his experiences in the UK and it didn't go the way he wanted.",
+  "refusal": false,
+  "secs": 8.1
+ },
+ {
+  "id": "conv-43_q219",
+  "conv": "conv-43",
+  "question": "How did Tim overcome his ankle injury from last season?",
+  "answer": "",
+  "sys_answer": "The context does not say Tim had an ankle injury; it was John. John overcame his ankle injury by taking time off, doing physical therapy, staying focused on his recovery, and working hard to strengthen his body.",
+  "refusal": true,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-43_q220",
+  "conv": "conv-43",
+  "question": "What motivated John to keep pushing himself to get better in writing and reading?",
+  "answer": "",
+  "sys_answer": "The context doesn't say John is trying to improve at writing; that's Tim, whose love of writing and reading motivates him. John's own motivation comes from his passion for basketball. His reading, such as rereading 'The Alchemist' and personal-development books, inspires him to follow his dreams and trust the process.",
+  "refusal": true,
+  "secs": 21.5
+ },
+ {
+  "id": "conv-43_q221",
+  "conv": "conv-43",
+  "question": "How did Tim overcome a mistake he made during a big game in basketball?",
+  "answer": "",
+  "sys_answer": "This was actually John, not Tim. After messing up in a big game, John didn't dwell on it: he worked hard to get better, owned up to the mistake, and learned that resilience is key. Tim isn't described as playing basketball, so the context has no such story for him.",
+  "refusal": false,
+  "secs": 7.1
+ },
+ {
+  "id": "conv-43_q222",
+  "conv": "conv-43",
+  "question": "What is Tim trying out to improve his strength and flexibility after recovery from ankle injury?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. Tim has no ankle injury in these memories; it was John who hurt his ankle, and John's recovery involved physical therapy, daily rehab exercises, and strength training. Nothing says Tim is trying anything to improve strength and flexibility.",
+  "refusal": true,
+  "secs": 11.1
+ },
+ {
+  "id": "conv-43_q223",
+  "conv": "conv-43",
+  "question": "What did John recently start learning in addition to being part of a travel club and working on studies?",
+  "answer": "",
+  "sys_answer": "The violin. It was Tim, not John, who joined the travel club, was working on studies, and recently started learning the violin (session of 2023-12-06).",
+  "refusal": false,
+  "secs": 12.3
+ },
+ {
+  "id": "conv-43_q224",
+  "conv": "conv-43",
+  "question": "What instrument is John learning to play in December 2023?",
+  "answer": "",
+  "sys_answer": "The context does not show John learning any instrument in December 2023. It was Tim who was learning the violin (and had been playing piano for about four months).",
+  "refusal": true,
+  "secs": 22.1
+ },
+ {
+  "id": "conv-43_q225",
+  "conv": "conv-43",
+  "question": "How long has John been playing the piano for, as of December 2023?",
+  "answer": "",
+  "sys_answer": "John isn't the piano player in the conversations; Tim is. As of early December 2023 (session on 2023-12-06), Tim said he had been playing piano for about four months. No information indicates John plays piano.",
+  "refusal": true,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-43_q226",
+  "conv": "conv-43",
+  "question": "What movie did Tim just finish watching on 8th December, 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say Tim finished watching any movie on 8 December 2023. In that conversation he mentioned a Harry Potter party and having just finished reading the book \"A Dance with Dragons\", not a movie.",
+  "refusal": true,
+  "secs": 10.3
+ },
+ {
+  "id": "conv-43_q227",
+  "conv": "conv-43",
+  "question": "What kind of game did Tim have a career-high in assists in?",
+  "answer": "",
+  "sys_answer": "It was actually John (not Tim) who had a career-high in assists, in a big game against their rival (the Friday before 2023-12-11).",
+  "refusal": false,
+  "secs": 11.3
+ },
+ {
+  "id": "conv-43_q228",
+  "conv": "conv-43",
+  "question": "What was Tim's way of dealing with doubts and stress when he was younger?",
+  "answer": "",
+  "sys_answer": "The memories don't describe Tim doing this. It was John who, when younger, practiced basketball outside for hours, dreaming of playing in big games, as his way of dealing with doubts and stress (session of 2023-12-11).",
+  "refusal": false,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-43_q229",
+  "conv": "conv-43",
+  "question": "Where was the photoshoot done for John's fragrance deal?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention a fragrance deal. The closest match is John's outdoor gear company deal (Dec 2023), whose photoshoot took place in a forest, but no fragrance deal is mentioned.",
+  "refusal": false,
+  "secs": 10.3
+ },
+ {
+  "id": "conv-43_q230",
+  "conv": "conv-43",
+  "question": "In which area has Tim's team seen the most growth during training?",
+  "answer": "",
+  "sys_answer": "Communication and bonding. This is the team of John, the basketball player, not Tim's.",
+  "refusal": false,
+  "secs": 11.8
+ },
+ {
+  "id": "conv-43_q231",
+  "conv": "conv-43",
+  "question": "What type of seminars is Tim conducting?",
+  "answer": "",
+  "sys_answer": "The context does not show Tim conducting any seminars. It was John who started doing seminars, helping people with sports and marketing (Dec 2023).",
+  "refusal": true,
+  "secs": 11.9
+ },
+ {
+  "id": "conv-43_q232",
+  "conv": "conv-43",
+  "question": "What is one cause that John opposes with his influence and resources?",
+  "answer": "",
+  "sys_answer": "Unfair or unequal access to sports (he fights for fair chances in sports for underserved communities).",
+  "refusal": false,
+  "secs": 20.1
+ },
+ {
+  "id": "conv-43_q233",
+  "conv": "conv-43",
+  "question": "What new fantasy TV series is John excited about?",
+  "answer": "",
+  "sys_answer": "The Wheel of Time. Note that it was Tim, not John, who said he was excited about this series (based on a book series he loves); John just said it sounded exciting.",
+  "refusal": false,
+  "secs": 16.7
+ },
+ {
+  "id": "conv-43_q234",
+  "conv": "conv-43",
+  "question": "Which language is John learning?",
+  "answer": "",
+  "sys_answer": "John is learning Spanish.",
+  "refusal": false,
+  "secs": 7.2
+ },
+ {
+  "id": "conv-43_q235",
+  "conv": "conv-43",
+  "question": "According to John, who is his least favorite character from Lord of the Rings?",
+  "answer": "",
+  "sys_answer": "The context does not say who John's least favorite Lord of the Rings character is. It only says his favorite is Aragorn.",
+  "refusal": true,
+  "secs": 15.3
+ },
+ {
+  "id": "conv-43_q236",
+  "conv": "conv-43",
+  "question": "Why does Tim like Aragorn from Lord of the Rings?",
+  "answer": "",
+  "sys_answer": "Tim finds Aragorn inspiring because of his journey from a ranger to king of Gondor, showing growth and redemption. (John, not Tim, named Aragorn as his favorite for being a great leader who puts others first, and for being brave, selfless, down-to-earth and standing up for justice.)",
+  "refusal": false,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-43_q237",
+  "conv": "conv-43",
+  "question": "What kind of painting does Tim have in his room as a reminder?",
+  "answer": "",
+  "sys_answer": "The context shows it is John, not Tim, who has the painting: a painting of Aragorn from Lord of the Rings, kept in his room to remind him to stay true and be a leader. Tim's only comparable item is a MinaLima Harry Potter print, which is not described as a painting.",
+  "refusal": false,
+  "secs": 6.8
+ },
+ {
+  "id": "conv-43_q238",
+  "conv": "conv-43",
+  "question": "What is the sculpture of Aragorn a reminder for John to be in everything he does?",
+  "answer": "",
+  "sys_answer": "A leader. John says his Aragorn artwork (described as a painting, not a sculpture) reminds him to stay true and be a leader in everything he does.",
+  "refusal": false,
+  "secs": 16.7
+ },
+ {
+  "id": "conv-43_q239",
+  "conv": "conv-43",
+  "question": "Which city in Ireland will John be staying in during his semester abroad?",
+  "answer": "",
+  "sys_answer": "John is not going on a semester abroad in Ireland. It is Tim who will stay in Galway, Ireland (per the January 2024 conversation).",
+  "refusal": false,
+  "secs": 21.3
+ },
+ {
+  "id": "conv-43_q240",
+  "conv": "conv-43",
+  "question": "What charity event did Tim organize recently in 2024?",
+  "answer": "",
+  "sys_answer": "The context does not show Tim organizing a charity event in 2024. The benefit basketball game (held in late December 2023/early January 2024) was organized by John, not Tim. Tim's 2024 news was getting into a study abroad program in Galway, Ireland.",
+  "refusal": true,
+  "secs": 23.8
+ },
+ {
+  "id": "conv-43_q241",
+  "conv": "conv-43",
+  "question": "What was Tims's reaction to sealing the deal with the beverage company?",
+  "answer": "",
+  "sys_answer": "Tim was thrilled and congratulatory. He said, \"Wow, Congrats on those deals with Nike and Gatorade! You're killing it!\" (July 2023). Note that the context only says John was in talks with Gatorade, not that the deal was sealed.",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-44_q123",
+  "conv": "conv-44",
+  "question": "Which specific type of bird mesmerizes Audrey?",
+  "answer": "",
+  "sys_answer": "The context doesn't say which bird mesmerizes Audrey. It was Andrew who said eagles mesmerize him.",
+  "refusal": true,
+  "secs": 6.5
+ },
+ {
+  "id": "conv-44_q124",
+  "conv": "conv-44",
+  "question": "What kind of flowers does Andrew have a tattoo of?",
+  "answer": "",
+  "sys_answer": "The context does not say Andrew has a tattoo of flowers. The tattoos mentioned are Audrey's, and they depict her dogs. The only flowers identified are the Peruvian Lilies Andrew was caring for.",
+  "refusal": true,
+  "secs": 8.9
+ },
+ {
+  "id": "conv-44_q125",
+  "conv": "conv-44",
+  "question": "What type of dog was Audrey looking to adopt based on her living space?",
+  "answer": "",
+  "sys_answer": "Audrey wasn't the one looking to adopt; Andrew was. Based on his apartment living space, he thought a smaller dog would be best (ideally one that loves to play and run if he's active). Audrey already has four dogs.",
+  "refusal": false,
+  "secs": 14.3
+ },
+ {
+  "id": "conv-44_q126",
+  "conv": "conv-44",
+  "question": "Why did Audrey sign up for a workshop about car maintenance?",
+  "answer": "",
+  "sys_answer": "The context does not mention Audrey signing up for a car maintenance workshop. The workshop she signed up for (per the 2023-05-11 conversation) was about bonding with her pets, a positive reinforcement training class, which she wanted to join to strengthen her bond with her four dogs and learn to train them better.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-44_q127",
+  "conv": "conv-44",
+  "question": "How did Andrew hear about the workshop on bonding with pets?",
+  "answer": "",
+  "sys_answer": "Andrew didn't hear about it firsthand. Audrey told him she saw the workshop flyer at her local pet store (a positive reinforcement training class), and he learned about it from her.",
+  "refusal": false,
+  "secs": 7.5
+ },
+ {
+  "id": "conv-44_q128",
+  "conv": "conv-44",
+  "question": "What type of training was the workshop Andrew signed up for in May 2023?",
+  "answer": "",
+  "sys_answer": "Positive reinforcement training. Note that it was Audrey who signed up for the workshop (about bonding with her pets) in May 2023. Andrew only said he would look into the classes.",
+  "refusal": false,
+  "secs": 20.2
+ },
+ {
+  "id": "conv-44_q129",
+  "conv": "conv-44",
+  "question": "How did Andrew describe the dog he met at the pet store?",
+  "answer": "",
+  "sys_answer": "The context does not contain any information about Andrew meeting a dog at a pet store, so there is no description to give. The memories only mention Andrew meeting dogs at shelters, and Audrey going to a pet store to buy toys.",
+  "refusal": true,
+  "secs": 12.5
+ },
+ {
+  "id": "conv-44_q130",
+  "conv": "conv-44",
+  "question": "What challenge is Audrey facing in their search for a pet?",
+  "answer": "",
+  "sys_answer": "The search challenge in the conversation is finding a pet-friendly/dog-friendly place to live (apartment) in the city. Note this is actually Andrew's challenge, not Audrey's, since Audrey already has four dogs.",
+  "refusal": false,
+  "secs": 7.8
+ },
+ {
+  "id": "conv-44_q131",
+  "conv": "conv-44",
+  "question": "What indoor activities does Andrew plan on trying after the rock climbing class?",
+  "answer": "",
+  "sys_answer": "The context does not contain this information. There is no mention of a rock climbing class or Andrew's plans for indoor activities after it.",
+  "refusal": true,
+  "secs": 12.5
+ },
+ {
+  "id": "conv-44_q132",
+  "conv": "conv-44",
+  "question": "What did Andrew set up in the backyard for their dogs on June 26, 2023?",
+  "answer": "",
+  "sys_answer": "It was actually Audrey who set up a doggy play area in the backyard with agility equipment and toys for her dogs on June 26, 2023 (Andrew did not set this up).",
+  "refusal": false,
+  "secs": 13.8
+ },
+ {
+  "id": "conv-44_q133",
+  "conv": "conv-44",
+  "question": "What did Audrey and her GF do on the Monday before July 24, 2023?",
+  "answer": "",
+  "sys_answer": "They volunteered at a pet shelter. This was Andrew and his girlfriend, not Audrey, and it happened on Monday, July 24, 2023.",
+  "refusal": false,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-44_q134",
+  "conv": "conv-44",
+  "question": "What is the name of Andrew's childhood dog?",
+  "answer": "",
+  "sys_answer": "The context does not say. The only childhood dog named (Max) is Audrey's, not Andrew's. Andrew mentions a family dog without naming it.",
+  "refusal": true,
+  "secs": 15.8
+ },
+ {
+  "id": "conv-44_q135",
+  "conv": "conv-44",
+  "question": "What special memories does Andrew have with his childhood dog, Max?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Andrew had a childhood dog named Max; Max was Audrey's childhood dog. Audrey's memories of Max: he had lots of energy, loved fetch, and they took long neighborhood walks where she shared her worries and hopes with him, her great listener.",
+  "refusal": true,
+  "secs": 24.5
+ },
+ {
+  "id": "conv-44_q136",
+  "conv": "conv-44",
+  "question": "What are some of the personalities of Andrew's four fur babies?",
+  "answer": "",
+  "sys_answer": "The question has a mix-up: the four fur babies are Audrey's, not Andrew's (Andrew has Toby, Buddy and Scout). Audrey's four dogs' personalities: the oldest is relaxed like a wise old sage; the second is always ready for a game; the third can be naughty but loves a good cuddle; and the youngest is full of life and always up for an adventure.",
+  "refusal": false,
+  "secs": 19.0
+ },
+ {
+  "id": "conv-44_q137",
+  "conv": "conv-44",
+  "question": "What type of classes did Andrew start with his pups recently on 4 August, 2023?",
+  "answer": "",
+  "sys_answer": "Agility classes (at a dog park). Note that in the 4 August 2023 conversation it was Audrey, not Andrew, who started agility classes with her pups.",
+  "refusal": false,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-44_q138",
+  "conv": "conv-44",
+  "question": "What is essential to keep the dogs looking good according to Andrew?",
+  "answer": "",
+  "sys_answer": "Regular grooming: daily brushing, regular baths, nail trims, and lots of love. The context attributes this to Audrey, not Andrew.",
+  "refusal": false,
+  "secs": 6.5
+ },
+ {
+  "id": "conv-44_q139",
+  "conv": "conv-44",
+  "question": "What did Audrey organize with the neighbors' cats?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Audrey organized anything with neighbors' cats. The closest thing is that on 2023-10-13 she made goodies to thank her neighbors for their pup-friendly homes, which involves dogs, not cats.",
+  "refusal": true,
+  "secs": 12.9
+ },
+ {
+  "id": "conv-44_q140",
+  "conv": "conv-44",
+  "question": "What did Andrew do to give his dogs extra comfort as the weather cooled down?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. Only hints: Toby loves cute sweaters (mentioned 2023-10-13), but there is no explicit statement of what Andrew did for extra comfort as the weather cooled.",
+  "refusal": true,
+  "secs": 12.6
+ },
+ {
+  "id": "conv-44_q141",
+  "conv": "conv-44",
+  "question": "How does Andrew describe the new beds for his dogs?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention new beds for several dogs, but Andrew says that for new pup Scout they got essentials for comfort and entertainment, like a bed, toys, and puppy pads, and he describes it as \"their own little safe haven.\"",
+  "refusal": false,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-44_q142",
+  "conv": "conv-44",
+  "question": "How did Andrew calm down his dog after the leash incident?",
+  "answer": "",
+  "sys_answer": "The question has a mistaken premise: the leash incident happened to Audrey, not Andrew. Audrey calmed her dog (Precious) by petting and hugging her, speaking calmly, and walking her slowly to relax. The context says nothing about Andrew calming a dog after a leash incident.",
+  "refusal": false,
+  "secs": 12.6
+ },
+ {
+  "id": "conv-44_q143",
+  "conv": "conv-44",
+  "question": "How often does Andrew take his dogs for walks?",
+  "answer": "",
+  "sys_answer": "The context doesn't say how often Andrew walks his dogs. He mentions walks and hikes with Toby and Buddy, but gives no specific frequency. (The 'multiple times a day' figure was Audrey's, about her own dogs.)",
+  "refusal": true,
+  "secs": 12.7
+ },
+ {
+  "id": "conv-44_q144",
+  "conv": "conv-44",
+  "question": "What kind of vegetables does Audrey take care of?",
+  "answer": "",
+  "sys_answer": "The context doesn't say which vegetables Audrey grows. It only says she has a small garden with a veggie patch (alongside Peruvian Lilies flowers), without naming any vegetables.",
+  "refusal": true,
+  "secs": 16.0
+ },
+ {
+  "id": "conv-44_q145",
+  "conv": "conv-44",
+  "question": "What did Andrew learn from reading books about economic systems?",
+  "answer": "",
+  "sys_answer": "The context does not say. Andrew is never mentioned reading books about economic systems or what he learned from them.",
+  "refusal": true,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-44_q146",
+  "conv": "conv-44",
+  "question": "What was the reason Andrew couldn't walk his dogs for a period of time?",
+  "answer": "",
+  "sys_answer": "The provided context does not say why Andrew couldn't walk his dogs for a period of time. The closest detail is that city living and his work-life balance made it harder to get outdoors and hike, but that is not stated as the reason.",
+  "refusal": true,
+  "secs": 23.0
+ },
+ {
+  "id": "conv-44_q147",
+  "conv": "conv-44",
+  "question": "What type of jewelry does Andrew make?",
+  "answer": "",
+  "sys_answer": "The context does not say that Andrew makes jewelry, so there is no information about a type of jewelry he makes.",
+  "refusal": true,
+  "secs": 10.0
+ },
+ {
+  "id": "conv-44_q148",
+  "conv": "conv-44",
+  "question": "Why does Andrew make jewelry out of recycled objects?",
+  "answer": "",
+  "sys_answer": "The context does not say. It contains no mention of Andrew making jewelry out of recycled objects, so his reason cannot be determined.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-44_q149",
+  "conv": "conv-44",
+  "question": "What type of games do Andrew's dogs like to play at the park?",
+  "answer": "",
+  "sys_answer": "The context doesn't say what games Andrew's dogs play at the park. Fetch and Frisbee are the games Audrey's dogs love. For Andrew's pup, the only park anecdote is Toby getting excited and chasing a squirrel.",
+  "refusal": true,
+  "secs": 21.2
+ },
+ {
+  "id": "conv-44_q150",
+  "conv": "conv-44",
+  "question": "What did Andrew make to thank his neighbors?",
+  "answer": "",
+  "sys_answer": "The context does not say Andrew made anything for his neighbors. It was Audrey who made goodies (treats) to thank her neighbors for their pup-friendly homes.",
+  "refusal": true,
+  "secs": 7.1
+ },
+ {
+  "id": "conv-44_q151",
+  "conv": "conv-44",
+  "question": "How do Andrew's dogs react to snow?",
+  "answer": "",
+  "sys_answer": "The context doesn't say how Andrew's dogs react to snow. The only snow mention is about Audrey's dogs, who hate snow and got confused when taken to a snowy park last winter.",
+  "refusal": true,
+  "secs": 34.6
+ },
+ {
+  "id": "conv-44_q152",
+  "conv": "conv-44",
+  "question": "How does Andrew describe his dogs' response to snow?",
+  "answer": "",
+  "sys_answer": "The context does not say how Andrew's dogs respond to snow. The only snow comment comes from Audrey, who said her dogs hate snow and were confused by it when she took them to a snowy park last winter.",
+  "refusal": true,
+  "secs": 6.7
+ },
+ {
+  "id": "conv-44_q153",
+  "conv": "conv-44",
+  "question": "What kind of experiences are Audrey's cats the best companions for?",
+  "answer": "",
+  "sys_answer": "Audrey doesn't have cats; she has four dogs (Pepper, Pixie, Precious and Panda). She says her dogs are the best companions for exploring the great outdoors, such as hikes, walks in nature and trips to the dog park.",
+  "refusal": false,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-44_q154",
+  "conv": "conv-44",
+  "question": "What activity do Audrey and Buddy enjoy doing together?",
+  "answer": "",
+  "sys_answer": "Going on walks and hiking on trails. Buddy is Andrew's dog, and he loves new hiking trails. Audrey and Andrew planned a hike with their dogs, including Buddy, for the following month.",
+  "refusal": false,
+  "secs": 12.8
+ },
+ {
+  "id": "conv-44_q155",
+  "conv": "conv-44",
+  "question": "What type of drink did Andrew recently try at a new spot in town?",
+  "answer": "",
+  "sys_answer": "The memories don't say what drink Andrew tried at a new spot. The closest mention is coffee, in the 2023-10-13 conversation about a new cafe, but that is not confirmed as a drink he tried.",
+  "refusal": false,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-44_q156",
+  "conv": "conv-44",
+  "question": "Which type of pizza did Audrey suggest trying first to someone new to Italian cuisine?",
+  "answer": "",
+  "sys_answer": "The context does not say. Audrey never suggests a type of pizza for someone new to Italian cuisine in any of the provided conversations.",
+  "refusal": true,
+  "secs": 20.9
+ },
+ {
+  "id": "conv-44_q157",
+  "conv": "conv-44",
+  "question": "How often does Andrew meet up with other dog owners for tips and playdates?",
+  "answer": "",
+  "sys_answer": "Once a week. This was Audrey, not Andrew, who meets up with other dog owners weekly for tips and playdates; Andrew hasn't joined a group.",
+  "refusal": false,
+  "secs": 8.6
+ },
+ {
+  "id": "conv-47_q150",
+  "conv": "conv-47",
+  "question": "What did John adopt in April 2022?",
+  "answer": "",
+  "sys_answer": "The context does not say John adopted anything in April 2022. He said he still wanted a dog and had not gotten one as of November 2022.",
+  "refusal": true,
+  "secs": 7.5
+ },
+ {
+  "id": "conv-47_q151",
+  "conv": "conv-47",
+  "question": "What is the name of the kitten that was adopted by James?",
+  "answer": "",
+  "sys_answer": "The context does not mention James adopting a kitten. He adopted a puppy named Ned (and has dogs Max and Daisy), but no kitten is mentioned.",
+  "refusal": true,
+  "secs": 11.4
+ },
+ {
+  "id": "conv-47_q152",
+  "conv": "conv-47",
+  "question": "What inspired John to create the game character in the virtual world?",
+  "answer": "",
+  "sys_answer": "The context does not say John created a game character. It was James who created the character in the Witcher 3-inspired virtual world, and he was inspired by a stranger he saw on a walk with his dogs, whose eyes and appearance struck him as if he had fallen in love at first sight.",
+  "refusal": true,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-47_q153",
+  "conv": "conv-47",
+  "question": "Which country did John visit in 2021?",
+  "answer": "",
+  "sys_answer": "Japan. John said it was the last country he visited as of April 2022, but the memories do not state that the trip was in 2021.",
+  "refusal": false,
+  "secs": 5.2
+ },
+ {
+  "id": "conv-47_q154",
+  "conv": "conv-47",
+  "question": "What kind of assignment was giving James a hard time at work?",
+  "answer": "",
+  "sys_answer": "It was actually John (not James) who struggled: a difficult coding assignment involving making a new algorithm work better. James only gave advice (break it into smaller steps, research similar algorithms, ask for help).",
+  "refusal": false,
+  "secs": 12.4
+ },
+ {
+  "id": "conv-47_q155",
+  "conv": "conv-47",
+  "question": "What did James and his friends do with the remaining money after helping the dog shelter?",
+  "answer": "",
+  "sys_answer": "They used the leftover money to buy groceries and cook food for the homeless. Note that it was John and his friends who did this, after their CS:GO charity tournament, not James.",
+  "refusal": false,
+  "secs": 7.6
+ },
+ {
+  "id": "conv-47_q156",
+  "conv": "conv-47",
+  "question": "What was the main goal of the money raised from the political campaign organized by John and his friends in May 2022?",
+  "answer": "",
+  "sys_answer": "It wasn't a political campaign; it was a CS:GO charity tournament (held around May 7, 2022). The main goal of the money was to support a dog shelter near John's street, with leftover funds used to buy groceries and cook food for the homeless.",
+  "refusal": false,
+  "secs": 16.3
+ },
+ {
+  "id": "conv-47_q157",
+  "conv": "conv-47",
+  "question": "What did the system John created help the illegal organization with?",
+  "answer": "",
+  "sys_answer": "The context contains no information about John creating a system for an illegal organization, so this cannot be answered.",
+  "refusal": true,
+  "secs": 9.0
+ },
+ {
+  "id": "conv-47_q158",
+  "conv": "conv-47",
+  "question": "What did James create for the charitable foundation that helped generate reports for analysis?",
+  "answer": "",
+  "sys_answer": "The context does not contain this information. There is no mention of James creating something for a charitable foundation to generate reports for analysis.",
+  "refusal": true,
+  "secs": 8.1
+ },
+ {
+  "id": "conv-47_q159",
+  "conv": "conv-47",
+  "question": "Who does James support in cricket matches?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of James watching or supporting anyone in cricket matches.",
+  "refusal": true,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-47_q160",
+  "conv": "conv-47",
+  "question": "What is Max good at doing according to John?",
+  "answer": "",
+  "sys_answer": "According to the conversation, John describes Max as a go-getter who is great at catching frisbees in mid-air and playing fetch (James also says Max is a pro swimmer).",
+  "refusal": false,
+  "secs": 11.0
+ },
+ {
+  "id": "conv-47_q161",
+  "conv": "conv-47",
+  "question": "Will there be a background check required to volunteer with the organization James volunteered for?",
+  "answer": "",
+  "sys_answer": "Probably not. James said no interview is required and that you only need to be friendly, polite and want to help people. He did not mention a background check, so the context does not explicitly confirm either way.",
+  "refusal": true,
+  "secs": 14.8
+ },
+ {
+  "id": "conv-47_q162",
+  "conv": "conv-47",
+  "question": "How did James relax in his free time on 9 July, 2022?",
+  "answer": "",
+  "sys_answer": "James relaxed with extreme sports, such as rope jumping (jumping from 150 meters) and surfing, which he said relaxes him. He also likes reading, but in summer he wanted something more exciting.",
+  "refusal": false,
+  "secs": 10.3
+ },
+ {
+  "id": "conv-47_q163",
+  "conv": "conv-47",
+  "question": "What new hobby did John become interested in on 9 July, 2022?",
+  "answer": "",
+  "sys_answer": "The context doesn't say John took up a new hobby on 9 July 2022. In that conversation John only mentions relaxing by reading; it was James who became interested in extreme sports (rope jumping and surfing).",
+  "refusal": true,
+  "secs": 12.6
+ },
+ {
+  "id": "conv-47_q164",
+  "conv": "conv-47",
+  "question": "When did John plan to return from his trip to Toronto and Vancouver?",
+  "answer": "",
+  "sys_answer": "The trip to Toronto and Vancouver was actually James's, not John's. James planned to return on July 20, 2022.",
+  "refusal": false,
+  "secs": 12.0
+ },
+ {
+  "id": "conv-47_q165",
+  "conv": "conv-47",
+  "question": "What made James leave his IT job?",
+  "answer": "",
+  "sys_answer": "The context doesn't say James left an IT job. It was John who left his IT job after 3 years (as of August 2022), because he wanted work that made a difference and aligned with his values and passions, namely a career in the gaming industry organizing tournaments.",
+  "refusal": true,
+  "secs": 14.4
+ },
+ {
+  "id": "conv-47_q166",
+  "conv": "conv-47",
+  "question": "Which game tournaments does James plan to organize besides CS:GO?",
+  "answer": "",
+  "sys_answer": "The context shows this is John's plan, not James's. Besides CS:GO, John plans to organize Fortnite tournaments, and he is also thinking about competitions for strategy and RPG games (e.g., The Witcher 3-type RPGs). James himself does not plan to organize tournaments in the memories.",
+  "refusal": false,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-47_q167",
+  "conv": "conv-47",
+  "question": "What happened to James's kitten during the recent visit to the clinic?",
+  "answer": "",
+  "sys_answer": "James had no kitten in the memories; it was his puppy that went to the clinic (around Aug 5, 2022). The visit was a routine examination, and the puppy was vaccinated to protect against a seasonal canine disease.",
+  "refusal": false,
+  "secs": 13.9
+ },
+ {
+  "id": "conv-47_q168",
+  "conv": "conv-47",
+  "question": "What aspect of \"The Witcher 3\" does John find boring?",
+  "answer": "",
+  "sys_answer": "The context does not say John finds any aspect of The Witcher 3 boring. He praises the storytelling, characters, and choice-driven immersion, so the question's premise isn't supported.",
+  "refusal": true,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-47_q169",
+  "conv": "conv-47",
+  "question": "What is John planning to do after receiving Samantha's phone number?",
+  "answer": "",
+  "sys_answer": "The question has the names mixed up: it was James who got Samantha's number, not John. James planned to call her the next day (around Aug 11, 2022) and ask her out on a date. He did start dating her, and asked her to be his girlfriend on about Sept 3, 2022.",
+  "refusal": false,
+  "secs": 22.5
+ },
+ {
+  "id": "conv-47_q170",
+  "conv": "conv-47",
+  "question": "What has James been teaching his siblings?",
+  "answer": "",
+  "sys_answer": "The memories don't say James taught his siblings anything. It was John who helped his younger siblings learn programming (coding, via a text-based adventure game project), and John later also taught his parents coding.",
+  "refusal": false,
+  "secs": 11.4
+ },
+ {
+  "id": "conv-47_q171",
+  "conv": "conv-47",
+  "question": "How much does James pay per dance class?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention James taking a dance class. The only class price mentioned is $10 per class for his cooking class.",
+  "refusal": false,
+  "secs": 19.5
+ },
+ {
+  "id": "conv-47_q172",
+  "conv": "conv-47",
+  "question": "What did James learn to make in the chemistry class besides omelette and meringue?",
+  "answer": "",
+  "sys_answer": "Dough. (James's class was a cooking class, not chemistry; besides omelette and meringue, he learned how to make the dough.)",
+  "refusal": false,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-47_q173",
+  "conv": "conv-47",
+  "question": "Why did James sign up for a ballet class?",
+  "answer": "",
+  "sys_answer": "The context contains no information about James signing up for a ballet class. The only class James is mentioned signing up for is a cooking class (around early September 2022), which he did because he wanted to learn something new.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-47_q174",
+  "conv": "conv-47",
+  "question": "What did John prepare for the first time in the cooking class?",
+  "answer": "",
+  "sys_answer": "John did not take a cooking class; it was James who did. In James's first lesson he made an omelette (along with several simple dishes). The context has no record of John cooking anything in a class.",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-47_q175",
+  "conv": "conv-47",
+  "question": "What is the name of the board game James tried in September 2022?",
+  "answer": "",
+  "sys_answer": "\"Dungeons of the Dragon\" \u2014 though per the 2022-09-18 conversation, it was John who tried this board game, not James.",
+  "refusal": false,
+  "secs": 7.1
+ },
+ {
+  "id": "conv-47_q176",
+  "conv": "conv-47",
+  "question": "Where does John get his ideas from?",
+  "answer": "",
+  "sys_answer": "John gets ideas and inspiration from a game design book, online tutorials, and developer forums (staying informed and constantly learning). He also gets creativity and motivation from nature, traveling, and spending time with friends. The 'books, movies, and dreams' answer was James's, not John's.",
+  "refusal": false,
+  "secs": 13.3
+ },
+ {
+  "id": "conv-47_q177",
+  "conv": "conv-47",
+  "question": "What did James use to play when he was younger to let off steam?",
+  "answer": "",
+  "sys_answer": "James played guitar when he was younger. (The 'let off steam' remark was actually John's, about playing drums.)",
+  "refusal": false,
+  "secs": 29.2
+ },
+ {
+  "id": "conv-47_q178",
+  "conv": "conv-47",
+  "question": "What does James do to stay informed and constantly learn about game design?",
+  "answer": "",
+  "sys_answer": "The context attributes those habits to John, not James: John reads a game design book, watches tutorials, and follows developer forums. James only recommended reading a magazine as a good information source (and elsewhere mentions setting small goals, tracking progress, and trying new genres), so there is no explicit statement of James's own game-design learning routine.",
+  "refusal": false,
+  "secs": 21.2
+ },
+ {
+  "id": "conv-47_q179",
+  "conv": "conv-47",
+  "question": "What kind of gig was James offered at the game dev non-profit organization?",
+  "answer": "",
+  "sys_answer": "James wasn't offered that gig; John was. John was asked to be a volunteer programming mentor for game developers at a game dev non-profit, teaching coding and assisting with projects.",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-47_q180",
+  "conv": "conv-47",
+  "question": "What does James feel about starting the journey as a programming mentor for game developers?",
+  "answer": "",
+  "sys_answer": "James isn't the mentor; John is. James thinks John's mentoring role is awesome and rewarding, is excited and supportive of it, and believes it will lead to great things.",
+  "refusal": false,
+  "secs": 8.3
+ },
+ {
+  "id": "conv-47_q181",
+  "conv": "conv-47",
+  "question": "What inspired James to create his painting?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention James creating a painting. The closest items are his game character, which was inspired by a stranger he saw on a walk with his dogs, and sketches from a medieval castle dream, but neither is described as a painting.",
+  "refusal": false,
+  "secs": 8.4
+ },
+ {
+  "id": "conv-47_q182",
+  "conv": "conv-47",
+  "question": "What games were played at the gaming tournament organized by James on 31 October, 2022?",
+  "answer": "",
+  "sys_answer": "Fortnite, Overwatch, and Apex Legends. Note that the context says John organized this tournament, not James; it was held the night before 31 October 2022 to raise money for a children's hospital.",
+  "refusal": false,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-47_q183",
+  "conv": "conv-47",
+  "question": "What was the purpose of the gaming tournament organized by James on 31 October, 2022?",
+  "answer": "",
+  "sys_answer": "The tournament, which was actually organized by John (not James) with his gaming buddies, was held to raise money for a children's hospital. They played Fortnite, Overwatch, and Apex Legends.",
+  "refusal": false,
+  "secs": 8.6
+ },
+ {
+  "id": "conv-47_q184",
+  "conv": "conv-47",
+  "question": "What decision did John and Samantha make on 31 October, 2022?",
+  "answer": "",
+  "sys_answer": "They decided to move in together. According to the 31 October 2022 conversation, it was James and Samantha who made this decision, not John, and they rented an apartment near McGee's bar.",
+  "refusal": false,
+  "secs": 22.0
+ },
+ {
+  "id": "conv-47_q185",
+  "conv": "conv-47",
+  "question": "Where did John and Samantha decide to live together on 31 October, 2022?",
+  "answer": "",
+  "sys_answer": "Note that it was James (not John) and Samantha who decided to move in together: they rented an apartment not far from McGee's bar.",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-47_q186",
+  "conv": "conv-47",
+  "question": "Why did John and Samantha choose an apartment near McGee's bar?",
+  "answer": "",
+  "sys_answer": "Because they love spending time at McGee's bar; having that bar nearby was one of their criteria when choosing the apartment (they had enjoyed going there together).",
+  "refusal": false,
+  "secs": 14.4
+ },
+ {
+  "id": "conv-47_q187",
+  "conv": "conv-47",
+  "question": "What game is James hooked on playing on 5 November, 2022?",
+  "answer": "",
+  "sys_answer": "Not explicitly stated for 5 November 2022. The most recent evidence (session of 21 Oct 2022) shows James hooked on Cyberpunk 2077, so that is the likely answer.",
+  "refusal": false,
+  "secs": 6.2
+ },
+ {
+  "id": "conv-47_q188",
+  "conv": "conv-47",
+  "question": "What project did James work on with a game developer by 7 November, 2022?",
+  "answer": "",
+  "sys_answer": "The context says it was John, not James, who worked with a game developer: an online board game, with a demo about to be released (session of 7 Nov 2022). James was on a road trip and no such project is recorded for him.",
+  "refusal": false,
+  "secs": 12.3
+ },
+ {
+  "id": "conv-47_q189",
+  "conv": "conv-47",
+  "question": "What is the name of James's cousin's dog?",
+  "answer": "",
+  "sys_answer": "The context does not give the name of James's cousin's dog. The only cousin's dog mentioned is John's cousin's dog, named Luna.",
+  "refusal": true,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-48_q191",
+  "conv": "conv-48",
+  "question": "What are the names of Deborah's snakes?",
+  "answer": "",
+  "sys_answer": "Deborah has no snakes according to the context. Susie and Seraphim are Jolene's snakes. Deborah has two cats, Luna and Max.",
+  "refusal": false,
+  "secs": 22.0
+ },
+ {
+  "id": "conv-48_q192",
+  "conv": "conv-48",
+  "question": "What are Deborah's favorite books?",
+  "answer": "",
+  "sys_answer": "The context does not say what Deborah's favorite books are. It only shows that she has a big bookshelf and values a cozy reading nook, with no specific titles or authors named.",
+  "refusal": true,
+  "secs": 18.0
+ },
+ {
+  "id": "conv-48_q193",
+  "conv": "conv-48",
+  "question": "Where did Deborah get her dogs?",
+  "answer": "",
+  "sys_answer": "The context does not say. It never mentions Deborah having dogs, so where she got them is unknown. (Jolene is the one with pets, namely snakes.)",
+  "refusal": true,
+  "secs": 10.5
+ },
+ {
+  "id": "conv-48_q194",
+  "conv": "conv-48",
+  "question": "How old are Jolene's cats?",
+  "answer": "",
+  "sys_answer": "Jolene doesn't have cats; she has snakes (Susie and Seraphim). The cats belong to Deborah: Max is 8 years old and Luna is 5 years old.",
+  "refusal": false,
+  "secs": 5.7
+ },
+ {
+  "id": "conv-48_q195",
+  "conv": "conv-48",
+  "question": "When did Deborah's parents give her first console?",
+  "answer": "",
+  "sys_answer": "The context doesn't say that Deborah's parents gave her a console. It was Jolene whose parents gave her her first console, when she was 10 years old (mentioned in the 2023-09-03 conversation). No exact year or date is given.",
+  "refusal": true,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-48_q196",
+  "conv": "conv-48",
+  "question": "When did Jolene release her pet snake?",
+  "answer": "",
+  "sys_answer": "The context does not say Jolene ever released a pet snake; no release date is mentioned. She still has Susie (adopted about two years before 2023) and Seraphim in the sessions.",
+  "refusal": true,
+  "secs": 7.0
+ },
+ {
+  "id": "conv-48_q197",
+  "conv": "conv-48",
+  "question": "Where did Jolene meet her new friend Anna?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Jolene met Anna. Anna is Deborah's friend, whom Deborah bonded with at her yoga class (per the 2023-02-04 conversation). If the question means Deborah's friend, the answer is a yoga class.",
+  "refusal": true,
+  "secs": 13.0
+ },
+ {
+  "id": "conv-48_q198",
+  "conv": "conv-48",
+  "question": "What is Deborah's favorite book which she mentioned on 4 February, 2023?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. On 4 February 2023, Deborah didn't name a favorite book. Jolene was the one who mentioned \"Sapiens\" (and \"Avalanche\" by Neal Stephenson).",
+  "refusal": true,
+  "secs": 20.4
+ },
+ {
+  "id": "conv-48_q199",
+  "conv": "conv-48",
+  "question": "What cool stuff did Deborah accomplish at the retreat on 9 February, 2023?",
+  "answer": "",
+  "sys_answer": "The context contains no information about a retreat on 9 February 2023 or what Deborah accomplished there. The only retreat mentioned is a yoga retreat near her mom's place in mid-August 2023, where she connected with nature and herself.",
+  "refusal": true,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-48_q200",
+  "conv": "conv-48",
+  "question": "How does Deborah plan to involve local engineers in her idea of teaching STEM to underprivileged kids?",
+  "answer": "",
+  "sys_answer": "The context does not contain this information. No memory mentions Deborah planning to teach STEM to underprivileged kids or to involve local engineers.",
+  "refusal": true,
+  "secs": 26.0
+ },
+ {
+  "id": "conv-48_q201",
+  "conv": "conv-48",
+  "question": "What gave Deborah anxiety in the garden she visited?",
+  "answer": "",
+  "sys_answer": "The context doesn't say anything gave Deborah anxiety in the garden. She described the garden (roses and dahlias) as calming and comforting, a place of peace after losing her friend Karlie.",
+  "refusal": true,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-48_q202",
+  "conv": "conv-48",
+  "question": "Why did Jolene spend time in the garden?",
+  "answer": "",
+  "sys_answer": "The context does not say that Jolene spent time in the garden. It was Deborah who did, to find comfort after losing a friend (Karlie) in February 2023.",
+  "refusal": true,
+  "secs": 6.1
+ },
+ {
+  "id": "conv-48_q203",
+  "conv": "conv-48",
+  "question": "How did Jolene and her rival initially meet?",
+  "answer": "",
+  "sys_answer": "The context does not say. It never mentions a rival of Jolene's or how they met.",
+  "refusal": true,
+  "secs": 11.2
+ },
+ {
+  "id": "conv-48_q204",
+  "conv": "conv-48",
+  "question": "What activity does Jolene incorporate into her daily routine after going for a morning jog in the park?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Jolene going for a morning jog in the park, so it doesn't say what she does afterward. She does talk about doing yoga and meditation as self-care, but not in connection with a jog.",
+  "refusal": true,
+  "secs": 5.6
+ },
+ {
+  "id": "conv-48_q205",
+  "conv": "conv-48",
+  "question": "What method does Jolene suggest Deborah to try for organizing tasks based on importance and urgency?",
+  "answer": "",
+  "sys_answer": "The Eisenhower Matrix. Note that Deborah suggested it to Jolene (not the reverse); it sorts tasks into four boxes by urgency and importance. Jolene herself uses the Pomodoro Technique.",
+  "refusal": false,
+  "secs": 18.5
+ },
+ {
+  "id": "conv-48_q206",
+  "conv": "conv-48",
+  "question": "How does Jolene plan to pursue her dream of climbing mountains?",
+  "answer": "",
+  "sys_answer": "The context does not say that Jolene has a dream of climbing mountains, so there is no information on how she plans to pursue it. She does talk about learning to surf and trying scuba diving, but not mountain climbing.",
+  "refusal": true,
+  "secs": 22.7
+ },
+ {
+  "id": "conv-48_q207",
+  "conv": "conv-48",
+  "question": "Who are the authors mentioned by Jolene that she enjoys reading during her yoga practice?",
+  "answer": "",
+  "sys_answer": "The context does not mention any authors that Jolene enjoys reading during her yoga practice.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-48_q208",
+  "conv": "conv-48",
+  "question": "Which show did Jolene go to with a friend on 9 April, 2023?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Jolene went to a show on 9 April 2023. It was Deborah who went to an art show with a friend that day.",
+  "refusal": true,
+  "secs": 6.0
+ },
+ {
+  "id": "conv-48_q209",
+  "conv": "conv-48",
+  "question": "What does Deborah find comforting about going to horror movie screenings?",
+  "answer": "",
+  "sys_answer": "The context does not say. Deborah is never described as going to horror movie screenings. She finds comfort in other things, such as art shows that remind her of her mom, sitting on the bench at her mom's old house, looking at photos, gardening, and yoga.",
+  "refusal": true,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-48_q210",
+  "conv": "conv-48",
+  "question": "How does Deborah describe the time spent with her snakes and partner?",
+  "answer": "",
+  "sys_answer": "Deborah doesn't have snakes. They are Jolene's. Jolene describes her time with her snakes as valuable and a way to be in tune with herself. She says gaming with her partner is a relaxing way to unwind that brings them closer. Deborah responds that such simple things bring the most happiness and comfort in tough times.",
+  "refusal": false,
+  "secs": 11.2
+ },
+ {
+  "id": "conv-48_q211",
+  "conv": "conv-48",
+  "question": "For how long has Jolene had Lucifer as a pet?",
+  "answer": "",
+  "sys_answer": "The context does not mention any pet named Lucifer, so the duration cannot be determined. Jolene's known pets are the snakes Susie (about two years) and Seraphim.",
+  "refusal": true,
+  "secs": 10.1
+ },
+ {
+  "id": "conv-48_q212",
+  "conv": "conv-48",
+  "question": "How does Deborah feel when spending time with Seraphim?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Deborah spends time with Seraphim. Seraphim is Jolene's snake. Jolene says her snakes calm her and make her happy, and Deborah remarks only that pets bring comfort, happiness and brighten life.",
+  "refusal": true,
+  "secs": 14.1
+ },
+ {
+  "id": "conv-48_q213",
+  "conv": "conv-48",
+  "question": "What made being part of the running group easy for Jolene to stay motivated?",
+  "answer": "",
+  "sys_answer": "The context does not mention Jolene being part of a running group, so it doesn't say what made it easy for her to stay motivated.",
+  "refusal": true,
+  "secs": 16.9
+ },
+ {
+  "id": "conv-48_q214",
+  "conv": "conv-48",
+  "question": "Why did Jolene decide to get a tarantula as a pet?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Jolene getting a tarantula. Her pets are snakes, Susie and Seraphim. She adopted Susie about two years before August 2023 because she was lonely and wanted company.",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-48_q215",
+  "conv": "conv-48",
+  "question": "How did Deborah come to have her pet, Susie?",
+  "answer": "",
+  "sys_answer": "Susie isn't Deborah's pet; she belongs to Jolene, who adopted Susie (a snake) about two years before August 2023 because she was lonely and wanted company. The context doesn't say Deborah has a pet named Susie.",
+  "refusal": true,
+  "secs": 17.5
+ },
+ {
+  "id": "conv-48_q216",
+  "conv": "conv-48",
+  "question": "What did Deborah design inspired by their love for space and engines?",
+  "answer": "",
+  "sys_answer": "Notebooks with galaxy and circuitry designs. Note that it was Jolene, not Deborah, who designed them (mentioned on 2023-08-12).",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-48_q217",
+  "conv": "conv-48",
+  "question": "What journal has Deborah been using to help track tasks and stay organized?",
+  "answer": "",
+  "sys_answer": "The context doesn't name any journal. Deborah says she uses a daily schedule/to-do list and the Eisenhower Matrix (sorting tasks by urgency and importance) to stay organized.",
+  "refusal": false,
+  "secs": 9.7
+ },
+ {
+  "id": "conv-48_q218",
+  "conv": "conv-48",
+  "question": "What game did Jolene recommend to Deborah for being thrilling and intense?",
+  "answer": "",
+  "sys_answer": "The context doesn't explicitly say. Jolene recommended Zelda BOTW (awesome open-world), Animal Crossing: New Horizons (calming and cute), and Overcooked 2 (hilarious and chaotic co-op), but none are described as thrilling and intense. The closest is Battlefield 1, which she only mentioned playing, not recommending.",
+  "refusal": false,
+  "secs": 10.9
+ },
+ {
+  "id": "conv-48_q219",
+  "conv": "conv-48",
+  "question": "What game did Deborah suggest as an awesome open-world game for the Nintendo Switch?",
+  "answer": "",
+  "sys_answer": "Deborah did not suggest it; Jolene did. Jolene recommended \"Zelda BOTW\" (The Legend of Zelda: Breath of the Wild) for Switch as an awesome open-world game.",
+  "refusal": false,
+  "secs": 18.3
+ },
+ {
+  "id": "conv-48_q220",
+  "conv": "conv-48",
+  "question": "What is special about the bench at the park near Jolene's house?",
+  "answer": "",
+  "sys_answer": "The context doesn't describe any special bench at a park near Jolene's house. The bench belongs to Deborah: it's at the park near her house, where she and her mom would chat about dreams and life, and it holds many treasured memories, such as watching a sunset together in silence.",
+  "refusal": false,
+  "secs": 10.7
+ },
+ {
+  "id": "conv-48_q221",
+  "conv": "conv-48",
+  "question": "What did Jolene and her mom chat about at their special bench in the park?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Jolene had a special bench with her mom. It was Deborah who said she and her mom would sit on the special bench in the park and chat about dreams and life.",
+  "refusal": true,
+  "secs": 10.3
+ },
+ {
+  "id": "conv-48_q222",
+  "conv": "conv-48",
+  "question": "How did Deborah feel after receiving positive feedback at the virtual conference?",
+  "answer": "",
+  "sys_answer": "Deborah didn't present at the virtual conference; Jolene did. Jolene felt thrilled and rewarded by the positive feedback, and Deborah was proud of her and supportive.",
+  "refusal": false,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-48_q223",
+  "conv": "conv-48",
+  "question": "What kind of event did Deborah present at recently?",
+  "answer": "",
+  "sys_answer": "The context does not say Deborah presented at any event. The presentation at a virtual conference was by Jolene. The closest thing for Deborah is that she and her neighbor ran a free community gardening class on 2023-09-16.",
+  "refusal": true,
+  "secs": 26.4
+ },
+ {
+  "id": "conv-48_q224",
+  "conv": "conv-48",
+  "question": "What did Deborah's mom stress the value of, which she wants to keep in mind for her engineering projects?",
+  "answer": "",
+  "sys_answer": "Helping others. The context says this was Jolene's mom (Jolene is the engineer), not Deborah's mom.",
+  "refusal": false,
+  "secs": 10.5
+ },
+ {
+  "id": "conv-48_q225",
+  "conv": "conv-48",
+  "question": "What type of projects is Deborah interested in getting involved in the future?",
+  "answer": "",
+  "sys_answer": "The context does not say what future projects Deborah wants to join. It was Jolene who described her interests: sustainable projects, specifically renewable energy such as solar power, and supplying clean water to communities with limited access. Deborah's own stated goals are to keep teaching yoga and supporting her community, through things like a community cleanup and a gardening class.",
+  "refusal": true,
+  "secs": 21.4
+ },
+ {
+  "id": "conv-48_q226",
+  "conv": "conv-48",
+  "question": "How did Jolene get Luna, one of her cats?",
+  "answer": "",
+  "sys_answer": "Luna is not Jolene's cat. She is Deborah's, and Deborah got her from a shelter. Jolene has snakes, Susie and Seraphim, not cats.",
+  "refusal": false,
+  "secs": 12.1
+ },
+ {
+  "id": "conv-48_q227",
+  "conv": "conv-48",
+  "question": "What type of classes did Deborah and her partner check out during their trip to Rio de Janeiro on 30 August, 2023?",
+  "answer": "",
+  "sys_answer": "Yoga classes. Note that it was Jolene and her partner who took the Rio de Janeiro trip, not Deborah.",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-48_q228",
+  "conv": "conv-48",
+  "question": "Why did Deborah get the new plant on 30 August, 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say. It has no mention of Deborah getting a new plant on 30 August 2023, so the reason cannot be determined.",
+  "refusal": true,
+  "secs": 7.0
+ },
+ {
+  "id": "conv-48_q229",
+  "conv": "conv-48",
+  "question": "How did Jolene's mom support her yoga practice when she first started?",
+  "answer": "",
+  "sys_answer": "The context says nothing about Jolene's mom supporting her yoga. It was Deborah's mom who did: she was Deborah's biggest fan and source of motivation and often came to her yoga classes with her. Jolene's mom is only mentioned as playing video games with her and teaching her to never give up.",
+  "refusal": false,
+  "secs": 9.1
+ },
+ {
+  "id": "conv-48_q230",
+  "conv": "conv-48",
+  "question": "What was the video game console that Deborah's parents got her at age 10?",
+  "answer": "",
+  "sys_answer": "The context does not say. It was Jolene, not Deborah, whose parents gave her something at age 10 that started her love of video games, and the console is not named. Nothing indicates Deborah's parents gave her a console.",
+  "refusal": true,
+  "secs": 8.9
+ },
+ {
+  "id": "conv-48_q231",
+  "conv": "conv-48",
+  "question": "What was one of Deborah's favorite games to play with her mom on the PlayStation game system?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Deborah played games with her mom. It was Jolene who played with her mom, and one of her favorites was \"Monster Hunter: World\". Deborah played detective games with her husband. No PlayStation is mentioned.",
+  "refusal": true,
+  "secs": 14.2
+ },
+ {
+  "id": "conv-48_q232",
+  "conv": "conv-48",
+  "question": "Where did Deborah and her partner travel for a few weeks in September 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say. No memory describes Deborah and her partner traveling for a few weeks in September 2023; it only mentions her yoga getaway being canceled due to a storm (Sept 8, 2023).",
+  "refusal": true,
+  "secs": 14.7
+ },
+ {
+  "id": "conv-48_q233",
+  "conv": "conv-48",
+  "question": "What did Jolene do with their mom's old friends?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Jolene did anything with her mom's old friends. It was Deborah who reconnected with her mom's old friends (session of 2023-09-15), reminisced with them and looked through her mom's photos. Jolene only listened and responded supportively.",
+  "refusal": true,
+  "secs": 16.3
+ },
+ {
+  "id": "conv-48_q234",
+  "conv": "conv-48",
+  "question": "Where did Jolene get married?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Jolene got married. She only mentions a partner. It was Deborah who said she got married at a special beach (where she also discovered surfing), though no specific location name is given.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-48_q235",
+  "conv": "conv-48",
+  "question": "What new activity did Jolene and her neighbor organize for the community on 16 September, 2023?",
+  "answer": "",
+  "sys_answer": "A free gardening class for the community (people of all ages joined). Note: the context says it was Deborah, not Jolene, who organized it with her neighbor.",
+  "refusal": false,
+  "secs": 23.4
+ },
+ {
+  "id": "conv-48_q236",
+  "conv": "conv-48",
+  "question": "What food did Jolene's mom make for her on holidays?",
+  "answer": "",
+  "sys_answer": "The context doesn't say what food Jolene's mom made on holidays. The only related details are about Deborah's mom, who baked pineapple birthday cakes, and Jolene saying she used to bake cookies with someone close to her, with no mention of holidays.",
+  "refusal": true,
+  "secs": 16.3
+ },
+ {
+  "id": "conv-48_q237",
+  "conv": "conv-48",
+  "question": "What kind of cookies did Deborah used to bake with someone close to her?",
+  "answer": "",
+  "sys_answer": "Deborah isn't the one who baked cookies. Jolene did, with someone close to her, and her favorite was a warm, gooey chocolate and soft, buttery cookie. Deborah's baking memory was of her mom making pineapple birthday cakes.",
+  "refusal": false,
+  "secs": 14.4
+ },
+ {
+  "id": "conv-48_q238",
+  "conv": "conv-48",
+  "question": "What activity did Jolene enjoy at the music festival with their pals on September 20, 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say what Jolene did at a music festival with pals on September 20, 2023. No memory mentions that event.",
+  "refusal": true,
+  "secs": 7.8
+ },
+ {
+  "id": "conv-49_q156",
+  "conv": "conv-49",
+  "question": "What type of car did Sam get after his old Prius broke down?",
+  "answer": "",
+  "sys_answer": "It was Evan, not Sam, whose old Prius broke down. Evan replaced it with a new Prius. The context does not say Sam got a car after a Prius broke down.",
+  "refusal": true,
+  "secs": 8.3
+ },
+ {
+  "id": "conv-49_q157",
+  "conv": "conv-49",
+  "question": "How did Sam get into watercolor painting?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Sam got into watercolor painting. It is Evan who does watercolors: a friend got Evan into it, gave him advice, and gave him a painting that inspired him. Sam has only talked about wanting to try painting and occasionally sketches.",
+  "refusal": true,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-49_q158",
+  "conv": "conv-49",
+  "question": "What did Sam start doing a few years back as a stress-buster?",
+  "answer": "",
+  "sys_answer": "Watercolor painting. Note that it was Evan, not Sam, who started it a few years back as a stress-buster; Sam was only thinking about trying painting.",
+  "refusal": false,
+  "secs": 6.7
+ },
+ {
+  "id": "conv-49_q159",
+  "conv": "conv-49",
+  "question": "Where did Sam take his family for a road trip on 24 May, 2023?",
+  "answer": "",
+  "sys_answer": "Jasper. The context shows it was actually Evan, not Sam, who took his family on that road trip, driving through the Icefields Parkway.",
+  "refusal": false,
+  "secs": 12.4
+ },
+ {
+  "id": "conv-49_q160",
+  "conv": "conv-49",
+  "question": "What did Sam find relaxing about his road trip to Jasper?",
+  "answer": "",
+  "sys_answer": "Sam didn't take the Jasper trip; Evan did. Evan found it relaxing because of the fresh air, the peacefulness, and a cozy cabin surrounded by mountains and forests.",
+  "refusal": false,
+  "secs": 12.6
+ },
+ {
+  "id": "conv-49_q161",
+  "conv": "conv-49",
+  "question": "What habit is Evan trying to change in terms of diet?",
+  "answer": "",
+  "sys_answer": "The context doesn't name a specific dietary habit that Evan is trying to change. He says he made smarter diet choices and changed his diet, and he is trying healthier snacks and recipes. The cravings for sugary drinks and snacks that appear in the context belong to Sam, not Evan.",
+  "refusal": false,
+  "secs": 9.3
+ },
+ {
+  "id": "conv-49_q162",
+  "conv": "conv-49",
+  "question": "What frustrating issue did Evan face at the supermarket?",
+  "answer": "",
+  "sys_answer": "The context contains no supermarket issue for Evan. It was Sam who had trouble with the self-checkout at the store (Dec 31, 2023); Evan said he had never had a problem with it.",
+  "refusal": false,
+  "secs": 18.6
+ },
+ {
+  "id": "conv-49_q163",
+  "conv": "conv-49",
+  "question": "What novel is Sam reading that he finds gripping?",
+  "answer": "",
+  "sys_answer": "The context does not name any novel. The only book mentioned is one Evan was reading (Sam said he was interested in it), and its title is never stated.",
+  "refusal": true,
+  "secs": 20.6
+ },
+ {
+  "id": "conv-49_q164",
+  "conv": "conv-49",
+  "question": "What does the smartwatch help Sam with?",
+  "answer": "",
+  "sys_answer": "The context never names a smartwatch or says Sam owns one. The device Evan describes, which Sam was considering buying, tracks progress toward health goals and acts as a constant, motivating reminder to keep going.",
+  "refusal": false,
+  "secs": 11.3
+ },
+ {
+  "id": "conv-49_q165",
+  "conv": "conv-49",
+  "question": "Why did Sam decide to get the bonsai tree?",
+  "answer": "",
+  "sys_answer": "The context does not mention Sam getting a bonsai tree. The closest evidence is a 2023-08-07 chat in which Evan, not Sam, says he got an unnamed item because it symbolizes strength and resilience, and caring for it keeps him motivated through tough times. If that item is the bonsai, that would be the reason, but the context never says so.",
+  "refusal": true,
+  "secs": 7.7
+ },
+ {
+  "id": "conv-49_q166",
+  "conv": "conv-49",
+  "question": "What did Sam mention he had been searching for fruitlessly for half an hour?",
+  "answer": "",
+  "sys_answer": "Keys. It was actually Evan (not Sam) who said, on 2023-08-13, that he had been searching for his keys for half an hour with no luck.",
+  "refusal": false,
+  "secs": 7.9
+ },
+ {
+  "id": "conv-49_q167",
+  "conv": "conv-49",
+  "question": "What class is Evan taking to learn how to make healthier meals?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Evan taking any class to learn how to make healthier meals. The only class he is mentioned taking is a watercolor painting class (started around August 2023).",
+  "refusal": false,
+  "secs": 16.6
+ },
+ {
+  "id": "conv-49_q168",
+  "conv": "conv-49",
+  "question": "What dish did Sam make on 18 August, 2023 that turned out bland?",
+  "answer": "",
+  "sys_answer": "The context does not say. The closest is the grilled chicken and veggie stir-fry Sam mentioned on 19 August 2023, but it was described as flavorful, not bland.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-49_q169",
+  "conv": "conv-49",
+  "question": "What food did Evan share a photo of on 19 August, 2023?",
+  "answer": "",
+  "sys_answer": "Evan did not share a food photo that day according to the context. The food photo in that 19 August 2023 conversation was Sam's grilled chicken and veggie stir-fry (Evan shared a landscape painting). If the question assumes Evan shared it, the closest match is the grilled chicken and veggie stir-fry.",
+  "refusal": false,
+  "secs": 36.2
+ },
+ {
+  "id": "conv-49_q170",
+  "conv": "conv-49",
+  "question": "What did Evan start sculpting years ago due to being inspired by a friend's gift?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Evan sculpting. It says a friend's gift of a painting inspired him to start painting (watercolor) years ago, so the answer is likely painting, not sculpting.",
+  "refusal": false,
+  "secs": 9.3
+ },
+ {
+  "id": "conv-49_q171",
+  "conv": "conv-49",
+  "question": "What nature concept do watercolor painting classes emphasize according to Sam?",
+  "answer": "",
+  "sys_answer": "Observing nature and painting what you see. Note: it was Evan, not Sam, who said this (2023-08-19): the instructor stresses observing nature and painting what we see.",
+  "refusal": false,
+  "secs": 11.9
+ },
+ {
+  "id": "conv-49_q172",
+  "conv": "conv-49",
+  "question": "What type of landscapes does Sam love painting the most?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Sam paints a favorite type of landscape. Sam has only considered painting and sketches occasionally. It is Evan who loves painting landscapes, nature scenes that capture the peacefulness of being outdoors (done in watercolors).",
+  "refusal": true,
+  "secs": 13.3
+ },
+ {
+  "id": "conv-49_q173",
+  "conv": "conv-49",
+  "question": "What sports activity has Sam been doing to stay active while dealing with the knee injury?",
+  "answer": "",
+  "sys_answer": "Sam didn't have a knee injury; Evan did. Evan stayed active by swimming (plus physical therapy exercises). Sam's own routine was a new diet and exercise plan, with yoga and low-impact exercise later.",
+  "refusal": false,
+  "secs": 6.3
+ },
+ {
+  "id": "conv-49_q174",
+  "conv": "conv-49",
+  "question": "What activity does Sam do to keep himself busy while healing his knee?",
+  "answer": "",
+  "sys_answer": "Sam didn't have a knee injury; Evan did. Evan kept busy with watercolor painting while healing his knee (plus easy PT exercises, and swimming earlier). Sam himself mentions journaling/creative writing and learning to draw.",
+  "refusal": false,
+  "secs": 10.2
+ },
+ {
+  "id": "conv-49_q175",
+  "conv": "conv-49",
+  "question": "What kind of writing does Evan enjoy as a form of expression?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Evan enjoys writing. It is Sam who enjoys writing in a journal and creative writing as a form of expression. Evan expresses himself through watercolor painting.",
+  "refusal": true,
+  "secs": 12.4
+ },
+ {
+  "id": "conv-49_q176",
+  "conv": "conv-49",
+  "question": "What electronics issue has been frustrating Evan lately?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention an electronics issue for Evan. The malfunctioning phone navigation app was Sam's problem (Oct 2023). Evan's frustration was his new Prius breaking down (Dec 2023), which is a car problem rather than an electronics one.",
+  "refusal": false,
+  "secs": 20.7
+ },
+ {
+  "id": "conv-49_q177",
+  "conv": "conv-49",
+  "question": "What activity did Evan quit one year ago?",
+  "answer": "",
+  "sys_answer": "The context does not say Evan quit any activity one year ago. The only related detail is that he started lifting weights about a year before October 2023, which is not quitting.",
+  "refusal": true,
+  "secs": 6.7
+ },
+ {
+  "id": "conv-49_q178",
+  "conv": "conv-49",
+  "question": "Where did Sam and his mate plan to try skydiving?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of Sam and a mate planning to go skydiving, so no location can be given.",
+  "refusal": true,
+  "secs": 6.8
+ },
+ {
+  "id": "conv-49_q179",
+  "conv": "conv-49",
+  "question": "What digestive issue did Evan experience lately?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Evan had a digestive issue. It was Sam who had gastritis (a severe stomachache that sent him to the ER) around mid-October 2023. Evan's only health scare was a check-up misunderstanding in November 2023.",
+  "refusal": true,
+  "secs": 7.6
+ },
+ {
+  "id": "conv-49_q180",
+  "conv": "conv-49",
+  "question": "How did Sam start his transformation journey two years ago?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Sam started a transformation two years ago. It was Evan who, around 2021, changed his diet and started walking regularly. Sam's own journey began in 2023 after a doctor's check-up flagged his weight, when he began a diet and exercise routine.",
+  "refusal": true,
+  "secs": 11.5
+ },
+ {
+  "id": "conv-49_q181",
+  "conv": "conv-49",
+  "question": "What gift did Sam receive from a close friend?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Sam receiving a gift from a close friend. It was Evan who received a 1968 Kustom K-200A vintage guitar from a close friend (mentioned on 2023-11-09).",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-49_q182",
+  "conv": "conv-49",
+  "question": "How does Sam describe the island he grew up on?",
+  "answer": "",
+  "sys_answer": "The question has a mistake: it was Evan, not Sam, who grew up on the island. Sam described Evan's island as gorgeous, peaceful and stunning, soul-calming, heavenly, and a peaceful retreat. Evan called it his happy place, serene and calming, a little slice of paradise.",
+  "refusal": false,
+  "secs": 11.2
+ },
+ {
+  "id": "conv-49_q183",
+  "conv": "conv-49",
+  "question": "What was the main reason for Evan's frustration with his new Prius getting stolen?",
+  "answer": "",
+  "sys_answer": "The context does not say Evan's new Prius was stolen. It says the new Prius broke down (Dec 5, 2023), and Evan was frustrated because he relies on it for his active lifestyle and road trips and expected it to be reliable.",
+  "refusal": true,
+  "secs": 18.8
+ },
+ {
+  "id": "conv-49_q184",
+  "conv": "conv-49",
+  "question": "What family event is Sam planning for next summer?",
+  "answer": "",
+  "sys_answer": "The context doesn't show Sam planning a family event. It was Evan who said (Dec 2023) that he is planning a big family reunion for next summer (summer 2024); Sam only offered to help with organizing tips.",
+  "refusal": false,
+  "secs": 8.8
+ },
+ {
+  "id": "conv-49_q185",
+  "conv": "conv-49",
+  "question": "What is the motto of Sam's family?",
+  "answer": "",
+  "sys_answer": "The context doesn't give a motto for Sam's family. The only motto mentioned is 'Bring it on Home', which is Evan's family motto, from their Banff trip.",
+  "refusal": false,
+  "secs": 34.7
+ },
+ {
+  "id": "conv-49_q186",
+  "conv": "conv-49",
+  "question": "Who helped Sam get the painting published in the exhibition?",
+  "answer": "",
+  "sys_answer": "A close friend of Evan's (the girl standing next to the painting) helped get the painting published in the exhibition. Note that it was Evan's painting, not Sam's, and the friend is not named in the context.",
+  "refusal": false,
+  "secs": 5.7
+ },
+ {
+  "id": "conv-49_q187",
+  "conv": "conv-49",
+  "question": "How did Sam feel when he painted the piece with the bird flying over it?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of Sam painting a piece with a bird flying over it, or of how he felt painting it.",
+  "refusal": true,
+  "secs": 16.9
+ },
+ {
+  "id": "conv-49_q188",
+  "conv": "conv-49",
+  "question": "How did Sam describe the process of creating the painting with the bird flying over it?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of a painting with a bird flying over it, and Sam never describes creating a painting. He only says he sketches occasionally and has not made anything remarkable yet.",
+  "refusal": true,
+  "secs": 6.1
+ },
+ {
+  "id": "conv-49_q189",
+  "conv": "conv-49",
+  "question": "What did Evan and his partner keep from their extended family on January 5, 2024?",
+  "answer": "",
+  "sys_answer": "They kept their marriage a secret from their extended family until they told them on January 5, 2024.",
+  "refusal": false,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-49_q190",
+  "conv": "conv-49",
+  "question": "What was Sam limiting himself to on his new diet?",
+  "answer": "",
+  "sys_answer": "The context doesn't explicitly say, but it implies Sam was cutting back on sugary drinks and snacks (he struggled with cravings for them), while eating healthier meals like grilled chicken and veggie stir-fry.",
+  "refusal": false,
+  "secs": 8.6
+ },
+ {
+  "id": "conv-49_q191",
+  "conv": "conv-49",
+  "question": "What dance activity did Evan and his partner try in a recent weekend?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention any dance activity. The only recent weekend activity Evan and his partner tried was snowshoeing (per the 2024-01-10 conversation), which is not a dance.",
+  "refusal": false,
+  "secs": 7.9
+ },
+ {
+  "id": "conv-49_q192",
+  "conv": "conv-49",
+  "question": "What suggestions did Evan give for high-impact exercises?",
+  "answer": "",
+  "sys_answer": "The context contains no high-impact exercise suggestions from Evan. He recommended low-impact options: swimming, yoga, walking and beach sunset walks. For general fitness he suggested setting goals such as a running distance or number of push-ups, weight lifting with a trainer, and hiking together, but none of these were framed as high-impact exercises.",
+  "refusal": false,
+  "secs": 14.9
+ },
+ {
+  "id": "conv-49_q193",
+  "conv": "conv-49",
+  "question": "What movie did Evan watch that motivated him to keep up with his routine?",
+  "answer": "",
+  "sys_answer": "The Godfather. Note that it was actually Sam who watched it and found it motivating (session of 2024-01-10); Evan just agreed it is a legendary film.",
+  "refusal": false,
+  "secs": 8.3
+ },
+ {
+  "id": "conv-49_q194",
+  "conv": "conv-49",
+  "question": "What activity hindered Evan's stress and flexibility?",
+  "answer": "",
+  "sys_answer": "Yoga. The context does not describe any activity that hindered his stress or flexibility. Evan says yoga helped him with stress and flexibility.",
+  "refusal": true,
+  "secs": 8.0
+ },
+ {
+  "id": "conv-49_q195",
+  "conv": "conv-49",
+  "question": "What did Sam share a photo of that was taken on a camping trip?",
+  "answer": "",
+  "sys_answer": "Sam didn't share a camping trip photo. It was Evan who shared one, a sunset he photographed while kayaking on a lake during a camping trip last summer (2023). Sam's photo was a countryside shot from a car ride.",
+  "refusal": false,
+  "secs": 12.7
+ },
+ {
+  "id": "conv-50_q158",
+  "conv": "conv-50",
+  "question": "Which DJ was Dave's favorite at the music festival in April 2023?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention any DJ. Dave's favorite at the music festival he attended in Boston (late March 2023, not April) was the band Aerosmith, not a DJ.",
+  "refusal": false,
+  "secs": 16.5
+ },
+ {
+  "id": "conv-50_q159",
+  "conv": "conv-50",
+  "question": "What advice did Calvin receive from the chef at the music festival?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention any chef. At the Tokyo music festival, it was a music producer who advised Calvin to stay true to himself and sound unique.",
+  "refusal": false,
+  "secs": 5.5
+ },
+ {
+  "id": "conv-50_q160",
+  "conv": "conv-50",
+  "question": "What is Calvin's new business venture as of 1 May, 2023?",
+  "answer": "",
+  "sys_answer": "The context does not state a new business venture for Calvin as of 1 May 2023. It only shows that Calvin is a musician who bought a mansion and planned a Tokyo trip and performance. The car shop that opened in May 2023 was Dave's, not Calvin's.",
+  "refusal": true,
+  "secs": 10.4
+ },
+ {
+  "id": "conv-50_q161",
+  "conv": "conv-50",
+  "question": "What type of cars does Calvin work on at his shop?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Calvin works on cars at a shop. Calvin is a musician who owns a Ferrari. It was Dave who opened a car shop and restores and modifies cars (such as a vintage Mustang), so the question may mean Dave.",
+  "refusal": true,
+  "secs": 5.8
+ },
+ {
+  "id": "conv-50_q162",
+  "conv": "conv-50",
+  "question": "What did Dave receive as a gift from another artist?",
+  "answer": "",
+  "sys_answer": "The context does not say Dave received a gift from another artist. The only artist-made item mentioned is Calvin's custom octopus guitar, made by his Japanese artist friend, which belongs to Calvin, not Dave.",
+  "refusal": true,
+  "secs": 10.9
+ },
+ {
+  "id": "conv-50_q163",
+  "conv": "conv-50",
+  "question": "What was the necklace Dave received meant to remind him of?",
+  "answer": "",
+  "sys_answer": "The context does not contain any information about a necklace Dave received or what it was meant to remind him of.",
+  "refusal": true,
+  "secs": 15.7
+ },
+ {
+  "id": "conv-50_q164",
+  "conv": "conv-50",
+  "question": "What did Calvin open in May 2023?",
+  "answer": "",
+  "sys_answer": "The context does not show Calvin opening anything in May 2023. It was Dave who opened a car shop (around the week before May 16, 2023). Calvin mentioned a flooded home, a Tokyo performance, and touring with Frank Ocean.",
+  "refusal": true,
+  "secs": 7.9
+ },
+ {
+  "id": "conv-50_q165",
+  "conv": "conv-50",
+  "question": "What gives Calvin a sense of achievement and purpose?",
+  "answer": "",
+  "sys_answer": "Music is what gives Calvin his sense of purpose and achievement: performing live, creating music that connects with people, and collaborating with other artists. He also says fixing cars gives him a sense of achievement, though the 'achievement and purpose' wording is Dave's description of his own fixing hobby.",
+  "refusal": false,
+  "secs": 8.7
+ },
+ {
+  "id": "conv-50_q166",
+  "conv": "conv-50",
+  "question": "What sports activity is Dave planning to try after the tour with Frank Ocean?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Dave plans any sports activity after the tour. It was Calvin who said he might try skiing (in Japan, after his Frank Ocean tour ends).",
+  "refusal": true,
+  "secs": 17.7
+ },
+ {
+  "id": "conv-50_q167",
+  "conv": "conv-50",
+  "question": "How does Calvin describe his process of adding acoustic elements to his songs?",
+  "answer": "",
+  "sys_answer": "The context doesn't mention Calvin adding acoustic elements. He only talks about adding electronic elements, which he says give his songs a fresh vibe and make the process an exciting one of self-discovery and growth, while he balances staying true to his sound with trying new things.",
+  "refusal": false,
+  "secs": 18.4
+ },
+ {
+  "id": "conv-50_q168",
+  "conv": "conv-50",
+  "question": "What clothing brand does Calvin own that he is proud of?",
+  "answer": "",
+  "sys_answer": "The context does not say that Calvin owns a clothing brand. He mentions growing his own music brand and is proud of his Ferrari, but no clothing brand is named.",
+  "refusal": true,
+  "secs": 5.8
+ },
+ {
+  "id": "conv-50_q169",
+  "conv": "conv-50",
+  "question": "What workshop did Calvin get picked for on 11 August, 2023?",
+  "answer": "",
+  "sys_answer": "It was actually Dave who was picked on 11 August 2023, for a car mod workshop (focused on auto engineering and custom car modifications). Calvin was the one congratulating him.",
+  "refusal": false,
+  "secs": 8.2
+ },
+ {
+  "id": "conv-50_q170",
+  "conv": "conv-50",
+  "question": "What kind of modifications has Calvin been working on in the car mod workshop?",
+  "answer": "",
+  "sys_answer": "Calvin wasn't working on modifications in a car mod workshop; it was Dave. Dave's work was on a classic muscle car: engine swaps, suspension modifications, and learning body modifications (a modern twist with a silver finish).",
+  "refusal": false,
+  "secs": 7.6
+ },
+ {
+  "id": "conv-50_q171",
+  "conv": "conv-50",
+  "question": "What type of car did Calvin work on during the workshop?",
+  "answer": "",
+  "sys_answer": "The context does not say Calvin worked on a car in a workshop. It was Dave who attended the car mod workshop, where he worked on a classic muscle car given a modern twist with a silver finish. Calvin only owns a Ferrari.",
+  "refusal": true,
+  "secs": 23.4
+ },
+ {
+  "id": "conv-50_q172",
+  "conv": "conv-50",
+  "question": "What did Dave and his friends record in August 2023?",
+  "answer": "",
+  "sys_answer": "A podcast about the rapidly evolving rap industry (recorded around August 21, 2023). In the memory, this was Calvin and his friends who recorded it, not Dave; Dave's August activity with friends was a card night.",
+  "refusal": false,
+  "secs": 26.2
+ },
+ {
+  "id": "conv-50_q173",
+  "conv": "conv-50",
+  "question": "Where did Dave start shooting a video for his new album?",
+  "answer": "",
+  "sys_answer": "Miami, on a beach. Note that it was Calvin, not Dave, who started shooting the video for his new album there (around late August 2023).",
+  "refusal": false,
+  "secs": 8.0
+ },
+ {
+  "id": "conv-50_q174",
+  "conv": "conv-50",
+  "question": "What design is featured on Dave's guitar?",
+  "answer": "",
+  "sys_answer": "The context doesn't describe any design on Dave's guitar. The guitar with an octopus design (a purple, shiny custom guitar made by a Japanese artist friend) belongs to Calvin, not Dave.",
+  "refusal": false,
+  "secs": 10.7
+ },
+ {
+  "id": "conv-50_q175",
+  "conv": "conv-50",
+  "question": "Why did Dave get his guitar customized with a shiny finish?",
+  "answer": "",
+  "sys_answer": "The premise is mistaken: it was Calvin, not Dave, who had the guitar customized. Calvin chose the shiny finish because it gives the guitar a unique look and matches his style.",
+  "refusal": false,
+  "secs": 5.5
+ },
+ {
+  "id": "conv-50_q176",
+  "conv": "conv-50",
+  "question": "What color glow did Dave customize his guitar with?",
+  "answer": "",
+  "sys_answer": "Purple. Note, though, that the customized guitar with the purple glow belongs to Calvin, not Dave; Dave only complimented it.",
+  "refusal": false,
+  "secs": 22.8
+ },
+ {
+  "id": "conv-50_q177",
+  "conv": "conv-50",
+  "question": "Where did Calvin come back from with insights on car modification on 1st September 2023?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. No memory from 1 September 2023 describes Calvin returning from anywhere with car modification insights. The nearby car-related trips are Dave's (a car workshop in San Francisco in August 2023, and a Detroit conference in October 2023), so the question may be mixing up the two people.",
+  "refusal": true,
+  "secs": 7.3
+ },
+ {
+  "id": "conv-50_q178",
+  "conv": "conv-50",
+  "question": "What emotion does Calvin mention feeling when he sees the relief of someone whose car he fixed?",
+  "answer": "",
+  "sys_answer": "The context does not say. No memory has Calvin describing an emotion on seeing the relief of someone whose car he fixed. The closest is that he says fixing cars gives him a sense of achievement and calms him, but this is not linked to anyone's relief.",
+  "refusal": true,
+  "secs": 14.1
+ },
+ {
+  "id": "conv-50_q179",
+  "conv": "conv-50",
+  "question": "What did Dave book a flight ticket for on 1st September 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say what Dave booked a flight ticket for on 1 September 2023; no memory mentions it.",
+  "refusal": true,
+  "secs": 7.4
+ },
+ {
+  "id": "conv-50_q180",
+  "conv": "conv-50",
+  "question": "Which horror movie did Dave mention as one of his favorites?",
+  "answer": "",
+  "sys_answer": "The context does not mention any horror movie that Dave named as a favorite.",
+  "refusal": true,
+  "secs": 11.3
+ },
+ {
+  "id": "conv-50_q181",
+  "conv": "conv-50",
+  "question": "Which song from the childhood of Dave brings back memories of a road trip with his dad?",
+  "answer": "",
+  "sys_answer": "\"California Love\" by Tupac and Dr. Dre. Note that in the conversation it was Calvin (not Dave) who said this song brings back memories of a road trip with his dad.",
+  "refusal": false,
+  "secs": 5.4
+ },
+ {
+  "id": "conv-50_q182",
+  "conv": "conv-50",
+  "question": "What car did Calvin work on in the junkyard?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no mention of Calvin working on a car in a junkyard.",
+  "refusal": true,
+  "secs": 15.1
+ },
+ {
+  "id": "conv-50_q183",
+  "conv": "conv-50",
+  "question": "What does Dave find satisfying about destroying old cars?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Dave destroys old cars; he restores them. What he finds satisfying is transforming broken, beat-up cars into running, beautiful ones, giving them a second chance, the sense of accomplishment, and seeing people's reactions to the finished product.",
+  "refusal": true,
+  "secs": 21.4
+ },
+ {
+  "id": "conv-50_q184",
+  "conv": "conv-50",
+  "question": "What does working on boats represent for Dave?",
+  "answer": "",
+  "sys_answer": "The context contains no information about Dave working on boats. It only describes his work on cars, which he says is like therapy, an escape from stress, and a source of fulfillment, accomplishment, and purpose.",
+  "refusal": true,
+  "secs": 6.6
+ },
+ {
+  "id": "conv-50_q185",
+  "conv": "conv-50",
+  "question": "What does Dave aim to do with his passion for cooking?",
+  "answer": "",
+  "sys_answer": "The context does not mention Dave having a passion for cooking. His passion is for cars (restoring and modifying them, running a car shop, blogging about it), and he also plays in a rock band.",
+  "refusal": true,
+  "secs": 12.3
+ },
+ {
+  "id": "conv-50_q186",
+  "conv": "conv-50",
+  "question": "What did Calvin recently get that is a \"masterpiece on canvas\"?",
+  "answer": "",
+  "sys_answer": "The context does not say. No memory mentions Calvin getting something described as a 'masterpiece on canvas'.",
+  "refusal": true,
+  "secs": 6.4
+ },
+ {
+  "id": "conv-50_q187",
+  "conv": "conv-50",
+  "question": "Who headlined the music festival that Calvin attended in October?",
+  "answer": "",
+  "sys_answer": "The context doesn't say. No music festival attended by Calvin in October is mentioned, so no headliner can be identified.",
+  "refusal": true,
+  "secs": 10.8
+ },
+ {
+  "id": "conv-50_q188",
+  "conv": "conv-50",
+  "question": "Which part of Tokyo is described as Tokyo's Times Square by Dave?",
+  "answer": "",
+  "sys_answer": "Shibuya Crossing. Note that it was Calvin, not Dave, who described it as Tokyo's Times Square (in the 2023-10-19 conversation).",
+  "refusal": false,
+  "secs": 10.0
+ },
+ {
+  "id": "conv-50_q189",
+  "conv": "conv-50",
+  "question": "What specific location in Tokyo does Calvin mention being excited to avoid?",
+  "answer": "",
+  "sys_answer": "The context does not say Calvin wants to avoid any specific location in Tokyo. He only mentions being excited to visit Shibuya Crossing and Shinjuku.",
+  "refusal": true,
+  "secs": 16.4
+ },
+ {
+  "id": "conv-50_q190",
+  "conv": "conv-50",
+  "question": "When did Calvin sell the car he restored last year?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Calvin sold a restored car. It was Dave who said (in a conversation on 2023-10-23) that he restored a car \"last year\" (i.e., 2022) and sold it to a collector; no exact sale date is given.",
+  "refusal": true,
+  "secs": 15.9
+ },
+ {
+  "id": "conv-50_q191",
+  "conv": "conv-50",
+  "question": "When did Calvin first get interested in motorcycles?",
+  "answer": "",
+  "sys_answer": "The context does not say when Calvin first got interested in motorcycles. Motorcycles are not mentioned anywhere; Calvin only talks about cars (a Ferrari and a luxury car) and music.",
+  "refusal": true,
+  "secs": 5.9
+ },
+ {
+  "id": "conv-50_q192",
+  "conv": "conv-50",
+  "question": "What realization did the nightclub experience bring to Dave?",
+  "answer": "",
+  "sys_answer": "The context does not mention any nightclub experience or any realization Dave had from one, so I can't answer this.",
+  "refusal": true,
+  "secs": 17.5
+ },
+ {
+  "id": "conv-50_q193",
+  "conv": "conv-50",
+  "question": "What did Dave do recently at his Japanese house?",
+  "answer": "",
+  "sys_answer": "Dave did not do anything at a Japanese house, because the Japanese house/mansion is Calvin's. Calvin threw a small party there (around late October 2023) for his new album, and Dave only congratulated him.",
+  "refusal": false,
+  "secs": 6.7
+ },
+ {
+  "id": "conv-50_q194",
+  "conv": "conv-50",
+  "question": "What did Calvin recently start a blog about?",
+  "answer": "",
+  "sys_answer": "Calvin didn't start a blog. It was Dave who recently started a blog about car mods (modifying cars). Calvin only gave him encouragement and asked about it.",
+  "refusal": false,
+  "secs": 12.4
+ },
+ {
+  "id": "conv-50_q195",
+  "conv": "conv-50",
+  "question": "What type of videos does Dave usually watch on his television?",
+  "answer": "",
+  "sys_answer": "The context doesn't say what Dave watches on TV. The TV-watching details are Calvin's: he watches music videos, concerts, and documentaries about artists and their creative process. The question may have mixed up the two.",
+  "refusal": true,
+  "secs": 16.5
+ },
+ {
+  "id": "conv-50_q196",
+  "conv": "conv-50",
+  "question": "What type of art has Dave been getting into lately?",
+  "answer": "",
+  "sys_answer": "Photography. Dave took up photography around November 2023, using a vintage camera to capture nature scenes like sunsets, beaches, waves and waterfalls.",
+  "refusal": false,
+  "secs": 5.6
+ },
+ {
+  "id": "conv-50_q197",
+  "conv": "conv-50",
+  "question": "What type of content does Dave post on his blog that inspired others to start their own cooking projects?",
+  "answer": "",
+  "sys_answer": "Dave's blog is about car mods, not cooking. He posted about how he made a car look like a beast (his car modification work), which inspired others to start their own DIY projects.",
+  "refusal": false,
+  "secs": 9.6
+ },
+ {
+  "id": "conv-50_q198",
+  "conv": "conv-50",
+  "question": "What kind of impact does Dave's blog on vegan recipes have on people?",
+  "answer": "",
+  "sys_answer": "The context contains no vegan recipes blog by Dave. His blog is about car mods, and it has inspired others to start their own DIY car projects and led people to ask him for advice.",
+  "refusal": false,
+  "secs": 16.1
+ },
+ {
+  "id": "conv-50_q199",
+  "conv": "conv-50",
+  "question": "Who did Dave invite to see him perform in Boston on 13 November, 2023?",
+  "answer": "",
+  "sys_answer": "The context does not say. There is no information about Dave inviting anyone to see him perform in Boston on 13 November 2023. The closest related detail is that Calvin was invited to perform at a show in Boston (mentioned 2023-11-17).",
+  "refusal": true,
+  "secs": 11.0
+ },
+ {
+  "id": "conv-50_q200",
+  "conv": "conv-50",
+  "question": "What new item did Calvin buy recently?",
+  "answer": "",
+  "sys_answer": "A new luxury car (a Ferrari), which he bought around March 2023.",
+  "refusal": false,
+  "secs": 15.8
+ },
+ {
+  "id": "conv-50_q201",
+  "conv": "conv-50",
+  "question": "What type of photos does Calvin like to capture with his new camera?",
+  "answer": "",
+  "sys_answer": "The context doesn't say Calvin has a new camera. Dave is the one who bought a new vintage camera, and he likes to photograph nature: sunsets, beaches, waves, and waterfalls and park scenes. Calvin only mentioned a photo he took in a Japanese garden.",
+  "refusal": true,
+  "secs": 8.8
+ },
+ {
+  "id": "conv-50_q202",
+  "conv": "conv-50",
+  "question": "What did Dave discuss with the cool artist he met at the gala?",
+  "answer": "",
+  "sys_answer": "Dave didn't attend the gala; Calvin did. Calvin talked with the artist about music and art, including their favorite artists, art, and how music connects people.",
+  "refusal": false,
+  "secs": 14.7
+ },
+ {
+  "id": "conv-50_q203",
+  "conv": "conv-50",
+  "question": "Where did Calvin take a stunning photo of a waterfall?",
+  "answer": "",
+  "sys_answer": "The context does not say Calvin took a waterfall photo. It was Dave who took the waterfall photo, at a serene spot in a nearby park (shared 2023-11-17). Calvin's photo from that conversation was of a Japanese garden.",
+  "refusal": true,
+  "secs": 8.1
+ }
+]
