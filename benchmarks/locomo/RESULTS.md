@@ -125,24 +125,25 @@ the #1230/#1235 governance. Answerer `claude-sonnet-5-5`, judge
 (Sonnet 5.x rejects <1), max_tokens 4000. Local box, zero LLM in the retrieval
 path; wall ~1.5 h for the full run.
 
-**Result — 1,540/1,540 answerable QA: 80.4% (1,238 correct).**
+**Result (as run) — 1,540/1,540 answerable QA: 80.4% (1,238 correct). Corrected headline: 74.5% (1,147/1,540) — see the correction below.**
 
-| Category | n | QA accuracy | retrieval any@5 (ref) |
-|---|---|---|---|
-| open-domain | 841 | 0.854 | 0.855 |
-| single-hop | 282 | 0.770 | 0.894 |
-| temporal | 321 | 0.748 | 0.816 |
-| multi-hop | 92 | 0.656 | 0.630 |
+| Category | n | QA accuracy (as run) | corrected | retrieval any@5 (ref) |
+|---|---|---|---|---|
+| open-domain | 841 | 0.854 | 0.772 | 0.855 |
+| single-hop | 282 | 0.770 | 0.755 | 0.894 |
+| temporal | 321 | 0.748 | 0.704 | 0.816 |
+| multi-hop | 96 | 0.656 | 0.615 | 0.630 |
 
 Per-conversation range 73.8%–95.1% (best conv-30 95.1%, conv-26 92.8%) — no
 single-unit anomaly.
 
-**Reading.** Multi-hop and temporal QA land at-or-above their retrieval
-any@5 — answers are often recoverable even when not all gold sessions reach
-top-5. Single-hop shows the largest QA-vs-retrieval gap (0.770 vs 0.894): most
-single-hop questions cite ~2.7 gold sessions and the judge is strict about
-enumeration completeness. Not apples-to-apples with any single-conversation or
-different-provider runs (e.g. earlier GLM answerer experiments at 86.0–86.8%).
+**Reading (as run).** Only multi-hop QA lands above its retrieval any@5
+(0.656 vs 0.630); temporal sits below it (0.748 vs 0.816). Single-hop shows the
+largest QA-vs-retrieval gap (0.770 vs 0.894): most single-hop questions cite
+~2.7 gold sessions and the judge is strict about enumeration completeness. Not
+apples-to-apples with any single-conversation or different-provider runs (e.g.
+earlier GLM answerer experiments at 86.0–86.8%). After the correction below, no
+category reaches its retrieval any@5.
 
 **Adversarial abstention (446 no-evidence QA, excluded above).** Custom pass
 reusing the run's store: regex-classified refusals 211/446 (47.3%); judge audit
@@ -151,6 +152,40 @@ regex-"concrete" answers were also refusals — yielding a corrected estimate of
 **~61% proper abstention (~272/446)**. The remaining ~39% fabricated answers are
 the abstention-layer headroom (prompt v2 teaches qualified abstention but does
 not enforce it).
+
+> **Correction (2026-11-09): judge-credited abstentions on answerable questions.**
+> The as-run 80.4% credits answers that abstain. Examples, all `correct=true`:
+> conv-43_q54 (gold "2022", answer "The context does not say when, or whether,
+> John took a trip…"), conv-43_q104 (gold "sage"), conv-43_q125, conv-44_q103,
+> conv-44_q104. An abstention on an answerable question is wrong; the adversarial
+> analysis above counts abstention as right only for unanswerable questions, so
+> the two are now scored consistently.
+>
+> Method: [`scripts/reclassify_abstention.py`](scripts/reclassify_abstention.py)
+> nominates `correct=true` rows whose answer's opening 50 characters match an
+> abstention pattern ("does not say", "not mentioned", "cannot be determined",
+> "no information", "not specified", "context does not", …). Only the answer is
+> searched: `judge_reason` and later hedges ("the exact date isn't specified")
+> also appear on concrete correct answers. Deterministic, stdlib-only; the raw
+> receipts are untouched and the derived rows are in
+> `results/qa-e2e-2026-11-08-reclassified.jsonl` (`reclassified: true`).
+>
+> Each nominated row was then read in full and labeled by hand
+> ([`scripts/abstention_labels.json`](scripts/abstention_labels.json)): ABSTAIN =
+> no candidate answer offered (flipped to false), HEDGED-ANSWER = opens with doubt
+> but then offers a candidate or inference (judge credit kept, `hedged_answer: true`).
+>
+> **Corrected headline: 74.5% (1,147/1,540); 91 rows reclassified** (as-run 80.4%,
+> 1,238, kept above as disclosure). Corrected per type: open-domain 649/841 =
+> 77.2%, single-hop 213/282 = 75.5%, temporal 226/321 = 70.4%, multi-hop
+> 59/96 = 61.5%. Disclosure: 13 hedged-answer rows stay credited (a hedge that
+> offers a concrete candidate for the question asked keeps the credit; an
+> explicit refusal of the question asked is flipped). The regex is a lower bound: abstentions phrased outside the
+> pattern (or opening past 50 characters) stay credited.
+>
+> Also fixed in this section: multi-hop n is 96 (not 92) and the total is 1,540
+> (not 1,536; 1,536 is the retrieval basis above), and the "at-or-above retrieval"
+> claim held only for multi-hop.
 
 **Raw artifacts (committed):** `results/qa-e2e-2026-11-08.jsonl` (per-question
 receipts), `results/adversarial-results.json` (446 answers + classification),
