@@ -379,6 +379,8 @@ impl crate::Uteke {
                 }
             }
             // The exact content in the target namespace, live or forgotten.
+            // Only a live copy (or a deprecated row over a forgotten one)
+            // is skipped; a live row whose copy was forgotten is inserted.
             let content_key = (
                 target_ns.clone(),
                 crate::provenance::content_hash(&entry.content),
@@ -395,11 +397,9 @@ impl crate::Uteke {
                     deduped += 1;
                     continue;
                 }
-                Some((_, true)) => {
-                    soft_deleted += 1;
-                    continue;
-                }
-                None => {}
+                // A live row over a forgotten copy is a new memory: a plain
+                // forget is recoverable, only `forget --reason` rejects (#1689).
+                Some((_, true)) | None => {}
             }
 
             // Re-embed the content with retry (consistent with remember path, #1005).
@@ -1489,17 +1489,6 @@ mod fidelity_tests {
     #[test]
     fn a_row_soft_deleted_in_the_target_is_not_resurrected() {
         let u = open_keyword();
-        // without an id: matched on exact content
-        let gone = u
-            .remember("deliberately forgotten text", &[], None, None)
-            .unwrap();
-        u.forget(&gone).unwrap();
-        let r = u
-            .import(r#"{"content":"deliberately forgotten text"}"#, None)
-            .unwrap();
-        assert_eq!((r.imported, r.soft_deleted_skipped), (0, 1), "{r:?}");
-        assert_eq!(u.count(None).unwrap(), 0, "nothing came back to life");
-
         // with the same id: matched on the id
         u.import(&fixture(), None).unwrap();
         u.forget(ID_B).unwrap();
@@ -1510,6 +1499,45 @@ mod fidelity_tests {
             "{r:?}"
         );
         assert!(u.get_by_id(ID_B).unwrap().unwrap().deprecated);
+    }
+
+    /// #1689: a plain forget is recoverable. Content without an id that was
+    /// forgotten imports as a new live row; the tombstone stays deprecated.
+    #[test]
+    fn an_anonymous_row_matching_a_forgotten_one_imports_as_a_new_live_row() {
+        let u = open_keyword();
+        let file = r#"{"content":"content forgotten then imported again"}"#;
+        assert_eq!(u.import(file, None).unwrap().imported, 1);
+        let first = u.list(None, 10, 0, None).unwrap()[0].id.clone();
+        u.forget(&first).unwrap();
+        assert_eq!(u.count(None).unwrap(), 0);
+        let r = u.import(file, None).unwrap();
+        assert_eq!((r.imported, r.soft_deleted_skipped), (1, 0), "{r:?}");
+        let live = u.list(None, 10, 0, None).unwrap();
+        assert_eq!(live.len(), 1);
+        assert_ne!(live[0].id, first, "a new row, not the tombstone");
+        assert!(u.get_by_id(&first).unwrap().unwrap().deprecated);
+        assert!(!live[0].deprecated);
+        // a third import is an exact duplicate of the live row again
+        let r = u.import(file, None).unwrap();
+        assert_eq!((r.imported, r.duplicates_skipped), (0, 1), "{r:?}");
+    }
+
+    /// A deprecated row in the file stays skipped over a forgotten copy.
+    #[test]
+    fn a_deprecated_row_over_a_forgotten_copy_is_skipped() {
+        let u = open_keyword();
+        let gone = u
+            .remember("forgotten at both ends", &[], None, None)
+            .unwrap();
+        u.forget(&gone).unwrap();
+        let r = u
+            .import(
+                r#"{"content":"forgotten at both ends","deprecated":true}"#,
+                None,
+            )
+            .unwrap();
+        assert_eq!((r.imported, r.duplicates_skipped), (0, 1), "{r:?}");
     }
 
     #[test]
