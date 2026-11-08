@@ -142,12 +142,14 @@ Same engine, two ways to run it.
 
 <sub>¹ Their published numbers on the same benchmark and 500-question split, on their own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory publishes MRR 88.2%, which is a different metric.</sub>
 
-**Stable across releases** (full 500 questions, scored from committed raw, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#four-release-stability-full-500-question-basis-scored-from-committed-raw)):
+**Stable across releases** (full 500 questions, scored from committed raw, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)):
 
-| Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
-|---|---|---|---|---|
-| recall_any@5 | 98.2% | 98.4% | 98.2% | 98.2% |
-| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% |
+| Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b |
+|---|---|---|---|---|---|
+| recall_any@5 | 98.2% | 98.4% | 98.2% | 98.2% | 98.2% |
+| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | 88.0% |
+
+<sub>Re-validated 2026-11-08 after the #1690 import fix: strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence.</sub>
 
 **By question type** (recall_any@5, v0.20.0):
 
