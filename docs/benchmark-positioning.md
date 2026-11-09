@@ -16,16 +16,19 @@ Presentation decisions already locked by the owner (Sep 2026):
 - the framework is **"publishable if reproducible"**;
 - competitor numbers are **always labeled cross-source** and never share a column
   with numbers from our own harness;
-- LoCoMo end-to-end (e2e) QA does not go to the README until the owner decides on a gate.
+- LoCoMo end-to-end (e2e) QA goes to the README only in a no-number format (promoted 2026-11-09, see the gate below).
 
 Two events in Nov 2026 reinforce that policy:
 
 1. **Regression fix (#1690).** After the fix, LongMemEval full-500 was re-validated
    on 2026-11-08: any@5 98.2%, strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50; four questions shifted partial gold ordering without losing all evidence.
 2. **LoCoMo e2e correction.** The first e2e QA run credited abstentions on answerable
-   questions. On 2026-11-09 the headline was corrected from 80.4% to **74.5%**
-   (91 rows reclassified; correction note in
-   [`benchmarks/locomo/RESULTS.md`](../benchmarks/locomo/RESULTS.md)).
+   questions. On 2026-11-09 the haiku-judged headline was corrected from 80.4% to
+   74.5% (91 rows reclassified). The same day a sonnet-5-5-judged run (same answerer)
+   gave **72.2%** (1,112/1,540, 0 reclassified), which the owner made canonical; the
+   haiku run is cross-judge reference data (see
+   [`benchmarks/locomo/RESULTS.md`](../benchmarks/locomo/RESULTS.md)). The 8.2-point
+   as-run gap from swapping only the judge is the evidence behind principle 1.
 
 This document turns those decisions into a reusable policy and lists concrete
 recommendations for the owner.
@@ -62,7 +65,8 @@ from principle 1 and never as the headline.
 A correction note is first-class content, kept next to the number it corrects, not
 removed or buried. The LoCoMo e2e correction (80.4% to 74.5%, 2026-11-09) is the
 reference case: the as-run number stays visible as a disclosure, the reclassified
-count is stated, and the corrected number is the one that gets cited. A project that
+count is stated, and the corrected number is the one that gets cited (superseded
+as canonical by the sonnet-judged 72.2%, with the haiku run kept as reference). A project that
 shows how it caught its own error is easier to trust than one that has never needed to.
 
 ### 5. Reproducibility
@@ -87,17 +91,20 @@ is an estimate after correction and is labeled as such.
 |---|---|---|---|
 | README hero | Efficiency-led angle locked (Sep 2026) | Keep efficiency as the hero. Do not use a bare "#1" claim. | No (already locked) |
 | README stability note | LME full-500 re-validated 2026-11-08 after #1690: any@5 98.2%, strict@5 88.0%, misses@50 0, strict@5 identical, strict@10 +1 (95.4%) | Add a short note: retrieval quality re-validated on the current line, with a link to the receipts. State the date and the comparison baseline. | Yes (wording and placement) |
-| LoCoMo e2e in README | e2e QA lives only in `benchmarks/locomo/`; corrected 74.5% | **No.** Keep it in `benchmarks/locomo/` until the owner approves a gate. A DRAFT gate is proposed below. | Yes (gate definition and timing) |
+| LoCoMo e2e in README | README has a LoCoMo section with no number; canonical e2e 72.2% (sonnet-5-5 judged) lives in `benchmarks/locomo/` | **Promoted 2026-11-09, no-number format**: the README explains that e2e QA depends on answerer and judge LLMs and links `benchmarks/locomo/RESULTS.md`. No LoCoMo e2e figure in the README. | No (decided 2026-11-09) |
 | Benchmark page | Retrieval and internal benchmarks on `docs/benchmarks.md` | Retrieval recall first, e2e QA second with judge disclosure, abstention and the correction note visible. Link receipts. | Yes (page structure) |
-| Blog / announcement angle | Not yet written | Angle: efficiency plus honesty about measurement (including the 80.4 to 74.5 correction). No "#1" claim, no leaderboard framing. | Yes (angle and publish go-ahead) |
+| Blog / announcement angle | Not yet written | Angle: efficiency plus honesty about measurement (including the 80.4 to 74.5 correction and the judge-swap effect). No "#1" claim, no leaderboard framing. | Yes (angle and publish go-ahead) |
 | Competitor comparison table | Competitor material lives in `docs/comparison.md` | Any competitor figure is a separate, labeled cross-source table: vendor, figure, source, date, self-reported or not, judge if known. Never in the same column as Uteke harness numbers. | Yes (whether to include one at all) |
 | Corrections policy | One correction note on LoCoMo (category mapping, 2026-09-10) and one on e2e (2026-11-09) | Adopt "correction note stays next to the number" as a standing rule for all benchmark files. | Yes (adopt as policy) |
 
-### DRAFT: gate criteria for promoting LoCoMo e2e to the README
+### Gate for LoCoMo e2e in the README
 
-> **DRAFT for the owner's consideration. This is not a decision.**
+> **PROMOTED 2026-11-09 (owner decision), in a no-number format with an
+> LLM-dependence explanation.** The criteria below stay as the bar for ever
+> printing a LoCoMo e2e figure in the README; until then the README section
+> carries no number.
 
-Candidate conditions, all of which would have to hold:
+Conditions for printing a number, all of which would have to hold:
 
 1. **Strict judge.** e2e scoring uses a strict rubric, and the judge model and
    rubric are named next to the number.
@@ -123,16 +130,16 @@ Only these figures are verified. Do not quote others without a committed receipt
 | LongMemEval full-500, misses@50 | **0** | Same run; strict@10 +1 vs v0.20.0 (95.4%) |
 | LoCoMo retrieval, any@5 | **0.840** | v0.17.0, judge-free |
 | LoCoMo retrieval, strict@5 | **0.716** | v0.17.0, judge-free |
-| LoCoMo e2e QA (corrected) | **74.5%** (1,147 / 1,540 answerable) | Strict judge; 91 rows reclassified, 13 hedged-answers disclosed |
-| LoCoMo e2e QA (as run) | 80.4% | Disclosure only; superseded by the corrected figure |
+| LoCoMo e2e QA (canonical) | **72.2%** (1,112 / 1,540 answerable) | Answerer and judge `claude-sonnet-5-5`, temp 1; 0 reclassified, 27 hedged rows audited and kept. Not for the README. |
+| LoCoMo e2e QA (haiku-judged, cross-judge reference) | 74.5% corrected / 80.4% as run | Judge `claude-haiku-4-5`, same answerer; 91 rows reclassified, 13 hedged. Reference only; not comparable to the canonical figure. |
 | LoCoMo adversarial abstention | ~61% | Corrected estimate |
 
 Suggested citation form for e2e:
 
-> LoCoMo e2e QA: 74.5% (1,147/1,540 answerable), strict judge, corrected from an
-> as-run 80.4% after 91 rows were reclassified (2026-11-09); 13 hedged-answers
-> disclosed. Judge-dependent;
-> not comparable to other vendors' LoCoMo figures.
+> LoCoMo e2e QA: 72.2% (1,112/1,540 answerable), answerer and judge
+> claude-sonnet-5-5 (2026-11-09); 27 hedged rows disclosed. Judge-dependent (the
+> same answers scored 80.4% as run under a haiku-4-5 judge); not comparable to
+> other vendors' LoCoMo figures.
 
 ## Cross-source reference points (not Uteke measurements)
 

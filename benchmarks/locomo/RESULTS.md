@@ -6,6 +6,7 @@
 **Runs:** Modal x86_64, fan-out ×10 shards, fusion = zero-config default strategy, CPU-only,
 no LLM in the retrieval path. Wall clock: 23 min (fusion).
 **Raw artifacts (committed):** [`results/`](results/) — audit snippet at the bottom.
+**End-to-end QA (canonical):** 72.2% (1,112/1,540 answerable), sonnet-5-5 answerer and judge, 2026-11-09 — see [canonical run](#end-to-end-qa-canonical-run-2026-11-09-sonnet-5-5-answerer-and-judge). The 2026-11-08 haiku-judged run is kept as a cross-judge reference.
 
 ## Headline (fusion default, v0.17.0)
 
@@ -199,3 +200,49 @@ rows = [json.loads(l) for l in open("results/qa-e2e-2026-11-08.jsonl")]
 print(len(rows), sum(r["correct"] for r in rows) / len(rows))  # 1540 0.804
 ```
 
+## End-to-end QA, canonical run (2026-11-09): sonnet-5-5 answerer and judge
+
+**Canonical e2e headline: 72.2% (1,112/1,540 answerable).** Same adapter and
+dataset as the first run above (full locomo10, 1,540 answerable QA), same
+answerer `claude-sonnet-5-5`, but the judge is also `claude-sonnet-5-5`
+(Anthropic OpenAI-compat layer, temp 1, max_tokens 4000). Binary from develop,
+fresh store. As-run = corrected: **0 rows reclassified.**
+
+| Category | n | correct | QA accuracy |
+|---|---|---|---|
+| open-domain | 841 | 634 | 75.4% |
+| temporal | 321 | 231 | 72.0% |
+| single-hop | 282 | 187 | 66.3% |
+| multi-hop | 96 | 60 | 62.5% |
+| **all** | **1,540** | **1,112** | **72.2%** |
+
+Per-conversation range 55.9% (conv-41) to 95.1% (conv-30). The conv-30 canary
+is identical to its full-run result (95.1%, 77/81), an internal consistency check.
+
+**Hedged rows.** 27 correct rows match the abstention pattern. Each was audited
+one by one: all are hedged-but-answering (the stated candidate matches the gold
+answer), so they keep the credit under the same convention as the haiku run's
+13 hedged rows. Nothing was flipped.
+
+**Raw artifacts (committed):** `results/qa-e2e-2026-11-09-sonnet55.jsonl`
+(1,540 per-question receipts).
+
+```python
+import json
+rows = [json.loads(l) for l in open("results/qa-e2e-2026-11-09-sonnet55.jsonl")]
+print(len(rows), sum(r["correct"] for r in rows))  # 1540 1112
+```
+
+### Cross-judge reference (same answerer, judge swapped)
+
+| Run | Judge | Headline |
+|---|---|---|
+| 2026-11-08 | claude-haiku-4-5 | 80.4% as-run; 74.5% corrected (91 abstentions flipped, 13 hedged) |
+| 2026-11-09 (canonical) | claude-sonnet-5-5 | 72.2% (as-run = corrected; 27 hedged, 0 flipped) |
+
+Both runs use the same answerer (`claude-sonnet-5-5`) and setup. Swapping only the
+judge shifts the as-run headline by 8.2 points (80.4% to 72.2%) on an identical
+setup. Abstention-pattern rows credited as correct fell from 104 to 27, largely because the sonnet judge does not credit the abstentions the haiku judge did.
+e2e QA numbers are judge-dependent and not comparable across judge setups, which
+is the evidence behind the policy in
+[`docs/benchmark-positioning.md`](../../docs/benchmark-positioning.md).

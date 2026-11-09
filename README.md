@@ -162,6 +162,8 @@ Every question's evidence lands in the top 50 (zero misses). What's left is orde
 > **🎯 Don't trust our benchmark. Run it yourself.** Public dataset, committed raw outputs for every validated release, scoring you can recompute in ~20 lines of Python. Verifying the committed results takes a minute and needs no embedder; re-running all 500 questions costs about $10.
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipts for the headline number (v0.19.0 run)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
 
+**LoCoMo.** LoCoMo end-to-end QA measures answer accuracy, and the result depends on the LLM answerer and the LLM judge used. In an internal comparison, identical answers were scored up to 8 points apart when only the judge model was swapped. For that reason we do not publish a single LoCoMo number in this README. The full table, the per-judge figures and the receipts are in [benchmarks/locomo/RESULTS.md](benchmarks/locomo/RESULTS.md). Retrieval recall, which needs no judge, remains the metric we rely on.
+
 `uteke bench --counts 100,1000,10000` measures latency and throughput on your own machine. 📖 [Benchmark docs](docs/benchmarks.md)
 
 ---
