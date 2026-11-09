@@ -230,8 +230,8 @@ UTEKE_RELEASE=v0.20.0 modal run scripts/modal_fanout.py --strategy default --num
 
 Issue #1689 was a regression affecting trees after commit 71f955c4 (#1636,
 2026-11-02), including release v0.23.0. The import dedup skipped a live row that
-retrieval needed. The fix, #1690 (commit 32a5cf3b), restores the v0.20.0
-behaviour. The full 500-question run on Modal x86_64 (`UTEKE_GIT_REF=32a5cf3b`,
+retrieval needed. The fix, #1690 (squash-merged into develop as `3bc72c1`; `32a5cf3b`, the commit that was
+measured, is its pre-squash branch commit), restores the v0.20.0 behaviour. The full 500-question run on Modal x86_64 (`UTEKE_GIT_REF=32a5cf3b`,
 2026-11-08) passes every gate: recall_any@5 = 98.2%, strict recall_all@5 =
 88.0%, strict recall_all@10 = 95.4%, zero misses @50. Per question against the
 v0.20.0 baseline, strict@5 is identical and strict@10 gains one question (0.9520 → 0.9540:

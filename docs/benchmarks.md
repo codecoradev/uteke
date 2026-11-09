@@ -119,7 +119,7 @@ recall_any@5 sits in a ±0.2pp band (98.2–98.4) with zero flips @10/@50 and on
 rank-boundary flip @5 between v0.17.0 and v0.19.0
 ([details](../benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)).
 
-Re-validated 2026-11-08 after the #1690 import fix: strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence
+Re-validated 2026-11-08 after the #1690 import fix (measured on the pre-squash commit `32a5cf3b`, merged as `3bc72c1`): strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence
 ([post-regression validation](../benchmarks/longmemeval/RESULTS.md#post-regression-validation-2026-11-08)).
 
 On the 470 non-abstention questions (the 30 `_abs` abstention questions are
