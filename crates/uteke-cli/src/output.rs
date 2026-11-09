@@ -361,6 +361,35 @@ pub(crate) fn print_room_semantic_human(room_id: &str, results: &[uteke_core::Se
     }
 }
 
+/// Print the rooms found by `room search` (#1704), best first.
+pub(crate) fn print_room_search_human(hits: &[uteke_core::RoomSearchHit]) {
+    if hits.is_empty() {
+        println!("No rooms found.");
+        return;
+    }
+    println!("Found {} room(s):\n", hits.len());
+    for (i, hit) in hits.iter().enumerate() {
+        let name = if hit.room_name == hit.room_id {
+            String::new()
+        } else {
+            format!("  {}", hit.room_name)
+        };
+        println!("  {}. {}{}", i + 1, hit.room_id, name);
+        println!(
+            "     {} memories, updated {}",
+            hit.memory_count,
+            hit.updated_at.get(..19).unwrap_or(&hit.updated_at)
+        );
+        if let Some(description) = &hit.description {
+            println!("     {description}");
+        }
+        for m in &hit.matches {
+            let id = m.memory_id.get(..8).unwrap_or(&m.memory_id);
+            println!("     match ({id}): {}", m.snippet);
+        }
+    }
+}
+
 /// Print aging preview (memories eligible for cleanup) in human-readable format.
 pub(crate) fn print_aging_preview_human(memories: &[uteke_core::Memory]) {
     if memories.is_empty() {

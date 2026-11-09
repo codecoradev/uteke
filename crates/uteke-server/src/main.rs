@@ -175,6 +175,9 @@ fn main() {
                 println!("  POST /room/summary         → {{ room_id }} → {{ summary }}");
                 println!("  POST /room/document        → {{ room_id }} → {{ document }}");
                 println!("  POST /room/stats           → {{ room_id }} → room stats");
+                println!(
+                    "  POST /room/search          → {{ query, limit?, namespace? }} → rooms for a query"
+                );
                 println!("  DEL  /room/delete          → {{ room_id }} → {{ deleted }}");
                 println!();
                 println!("  Document endpoints:");

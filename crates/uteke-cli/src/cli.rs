@@ -1054,6 +1054,25 @@ pub enum RoomCommands {
         /// Room ID
         room_id: String,
     },
+    /// Find rooms for a topic (#1704)
+    ///
+    /// Fuses a match on room id, title and description with the rooms of the
+    /// memories a recall of the query finds, so an untitled room is still
+    /// found by its content. Keep the query short (2-3 keywords).
+    ///
+    /// Examples:
+    ///   uteke room search "tole gateway"
+    ///   uteke room search budget --limit 5 --json
+    Search {
+        /// What the room is about
+        query: String,
+        /// Maximum rooms to return (default 10, max 100)
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Only rooms of this namespace
+        #[arg(long)]
+        namespace: Option<String>,
+    },
     /// Recall all memories in a room (cross-namespace)
     ///
     /// Examples:

@@ -204,6 +204,7 @@ Both transports expose the same 51 tools (MCP protocol version `2025-06-18`):
 | `uteke_namespace_rename` | Rename a namespace (#1181); when the target exists this is a merge, returns `{from, to, moved, target_existed}` |
 | `uteke_namespace_delete` | Delete a namespace with an explicit strategy for its memories (#1181): `refuse` (default, 409 while referenced), `merge` into `target`, or `deprecate` (soft-delete, restorable) |
 | `uteke_room_stats` | Room statistics |
+| `uteke_room_search` | Find rooms for a topic (#1704): room id/title/description match fused with the rooms of the memories a recall finds; each hit has the memory count, last update and up to two matching memories (→ `POST /room/search`, LAB) |
 | `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
 | `uteke_room_summary_document` | Generate summary document from room (→ `POST /room/summary-document`) |
 | `uteke_room_add_document` | Link an existing document to a room (#859) |
@@ -310,7 +311,7 @@ A client authenticated with `UTEKE_READ_ONLY_TOKEN` can call these tools over
 `uteke_provenance`, `uteke_timeline`, `uteke_contradictions`, `uteke_stats`,
 `uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_list_rooms`,
 `uteke_graph`, `uteke_room_list`, `uteke_room_recall`, `uteke_room_memories`,
-`uteke_room_stats`, `uteke_room_summary`, `uteke_room_summary_document` (alias
+`uteke_room_stats`, `uteke_room_search`, `uteke_room_summary`, `uteke_room_summary_document` (alias
 `uteke_room_document`), `uteke_room_list_documents` and `uteke_tags_list`.
 
 Every other tool is refused with a tool error (`isError: true`, text

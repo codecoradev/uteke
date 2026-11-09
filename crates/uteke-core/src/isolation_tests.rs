@@ -330,3 +330,34 @@ fn rooms_on_hits_stay_in_scope() {
         assert!(roomed > 0, "the {scope} room memory reports its room");
     }
 }
+
+/// #1704: room search scoped to a namespace never returns the other
+/// namespace's room, through either arm.
+#[test]
+fn room_search_stays_in_scope() {
+    let s = seed();
+    for scope in SCOPES {
+        let hits = s.u.search_rooms(QUERY, 20, Some(scope)).unwrap();
+        assert!(!hits.is_empty(), "room search scoped to {scope} has hits");
+        for hit in &hits {
+            assert_eq!(hit.room_id, format!("room-{scope}"));
+            assert!(
+                hit.matches.iter().all(|m| {
+                    s.u.get(&m.memory_id)
+                        .ok()
+                        .is_some_and(|mem| mem.namespace == scope)
+                }),
+                "a match shown for {scope} is another scope's memory"
+            );
+        }
+        // A title/id match for the other scope's room is not returned either.
+        let by_name =
+            s.u.search_rooms(&format!("room-{}", other(scope)), 20, Some(scope));
+        assert!(
+            by_name
+                .unwrap()
+                .iter()
+                .all(|h| h.room_id != format!("room-{}", other(scope)))
+        );
+    }
+}

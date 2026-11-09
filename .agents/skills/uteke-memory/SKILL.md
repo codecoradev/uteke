@@ -99,6 +99,7 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke room consolidate <ID>` | Merge a room's memories into denser records (dry-run unless `--apply`; uses LLM calls) | `--apply`, `--max-calls` |
 | `uteke room list` | List all rooms | `--namespace` |
 | `uteke room stats <ID>` | Room statistics and participants | |
+| `uteke room search <QUERY>` | Find rooms for a topic: room id/title/description match fused with the rooms of the memories a recall finds (keep the query to 2-3 keywords) | `--limit` (default 10, max 100), `--namespace` |
 | `uteke room recall <ID>` | Recall room memories | `--query`, `--author`, `--limit`, `--min` |
 | `uteke room summary <ID>` | Topic clustering summary | |
 | `uteke room document <ID>` | Generate structured document from room | |

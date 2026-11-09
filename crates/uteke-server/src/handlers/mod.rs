@@ -177,6 +177,8 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/room/remember", rooms::post_room_remember),
     ("GET", "/room/list", rooms::get_room_list),
     ("POST", "/room/stats", rooms::post_room_stats),
+    // ── Room search (#1704, LAB) ─────────────────────────────────────
+    ("POST", "/room/search", rooms::post_room_search),
     // ── Room ↔ Document junction (#689) ──────────────────────────────
     (
         "POST",

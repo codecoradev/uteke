@@ -144,6 +144,24 @@ pub(crate) fn run(
             Ok(())
         }
 
+        RoomCommands::Search {
+            query,
+            limit,
+            namespace,
+        } => {
+            // Rooms are cross-namespace; only an explicit --namespace on the
+            // subcommand narrows the search (like `room list`).
+            let hits = uteke
+                .search_rooms(query, *limit, namespace.as_deref())
+                .map_err(|e| format!("Failed to search rooms: {e}"))?;
+            if cli.json {
+                output::print_json(&hits);
+            } else {
+                output::print_room_search_human(&hits);
+            }
+            Ok(())
+        }
+
         RoomCommands::Stats { room_id } => {
             let stats = uteke
                 .room_stats(room_id)

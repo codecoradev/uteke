@@ -675,6 +675,11 @@ uteke room list --namespace my-agent  # scoped
 # Show room stats and participants
 uteke room stats "project-kickoff"
 
+# Find rooms for a topic (#1704): id/title/description match fused with the
+# rooms of the memories a recall finds. Keep the query to 2-3 keywords.
+uteke room search "database decision"
+uteke room search budget --limit 5 --json
+
 # Recall within a room (semantic)
 uteke room recall "project-kickoff" --query "database decision"
 

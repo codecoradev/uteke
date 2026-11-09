@@ -183,6 +183,10 @@
     },
     {
       "method": "POST",
+      "path": "/room/search"
+    },
+    {
+      "method": "POST",
       "path": "/room/memory"
     },
     {

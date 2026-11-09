@@ -433,6 +433,17 @@ pub const ENDPOINTS: &[Endpoint] = &[
         issues: &["#784"],
     },
     Endpoint {
+        method: "POST",
+        path: "/room/search",
+        tier: Tier::Lab,
+        writes: false,
+        description: "Search rooms by query (#1704). Fuses a metadata match (room id, title, description) with the rooms of the memories a recall of the query finds. Body: `{query, limit?, namespace?}`; `limit` defaults to 10, max 100; a blank query is a 400. Returns `[{room_id, room_name, description?, memory_count, updated_at, score, matches?}]`, best first; deprecated memories are not counted. With `namespace`, only that namespace's rooms are returned.",
+        request_type: Some("serde_json::Value"),
+        response_type: None,
+        excludes_deprecated: true,
+        issues: &["#1704"],
+    },
+    Endpoint {
         method: "GET",
         path: "/room/memories",
         tier: Tier::Core,
@@ -1054,6 +1065,7 @@ mod tests {
             "/room/summary",
             "/room/summary-document",
             "/room/stats",
+            "/room/search",
             "/room/document/list",
             "/doc/get",
             "/doc/list",
@@ -1126,6 +1138,7 @@ mod tests {
             ("uteke_room_recall", "POST", "/room/recall"),
             ("uteke_room_memories", "GET", "/room/memories"),
             ("uteke_room_stats", "POST", "/room/stats"),
+            ("uteke_room_search", "POST", "/room/search"),
             ("uteke_room_summary", "POST", "/room/summary"),
             (
                 "uteke_room_summary_document",

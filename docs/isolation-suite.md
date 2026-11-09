@@ -30,6 +30,7 @@ These read surfaces take no scope, and each is listed with its reason in the sui
 
 - **Fetch by ID** (`GET /memory`, `/provenance`, `/timeline`, `/edges`, `POST /memory/doc-refs`, `uteke_get`, `uteke_provenance`, `uteke_timeline`): IDs are global handles.
 - **By room or slug** (`/room/summary`, `/room/stats`, `/doc/get`, `uteke_room_stats`, ...): the room or the document is the scope; documents are global.
+- **Room search** (`/room/search`, `uteke_room_search`, #1704): takes a namespace, so it is scope-checked in the core and MCP suites (the rooms of the scope only, and only that scope's memories as matches).
 - **No records**: `/health`, `/guide`, `/routes`, `/store`, `/namespaces`.
 - **`SearchType::Document`**: the global document view; it returns documents only, never a memory, and `All` and `Memory` never return a document when scoped (pinned in the core suite).
 

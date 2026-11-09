@@ -115,6 +115,7 @@ uteke room recall weekly-standup --author alice
 | `uteke room link <memory-id> <id>` | Add an existing memory to the room without copying it |
 | `uteke room move-memory <memory-id> --from <id> --to <id>` | Move a memory between rooms |
 | `uteke room stats <id>` | Memory count and participants |
+| `uteke room search "<query>"` | Find rooms for a topic (see below) |
 | `uteke room summary <id>` | Topic clusters, top tags and decisions (no LLM) |
 | `uteke room document <id>` | Turn the room's memories into a document |
 | `uteke room delete <id>` | Delete the room; its memories are kept, only the links are removed |
@@ -173,6 +174,32 @@ Content-Type: application/json
 
 {"room_id": "engineering", "query": "migration", "limit": 10}
 ```
+
+## Finding a room
+
+On a store with many rooms, ask for the room instead of listing them all:
+
+```bash
+uteke room search "database decision" --limit 5
+```
+
+```http
+POST /room/search
+{"query": "database decision", "limit": 5}
+```
+
+Two signals are fused with the same reciprocal-rank fusion as hybrid recall: a
+match of the query terms on the room id, title and description (a term in the id
+or title counts double), and the rooms of the memories a recall of the query
+finds. The second signal finds a room that has no title or description by what
+is in it. Each hit has the `room_id`, `room_name` (title, or the id), the
+`description` when set, the number of live memories, `updated_at`, and up to two
+matching memories (`matches`) so you can check the room before opening it with
+`uteke room recall`. A blank query is an error; `limit` defaults to 10 and is
+capped at 100. With `--namespace` only that namespace's rooms are returned.
+Keep the query to 2-3 keywords: a long sentence can empty the keyword leg, as in
+`recall`. `POST /room/search` is a LAB endpoint (no compatibility promise); the
+MCP tool is `uteke_room_search`.
 
 ## Which rooms is a hit in?
 
