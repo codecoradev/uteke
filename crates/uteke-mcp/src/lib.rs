@@ -4469,7 +4469,11 @@ mod namespace_deprecation_tests {
         assert_eq!(read_only, expected);
         let full = names(Access::Full);
         assert!(read_only.is_subset(&full));
-        assert_eq!(full.len(), 51, "full catalog must not change");
+        assert_eq!(
+            full.len(),
+            52,
+            "full catalog changed: 51 plus uteke_room_search (#1704); a new tool is a deliberate edit of this pin"
+        );
         for write in ["uteke_remember", "uteke_forget", "uteke_doc_create"] {
             assert!(
                 full.contains(write) && !read_only.contains(write),

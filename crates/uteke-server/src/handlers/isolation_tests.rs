@@ -126,6 +126,12 @@ fn surfaces(scope: &str) -> Vec<Surface> {
             json!({"room_id": format!("room-{scope}"), "query": Q}),
             true,
         ),
+        // #1704: the rooms of the scope, and only that scope's memories as matches.
+        post(
+            "/room/search",
+            json!({"query": Q, "namespace": scope, "limit": 20}),
+            true,
+        ),
         post(
             "/orphans",
             json!({"namespace": scope, "limit": 50, "threshold": 2.0}),
