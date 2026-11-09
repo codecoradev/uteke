@@ -1961,4 +1961,79 @@ mod tests {
         let r = u.run_capture_extraction(&src, 5, &settings()).unwrap();
         assert_eq!((r.sessions_done, r.facts_refused), (1, 1));
     }
+
+    #[test]
+    fn the_queue_and_turn_limits_have_their_documented_defaults() {
+        assert_eq!(DEFAULT_MAX_QUEUE_BYTES, 536_870_912);
+        assert_eq!(DEFAULT_MAX_QUEUE_TURNS, 100_000);
+        assert_eq!(DEFAULT_MAX_TURN_BYTES, 1_048_576);
+        let d = CaptureSettings::default();
+        assert_eq!(d.max_queue_bytes, 536_870_912);
+        assert_eq!(d.max_queue_turns, 100_000);
+        assert_eq!(d.max_turn_bytes, 1_048_576);
+    }
+
+    #[test]
+    fn the_offline_fact_source_extracts_facts_without_a_network() {
+        let src = OfflineFacts { max_facts: 10 };
+        let facts = src
+            .extract("Hi there! My name is John. I prefer Vim over Emacs. What time is it?")
+            .unwrap();
+        assert!(!facts.is_empty(), "the offline rules must find a fact");
+        assert!(
+            facts
+                .iter()
+                .any(|f| f.content.to_lowercase().contains("prefer")),
+            "{facts:?}"
+        );
+        assert!(
+            facts
+                .iter()
+                .all(|f| f.scene.is_none() && f.fact_type.is_none())
+        );
+
+        let capped = OfflineFacts { max_facts: 1 }
+            .extract("I prefer tea. I like coffee. I enjoy hiking. I love coding.")
+            .unwrap();
+        assert_eq!(capped.len(), 1, "max_facts bounds the result");
+
+        assert!(
+            src.extract("Hi! Hey! Hello! Okay. Thanks!")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    /// A rule-based extractor copies the role label into a fact; the stored
+    /// memory must not carry it.
+    struct Labelled;
+
+    impl FactSource for Labelled {
+        fn extract(&self, _text: &str) -> Result<Vec<ExtractedFact>, Error> {
+            Ok(vec![ExtractedFact::flat("user: the db is postgres")])
+        }
+    }
+
+    #[test]
+    fn a_stored_capture_fact_has_no_role_label() {
+        let u = open_keyword();
+        u.capture("s", Role::User, "the db is postgres", None, None)
+            .unwrap();
+        let r = u.run_capture_extraction(&Labelled, 5, &settings()).unwrap();
+        assert_eq!(r.facts_stored, 1);
+        assert_eq!(
+            rows(
+                &u,
+                "SELECT COUNT(*) FROM memories WHERE content = 'the db is postgres' AND deprecated = 0"
+            ),
+            1
+        );
+        assert_eq!(
+            rows(
+                &u,
+                "SELECT COUNT(*) FROM memories WHERE content LIKE 'user:%'"
+            ),
+            0
+        );
+    }
 }
