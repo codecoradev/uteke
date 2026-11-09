@@ -124,8 +124,9 @@ pub use memory::aging::DeprecatedMemoryInfo;
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     DEFAULT_NAMESPACE, ExportEntry, ImportOptions, ImportResult, Memory, MemoryTier, MemoryType,
-    NamespaceDeleteResult, NamespaceRenameResult, PruneResult, RecallStrategy, SearchResult,
-    SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo, UnifiedSearchResult,
+    NamespaceDeleteResult, NamespaceRenameResult, PruneResult, RecallStrategy, RoomRef,
+    SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
+    UnifiedSearchResult,
 };
 pub use memory::{
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
@@ -2636,6 +2637,7 @@ impl Uteke {
                 updated_at: None,
                 linked_doc_slugs: None,
                 linked_memory_ids: None,
+                rooms: Vec::new(),
             })
             .collect())
     }
@@ -2748,6 +2750,7 @@ impl Uteke {
                         updated_at: Some(m.updated_at),
                         linked_doc_slugs: None,
                         linked_memory_ids: None,
+                        rooms: Vec::new(),
                     }
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
@@ -2792,6 +2795,7 @@ impl Uteke {
                         updated_at: None,
                         linked_doc_slugs: None,
                         linked_memory_ids: None,
+                        rooms: Vec::new(),
                     }
                 } else {
                     unreachable!("RRF key must reference either mem_map or doc_map")

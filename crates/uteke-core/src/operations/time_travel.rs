@@ -129,6 +129,7 @@ impl crate::Uteke {
                 memory,
                 score,
                 similarity: Some(similarity),
+                rooms: Vec::new(),
             });
         }
         results.sort_by(|a, b| {

@@ -7,6 +7,25 @@ pub(crate) fn print_json<T: serde::Serialize>(value: &T) {
     println!("{}", serde_json::to_string(value).unwrap());
 }
 
+/// The `Rooms:` line of a hit (#1703): `id` alone when the room has no
+/// title, else `id (name)`. `None` for a memory in no room.
+fn rooms_line(rooms: &[uteke_core::RoomRef]) -> Option<String> {
+    if rooms.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = rooms
+        .iter()
+        .map(|r| {
+            if r.room_name == r.room_id {
+                r.room_id.clone()
+            } else {
+                format!("{} ({})", r.room_id, r.room_name)
+            }
+        })
+        .collect();
+    Some(format!("     Rooms: {}", shown.join(", ")))
+}
+
 /// Print a context pack (#1281) in human-readable form.
 pub(crate) fn print_pack_human(pack: &ContextPack) {
     println!(
@@ -74,6 +93,9 @@ pub(crate) fn print_recall_human(results: &[uteke_core::SearchResult]) {
             tags
         );
         println!("     ID: {}", r.memory.id);
+        if let Some(line) = rooms_line(&r.rooms) {
+            println!("{line}");
+        }
         println!("     Created: {}", r.memory.created_at.to_rfc3339());
     }
 }
@@ -108,6 +130,9 @@ pub(crate) fn print_unified_human(results: &[uteke_core::UnifiedSearchResult]) {
             uteke_core::SearchResultType::Memory => {
                 if let Some(id) = &r.memory_id {
                     println!("     ID: {}", id);
+                }
+                if let Some(line) = rooms_line(&r.rooms) {
+                    println!("{line}");
                 }
                 if let Some(mt) = &r.memory_type {
                     println!("     Type: {}", mt);
@@ -162,6 +187,9 @@ pub(crate) fn print_search_human(results: &[uteke_core::SearchResult]) {
         };
         println!("  {}. {}{}", i + 1, r.memory.content, tags);
         println!("     ID: {}", r.memory.id);
+        if let Some(line) = rooms_line(&r.rooms) {
+            println!("{line}");
+        }
     }
 }
 
@@ -327,6 +355,9 @@ pub(crate) fn print_room_semantic_human(room_id: &str, results: &[uteke_core::Se
             tags
         );
         println!("     ID: {}", &r.memory.id[..8.min(r.memory.id.len())]);
+        if let Some(line) = rooms_line(&r.rooms) {
+            println!("{line}");
+        }
     }
 }
 

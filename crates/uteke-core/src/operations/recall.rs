@@ -165,6 +165,7 @@ impl crate::Uteke {
                     score: boosted_score,
                     // Raw cosine of the vector leg: `score` may carry the hot boost.
                     similarity: Some(score),
+                    rooms: Vec::new(),
                 });
             }
 
@@ -675,6 +676,7 @@ impl crate::Uteke {
                     memory,
                     score: normalized as f32,
                     similarity,
+                    rooms: Vec::new(),
                 })
             })
             .collect();
@@ -713,7 +715,7 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         let memories = self.store.search_content(query, namespace, limit)?;
 
-        let results: Vec<SearchResult> = memories
+        let mut results: Vec<SearchResult> = memories
             .into_iter()
             .filter(|memory| {
                 if let Some(filter_tags) = tags_filter {
@@ -731,6 +733,7 @@ impl crate::Uteke {
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
         self.store.touch_recall_batch(&touch_ids).ok();
 
+        self.attach_rooms(&mut results)?;
         Ok(results)
     }
 }

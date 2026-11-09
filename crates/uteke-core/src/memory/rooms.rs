@@ -521,6 +521,52 @@ impl super::Store {
         Ok(map)
     }
 
+    /// The rooms of the given memories, as `memory_id -> rooms` (#1703).
+    ///
+    /// Only the ids asked for are looked up (the recall path must not read the
+    /// whole `room_memories` table, unlike [`Self::room_ids_by_memory`]). Each
+    /// list is sorted by room id; `room_name` is the room title, or the id when
+    /// the title is unset or blank. Memories in no room are absent.
+    pub fn room_refs_for_memories(
+        &self,
+        memory_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, Vec<super::types::RoomRef>>, Error> {
+        // Stay well under SQLite's bound-variable limit.
+        const CHUNK: usize = 400;
+        let mut map: std::collections::HashMap<String, Vec<super::types::RoomRef>> =
+            Default::default();
+        for chunk in memory_ids.chunks(CHUNK) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT rm.memory_id, r.id, COALESCE(NULLIF(TRIM(r.title), ''), r.id) \
+                 FROM room_memories rm JOIN rooms r ON r.id = rm.room_id \
+                 WHERE rm.memory_id IN ({marks}) \
+                 ORDER BY rm.memory_id, r.id"
+            );
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| Error::db("prepare room refs for memories", e))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| Error::db("query room refs for memories", e))?;
+            for row in rows {
+                let (memory, room_id, room_name) =
+                    row.map_err(|e| Error::db("read room refs for memories", e))?;
+                map.entry(memory)
+                    .or_default()
+                    .push(super::types::RoomRef { room_id, room_name });
+            }
+        }
+        Ok(map)
+    }
+
     /// Add an EXISTING memory to a room without copying it (#1589).
     ///
     /// Both must exist (`NotFound` otherwise). Idempotent: a memory already in

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Recall, search and room recall hits carry the rooms of their memory (#1703)** - each
+  memory hit of `recall`, `search` and `room recall` (with a query) now has an optional
+  `rooms` list of `{room_id, room_name}` (the room title, or the id when it has none),
+  sorted by room id and omitted when the memory is in no room. A memory can be in several
+  rooms, so it is a list. It is on `POST /recall`, `POST /search`, `POST /room/recall`, the
+  MCP tools `uteke_recall`, `uteke_search` and `uteke_room_recall`, and the CLI (`--json`;
+  a `Rooms:` line in the human output), in the plain, unified, `--pack` and `--explain`
+  forms. The rooms are looked up for the returned ids only, after the ranking, the cut to
+  `limit` and the recall cache, so order and scores are unchanged and a cached hit never
+  reports an old membership. A room recall without a query (the chronological list) is
+  unchanged. Contract note for uteke-cloud: additive response field on CORE endpoints.
+
 ### Docs
 
 - **Skill: a "Finding the right room" procedure (#1702)** - the `uteke-memory` skill (both

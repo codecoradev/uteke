@@ -47,7 +47,27 @@ fn bad(msg: &str) -> Error {
 
 impl Uteke {
     /// Run `req` as `POST /recall` always has. See the module documentation.
+    ///
+    /// Every memory hit in the output carries the rooms its memory belongs to
+    /// (#1703). They are looked up once, after the ranking and the cut to
+    /// `limit`, so the result order and scores are exactly those of the
+    /// recall itself.
     pub fn run_recall(
+        &self,
+        req: &RecallRequest,
+        defaults: RecallDefaults<'_>,
+    ) -> Result<RecallOutput, Error> {
+        let mut output = self.run_recall_unrooted(req, defaults)?;
+        match &mut output {
+            RecallOutput::Explained(items) => self.attach_rooms_explained(items)?,
+            RecallOutput::Packed(pack) => self.attach_rooms_unified(&mut pack.selected)?,
+            RecallOutput::Unified(results) => self.attach_rooms_unified(results)?,
+            RecallOutput::Memories { results, .. } => self.attach_rooms(results)?,
+        }
+        Ok(output)
+    }
+
+    fn run_recall_unrooted(
         &self,
         req: &RecallRequest,
         defaults: RecallDefaults<'_>,
@@ -245,6 +265,7 @@ impl Uteke {
 mod tests {
     use super::*;
     use crate::RecallInput;
+    use crate::RecallStrategy;
     use crate::TrustTier;
     use crate::test_support::open_keyword;
 
@@ -400,6 +421,167 @@ mod tests {
             i.strategy = Some("fts5".into());
         });
         assert!(matches!(run(&u, &r), Ok(RecallOutput::Unified(_))));
+    }
+
+    // ── #1703: the rooms of each hit ─────────────────────────────────────
+
+    /// A memory in two rooms (one titled, one not) and one in no room, all
+    /// matching `rust memory safety`.
+    fn roomed_store() -> (Uteke, String) {
+        let u = open_keyword();
+        u.remember("rust memory safety in no room", &[], None, None)
+            .unwrap();
+        u.create_room("beta", Some("Beta room"), "default").unwrap();
+        let id = u
+            .remember_in_room(
+                "rust memory safety in two rooms",
+                &[],
+                None,
+                None,
+                "fact",
+                "alpha",
+                "tester",
+            )
+            .unwrap()
+            .id;
+        assert!(u.add_memory_to_room(&id, "beta", "tester").unwrap());
+        (u, id)
+    }
+
+    fn expected_rooms() -> Vec<crate::RoomRef> {
+        vec![
+            crate::RoomRef {
+                room_id: "alpha".into(),
+                room_name: "alpha".into(),
+            },
+            crate::RoomRef {
+                room_id: "beta".into(),
+                room_name: "Beta room".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn memory_hits_carry_their_rooms_and_the_ranking_is_untouched() {
+        let (u, id) = roomed_store();
+        let rooms_of = |hits: &[SearchResult]| {
+            hits.iter()
+                .map(|h| (h.memory.id.clone(), h.rooms.clone()))
+                .collect::<Vec<_>>()
+        };
+        let hits = memories(&u, &req(|i| i.strategy = Some("fts5".into())));
+        assert_eq!(hits.len(), 2);
+        for (hit_id, rooms) in rooms_of(&hits) {
+            if hit_id == id {
+                assert_eq!(rooms, expected_rooms());
+            } else {
+                assert!(rooms.is_empty(), "a memory in no room has none");
+            }
+        }
+        // Same order and scores as the recall without the room lookup.
+        let bare = u
+            .recall_hybrid(
+                "rust memory safety",
+                10,
+                None,
+                None,
+                RecallStrategy::Fts5,
+                0.0,
+            )
+            .unwrap();
+        let order = |v: &[SearchResult]| v.iter().map(|h| h.memory.id.clone()).collect::<Vec<_>>();
+        assert_eq!(order(&hits), order(&bare));
+        for (a, b) in hits.iter().zip(&bare) {
+            assert_eq!(a.score, b.score);
+        }
+    }
+
+    #[test]
+    fn unified_packed_and_explained_hits_carry_their_rooms() {
+        let (u, id) = roomed_store();
+        let unified = req(|i| {
+            i.search_type = Some("memory".into());
+            i.strategy = Some("fts5".into());
+        });
+        let RecallOutput::Unified(results) = run(&u, &unified).unwrap() else {
+            panic!("unified expected")
+        };
+        let hit = results
+            .iter()
+            .find(|r| r.memory_id.as_deref() == Some(id.as_str()))
+            .unwrap();
+        assert_eq!(hit.rooms, expected_rooms());
+        assert!(
+            results
+                .iter()
+                .filter(|r| r.memory_id.as_deref() != Some(id.as_str()))
+                .all(|r| r.rooms.is_empty())
+        );
+
+        let packed = req(|i| {
+            i.pack = true;
+            i.strategy = Some("fts5".into());
+        });
+        let RecallOutput::Packed(pack) = run(&u, &packed).unwrap() else {
+            panic!("pack expected")
+        };
+        let hit = pack
+            .selected
+            .iter()
+            .find(|r| r.memory_id.as_deref() == Some(id.as_str()))
+            .unwrap();
+        assert_eq!(hit.rooms, expected_rooms());
+
+        let explained = req(|i| {
+            i.explain = true;
+            i.strategy = Some("fts5".into());
+        });
+        let RecallOutput::Explained(items) = run(&u, &explained).unwrap() else {
+            panic!("explain expected")
+        };
+        let hit = items.iter().find(|e| e.result.memory.id == id).unwrap();
+        assert_eq!(hit.result.rooms, expected_rooms());
+    }
+
+    #[test]
+    fn the_rooms_field_is_omitted_when_empty_and_listed_otherwise() {
+        let (u, id) = roomed_store();
+        let hits = memories(&u, &req(|i| i.strategy = Some("fts5".into())));
+        for hit in &hits {
+            let json = serde_json::to_value(hit).unwrap();
+            if hit.memory.id == id {
+                assert_eq!(
+                    json["rooms"],
+                    serde_json::json!([
+                        {"room_id": "alpha", "room_name": "alpha"},
+                        {"room_id": "beta", "room_name": "Beta room"},
+                    ])
+                );
+            } else {
+                assert!(json.get("rooms").is_none(), "no key for a roomless hit");
+            }
+        }
+    }
+
+    #[test]
+    fn a_stale_cached_recall_never_reports_old_membership() {
+        let (u, id) = roomed_store();
+        let q = || req(|i| i.strategy = Some("fts5".into()));
+        let first = memories(&u, &q());
+        assert!(
+            !first
+                .iter()
+                .find(|h| h.memory.id == id)
+                .unwrap()
+                .rooms
+                .is_empty()
+        );
+        // Leave one room, then ask the same question again.
+        u.create_room("gamma", Some("Gamma"), "default").unwrap();
+        assert!(u.add_memory_to_room(&id, "gamma", "tester").unwrap());
+        let second = memories(&u, &q());
+        let rooms = &second.iter().find(|h| h.memory.id == id).unwrap().rooms;
+        assert_eq!(rooms.len(), 3, "the new room shows at once: {rooms:?}");
     }
 
     // ── #1650: strict filters on similarity, #1651: min_trust ───────────
