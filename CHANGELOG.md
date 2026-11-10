@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Room search (#1704)** - `POST /room/search`, the MCP tool `uteke_room_search` and
+  `uteke room search <QUERY> [--limit N] [--namespace NS]` find rooms for a topic, so an
+  agent no longer has to read `room list` (hundreds of rooms, many untitled). Two signals
+  are fused with the reciprocal-rank fusion of hybrid recall: the query terms against the
+  room id, title and description (a term in the id or title counts double), and the
+  rooms of the memories a recall of the query finds (only confident ones: a vector
+  similarity at the `--strict` floor, or an exact keyword hit), so a room with no title is
+  still found by its content. Each hit has `room_id`, `room_name`, `description`, the
+  number of live memories, `updated_at`, a `score` (order only) and up to two matching
+  memories. A blank query is a 400, `limit` defaults to 10 and is capped at 100, a
+  `namespace` limits the rooms returned, and the result is deterministic (ties by room
+  id). No schema change. `/room/search` is LAB: no contract issue is needed, and
+  uteke-cloud has to implement it separately for its MCP.
 - **Recall, search and room recall hits carry the rooms of their memory (#1703)** - each
   memory hit of `recall`, `search` and `room recall` (with a query) now has an optional
   `rooms` list of `{room_id, room_name}` (the room title, or the id when it has none),
@@ -22,8 +35,8 @@
   copies) now says how to locate a room on a large store without `room list`: recall by
   2-3 keywords first, then `room recall` and `room summary` once the room is known, a room
   index document through `doc search`, the room naming prefixes, and the matching MCP tool
-  names. It names the two missing pieces (rooms in recall results, room search) so the
-  section can be replaced when they land.
+  names. Once rooms in recall results (#1703) and room search (#1704) landed it was
+  updated to start from `room search` and the `rooms` of a recall hit.
 
 ### Fixed
 

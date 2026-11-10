@@ -531,6 +531,39 @@ pub(super) fn post_room_stats(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     }
 }
 
+// POST /room/search — find rooms for a query (#1704, LAB)
+pub(super) fn post_room_search(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
+    let uteke = c.uteke;
+    let ctx = c.ctx;
+    let req = &mut *c.req;
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)] // #1251: an unknown key is a 400, not a silent no-op
+    struct RoomSearchRequest {
+        query: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        namespace: Option<String>,
+    }
+    match read_body::<RoomSearchRequest>(req.as_reader()) {
+        Ok(req_data) => {
+            match uteke.search_rooms(
+                &req_data.query,
+                req_data.limit.unwrap_or(0),
+                ns(&req_data.namespace),
+            ) {
+                Ok(hits) => ctx.ok_response_for(req, &hits),
+                Err(uteke_core::Error::Validation(msg)) => ctx.error_response_for(req, 400, msg),
+                Err(e) => {
+                    error!("Internal error: {e}");
+                    ctx.error_response_for(req, 500, "Internal server error")
+                }
+            }
+        }
+        Err(e) => ctx.error_response_for(req, 400, e),
+    }
+}
+
 // POST /room/document/list — list documents linked to a room
 pub(super) fn post_room_document_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let uteke = c.uteke;

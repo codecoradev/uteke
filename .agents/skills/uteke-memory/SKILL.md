@@ -99,6 +99,7 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke room consolidate <ID>` | Merge a room's memories into denser records (dry-run unless `--apply`; uses LLM calls) | `--apply`, `--max-calls` |
 | `uteke room list` | List all rooms | `--namespace` |
 | `uteke room stats <ID>` | Room statistics and participants | |
+| `uteke room search <QUERY>` | Find rooms for a topic: room id/title/description match fused with the rooms of the memories a recall finds (keep the query to 2-3 keywords) | `--limit` (default 10, max 100), `--namespace` |
 | `uteke room recall <ID>` | Recall room memories | `--query`, `--author`, `--limit`, `--min` |
 | `uteke room summary <ID>` | Topic clustering summary | |
 | `uteke room document <ID>` | Generate structured document from room | |
@@ -349,32 +350,36 @@ project name.
 A store can hold hundreds of rooms and `uteke room list` has no filter or limit,
 so do not use it to look for a topic.
 
-1. **Find the content first.** `uteke recall "<2-3 keywords>" --tags project:<name>`;
+1. **Ask for the room.** `uteke room search "<2-3 keywords>"` returns the best rooms
+   first: room id and name, description, memory count, last update and up to two
+   matching memories to check before opening it. It matches the room id, title and
+   description and the memories a recall of the query finds, so a room with no
+   title is still found.
+2. **Or find the content.** `uteke recall "<2-3 keywords>" --tags project:<name>`;
    add `--strategy fts5` for exact terms. Long sentences can zero out the keyword arm.
    Each hit lists the rooms its memory is in (`rooms`: `room_id` and `room_name`), so
    the hit already tells you which room to open next.
-2. **Scope once the room is known.** `uteke room recall <id> --query "<keywords>"`, and
+3. **Scope once the room is known.** `uteke room recall <id> --query "<keywords>"`, and
    `uteke room summary <id>` for a no-LLM overview (topic clusters, top tags, decisions).
-3. **Find a room by purpose.** If the workspace keeps a room index document (for example
-   `room-index` or the project registry), `uteke doc search "<topic>" --mode hybrid`
-   finds it. Check the conventions rooms the same way (see "Conventions first").
-4. **Read the name.** Project rooms are `<name>`, discussions `disc:<topic>`, research
+4. **Fallback: find a room by purpose.** On a server without room search, or when the
+   workspace keeps a room index document (for example `room-index` or the project
+   registry), `uteke doc search "<topic>" --mode hybrid` finds it. Check the
+   conventions rooms the same way (see "Conventions first").
+5. **Read the name.** Project rooms are `<name>`, discussions `disc:<topic>`, research
    `riset:<topic>`: the prefix tells you the kind of room before you open it.
-5. **Keep the room id.** When a step reveals a room id, carry it into the next step so
+6. **Keep the room id.** When a step reveals a room id, carry it into the next step so
    the follow-up is a `room recall`, not another discovery.
 
 Agents that use the MCP tools instead of the CLI follow the same steps:
 
 | CLI | MCP tool |
 |-----|----------|
+| `room search` | `uteke_room_search` |
 | `recall` | `uteke_recall` |
 | `search` | `uteke_search` (keyword; keep the query short) |
 | `room recall` | `uteke_room_recall` |
 | `room summary` | `uteke_room_summary` |
 | `doc search` | `uteke_doc_search` |
-
-There is no room search yet (tracked in #1704). Until it lands, a recall hit's `rooms`
-plus this procedure is how you find a room; replace it then.
 
 ### What to store
 

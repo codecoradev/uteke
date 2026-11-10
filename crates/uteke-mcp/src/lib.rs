@@ -90,6 +90,7 @@ pub const READ_ONLY_TOOLS: &[&str] = &[
     "uteke_room_recall",
     "uteke_room_memories",
     "uteke_room_stats",
+    "uteke_room_search",
     "uteke_room_summary",
     "uteke_room_summary_document",
     // MCP alias of the read-only summary document above; NOT the HTTP
@@ -296,6 +297,7 @@ fn handle_request(
                 tool_room_recall(),
                 tool_room_memories(),
                 tool_room_stats(),
+                tool_room_search(),
                 tool_room_summary(),
                 tool_room_document(),
                 tool_room_add_document(),
@@ -390,6 +392,7 @@ fn handle_request(
                 "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
                 "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
                 "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
+                "uteke_room_search" => exec_room_search(uteke, &arguments)?,
                 "uteke_room_summary" => exec_room_summary(uteke, &arguments)?,
                 "uteke_room_summary_document" | "uteke_room_document" => {
                     exec_room_document(uteke, &arguments)?
@@ -1090,6 +1093,23 @@ fn tool_room_stats() -> Value {
                 "room_id": { "type": "string", "description": "Room identifier" }
             },
             "required": ["room_id"]
+        }
+    })
+}
+
+fn tool_room_search() -> Value {
+    serde_json::json!({
+        "name": "uteke_room_search",
+        "description": "Find rooms for a topic (#1704). Use it when you do not know which room holds something; do not list every room. Fuses a match on room id, title and description with the rooms of the memories a recall of the query finds, so a room with no title is still found by its content. Returns the best rooms first, each with its id, name, description, memory count, last update and up to two matching memories to check before opening it with uteke_room_recall. Keep the query short (2-3 keywords).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "What the room is about (keywords)" },
+                "limit": { "type": "integer", "description": "Max rooms (default 10, max 100)", "default": 10 },
+                "namespace": { "type": "string", "description": "Only rooms of this namespace (DEPRECATED, prefer no filter)" },
+                "full_ids": { "type": "boolean", "description": "Show full memory ids instead of 8-character prefixes", "default": false }
+            },
+            "required": ["query"]
         }
     })
 }
@@ -2977,6 +2997,54 @@ fn exec_room_link_memory(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
     })
 }
 
+fn exec_room_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
+    let query = args["query"].as_str().ok_or("Missing 'query'")?;
+    let limit = args["limit"].as_u64().unwrap_or(0) as usize;
+    let namespace = args["namespace"].as_str();
+    let full_ids = args["full_ids"].as_bool().unwrap_or(false);
+    let hits = uteke
+        .search_rooms(query, limit, namespace)
+        .map_err(|e| format!("Failed: {e}"))?;
+    let text = if hits.is_empty() {
+        "No rooms found.".to_string()
+    } else {
+        let mut lines = Vec::new();
+        for (i, hit) in hits.iter().enumerate() {
+            let name = if hit.room_name == hit.room_id {
+                String::new()
+            } else {
+                format!(" ({})", hit.room_name)
+            };
+            lines.push(format!(
+                "{}. {}{} - {} memories, updated {}",
+                i + 1,
+                hit.room_id,
+                name,
+                hit.memory_count,
+                hit.updated_at
+            ));
+            if let Some(description) = &hit.description {
+                lines.push(format!("       {description}"));
+            }
+            for m in &hit.matches {
+                lines.push(format!(
+                    "       match (id: {}): {}",
+                    display_id(&m.memory_id, full_ids),
+                    m.snippet
+                ));
+            }
+        }
+        lines.join("\n")
+    };
+    Ok(ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: false,
+    })
+}
+
 fn exec_room_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
@@ -4401,7 +4469,11 @@ mod namespace_deprecation_tests {
         assert_eq!(read_only, expected);
         let full = names(Access::Full);
         assert!(read_only.is_subset(&full));
-        assert_eq!(full.len(), 51, "full catalog must not change");
+        assert_eq!(
+            full.len(),
+            52,
+            "full catalog changed: 51 plus uteke_room_search (#1704); a new tool is a deliberate edit of this pin"
+        );
         for write in ["uteke_remember", "uteke_forget", "uteke_doc_create"] {
             assert!(
                 full.contains(write) && !read_only.contains(write),
@@ -4508,6 +4580,7 @@ mod read_only_gate_tests {
             "uteke_room_recall",
             "uteke_room_memories",
             "uteke_room_stats",
+            "uteke_room_search",
             "uteke_room_summary",
             "uteke_room_summary_document",
             "uteke_room_document",
@@ -4645,6 +4718,12 @@ mod isolation_tests {
         v.push((
             "uteke_recall",
             json!({"query": Q, "namespace": scope, "tags": ["shared"]}),
+            true,
+        ));
+        // #1704: the rooms of the scope only, and the memories shown for them.
+        v.push((
+            "uteke_room_search",
+            json!({"query": Q, "namespace": scope}),
             true,
         ));
         v

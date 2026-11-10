@@ -97,6 +97,7 @@ pub mod recall_settings;
 pub mod remember_exec;
 mod remember_request;
 mod room_ops;
+pub mod room_search;
 pub mod rooms_segments;
 pub mod salience_recency;
 pub mod structural_export;
@@ -135,6 +136,7 @@ pub use memory::{
 };
 pub use orphans::{DEFAULT_ORPHAN_THRESHOLD, OrphanMemory, compute_orphan_score};
 pub use provenance::{ProvenanceReport, TrustTier};
+pub use room_search::{ROOM_SEARCH_DEFAULT_LIMIT, ROOM_SEARCH_MAX_LIMIT, RoomMatch, RoomSearchHit};
 pub use salience_recency::{
     SalienceRecencyConfig, apply_boosts, recency_score, salience_score, type_half_life_days,
 };

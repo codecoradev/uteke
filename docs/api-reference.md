@@ -439,6 +439,16 @@ Get memory count for a room. Includes deprecated memories (known discrepancy vs 
 
 *Related: `#784`*
 
+#### 🟡 `POST` `/room/search`
+
+Search rooms by query (#1704). Fuses a metadata match (room id, title, description) with the rooms of the memories a recall of the query finds. Body: `{query, limit?, namespace?}`; `limit` defaults to 10, max 100; a blank query is a 400. Returns `[{room_id, room_name, description?, memory_count, updated_at, score, matches?}]`, best first; deprecated memories are not counted. With `namespace`, only that namespace's rooms are returned.
+
+*Excludes deprecated memories from results.*
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1704`*
+
 #### 🟢 `GET` `/room/memories`
 
 List all memories in a room (chronological). Accepts `?room_id=...` query param; optional `?author=...` and `?namespace=...` filters (#1288). Without `namespace`, returns ALL namespaces that contributed to the room.
