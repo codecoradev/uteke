@@ -6,6 +6,58 @@ use crate::memory::{Room, RoomDocument, RoomStats, RoomSummary};
 use crate::operations::RememberOutcome;
 
 impl crate::Uteke {
+    /// Attach to each hit the rooms its memory belongs to (#1703).
+    ///
+    /// One id-scoped query for the whole slice. Call it on the FINAL result
+    /// list, after the recall cache and after any cut to `limit`: the cache
+    /// would otherwise keep reporting a membership that has since changed, and
+    /// a cut list is cheaper to look up. Ranking and scores are never touched.
+    pub fn attach_rooms(&self, results: &mut [SearchResult]) -> Result<(), Error> {
+        let ids: Vec<String> = results.iter().map(|r| r.memory.id.clone()).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let map = self.store.room_refs_for_memories(&refs)?;
+        for result in results.iter_mut() {
+            result.rooms = map.get(&result.memory.id).cloned().unwrap_or_default();
+        }
+        Ok(())
+    }
+
+    /// [`Self::attach_rooms`] for `recall --explain` results.
+    pub fn attach_rooms_explained(
+        &self,
+        results: &mut [crate::recall_explain::ExplainedRecall],
+    ) -> Result<(), Error> {
+        let mut hits: Vec<SearchResult> = results.iter().map(|e| e.result.clone()).collect();
+        self.attach_rooms(&mut hits)?;
+        for (item, hit) in results.iter_mut().zip(hits) {
+            item.result.rooms = hit.rooms;
+        }
+        Ok(())
+    }
+
+    /// [`Self::attach_rooms`] for unified results: only the memory-typed items
+    /// (a document has no rooms) are looked up.
+    pub fn attach_rooms_unified(
+        &self,
+        results: &mut [crate::memory::types::UnifiedSearchResult],
+    ) -> Result<(), Error> {
+        let ids: Vec<String> = results.iter().filter_map(|r| r.memory_id.clone()).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        if refs.is_empty() {
+            return Ok(());
+        }
+        let map = self.store.room_refs_for_memories(&refs)?;
+        for result in results.iter_mut() {
+            if let Some(id) = &result.memory_id {
+                result.rooms = map.get(id).cloned().unwrap_or_default();
+            }
+        }
+        Ok(())
+    }
+
     /// Create a new room for collaborative memory.
     pub fn create_room(
         &self,
@@ -153,6 +205,7 @@ impl crate::Uteke {
                     memory,
                     score,
                     similarity: Some(similarity),
+                    rooms: Vec::new(),
                 });
             }
         }
@@ -164,6 +217,7 @@ impl crate::Uteke {
         if limit > 0 {
             results.truncate(limit);
         }
+        self.attach_rooms(&mut results)?;
         Ok(results)
     }
 
@@ -276,6 +330,7 @@ impl crate::Uteke {
                         memory: mem,
                         score,
                         similarity: Some(score.clamp(0.0, 1.0)),
+                        rooms: Vec::new(),
                     });
                 }
             }
@@ -305,6 +360,8 @@ impl crate::Uteke {
             results.truncate(limit);
         }
 
+        // 8. The rooms of the survivors (#1703): after the cut, one query.
+        self.attach_rooms(&mut results)?;
         Ok(results)
     }
 
@@ -1121,5 +1178,72 @@ mod tests {
         let alice = uteke.recall_room("ar", Some("alice"), 0).unwrap();
         assert_eq!(alice.len(), 1);
         assert!(alice[0].content.contains("alice"));
+    }
+
+    // ── #1703: rooms next to search and room recall hits ─────────────────
+
+    #[test]
+    fn room_refs_use_the_id_when_the_title_is_blank_and_sort_by_id() {
+        let uteke = open_in_memory();
+        uteke.create_room("zeta", Some("Zeta"), "default").unwrap();
+        uteke.create_room("blank", Some("   "), "default").unwrap();
+        let id = uteke
+            .remember_in_room("quokka note", &[], None, None, "fact", "zeta", "a")
+            .unwrap()
+            .id;
+        assert!(uteke.add_memory_to_room(&id, "blank", "a").unwrap());
+        let map = uteke.store.room_refs_for_memories(&[id.as_str()]).unwrap();
+        let rooms = &map[&id];
+        assert_eq!(rooms[0].room_id, "blank");
+        assert_eq!(rooms[0].room_name, "blank", "blank title falls back to id");
+        assert_eq!(rooms[1].room_id, "zeta");
+        assert_eq!(rooms[1].room_name, "Zeta");
+    }
+
+    #[test]
+    fn room_refs_look_up_more_ids_than_one_query_holds() {
+        let uteke = open_in_memory();
+        let id = uteke
+            .remember_in_room("quokka note", &[], None, None, "fact", "r", "a")
+            .unwrap()
+            .id;
+        let fakes: Vec<String> = (0..900).map(|i| format!("no-such-memory-{i}")).collect();
+        let mut ids: Vec<&str> = fakes.iter().map(String::as_str).collect();
+        ids.push(id.as_str());
+        let map = uteke.store.room_refs_for_memories(&ids).unwrap();
+        assert_eq!(map.len(), 1, "only the memory in a room is present");
+        assert_eq!(map[&id][0].room_id, "r");
+        assert!(uteke.store.room_refs_for_memories(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn keyword_search_and_room_recall_report_the_rooms() {
+        let uteke = open_in_memory();
+        uteke
+            .remember("quokka without a room", &[], None, None)
+            .unwrap();
+        let id = uteke
+            .remember_in_room("quokka in a room", &[], None, None, "fact", "wild", "a")
+            .unwrap()
+            .id;
+        let hits = uteke.search("quokka", 10, None, None).unwrap();
+        assert_eq!(hits.len(), 2);
+        for hit in &hits {
+            if hit.memory.id == id {
+                assert_eq!(hit.rooms.len(), 1);
+                assert_eq!(hit.rooms[0].room_id, "wild");
+            } else {
+                assert!(hit.rooms.is_empty());
+            }
+        }
+        let in_room = uteke
+            .recall_room_semantic("wild", "quokka", 5, None, 0.0)
+            .unwrap();
+        assert_eq!(in_room.len(), 1);
+        assert_eq!(in_room[0].rooms[0].room_id, "wild");
+        let packed = uteke
+            .recall_room_packed("wild", "quokka", 5, None, 0.0, None, 4000, &[])
+            .unwrap();
+        assert_eq!(packed.selected[0].rooms[0].room_id, "wild");
     }
 }

@@ -1559,6 +1559,9 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 if !detail.is_empty() {
                     lines.push(format!("       {}", detail));
                 }
+                if let Some(line) = rooms_text(&r.rooms) {
+                    lines.push(line);
+                }
                 // #1053: flag memories superseded by a newer decision so agents
                 // don't act on stale info.
                 if let uteke_core::SearchResultType::Memory = r.result_type {
@@ -1593,6 +1596,9 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                     display_id(&r.memory.id, full_ids),
                     hit_signals(r.similarity, Some(uteke_core::TrustTier::of(&r.memory)))
                 ));
+                if let Some(line) = rooms_text(&r.rooms) {
+                    lines.push(line);
+                }
             }
             Ok(text_result(lines.join("\n")))
         }
@@ -1609,6 +1615,26 @@ fn hit_signals(similarity: Option<f32>, tier: Option<uteke_core::TrustTier>) -> 
         .map(|t| format!(", tier {}", t.as_str()))
         .unwrap_or_default();
     format!(", sim {sim}{tier}")
+}
+
+/// `(rooms: id (name), other-id)` under a hit (#1703): the rooms its memory
+/// belongs to, so the agent can follow up with `uteke_room_recall`. `None` for
+/// a memory in no room, so such lines are unchanged.
+fn rooms_text(rooms: &[uteke_core::RoomRef]) -> Option<String> {
+    if rooms.is_empty() {
+        return None;
+    }
+    let shown: Vec<String> = rooms
+        .iter()
+        .map(|r| {
+            if r.room_name == r.room_id {
+                r.room_id.clone()
+            } else {
+                format!("{} ({})", r.room_id, r.room_name)
+            }
+        })
+        .collect();
+    Some(format!("       (rooms: {})", shown.join(", ")))
 }
 
 /// Refuse an argument the tool does not declare (#1439), with the list of the
@@ -2036,10 +2062,13 @@ fn exec_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         });
     }
 
-    let lines: Vec<String> = results
-        .iter()
-        .map(|sr| format!("[{:.2}] {}", sr.score, sr.memory.content))
-        .collect();
+    let mut lines: Vec<String> = Vec::with_capacity(results.len());
+    for sr in &results {
+        lines.push(format!("[{:.2}] {}", sr.score, sr.memory.content));
+        if let Some(line) = rooms_text(&sr.rooms) {
+            lines.push(line);
+        }
+    }
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2669,6 +2698,9 @@ fn format_room_recall_lines(results: &[uteke_core::SearchResult], full_ids: bool
             "       (id: {})",
             display_id(&sr.memory.id, full_ids)
         ));
+        if let Some(line) = rooms_text(&sr.rooms) {
+            lines.push(line);
+        }
     }
     lines
 }
@@ -3919,6 +3951,7 @@ mod room_recall_tests {
             },
             score,
             similarity: None,
+            rooms: Vec::new(),
         }
     }
 

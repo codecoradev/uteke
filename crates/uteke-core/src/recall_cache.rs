@@ -236,6 +236,7 @@ mod tests {
             },
             score: 0.95,
             similarity: None,
+            rooms: Vec::new(),
         }];
 
         // Miss first

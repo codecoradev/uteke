@@ -189,7 +189,7 @@ pub(crate) fn run_recall(
         if enrich {
             return Err("--explain and --enrich cannot be used together".to_string());
         }
-        let explained = filter
+        let mut explained = filter
             .fetch(
                 uteke,
                 limit,
@@ -199,6 +199,9 @@ pub(crate) fn run_recall(
             )
             .map_err(|e| format!("Failed to recall: {e}"))?;
         uteke.reset_salience_recency_config();
+        uteke
+            .attach_rooms_explained(&mut explained)
+            .map_err(|e| format!("Failed to look up rooms: {e}"))?;
 
         if explained.is_empty() {
             if cli.json {
@@ -287,7 +290,7 @@ pub(crate) fn run_recall(
                 |r| r.memory_id.as_deref(),
             )
             .map_err(|e| format!("Failed to recall: {e}"));
-        let pack_result = match packed {
+        let mut pack_result = match packed {
             Ok(results) => uteke_core::pack_mode::pack_context(results, budget, exclude_ids),
             Err(e) => {
                 uteke.reset_salience_recency_config();
@@ -296,6 +299,9 @@ pub(crate) fn run_recall(
         };
 
         uteke.reset_salience_recency_config();
+        uteke
+            .attach_rooms_unified(&mut pack_result.selected)
+            .map_err(|e| format!("Failed to look up rooms: {e}"))?;
 
         if cli.json {
             output::print_json(&pack_result);
@@ -307,7 +313,7 @@ pub(crate) fn run_recall(
 
     if use_unified {
         // Unified search path (#531)
-        let unified_results = filter
+        let mut unified_results = filter
             .fetch(
                 uteke,
                 limit,
@@ -331,6 +337,9 @@ pub(crate) fn run_recall(
             .map_err(|e| format!("Failed to recall: {e}"))?;
 
         uteke.reset_salience_recency_config();
+        uteke
+            .attach_rooms_unified(&mut unified_results)
+            .map_err(|e| format!("Failed to look up rooms: {e}"))?;
 
         if unified_results.is_empty() {
             if cli.json {
@@ -498,6 +507,12 @@ pub(crate) fn run_recall(
     } else {
         filtered
     };
+
+    // The rooms of what is left (#1703): after every filter, one query.
+    let mut filtered = filtered;
+    uteke
+        .attach_rooms(&mut filtered)
+        .map_err(|e| format!("Failed to look up rooms: {e}"))?;
 
     if filtered.is_empty() {
         if cli.json {

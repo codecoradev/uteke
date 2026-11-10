@@ -174,6 +174,30 @@ Content-Type: application/json
 {"room_id": "engineering", "query": "migration", "limit": 10}
 ```
 
+## Which rooms is a hit in?
+
+A memory can be in several rooms, and a recall or search hit tells you which.
+Hits of `recall`, `search` and `room recall` (with a query) carry a `rooms` list,
+sorted by room id, and the field is left out when the memory is in no room:
+
+```json
+{
+  "memory": {"id": "01a1b2c3", "content": "We chose Redis for caching"},
+  "score": 0.04,
+  "rooms": [
+    {"room_id": "engineering", "room_name": "Team decisions"},
+    {"room_id": "weekly-standup", "room_name": "weekly-standup"}
+  ]
+}
+```
+
+`room_name` is the room title, or the id when the room has no title. In the
+unified, `--pack` and `--explain` forms the same list sits on each memory item.
+The human CLI output adds a `Rooms:` line and the MCP text output a
+`(rooms: …)` line under a hit. Ranking and scores do not change, and a room
+recall without a query (the chronological list) is not affected: every item
+in it is in the room you asked for.
+
 ## Rooms, Tags and Author Instead of Namespaces
 
 Namespaces are deprecated and will be removed in a future 0.x release (see the

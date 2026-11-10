@@ -170,6 +170,7 @@ impl crate::Uteke {
                 similarity: seed_similarity.get(&id).copied(),
                 memory,
                 score,
+                rooms: Vec::new(),
             })
             .collect();
         all_results.sort_by(|a, b| {

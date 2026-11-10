@@ -323,6 +323,7 @@ mod tests {
             },
             score,
             similarity: None,
+            rooms: Vec::new(),
         }
     }
 

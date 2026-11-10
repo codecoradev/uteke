@@ -321,6 +321,7 @@ impl Uteke {
                         memory,
                         score: base,
                         similarity,
+                        rooms: Vec::new(),
                     });
                 }
                 results.sort_by(|a, b| {

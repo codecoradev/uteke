@@ -351,6 +351,8 @@ so do not use it to look for a topic.
 
 1. **Find the content first.** `uteke recall "<2-3 keywords>" --tags project:<name>`;
    add `--strategy fts5` for exact terms. Long sentences can zero out the keyword arm.
+   Each hit lists the rooms its memory is in (`rooms`: `room_id` and `room_name`), so
+   the hit already tells you which room to open next.
 2. **Scope once the room is known.** `uteke room recall <id> --query "<keywords>"`, and
    `uteke room summary <id>` for a no-LLM overview (topic clusters, top tags, decisions).
 3. **Find a room by purpose.** If the workspace keeps a room index document (for example
@@ -371,9 +373,8 @@ Agents that use the MCP tools instead of the CLI follow the same steps:
 | `room summary` | `uteke_room_summary` |
 | `doc search` | `uteke_doc_search` |
 
-A recall hit does not yet say which room it came from (tracked in #1703), and there is
-no room search yet (tracked in #1704). This procedure is the fallback until they land;
-replace it then.
+There is no room search yet (tracked in #1704). Until it lands, a recall hit's `rooms`
+plus this procedure is how you find a room; replace it then.
 
 ### What to store
 
