@@ -344,6 +344,37 @@ it already has a memory convention: a room or document named like `*conventions*
 the defaults: one fact per memory, no secrets or credentials, tag it with the
 project name.
 
+### Finding the right room
+
+A store can hold hundreds of rooms and `uteke room list` has no filter or limit,
+so do not use it to look for a topic.
+
+1. **Find the content first.** `uteke recall "<2-3 keywords>" --tags project:<name>`;
+   add `--strategy fts5` for exact terms. Long sentences can zero out the keyword arm.
+2. **Scope once the room is known.** `uteke room recall <id> --query "<keywords>"`, and
+   `uteke room summary <id>` for a no-LLM overview (topic clusters, top tags, decisions).
+3. **Find a room by purpose.** If the workspace keeps a room index document (for example
+   `room-index` or the project registry), `uteke doc search "<topic>" --mode hybrid`
+   finds it. Check the conventions rooms the same way (see "Conventions first").
+4. **Read the name.** Project rooms are `<name>`, discussions `disc:<topic>`, research
+   `riset:<topic>`: the prefix tells you the kind of room before you open it.
+5. **Keep the room id.** When a step reveals a room id, carry it into the next step so
+   the follow-up is a `room recall`, not another discovery.
+
+Agents that use the MCP tools instead of the CLI follow the same steps:
+
+| CLI | MCP tool |
+|-----|----------|
+| `recall` | `uteke_recall` |
+| `search` | `uteke_search` (keyword; keep the query short) |
+| `room recall` | `uteke_room_recall` |
+| `room summary` | `uteke_room_summary` |
+| `doc search` | `uteke_doc_search` |
+
+A recall hit does not yet say which room it came from (tracked in #1703), and there is
+no room search yet (tracked in #1704). This procedure is the fallback until they land;
+replace it then.
+
 ### What to store
 
 Store only what is worth recalling again: decisions with their reason, causes of

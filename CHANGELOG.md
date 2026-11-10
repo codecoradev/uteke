@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Docs
+
+- **Skill: a "Finding the right room" procedure (#1702)** - the `uteke-memory` skill (both
+  copies) now says how to locate a room on a large store without `room list`: recall by
+  2-3 keywords first, then `room recall` and `room summary` once the room is known, a room
+  index document through `doc search`, the room naming prefixes, and the matching MCP tool
+  names. It names the two missing pieces (rooms in recall results, room search) so the
+  section can be replaced when they land.
+
 ### Fixed
 
 - **`import` no longer skips content that was only forgotten (#1689)** - since #1633/#1636 a
