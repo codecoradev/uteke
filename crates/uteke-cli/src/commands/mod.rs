@@ -316,6 +316,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             recursive,
             timestamp,
             defer_embed,
+            skip_deprecated_copies,
         } => {
             let opts = maintenance::ExtractOpts {
                 enabled: *extract,
@@ -366,6 +367,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 opts,
                 timestamp.as_deref(),
                 *defer_embed,
+                *skip_deprecated_copies,
             )
         }
 

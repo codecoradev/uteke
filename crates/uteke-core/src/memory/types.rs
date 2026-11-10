@@ -728,6 +728,12 @@ pub struct ImportOptions {
     /// the embedding to `uteke repair --reembed` (#1608). Duplicates are then
     /// caught by exact content only, not by the cosine check.
     pub defer_embedding: bool,
+    /// Skip a live row whose content matches only a DEPRECATED copy (forgotten,
+    /// superseded, consolidated or pruned) instead of importing it as a new
+    /// live memory (#1716). Off by default: a restore must not lose rows, and a
+    /// plain forget is recoverable. Turn it on when the file may carry text that
+    /// was replaced on purpose. A skipped row counts in `duplicates_skipped`.
+    pub skip_deprecated_copies: bool,
 }
 
 fn is_zero(n: &usize) -> bool {

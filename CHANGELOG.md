@@ -17,6 +17,17 @@
   `room_aliases` table (forward-only: an older binary ignores it). Owner order
   2026-11-10 (contract amendment 4, uteke-cloud #526); the `category:title` room naming
   (#1715) depends on it.
+- **`skip_deprecated_copies` for `import` (#1716)** - OSS and Cloud now agree on a live row
+  whose content matches only a deprecated copy (forgotten, superseded, consolidated or
+  pruned): by default it is imported as a new live memory (the OSS behaviour since #1690),
+  and the opt-in `skip_deprecated_copies` skips it and counts it in `duplicates_skipped`.
+  It is a boolean in the body of `POST /import` and `uteke import --skip-deprecated-copies`
+  (JSON/JSONL only), for files that may carry text replaced on purpose. The skipped row
+  links no rooms, since the stored copy is not live. Unchanged either way: a row that
+  carries the id of a deprecated memory is skipped, a `deprecated` row over a deprecated
+  copy is skipped, an exact copy of a live row is a duplicate, and values rejected with
+  `forget --reason` are rejected. Contract: additive request field on a CORE endpoint
+  (uteke-cloud #528, owner decision 2026-11-10, "OSS = Cloud").
 - **Room search (#1704)** - `POST /room/search`, the MCP tool `uteke_room_search` and
   `uteke room search <QUERY> [--limit N] [--namespace NS]` find rooms for a topic, so an
   agent no longer has to read `room list` (hundreds of rooms, many untitled). Two signals
