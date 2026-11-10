@@ -1,0 +1,54 @@
+name: MCP Registry
+
+# Publishes server.json to the MCP Registry as io.github.codecoradev/uteke.
+# The registry only grants an organization namespace to GitHub OIDC (or a PAT
+# with read:org); the interactive `mcp-publisher login github` flow cannot read
+# organization roles, so publishing runs here.
+#
+# Runs on a release tag, or by hand (workflow_dispatch) for the first listing
+# or a re-publish. server.json's version must match the tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  MCP_PUBLISHER_VERSION: "1.8.8"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check server.json version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          got="$(jq -r .version server.json)"
+          if [ "$want" != "$got" ]; then
+            echo "server.json version $got does not match tag $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - name: Install mcp-publisher
+        run: |
+          base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
+          curl -fsSLO "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSLO "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          grep ' mcp-publisher_linux_amd64.tar.gz$' "registry_${MCP_PUBLISHER_VERSION}_checksums.txt" | sha256sum -c -
+          tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+
+      - name: Validate
+        run: ./mcp-publisher validate
+
+      - name: Publish
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
