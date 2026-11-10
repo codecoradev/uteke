@@ -96,6 +96,7 @@ mod recall_request;
 pub mod recall_settings;
 pub mod remember_exec;
 mod remember_request;
+pub mod room_naming;
 mod room_ops;
 pub mod room_search;
 pub mod rooms_segments;

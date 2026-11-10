@@ -1110,6 +1110,50 @@ mod room_recall_at_tests {
         assert_ne!(status, 200, "{resp}");
     }
 
+    /// #1715 stage 1: an id outside `category:title` is accepted with a warning
+    /// on create and rename; a conventional id, any custom category included, is
+    /// not warned, and reads never warn.
+    #[test]
+    fn room_create_and_rename_warn_about_an_id_outside_category_title() {
+        let app = NamespaceApp::new();
+        let create = |id: &str| {
+            let body = serde_json::json!({ "room_id": id, "namespace": "default" }).to_string();
+            app.call(Method::Post, "/room/create", Some(body))
+        };
+        let (status, resp) = create("plain-room");
+        assert_eq!(status, 200, "{resp}");
+        let warnings = resp["warnings"].as_array().expect("warnings array");
+        assert_eq!(warnings.len(), 1, "{resp}");
+        assert!(
+            warnings[0].as_str().unwrap().contains("category:title"),
+            "{resp}"
+        );
+        assert_eq!(resp["created"], serde_json::json!("plain-room"));
+
+        for id in ["project:uteke", "lab:custom"] {
+            let (status, resp) = create(id);
+            assert_eq!(status, 200, "{resp}");
+            assert!(resp.get("warnings").is_none(), "{id}: {resp}");
+        }
+
+        // Renaming to a non-conventional id warns; to a conventional one does not.
+        let body = serde_json::json!({ "from": "project:uteke", "to": "uteke-main" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(resp["warnings"].as_array().map(Vec::len), Some(1), "{resp}");
+        let body =
+            serde_json::json!({ "from": "uteke-main", "to": "project:uteke-main" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+
+        // Reads and existing rooms are never warned.
+        let body = serde_json::json!({ "room_id": "plain-room" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/stats", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+    }
+
     #[test]
     fn room_update_missing_room_returns_404() {
         let app = NamespaceApp::new();

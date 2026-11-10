@@ -2815,6 +2815,14 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
     })
 }
 
+/// The stage-1 naming warning (#1715) as a line to append to a create or
+/// rename result; empty when the id has the `category:title` shape.
+fn room_id_warning_suffix(room_id: &str) -> String {
+    uteke_core::room_naming::room_id_warning(room_id)
+        .map(|w| format!("\nWarning: {w}"))
+        .unwrap_or_default()
+}
+
 fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let title = args["title"].as_str();
@@ -2828,8 +2836,9 @@ fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
             text: format!(
-                "Room created: {room_id} (namespace: {namespace}){}",
-                namespace_deprecation_suffix(Some(namespace))
+                "Room created: {room_id} (namespace: {namespace}){}{}",
+                namespace_deprecation_suffix(Some(namespace)),
+                room_id_warning_suffix(room_id)
             ),
         }],
         is_error: false,
@@ -2922,7 +2931,10 @@ fn exec_room_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     Ok(ToolResult {
         content: vec![McpContent::Text {
             r#type: "text".to_string(),
-            text: format!("✓ Room '{from}' renamed to '{to}' — all links moved atomically"),
+            text: format!(
+                "✓ Room '{from}' renamed to '{to}' — all links moved atomically; '{from}' still works as an alias{}",
+                room_id_warning_suffix(to)
+            ),
         }],
         is_error: false,
     })
@@ -4436,16 +4448,54 @@ mod namespace_deprecation_tests {
     #[test]
     fn room_create_warns_only_for_non_default() {
         let u = store();
-        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "r1"})).unwrap());
-        assert_eq!(t, "Room created: r1 (namespace: default)");
+        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "project:r1"})).unwrap());
+        assert_eq!(t, "Room created: project:r1 (namespace: default)");
         let t = text(
             exec_room_create(
                 &u,
-                &serde_json::json!({"room_id": "r2", "namespace": "ns-mcp-r"}),
+                &serde_json::json!({"room_id": "project:r2", "namespace": "ns-mcp-r"}),
             )
             .unwrap(),
         );
         assert!(t.contains(NAMESPACE_DEPRECATION_WARNING), "{t}");
+    }
+
+    /// #1715 stage 1: an id outside `category:title` is created, with a warning;
+    /// a custom category of the right shape is not warned.
+    #[test]
+    fn room_create_and_rename_warn_about_an_id_outside_category_title() {
+        let u = store();
+        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "plain"})).unwrap());
+        assert!(
+            t.starts_with("Room created: plain (namespace: default)"),
+            "{t}"
+        );
+        assert!(
+            t.contains("Warning: Room id 'plain' is not of the form category:title"),
+            "{t}"
+        );
+        assert!(u.get_room("plain").unwrap().is_some());
+
+        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "lab:custom"})).unwrap());
+        assert_eq!(t, "Room created: lab:custom (namespace: default)");
+
+        let t = text(
+            exec_room_rename(
+                &u,
+                &serde_json::json!({"from": "plain", "to": "still-plain"}),
+            )
+            .unwrap(),
+        );
+        assert!(t.contains("'plain' still works as an alias"), "{t}");
+        assert!(t.contains("Warning: Room id 'still-plain'"), "{t}");
+        let t = text(
+            exec_room_rename(
+                &u,
+                &serde_json::json!({"from": "still-plain", "to": "ops:plain"}),
+            )
+            .unwrap(),
+        );
+        assert!(!t.contains("Warning"), "{t}");
     }
 
     #[test]
