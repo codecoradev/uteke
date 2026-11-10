@@ -74,7 +74,9 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    copies (`.agents/skills/uteke-memory/SKILL.md` and
    `crates/uteke-cli/assets/uteke-memory-skill.md`, enforced by tests),
    `docs/core-contract.json` (regenerate with `cargo run -p docgen`), the
-   `version` in `server.json` (MCP Registry entry; the `MCP Registry`
+   `version` in `server.json` and `gemini-extension.json` (both enforced by
+   `registry_manifests_match_workspace_version`; `server.json` is the MCP
+   Registry entry; the `MCP Registry`
    workflow publishes it on the tag through GitHub OIDC and fails if the
    version does not match; a local `mcp-publisher login github` cannot
    publish under the organization namespace), and the CHANGELOG entry. Merge it with the normal merge gate.
