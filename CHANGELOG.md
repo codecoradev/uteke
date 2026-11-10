@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Renaming a room keeps its old id working (#1714)** - `room rename`, `POST /room/rename` and
+  `uteke_room_rename` now record the id a room leaves as an alias of the renamed room, in
+  the same transaction. Every room operation (remember, recall, room recall, stats,
+  summary, update, document links, memory links, move, delete) resolves an alias first
+  and works on the canonical room, so AGENTS.md files, notes, skills and agent configs
+  that still name the old id keep working. Responses name the canonical room. An alias is
+  never also a room id: creating a room under an alias, or renaming another room onto an
+  alias of a different room, is an error; a room may take back a name it used to have. A
+  chain of renames (A to B to C) resolves every earlier name to C, deleting a room drops
+  its aliases, and `room list` shows canonical rooms only. Schema v26 adds the
+  `room_aliases` table (forward-only: an older binary ignores it). Owner order
+  2026-11-10 (contract amendment 4, uteke-cloud #526); the `category:title` room naming
+  (#1715) depends on it.
 - **Room search (#1704)** - `POST /room/search`, the MCP tool `uteke_room_search` and
   `uteke room search <QUERY> [--limit N] [--namespace NS]` find rooms for a topic, so an
   agent no longer has to read `room list` (hundreds of rooms, many untitled). Two signals
