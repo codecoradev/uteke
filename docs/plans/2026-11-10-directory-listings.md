@@ -39,8 +39,8 @@ badge, so Glama comes first.
 1. [ ] **Glama listing.** Search `glama.ai/mcp/servers` for `uteke` (nothing on
        2026-11-10). If absent, use "Add Server" (needs a signed-in account:
        GitHub works; the email route has a captcha, so an owner must do it).
-       Then **claim** it: add a `glama.json` with the maintainers' GitHub
-       usernames at the repo root (a PR, `docs/` or `chore/` branch).
+       Then **claim** it (`glama.json` is already in the repo root, naming
+       `ajianaz`; redo the "Claim ownership" flow so Glama reads it).
        Glama grades licence, quality and maintenance; Apache-2.0 helps.
 2. [ ] Open `https://glama.ai/mcp/servers/codecoradev/uteke` and confirm the
        badge image `.../badges/score.svg` renders.
@@ -116,9 +116,13 @@ Checked against `crates/uteke-mcp/src/lib.rs` on 2026-11-10:
       empty lists, not "method not found".
 - [ ] Errors from tools should come back as results with `isError: true`
       (partly done; verify per tool).
-- [ ] `llms-install.md` at the repo root (Cline installs from it).
+- [x] `llms-install.md` at the repo root (Cline installs from it).
 - [ ] A privacy-policy URL on uteke.app.
-- [ ] Manifests: `gemini-extension.json`, `.cursor-plugin/plugin.json`, `glama.json`.
+- [x] Manifests `glama.json` and `gemini-extension.json` (version kept in step by
+      `registry_manifests_match_workspace_version`).
+- [ ] Manifest `.cursor-plugin/plugin.json` (with the Cursor Marketplace application).
+- [ ] Repo topic `gemini-cli-extension` (the gallery crawler needs it; the repo is
+      at the 20-topic limit, so swap out one, e.g. `rag`).
 
 The first three touch the MCP surface. Per AGENTS.md, read
 `kontrak-core-cloud` first; if CORE semantics change, a uteke-cloud contract
