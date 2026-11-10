@@ -853,6 +853,13 @@ pub struct ImportRequest {
     /// before the request returns.
     #[serde(default)]
     pub defer_embedding: bool,
+    /// Skip a live row whose content matches only a deprecated copy (forgotten,
+    /// superseded, consolidated or pruned) instead of importing it as a new live
+    /// memory (#1716, default false). A skipped row counts in
+    /// `duplicates_skipped`. Rows that carry the id of a deprecated memory are
+    /// skipped either way.
+    #[serde(default)]
+    pub skip_deprecated_copies: bool,
 }
 
 // ── Room Remember Types (#762) ────────────────────────────────────────

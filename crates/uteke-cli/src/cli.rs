@@ -468,6 +468,12 @@ pub enum Commands {
         /// and only exact copies are skipped as duplicates.
         #[arg(long, conflicts_with_all = ["full", "extract", "batch_dir"])]
         defer_embed: bool,
+        /// JSON/JSONL only: skip a live row whose content matches only a
+        /// deprecated copy (forgotten, superseded, consolidated or pruned)
+        /// instead of importing it as a new live memory (#1716). A skipped row
+        /// counts as a duplicate.
+        #[arg(long, conflicts_with_all = ["full", "extract", "batch_dir"])]
+        skip_deprecated_copies: bool,
     },
     /// Generate shell completions
     Completions {

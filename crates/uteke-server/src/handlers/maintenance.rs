@@ -311,6 +311,7 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let import_ns = ns(&req_data.namespace);
             let options = uteke_core::ImportOptions {
                 defer_embedding: req_data.defer_embedding,
+                skip_deprecated_copies: req_data.skip_deprecated_copies,
             };
             match uteke.import_with(&req_data.content, import_ns, options) {
                 Ok(result) => {
