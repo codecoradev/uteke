@@ -1067,6 +1067,49 @@ mod room_recall_at_tests {
         );
     }
 
+    /// #1714: the id a room had before a rename keeps working over HTTP, and
+    /// the responses name the canonical room.
+    #[test]
+    fn a_renamed_rooms_old_id_still_works_and_answers_with_the_canonical_id() {
+        let app = NamespaceApp::new();
+        let body = serde_json::json!({ "room_id": "old-name", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        let body = serde_json::json!({ "from": "old-name", "to": "new-name" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+
+        // A write through the old id lands in the renamed room and says so.
+        let body = serde_json::json!({
+            "content": "written through the old id",
+            "tags": [],
+            "room_id": "old-name",
+            "author": "tester"
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/room/remember", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(resp["room_id"], serde_json::json!("new-name"), "{resp}");
+
+        // The room listing shows the renamed room once; stats work by either id.
+        for id in ["old-name", "new-name"] {
+            let body = serde_json::json!({ "room_id": id }).to_string();
+            let (status, resp) = app.call(Method::Post, "/room/stats", Some(body));
+            assert_eq!(status, 200, "{id}: {resp}");
+            assert_eq!(
+                resp["room_id"],
+                serde_json::json!("new-name"),
+                "{id}: {resp}"
+            );
+            assert_eq!(resp["memory_count"], serde_json::json!(1), "{id}: {resp}");
+        }
+
+        // A new room cannot take the old id.
+        let body = serde_json::json!({ "room_id": "old-name", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_ne!(status, 200, "{resp}");
+    }
+
     #[test]
     fn room_update_missing_room_returns_404() {
         let app = NamespaceApp::new();

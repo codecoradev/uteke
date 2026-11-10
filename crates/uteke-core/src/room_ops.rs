@@ -68,6 +68,17 @@ impl crate::Uteke {
         self.store.create_room(room_id, title, namespace)
     }
 
+    /// The canonical id of a room: an alias (the old id of a renamed room,
+    /// #1714) gives the room it points to, any other id comes back unchanged.
+    /// Surfaces use it to answer with the canonical id whatever id was sent.
+    /// A failed lookup returns the id as given (it can only fail on a broken
+    /// store, which the operation itself reports).
+    pub fn canonical_room_id(&self, room_id: &str) -> String {
+        self.store
+            .canonical_room(room_id)
+            .unwrap_or_else(|_| room_id.to_string())
+    }
+
     /// Get a room by ID.
     pub fn get_room(&self, room_id: &str) -> Result<Option<Room>, Error> {
         self.store.get_room(room_id)
@@ -946,8 +957,8 @@ mod tests {
         assert_eq!(room.title, Some("Old".to_string()));
         assert_eq!(room.namespace, "default");
 
-        // Old name is gone, members followed.
-        assert!(uteke.get_room("old-room").unwrap().is_none());
+        // The old name is now an alias of the renamed room (#1714); members followed.
+        assert_eq!(uteke.get_room("old-room").unwrap().unwrap().id, "new-room");
         assert_eq!(uteke.recall_room("new-room", None, 0).unwrap().len(), 2);
         // Cross-namespace room recall is author-filterable on the new ID.
         assert_eq!(
@@ -985,7 +996,8 @@ mod tests {
         store.rename_room("r-old", "r-new").unwrap();
 
         assert_eq!(store.room_list_documents("r-new").unwrap(), vec!["doc-1"]);
-        assert!(store.room_list_documents("r-old").unwrap().is_empty());
+        // The old id is an alias of the renamed room now (#1714).
+        assert_eq!(store.room_list_documents("r-old").unwrap(), vec!["doc-1"]);
     }
 
     #[test]
@@ -1002,6 +1014,158 @@ mod tests {
 
         let same = uteke.rename_room("a", "a");
         assert!(matches!(same, Err(crate::Error::Validation(_))));
+    }
+
+    // ── Room aliases: a rename keeps the old id working (#1714) ──────
+
+    #[test]
+    fn an_old_room_id_resolves_on_every_room_operation() {
+        let u = open_no_embedder();
+        u.create_room("old", Some("Old"), "default").unwrap();
+        let m = u
+            .remember("alias member", &[], None, Some("default"))
+            .unwrap();
+        u.store
+            .link_memory_to_room("old", &m, "alice", "participant")
+            .unwrap();
+        let m2 = u
+            .remember("later member", &[], None, Some("default"))
+            .unwrap();
+        let doc = crate::memory::documents::Document {
+            id: "d1".into(),
+            slug: "d1".into(),
+            title: "D1".into(),
+            content: "# D1".into(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".into(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            parent_id: None,
+            path: "/d1/".into(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        u.store.upsert_document(&doc).unwrap();
+        u.rename_room("old", "new").unwrap();
+
+        // Reads answer with the canonical id.
+        assert_eq!(u.get_room("old").unwrap().unwrap().id, "new");
+        assert_eq!(u.room_stats("old").unwrap().unwrap().room_id, "new");
+        assert_eq!(u.recall_room("old", None, 0).unwrap().len(), 1);
+        assert_eq!(u.room_summary("old").unwrap().unwrap().room_id, "new");
+        assert_eq!(u.store.get_room_memory_ids("old", None).unwrap().len(), 1);
+        // Writes land on the renamed room.
+        assert!(u.add_memory_to_room(&m2, "old", "bob").unwrap());
+        assert_eq!(u.recall_room("new", None, 0).unwrap().len(), 2);
+        u.room_add_document("old", "d1").unwrap();
+        assert_eq!(u.room_list_documents("new").unwrap(), vec!["d1"]);
+        assert_eq!(u.room_list_documents("old").unwrap(), vec!["d1"]);
+        u.room_remove_document("old", "d1").unwrap();
+        assert!(u.room_list_documents("new").unwrap().is_empty());
+        let updated = u
+            .update_room("old", Some("Renamed"), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (updated.id.as_str(), updated.title.as_deref()),
+            ("new", Some("Renamed"))
+        );
+        // list shows the canonical room only.
+        let ids: Vec<String> = u
+            .list_rooms(None)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(ids, vec!["new"]);
+    }
+
+    #[test]
+    fn a_chain_of_renames_resolves_every_earlier_name() {
+        let u = open_no_embedder();
+        u.create_room("a", None, "default").unwrap();
+        u.rename_room("a", "b").unwrap();
+        u.rename_room("b", "c").unwrap();
+        for name in ["a", "b", "c"] {
+            assert_eq!(u.get_room(name).unwrap().unwrap().id, "c", "{name}");
+        }
+        // Renaming through an alias renames the room it points to.
+        let room = u.rename_room("a", "d").unwrap();
+        assert_eq!(room.id, "d");
+        for name in ["a", "b", "c", "d"] {
+            assert_eq!(u.get_room(name).unwrap().unwrap().id, "d", "{name}");
+        }
+    }
+
+    #[test]
+    fn an_alias_is_never_a_room_and_cannot_shadow_one() {
+        let u = open_no_embedder();
+        u.create_room("a", None, "default").unwrap();
+        u.create_room("other", None, "default").unwrap();
+        u.rename_room("a", "b").unwrap();
+
+        // A room cannot be created under an alias.
+        let e = u.create_room("a", None, "default").unwrap_err();
+        assert!(
+            matches!(&e, crate::Error::Validation(m) if m.contains("alias of b")),
+            "{e:?}"
+        );
+        // Another room cannot be renamed onto an alias of a different room.
+        let e = u.rename_room("other", "a").unwrap_err();
+        assert!(
+            matches!(&e, crate::Error::Validation(m) if m.contains("alias of b")),
+            "{e:?}"
+        );
+        assert_eq!(u.get_room("a").unwrap().unwrap().id, "b");
+        assert_eq!(u.get_room("other").unwrap().unwrap().id, "other");
+    }
+
+    #[test]
+    fn a_room_can_take_back_a_former_name() {
+        let u = open_no_embedder();
+        u.create_room("a", None, "default").unwrap();
+        u.rename_room("a", "b").unwrap();
+        let room = u.rename_room("b", "a").unwrap();
+        assert_eq!(room.id, "a");
+        // b is the alias now; a is a real room again.
+        assert_eq!(u.get_room("a").unwrap().unwrap().id, "a");
+        assert_eq!(u.get_room("b").unwrap().unwrap().id, "a");
+        assert_eq!(u.list_rooms(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_room_drops_its_aliases() {
+        let u = open_no_embedder();
+        u.create_room("a", None, "default").unwrap();
+        u.rename_room("a", "b").unwrap();
+        u.rename_room("b", "c").unwrap();
+        // Deleting through an alias deletes the room it points to.
+        u.delete_room("a").unwrap();
+        for name in ["a", "b", "c"] {
+            assert!(u.get_room(name).unwrap().is_none(), "{name}");
+        }
+        // The names are free again.
+        u.create_room("a", None, "default").unwrap();
+        u.create_room("b", None, "default").unwrap();
+        assert_eq!(u.get_room("a").unwrap().unwrap().id, "a");
+    }
+
+    #[test]
+    fn moving_between_a_room_and_its_alias_is_the_identity_move() {
+        let u = open_no_embedder();
+        u.create_room("a", None, "default").unwrap();
+        u.rename_room("a", "b").unwrap();
+        let m = u.remember("x", &[], None, Some("default")).unwrap();
+        u.store
+            .link_memory_to_room("b", &m, "alice", "participant")
+            .unwrap();
+        let e = u.move_memory_to_room(&m, "a", "b").unwrap_err();
+        assert!(matches!(e, crate::Error::Validation(_)), "{e:?}");
     }
 
     #[test]

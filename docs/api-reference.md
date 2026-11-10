@@ -461,7 +461,7 @@ Delete a room (unlink-only): room links are removed, memories and documents are 
 
 #### 🟡 `POST` `/room/rename`
 
-Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). Accepts `{ from, to }`. Write op — blocked for read-only tokens.
+Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). The old id stays valid as an alias of the renamed room (#1714): every room operation resolves it and answers with the canonical id, and a room cannot be created under an alias. Accepts `{ from, to }` (`from` may itself be an alias). Write op — blocked for read-only tokens.
 
 **Request body**: JSON object (see handler source for fields)
 

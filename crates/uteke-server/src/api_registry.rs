@@ -470,7 +470,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
         path: "/room/rename",
         tier: Tier::Core,
         writes: true,
-        description: "Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). Accepts `{ from, to }`. Write op — blocked for read-only tokens.",
+        description: "Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). The old id stays valid as an alias of the renamed room (#1714): every room operation resolves it and answers with the canonical id, and a room cannot be created under an alias. Accepts `{ from, to }` (`from` may itself be an alias). Write op — blocked for read-only tokens.",
         request_type: Some("serde_json::Value"),
         response_type: None,
         excludes_deprecated: false,

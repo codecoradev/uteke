@@ -94,7 +94,7 @@ pub(super) fn post_room_consolidate(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             } else {
                 match uteke_core::consolidation_api::plan_room(uteke, &req_data.room_id) {
                     Ok(dry) => serde_json::json!({
-                        "room_id": req_data.room_id,
+                        "room_id": uteke.canonical_room_id(&req_data.room_id),
                         "dry_run": true,
                         "total_memories": dry.plan.total_memories,
                         "batches": dry.plan.batches.len(),
@@ -474,7 +474,7 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         req,
                         &serde_json::json!({
                             "id": outcome.id,
-                            "room_id": req_data.room_id,
+                            "room_id": uteke.canonical_room_id(&req_data.room_id),
                             "embedding_written": outcome.embedding_written,
                             "redacted": outcome.redacted(),
                             "warning": uteke_core::namespace_deprecation::merge_warning(
@@ -577,7 +577,7 @@ pub(super) fn post_room_document_list(c: &mut Call) -> Response<Cursor<Vec<u8>>>
         Ok(req_data) => match uteke.room_list_documents(&req_data.room_id) {
             Ok(slugs) => ctx.ok_response_for(
                 req,
-                &serde_json::json!({ "room_id": req_data.room_id, "doc_slugs": slugs }),
+                &serde_json::json!({ "room_id": uteke.canonical_room_id(&req_data.room_id), "doc_slugs": slugs }),
             ),
             Err(e) => {
                 error!("Internal error: {e}");
@@ -600,7 +600,7 @@ pub(super) fn put_room_document_add(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     }
     match read_body::<RoomDocAddReq>(req.as_reader()) {
         Ok(req_data) => match uteke.room_add_document(&req_data.room_id, &req_data.doc_slug) {
-            Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "linked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
+            Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "linked", "room_id": uteke.canonical_room_id(&req_data.room_id), "doc_slug": req_data.doc_slug })),
             Err(e) => match e {
                 uteke_core::Error::Validation(_) => {
                     ctx.error_response_for(req, 400, e.to_string())
@@ -627,7 +627,7 @@ pub(super) fn delete_room_document_remove(c: &mut Call) -> Response<Cursor<Vec<u
     }
     match read_body::<RoomDocRemoveReq>(req.as_reader()) {
         Ok(req_data) => match uteke.room_remove_document(&req_data.room_id, &req_data.doc_slug) {
-            Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "unlinked", "room_id": req_data.room_id, "doc_slug": req_data.doc_slug })),
+            Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "unlinked", "room_id": uteke.canonical_room_id(&req_data.room_id), "doc_slug": req_data.doc_slug })),
             Err(e) => {
                 error!("Internal error: {e}");
                 ctx.error_response_for(req, 500, "Internal server error")
