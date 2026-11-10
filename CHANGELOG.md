@@ -35,8 +35,8 @@
   copies) now says how to locate a room on a large store without `room list`: recall by
   2-3 keywords first, then `room recall` and `room summary` once the room is known, a room
   index document through `doc search`, the room naming prefixes, and the matching MCP tool
-  names. It names the two missing pieces (rooms in recall results, room search) so the
-  section can be replaced when they land.
+  names. Once rooms in recall results (#1703) and room search (#1704) landed it was
+  updated to start from `room search` and the `rooms` of a recall hit.
 
 ### Fixed
 
