@@ -74,12 +74,17 @@ Glama may flag a token-gated endpoint as unhealthy. So:
 
 ## 4. Memory-specific lists (no Glama needed)
 
-- [ ] `topoteretes/awesome-ai-memory`: table row. Columns: Name, URL,
+- [x] `topoteretes/awesome-ai-memory`: PR #126 open (2026-11-10). Table row. Columns: Name, URL,
       Open/Close, GitHub URL, Category, Storage. Row: `Uteke | https://uteke.app |
       Managed, Open source | https://github.com/codecoradev/uteke | Memory Tool |
       Vector`. (Its README says "open a pull request"; there is no CONTRIBUTING file.)
-- [ ] `TeleAI-UAGI/Awesome-Agent-Memory`: read its CONTRIBUTING first (not read yet).
-- [ ] Hermes Atlas "Best memory providers" (`hermesatlas.com/lists/best-memory-providers`):
+- [x] `TeleAI-UAGI/Awesome-Agent-Memory`: PR #190 open (2026-11-10), entry #41 by star count
+      (285 stars; below 100 stars an entry goes in the collapsed Emerging section, so
+      this stays valid while stars stay above ~90). Description is capped at 25 words.
+- [ ] Hermes Atlas (`hermesatlas.com`, repo `ksimback/hermes-ecosystem`): submit through the
+      "Suggest a Repo" issue form (prefilled link in the session notes; category
+      "Memory & Context"). The form sets a label the automation needs, so use the web form, not `gh issue create`.
+      Previously noted as "Best memory providers" list:
       Uteke has a Hermes integration (`docs/integrations/hermes.md`). Find its
       submission route first (not read yet); competitors listed there include
       mnemosyne, ClawMem, Sibyl-Memory.
@@ -121,8 +126,7 @@ Checked against `crates/uteke-mcp/src/lib.rs` on 2026-11-10:
 - [x] Manifests `glama.json` and `gemini-extension.json` (version kept in step by
       `registry_manifests_match_workspace_version`).
 - [ ] Manifest `.cursor-plugin/plugin.json` (with the Cursor Marketplace application).
-- [ ] Repo topic `gemini-cli-extension` (the gallery crawler needs it; the repo is
-      at the 20-topic limit, so swap out one, e.g. `rag`).
+- [x] Repo topic `gemini-cli-extension` (swapped in for `rag`, 2026-11-10).
 
 The first three touch the MCP surface. Per AGENTS.md, read
 `kontrak-core-cloud` first; if CORE semantics change, a uteke-cloud contract
@@ -145,3 +149,31 @@ after the README demo and social preview are live (both are).
 4. Section 1 verification a week later.
 5. Section 6 MCP annotations as their own code PR; then Cursor, Cline, and,
    if wanted, the Claude directories.
+
+## 8. `brew install uteke` without a tap (homebrew-core)
+
+Today users run `brew install codecoradev/tap/uteke`. After `brew tap codecoradev/tap`
+once, `brew install uteke` and `brew upgrade uteke` already work, because no
+homebrew-core formula named `uteke` exists (checked 2026-11-10).
+
+The bare name without any tap needs homebrew-core. Checked against docs.brew.sh:
+
+- Notability for a self-submission: 90 forks, 90 watchers or 225 stars. Stars are 285: met.
+  The repository is older than 30 days: met.
+- **Not met: the formula must build from source.** The tap formula installs
+  prebuilt release tarballs, which homebrew-core rejects (prebuilt-only belongs in a cask
+  or a tap). A core formula needs `depends_on "rust" => :build`, a SHA-256-checked
+  tag archive, `cargo install` with the locked dependency set, a working `livecheck`.
+- ONNX Runtime: the tap ships its own `libonnxruntime`. A core formula should use
+  Homebrew's `onnxruntime` (1.31.1, bottled for macOS and Linux) through
+  `ORT_LIB_PATH`; `ort` is built with `load-dynamic` and `api-18`, so this should work but is untested.
+- Self-updating software must have its self-update disabled where possible: `uteke upgrade`
+  and the daily release check need an off switch for packaged builds.
+- The first run downloads a ~200 MB embedding model. Likely acceptable (data, not software), but a reviewer may ask.
+- Must build and pass tests on the homebrew-core CI matrix: macOS (Intel included) and Linux.
+  Uteke has no macOS Intel prebuilt; a source build removes that gap.
+
+Steps if pursued: (1) source formula in a scratch tap, `brew install --build-from-source`,
+`brew test`, `brew audit --new --strict`; (2) decide how packaged builds disable
+`uteke upgrade`; (3) PR to `Homebrew/homebrew-core`. Keep the tap formula as the fast prebuilt path.
+
