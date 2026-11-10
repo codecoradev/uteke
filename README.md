@@ -51,7 +51,7 @@ Uteke gives all of them one long-term memory that runs on your own machine:
 - **Verifiable recall.** [98.2% recall@5 on LongMemEval-S](#benchmarks), with the stricter numbers shown next to it and the raw outputs in this repo.
 - **Fast and cheap to query.** ~45 ms warm recall, 0 LLM tokens per query, CPU only.
 - **One binary.** No Python, no Docker, no vector database, no API key. The embedding model (~200 MB) downloads once.
-- **One memory, every agent.** Claude Code, Claude Desktop, Cursor, Hermes and any MCP client share the same store. [Rooms](docs/rooms.md) record which agent or person wrote what.
+- **One memory, every agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes and any MCP client share the same store. [Rooms](docs/rooms.md) record which agent or person wrote what.
 - **Finds by meaning and by keyword.** Local vectors and SQLite full-text search, fused into one ranking ([how it works](#how-it-works)).
 - **Remembers over time.** Point-in-time recall (`--at`), a relationship graph, a document engine, and decay for stale memories.
 - **Private by default.** No telemetry. Secrets such as API keys are masked before a memory is stored.
@@ -74,6 +74,10 @@ uteke recall "when do we deploy?"
 # Look at what is stored, in a read-only browser page
 uteke view
 ```
+
+<p align="center">
+  <img src="docs/assets/uteke-demo.gif" width="760" alt="Terminal demo: uteke remember stores two notes, then uteke recall 'which port is the database on?' returns the Postgres port note and 'what is our release process?' returns the deploy note, with no shared keywords." />
+</p>
 
 No API keys, no Python, no cloud account. The first run downloads the embedding model (~200 MB, one time).
 
@@ -142,6 +146,9 @@ Same engine, two ways to run it.
 
 <sub>¹ Their published numbers on the same benchmark and 500-question split, on their own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory publishes MRR 88.2%, which is a different metric.</sub>
 
+<details>
+<summary>Stability across releases and results per question type</summary>
+
 **Stable across releases** (full 500 questions, scored from committed raw, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)):
 
 | Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b |
@@ -159,6 +166,8 @@ Same engine, two ways to run it.
 
 Every question's evidence lands in the top 50 (zero misses). What's left is ordering when a question needs several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling, and most misses lose exactly one session.
 
+</details>
+
 > **🎯 Don't trust our benchmark. Run it yourself.** Public dataset, committed raw outputs for every validated release, scoring you can recompute in ~20 lines of Python. Verifying the committed results takes a minute and needs no embedder; re-running all 500 questions costs about $10.
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipts for the headline number (v0.19.0 run)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
 
@@ -175,6 +184,7 @@ Every question's evidence lands in the top 50 (zero misses). What's left is orde
 | **Claude Code** | `.mcp.json`: `{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }` · [details](docs/mcp.md#claude-code) |
 | **Claude Desktop** | [config snippet](docs/mcp.md#claude-desktop) |
 | **Cursor** | same `.mcp.json` as Claude Code · [details](docs/mcp.md#cursor) |
+| **Codex** | `uteke connect codex` installs recall and capture hooks · [details](docs/integrations/codex.md) |
 | **Hermes** | stdio or HTTP · [details](docs/mcp.md#hermes) |
 | **Any MCP client** | stdio (`uteke-mcp`) or Streamable HTTP (`uteke-serve`) · [transports](docs/mcp.md#transport-comparison) |
 | **Claude on the web, desktop or mobile** | add `https://uteke.app/mcp` as a connector, sign in ([Uteke Cloud](https://uteke.app/?utm_source=github&utm_medium=readme&utm_campaign=prove-the-recall)) |

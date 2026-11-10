@@ -73,8 +73,11 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    crates, `Cargo.lock`, both READMEs' version line, the version line of both skill
    copies (`.agents/skills/uteke-memory/SKILL.md` and
    `crates/uteke-cli/assets/uteke-memory-skill.md`, enforced by tests),
-   `docs/core-contract.json` (regenerate with `cargo run -p docgen`), and the
-   CHANGELOG entry. Merge it with the normal merge gate.
+   `docs/core-contract.json` (regenerate with `cargo run -p docgen`), the
+   `version` in `server.json` (MCP Registry entry; the `MCP Registry`
+   workflow publishes it on the tag through GitHub OIDC and fails if the
+   version does not match; a local `mcp-publisher login github` cannot
+   publish under the organization namespace), and the CHANGELOG entry. Merge it with the normal merge gate.
 3. **Release branch.** `git checkout -b chore/release-vX.Y.Z-main origin/develop`, then
    merge `main` keeping develop's side. First prove `main` has no content `develop`
    lacks: `git diff <develop's previous release commit> origin/main` is empty and

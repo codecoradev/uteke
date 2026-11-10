@@ -9,9 +9,11 @@ export default createConfig({
   head: [
     ['link', { rel: 'icon', type: 'image/png', href: '/favicon.png' }],
     ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],
-    ['meta', { property: 'og:title', content: 'Uteke — One Memory. Every Agent. Local-first.' }],
+    ['meta', { property: 'og:title', content: 'Uteke: long-term memory for any AI agent' }],
     ['meta', { property: 'og:description', content: 'Offline semantic memory for AI agents. One binary, every MCP client, local-first. ~45ms recall.' }],
+    ['meta', { property: 'og:image', content: 'https://raw.githubusercontent.com/codecoradev/uteke/main/docs/assets/uteke-social-preview.png' }],
     ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:image', content: 'https://raw.githubusercontent.com/codecoradev/uteke/main/docs/assets/uteke-social-preview.png' }],
   ],
   ignoreDeadLinks: true,
   sidebar: [
