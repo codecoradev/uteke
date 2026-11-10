@@ -177,3 +177,65 @@ Steps if pursued: (1) source formula in a scratch tap, `brew install --build-fro
 `brew test`, `brew audit --new --strict`; (2) decide how packaged builds disable
 `uteke upgrade`; (3) PR to `Homebrew/homebrew-core`. Keep the tap formula as the fast prebuilt path.
 
+### Feasibility test, 2026-11-10 (macOS arm64, Homebrew 7.0.13)
+
+A throwaway source formula `uteke-src` (below, `keg_only`) in a local tap:
+
+| Check | Result |
+|---|---|
+| `brew install --build-from-source` (cli, server, mcp; `usearch` C++ included) | built in about 4.5 minutes, Rust 1.99.1 |
+| Embeddings with Homebrew's `onnxruntime` 1.31.1 through `ORT_LIB_PATH` | works: `--strategy vector` scored 0.83 on a query with no shared keyword |
+| `brew test` | passes |
+| `brew audit --new --strict --online` | passes (one style fix: `formula_opt_lib`) |
+
+Still open before a PR to `Homebrew/homebrew-core`:
+
+1. `uteke upgrade` has no Homebrew detection and would overwrite the binary in the
+   Cellar. Refuse when the executable path contains `/Cellar/` and point to `brew upgrade`.
+   (The wrapper below only sets `UTEKE_NO_UPDATE_CHECK`, which stops the daily check.)
+2. Linux build and test: only homebrew-core CI (or a Linux host) can confirm it.
+3. Rename to `uteke`, drop `keg_only`. The tap formula `codecoradev/tap/uteke` stays as the prebuilt path.
+4. `Cargo.lock` pins `chacha20 0.10.1` (yanked; 0.10.2 exists), pulled in by `rand 0.10.2`.
+   The build only warns, but `cargo update -p chacha20` should land before submitting.
+
+Side effect of the test: Homebrew upgraded the build dependencies on the host
+(rust, onnxruntime, cmake, llvm, protobuf and others). Clean up with
+`brew uninstall uteke-src` and `brew untap local/uteke-test`.
+
+```ruby
+class UtekeSrc < Formula
+  desc "Long-term memory for AI agents: offline hybrid vector and full-text recall"
+  homepage "https://uteke.app"
+  url "https://github.com/codecoradev/uteke/archive/refs/tags/v0.23.0.tar.gz"
+  sha256 "4d3e2c219ddf1256fe1974827e2eb806b795040fc03bb9bc1c2b1b407f84599d"
+  license "Apache-2.0"
+
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
+  keg_only "local feasibility test of a homebrew-core style formula"
+
+  depends_on "cmake" => :build
+  depends_on "rust" => :build
+  depends_on "onnxruntime"
+
+  def install
+    %w[uteke-cli uteke-server uteke-mcp].each do |crate|
+      system "cargo", "install", *std_cargo_args(path: "crates/#{crate}")
+    end
+
+    # ort is built with load-dynamic: point it at Homebrew's libonnxruntime FILE.
+    ort_lib = formula_opt_lib("onnxruntime")/shared_library("libonnxruntime")
+    %w[uteke uteke-serve uteke-mcp].each do |name|
+      libexec.install bin/name
+      (bin/name).write_env_script libexec/name, ORT_LIB_PATH: ort_lib, UTEKE_NO_UPDATE_CHECK: "1"
+    end
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/uteke --version")
+  end
+end
+```
