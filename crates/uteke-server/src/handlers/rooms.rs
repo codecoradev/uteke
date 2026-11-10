@@ -274,16 +274,20 @@ pub(super) fn post_room_create(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 req_data.title.as_deref(),
                 &req_data.namespace,
             ) {
-                Ok(()) => ctx.ok_response_for(
-                    req,
-                    &with_namespace_warning(
+                Ok(()) => {
+                    let mut body = with_namespace_warning(
                         serde_json::json!({
                             "created": req_data.room_id,
                             "namespace": req_data.namespace
                         }),
                         Some(req_data.namespace.as_str()),
-                    ),
-                ),
+                    );
+                    // #1715: an id outside `category:title` is accepted with a warning.
+                    if let Some(w) = uteke_core::room_naming::room_id_warning(&req_data.room_id) {
+                        body["warnings"] = serde_json::json!([w]);
+                    }
+                    ctx.ok_response_for(req, &body)
+                }
                 Err(e) => {
                     let msg = format!("Failed to create room: {e}");
                     ctx.error_response_for(req, 400, &msg)
@@ -307,14 +311,18 @@ pub(super) fn post_room_rename(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     }
     match read_body::<RoomRenameRequest>(req.as_reader()) {
         Ok(req_data) => match uteke.rename_room(&req_data.from, &req_data.to) {
-            Ok(room) => ctx.ok_response_for(
-                req,
-                &serde_json::json!({
+            Ok(room) => {
+                let mut body = serde_json::json!({
                     "renamed": req_data.from,
                     "to": req_data.to,
                     "room": room,
-                }),
-            ),
+                });
+                // #1715: an id outside `category:title` is accepted with a warning.
+                if let Some(w) = uteke_core::room_naming::room_id_warning(&req_data.to) {
+                    body["warnings"] = serde_json::json!([w]);
+                }
+                ctx.ok_response_for(req, &body)
+            }
             Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),

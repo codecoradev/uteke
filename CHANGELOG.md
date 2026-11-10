@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Room ids of the form `category:title` (#1715, stage 1 of 3)** - the convention is
+  `category:title` (for example `project:uteke`, `research:docker`): lowercase, exactly one
+  colon, at most 64 characters. Only the shape is the rule; the category is a
+  recommendation (`project`, `research`, `team`, `ops`, `ref`), so a custom category of
+  the right shape is accepted. Stage 1: creating a room, or renaming one, to an id of
+  another shape still works and now returns a warning (`warnings` on `POST /room/create`
+  and `POST /room/rename`, a `Warning:` line in the MCP tools, a line on stderr and
+  `warnings` in `--json` for `uteke room create` and `uteke room rename`). Reads, recall
+  and existing rooms are never warned or blocked, and a room created by a first
+  `room remember` is not warned yet. Stage 2 renames the old rooms through the aliases of
+  #1714; stage 3 rejects new ids of the wrong shape. Owner order 2026-11-10 (contract
+  amendment 4, uteke-cloud #527).
 - **Renaming a room keeps its old id working (#1714)** - `room rename`, `POST /room/rename` and
   `uteke_room_rename` now record the id a room leaves as an alias of the renamed room, in
   the same transaction. Every room operation (remember, recall, room recall, stats,

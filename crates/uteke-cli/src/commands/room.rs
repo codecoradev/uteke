@@ -18,13 +18,18 @@ pub(crate) fn run(
             uteke
                 .create_room(room_id, title.as_deref(), ns_str)
                 .map_err(|e| format!("Failed to create room: {e}"))?;
+            let warning = uteke_core::room_naming::room_id_warning(room_id);
             if cli.json {
-                println!(
-                    "{}",
-                    serde_json::json!({"created": room_id, "namespace": ns_str})
-                );
+                let mut body = serde_json::json!({"created": room_id, "namespace": ns_str});
+                if let Some(w) = &warning {
+                    body["warnings"] = serde_json::json!([w]);
+                }
+                println!("{body}");
             } else {
                 println!("✓ Room '{room_id}' created");
+                if let Some(w) = &warning {
+                    eprintln!("Warning: {w}");
+                }
             }
             Ok(())
         }
@@ -32,13 +37,20 @@ pub(crate) fn run(
             let room = uteke
                 .rename_room(old_id, new_id)
                 .map_err(|e| format!("Failed to rename room: {e}"))?;
+            let warning = uteke_core::room_naming::room_id_warning(new_id);
             if cli.json {
-                println!(
-                    "{}",
-                    serde_json::json!({"renamed": old_id, "to": new_id, "room": room})
-                );
+                let mut body = serde_json::json!({"renamed": old_id, "to": new_id, "room": room});
+                if let Some(w) = &warning {
+                    body["warnings"] = serde_json::json!([w]);
+                }
+                println!("{body}");
             } else {
-                println!("✓ Room '{old_id}' renamed to '{new_id}'");
+                println!(
+                    "✓ Room '{old_id}' renamed to '{new_id}' ('{old_id}' still works as an alias)"
+                );
+                if let Some(w) = &warning {
+                    eprintln!("Warning: {w}");
+                }
             }
             Ok(())
         }
