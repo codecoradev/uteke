@@ -75,6 +75,10 @@ uteke recall "when do we deploy?"
 uteke view
 ```
 
+<p align="center">
+  <img src="docs/assets/uteke-demo.gif" width="760" alt="Terminal demo: uteke remember stores two notes, then uteke recall 'which port is the database on?' returns the Postgres port note and 'what is our release process?' returns the deploy note, with no shared keywords." />
+</p>
+
 No API keys, no Python, no cloud account. The first run downloads the embedding model (~200 MB, one time).
 
 Give your agent (Claude Code, Cursor, Hermes) the same memory with one line:

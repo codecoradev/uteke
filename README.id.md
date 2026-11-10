@@ -72,6 +72,10 @@ uteke remember "Deploy v2.1 ke staging jam 3 sore"
 uteke recall "kapan kita deploy?"
 ```
 
+<p align="center">
+  <img src="docs/assets/uteke-demo.gif" width="760" alt="Demo terminal: uteke remember menyimpan dua catatan, lalu uteke recall 'which port is the database on?' menemukan catatan port Postgres dan 'what is our release process?' menemukan catatan deploy, tanpa kata kunci yang sama." />
+</p>
+
 Tanpa API key, tanpa Python, tanpa akun cloud. Run pertama mengunduh model embedding (~200 MB, sekali saja).
 
 Kasih agent kamu (Claude Code, Cursor, Hermes) memori yang sama dengan satu baris:
