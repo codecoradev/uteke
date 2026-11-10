@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "CLI for Uteke — persistent semantic memory for AI agents, offline-first, ~30ms recall"
-keywords = ["cli", "memory", "ai", "vector-search", "offline"]
+description = "CLI for Uteke: long-term memory for AI agents (Claude Code, Cursor, Codex, any MCP client), one offline binary"
+keywords = ["cli", "memory", "ai-agents", "mcp", "offline"]
 categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]

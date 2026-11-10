@@ -51,7 +51,7 @@ Uteke kasih mereka semua satu memori jangka panjang yang jalan di mesin kamu sen
 - **Recall yang bisa dicek.** [98,2% recall@5 di LongMemEval-S](#benchmark), angka yang lebih ketat ditampilkan di sebelahnya, dan raw output-nya ada di repo ini.
 - **Cepat dan murah.** Recall hangat ~45 ms, 0 token LLM per query, cukup CPU.
 - **Satu binary.** Tanpa Python, tanpa Docker, tanpa vector database, tanpa API key. Model embedding (~200 MB) diunduh sekali.
-- **Satu memori, semua agent.** Claude Code, Claude Desktop, Cursor, Hermes, dan klien MCP lain berbagi store yang sama. [Rooms](docs/rooms.md) mencatat agent atau orang mana yang menulis apa.
+- **Satu memori, semua agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes, dan klien MCP lain berbagi store yang sama. [Rooms](docs/rooms.md) mencatat agent atau orang mana yang menulis apa.
 - **Cari berdasarkan makna dan kata kunci.** Vector lokal dan full-text search SQLite, digabung jadi satu ranking ([cara kerjanya](#cara-kerja)).
 - **Ingat lintas waktu.** Recall per titik waktu (`--at`), relationship graph, document engine, dan decay untuk memori basi.
 - **Privat dari awal.** Tanpa telemetry. Secret seperti API key disamarkan sebelum memori disimpan.
@@ -139,7 +139,10 @@ Mesinnya sama, dua cara menjalankannya.
 
 <sub>¹ Angka yang mereka publikasikan di benchmark dan split 500 pertanyaan yang sama, dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory mempublikasikan MRR 88,2%, metrik yang berbeda.</sub>
 
-**Stabil antar rilis** (500 pertanyaan penuh, dihitung dari raw yang di-commit, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#four-release-stability-full-500-question-basis-scored-from-committed-raw)):
+<details>
+<summary>Stabilitas antar rilis dan hasil per jenis pertanyaan</summary>
+
+**Stabil antar rilis** (500 pertanyaan penuh, dihitung dari raw yang di-commit, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)):
 
 | Rilis | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
 |---|---|---|---|---|
@@ -153,6 +156,8 @@ Mesinnya sama, dua cara menjalankannya.
 | **100%** | 96,7–98,2% | 98,4% | 98,3% |
 
 Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang tersisa adalah urutan, saat satu pertanyaan butuh beberapa sesi sekaligus: strict recall_all@5 88,0% dari batas 99,4%, dan sebagian besar kegagalan hanya kehilangan satu sesi.
+
+</details>
 
 > **🎯 Jangan percaya benchmark kami. Jalankan sendiri.** Dataset publik, raw output untuk setiap rilis yang divalidasi, dan skor yang bisa kamu hitung ulang dengan ~20 baris Python. Mengecek hasil yang di-commit cuma butuh semenit tanpa embedder; menjalankan ulang 500 pertanyaan sekitar $10.
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipt untuk angka utama (run v0.19.0)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
@@ -168,6 +173,7 @@ Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang ter
 | **Claude Code** | `.mcp.json`: `{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }` · [detail](docs/mcp.md#claude-code) |
 | **Claude Desktop** | [contoh config](docs/mcp.md#claude-desktop) |
 | **Cursor** | `.mcp.json` yang sama dengan Claude Code · [detail](docs/mcp.md#cursor) |
+| **Codex** | `uteke connect codex` memasang hook recall dan capture · [detail](docs/integrations/codex.md) |
 | **Hermes** | stdio atau HTTP · [detail](docs/mcp.md#hermes) |
 | **Klien MCP lain** | stdio (`uteke-mcp`) atau Streamable HTTP (`uteke-serve`) · [transport](docs/mcp.md#transport-comparison) |
 | **Claude di web, desktop, atau mobile** | tambahkan `https://uteke.app/mcp` sebagai connector, login ([Uteke Cloud](https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)) |
