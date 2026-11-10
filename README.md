@@ -14,6 +14,8 @@
   <a href="https://github.com/codecoradev/uteke/releases"><img src="https://img.shields.io/github/v/release/codecoradev/uteke?style=flat-square&color=green" alt="Latest Release" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
   <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
+  <a href="https://hub.docker.com/r/codecoradev/uteke"><img src="https://img.shields.io/docker/pulls/codecoradev/uteke?style=flat-square&logo=docker&logoColor=white&label=Docker%20pulls&color=2496ED" alt="Docker Hub pulls" /></a>
+  <a href="https://github.com/codecoradev/uteke/releases"><img src="https://img.shields.io/github/downloads/codecoradev/uteke/total?style=flat-square&logo=github&label=release%20downloads&color=blueviolet" alt="GitHub release downloads" /></a>
   <a href="#benchmarks"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-1F908C.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
 
