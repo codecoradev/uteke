@@ -42,3 +42,25 @@ fn init_installs_skill_md() {
     assert!(skill.starts_with("---\ndescription:"));
     let _ = Uteke::open(dir.path().join("t.db")).unwrap();
 }
+
+/// The MCP Registry entry and the Gemini CLI extension manifest carry their
+/// own version string; a release that forgets to bump them publishes stale
+/// metadata (the registry treats versions as immutable).
+#[test]
+fn registry_manifests_match_workspace_version() {
+    let ver = env!("CARGO_PKG_VERSION");
+    for (name, raw) in [
+        ("server.json", include_str!("../../../server.json")),
+        (
+            "gemini-extension.json",
+            include_str!("../../../gemini-extension.json"),
+        ),
+    ] {
+        let json: serde_json::Value = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            json["version"].as_str(),
+            Some(ver),
+            "{name} is stale: set its `version` to {ver} in the release-prep commit"
+        );
+    }
+}
