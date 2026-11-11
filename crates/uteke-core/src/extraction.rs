@@ -164,6 +164,43 @@ mod env_override_tests {
         assert_eq!(c.max_facts, 7, "an invalid number is ignored");
         assert_eq!(c.mode, "llm", "mode has no variable");
     }
+
+    /// #1684: `with_env_overrides` reads the real environment and keeps the
+    /// file values it has no variable for (it is not `Default::default()`).
+    #[test]
+    #[serial_test::serial]
+    #[allow(unsafe_code)] // env mutation, serialized with the other env tests
+    fn with_env_overrides_reads_the_process_environment() {
+        const KEYS: [&str; 5] = [
+            "UTEKE_EXTRACTION_MODEL",
+            "UTEKE_EXTRACTION_API_KEY",
+            "UTEKE_EXTRACTION_BASE_URL",
+            "UTEKE_EXTRACTION_ENDPOINT_PATH",
+            "UTEKE_EXTRACTION_MAX_FACTS",
+        ];
+        let previous: Vec<Option<String>> = KEYS.iter().map(|k| std::env::var(k).ok()).collect();
+        for k in KEYS {
+            unsafe { std::env::remove_var(k) };
+        }
+        unsafe { std::env::set_var("UTEKE_EXTRACTION_API_KEY", "env-key") };
+        unsafe { std::env::set_var("UTEKE_EXTRACTION_MAX_FACTS", "3") };
+        let file = ExtractionConfig {
+            mode: "llm".into(),
+            model: "file-model".into(),
+            ..Default::default()
+        };
+        let c = file.with_env_overrides();
+        for (k, v) in KEYS.iter().zip(previous) {
+            match v {
+                Some(v) => unsafe { std::env::set_var(k, v) },
+                None => unsafe { std::env::remove_var(k) },
+            }
+        }
+        assert_eq!(c.api_key, "env-key", "a variable overrides the file");
+        assert_eq!(c.max_facts, 3);
+        assert_eq!(c.model, "file-model", "no variable: the file value stays");
+        assert_eq!(c.mode, "llm", "mode has no variable and is kept");
+    }
 }
 
 /// An OpenAI-compatible chat-completions client used for fact extraction.
