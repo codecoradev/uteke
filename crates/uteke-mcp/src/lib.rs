@@ -5467,3 +5467,73 @@ mod capture_mcp_tests {
         assert_eq!(tool_capture()["name"], "uteke_capture");
     }
 }
+
+/// #1713: the rooms of a hit are CORE on MCP too (`uteke_recall`,
+/// `uteke_search`, `uteke_room_recall`). A memory in three rooms shows them
+/// sorted by room id, a blank or missing title shows the id, and a memory in
+/// no room shows no rooms line.
+#[cfg(test)]
+mod rooms_core_mcp_tests {
+    use super::*;
+
+    const LINE: &str = "       (rooms: ops:gamma, project:alpha, team:beta (Beta room))";
+
+    fn store() -> Uteke {
+        let u = Uteke::open_with_backend(":memory:", None).expect("open without embedder");
+        u.create_room("team:beta", Some("Beta room"), "default")
+            .unwrap();
+        u.create_room("ops:gamma", Some("   "), "default").unwrap();
+        u.create_room("project:alpha", None, "default").unwrap();
+        let id = u
+            .remember_in_room(
+                "orchid ledger kept in three rooms",
+                &[],
+                None,
+                None,
+                "fact",
+                "team:beta",
+                "tester",
+            )
+            .unwrap()
+            .id;
+        for room in ["project:alpha", "ops:gamma"] {
+            assert!(u.add_memory_to_room(&id, room, "tester").unwrap());
+        }
+        u.remember("orchid ledger kept in no room", &[], None, None)
+            .unwrap();
+        u
+    }
+
+    fn text(r: ToolResult) -> String {
+        match r.content.into_iter().next() {
+            Some(McpContent::Text { text, .. }) => text,
+            _ => panic!("text content expected"),
+        }
+    }
+
+    fn check(tool: &str, t: &str) {
+        assert_eq!(
+            t.matches("(rooms:").count(),
+            1,
+            "{tool}: one rooms line: {t}"
+        );
+        assert!(
+            t.lines().any(|l| l == LINE),
+            "{tool}: exact rooms line: {t}"
+        );
+    }
+
+    #[test]
+    fn recall_search_and_room_recall_show_the_rooms_of_a_hit() {
+        let u = store();
+        let q = serde_json::json!({"query": "orchid ledger", "strategy": "fts5"});
+        check("uteke_recall", &text(exec_recall(&u, &q).unwrap()));
+        let q = serde_json::json!({"query": "orchid ledger"});
+        check("uteke_search", &text(exec_search(&u, &q).unwrap()));
+        let q = serde_json::json!({"room_id": "project:alpha", "query": "orchid ledger"});
+        check(
+            "uteke_room_recall",
+            &text(exec_room_recall(&u, &q).unwrap()),
+        );
+    }
+}
