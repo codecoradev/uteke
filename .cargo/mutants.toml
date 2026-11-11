@@ -35,8 +35,17 @@ exclude_globs = [
 #     always holds when reached (set together at ~line 435), so both
 #     operands always have the same truth value.
 #   chunker.rs:443:17 (&& → ||) — same invariant as above, at the final flush.
+#   capture.rs:348:45 (+ → *) in chunk_session — `whole` is only a shortcut:
+#     when it is false, split_on_boundary(content, budget - label_len) returns
+#     the same single piece for any content that fits, and `c * l <= b < c + l`
+#     is impossible for c, l >= 2 (c = 1 gives one piece either way), so no
+#     test can tell the two apart.
+#   capture.rs:359:43 (> → >=) in chunk_session — `sep` is read only under
+#     `cur_len > 0`, where `cur_len >= 0` is true as well, so both give 1.
 exclude_re = [
     "chunker.rs:282:24: replace < with <=",
     "chunker.rs:425:25: replace && with \\|\\|",
     "chunker.rs:443:17: replace && with \\|\\|",
+    "capture.rs:348:45: replace \\+ with \\* in chunk_session",
+    "capture.rs:359:43: replace > with >= in chunk_session",
 ]
