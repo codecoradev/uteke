@@ -35,6 +35,10 @@ exclude_globs = [
 #     always holds when reached (set together at ~line 435), so both
 #     operands always have the same truth value.
 #   chunker.rs:443:17 (&& → ||) — same invariant as above, at the final flush.
+#   maintenance.rs:435 (the arithmetic and the comparison of `(i + 1) % 100 == 0`)
+#     in reembed_missing_memories — the condition only decides whether a
+#     "Re-embed progress" info line is logged; no result, count or stored value
+#     depends on it, and the crate has no log-capturing test dependency.
 #   capture.rs:348:45 (+ → *) in chunk_session — `whole` is only a shortcut:
 #     when it is false, split_on_boundary(content, budget - label_len) returns
 #     the same single piece for any content that fits, and `c * l <= b < c + l`
@@ -48,4 +52,5 @@ exclude_re = [
     "chunker.rs:443:17: replace && with \\|\\|",
     "capture.rs:348:45: replace \\+ with \\* in chunk_session",
     "capture.rs:359:43: replace > with >= in chunk_session",
+    "maintenance.rs:435:.* in crate::Uteke::reembed_missing_memories",
 ]
