@@ -354,6 +354,9 @@ impl ReqCtx {
         if let Error::RejectedValue { reason } = e {
             return self.rejected_value_response(req, reason);
         }
+        if let Error::InvalidRoomId { id } = e {
+            return self.invalid_room_id_response(req, id, &e.to_string());
+        }
         match e.class() {
             ErrorClass::BadRequest => self.error_response_for(req, 400, e.to_string()),
             ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
@@ -394,6 +397,31 @@ impl ReqCtx {
 
     /// The privacy filter rejected the write in strict mode (#1464): 400 with
     /// the kinds found, never the values.
+    /// A new room id outside `category:title` while `[rooms]
+    /// require_category_title` is on (#1715 stage 3): 400 `invalid_room_id`.
+    pub fn invalid_room_id_response(
+        &self,
+        req: &Request,
+        room_id: &str,
+        message: &str,
+    ) -> Response<Cursor<Vec<u8>>> {
+        let data = serde_json::json!({
+            "error": "invalid_room_id",
+            "message": message,
+            "room_id": room_id,
+        })
+        .to_string();
+        let mut headers = self.cors_headers_for(req);
+        headers.push(json_header());
+        Response::new(
+            StatusCode::from(400),
+            headers,
+            Cursor::new(data.into_bytes()),
+            None,
+            None,
+        )
+    }
+
     pub fn secret_detected_response(
         &self,
         req: &Request,

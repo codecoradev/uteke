@@ -379,13 +379,13 @@ Get recently added memories. Accepts `?limit=N&namespace=X` query params.
 
 #### 🟡 `POST` `/room/create`
 
-Create a new memory room. Accepts `{"name": "..."}`. Room ids are meant to have the shape `category:title` (for example `project:uteke`, `research:docker`; lowercase, one colon, at most 64 characters; the category is a recommendation, any category of that shape is accepted). Another id is still created, and the response carries `warnings` with one message (#1715); it will be rejected in a later release.
+Create a new memory room. Accepts `{"name": "..."}`. Room ids are meant to have the shape `category:title` (for example `project:uteke`, `research:docker`; lowercase, one colon, at most 64 characters; the category is a recommendation, any category of that shape is accepted). Another id is still created, and the response carries `warnings` with one message (#1715); with `[rooms] require_category_title` on it is refused with 400 `invalid_room_id`.
 
 **Request body**: JSON object (see handler source for fields)
 
 #### 🟡 `POST` `/room/remember`
 
-Store a memory linked to a room. Accepts room_id, content, tags, type, author. A room that does not exist is created; when its id is not of the shape `category:title` the response carries `warnings` with one message, as on `/room/create` (#1715).
+Store a memory linked to a room. Accepts room_id, content, tags, type, author. A room that does not exist is created; when its id is not of the shape `category:title` the response carries `warnings` with one message, as on `/room/create` (#1715), or the write is refused with 400 `invalid_room_id` (nothing stored) when `[rooms] require_category_title` is on.
 
 **Request body**: [`RoomRememberRequest`](#roomrememberrequest)
 
@@ -461,7 +461,7 @@ Delete a room (unlink-only): room links are removed, memories and documents are 
 
 #### 🟡 `POST` `/room/rename`
 
-Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). The old id stays valid as an alias of the renamed room (#1714): every room operation resolves it and answers with the canonical id, and a room cannot be created under an alias. Accepts `{ from, to }` (`from` may itself be an alias). A `to` outside the `category:title` shape is accepted with a `warnings` entry in the response (#1715). Write op — blocked for read-only tokens.
+Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). The old id stays valid as an alias of the renamed room (#1714): every room operation resolves it and answers with the canonical id, and a room cannot be created under an alias. Accepts `{ from, to }` (`from` may itself be an alias). A `to` outside the `category:title` shape is accepted with a `warnings` entry in the response (#1715), or refused with 400 `invalid_room_id` when `[rooms] require_category_title` is on. Write op — blocked for read-only tokens.
 
 **Request body**: JSON object (see handler source for fields)
 

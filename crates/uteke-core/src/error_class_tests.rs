@@ -17,6 +17,13 @@ fn every_variant_has_a_class() {
         kinds: vec!["jwt".into()],
     };
     assert_eq!(secret.class(), ErrorClass::SecretDetected);
+    let room = Error::InvalidRoomId { id: "plain".into() };
+    assert_eq!(room.class(), ErrorClass::InvalidRoomId);
+    assert!(
+        room.to_string()
+            .starts_with("Room id 'plain' is not of the form category:title"),
+        "{room}"
+    );
 }
 
 #[test]

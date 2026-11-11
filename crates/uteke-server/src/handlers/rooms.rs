@@ -288,6 +288,7 @@ pub(super) fn post_room_create(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     }
                     ctx.ok_response_for(req, &body)
                 }
+                Err(e @ uteke_core::Error::InvalidRoomId { .. }) => ctx.core_error(req, &e),
                 Err(e) => {
                     let msg = format!("Failed to create room: {e}");
                     ctx.error_response_for(req, 400, &msg)

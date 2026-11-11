@@ -40,6 +40,14 @@ pub enum Error {
     )]
     RejectedValue { reason: String },
 
+    /// A new canonical room id is not of the form `category:title` while
+    /// `[rooms] require_category_title` is on (#1715, stage 3). Transports
+    /// answer 400 `invalid_room_id`.
+    #[error(
+        "Room id '{id}' is not of the form category:title (lowercase, one colon, at most 64 characters; for example project:uteke); this store requires it ([rooms] require_category_title)"
+    )]
+    InvalidRoomId { id: String },
+
     #[error("Lock error: {context}")]
     Lock { context: String },
 
@@ -59,6 +67,9 @@ pub enum ErrorClass {
     SecretDetected,
     /// The value has a rejected-value tombstone: HTTP 409 `rejected_value`.
     RejectedValue,
+    /// A new room id outside `category:title` while that shape is required:
+    /// HTTP 400 `invalid_room_id` (#1715).
+    InvalidRoomId,
     /// Anything else: HTTP 500.
     Internal,
 }
@@ -119,6 +130,7 @@ impl Error {
             Error::NotFound(_) => ErrorClass::NotFound,
             Error::SecretDetected { .. } => ErrorClass::SecretDetected,
             Error::RejectedValue { .. } => ErrorClass::RejectedValue,
+            Error::InvalidRoomId { .. } => ErrorClass::InvalidRoomId,
             Error::Io(_)
             | Error::Database { .. }
             | Error::Embedding { .. }

@@ -727,6 +727,8 @@ pub struct Uteke {
     /// `[capture]` (#1466): read by the HTTP and MCP surfaces (opt-in gate)
     /// and the server's scheduled extraction.
     capture_settings: capture::CaptureSettings,
+    /// `[rooms]` (#1715): set by `apply_settings`.
+    room_naming_settings: room_naming::RoomNamingSettings,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
     /// While non-zero, recalls do not touch what they return (access count,
@@ -1187,6 +1189,7 @@ impl Uteke {
             privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),
             capture_settings: capture::CaptureSettings::default(),
+            room_naming_settings: room_naming::RoomNamingSettings::default(),
             embed_cache_path,
         }
     }
@@ -1281,6 +1284,16 @@ impl Uteke {
     /// Get the current lifecycle configuration (#928).
     pub fn lifecycle_config(&self) -> LifecycleConfig {
         self.lifecycle_config
+    }
+
+    /// Set the `[rooms]` settings (#1715). Called from `apply_settings`.
+    pub fn set_room_naming_settings(&mut self, settings: room_naming::RoomNamingSettings) {
+        self.room_naming_settings = settings;
+    }
+
+    /// The `[rooms]` settings in force (#1715).
+    pub fn room_naming_settings(&self) -> room_naming::RoomNamingSettings {
+        self.room_naming_settings
     }
 
     /// Set the `[capture]` settings (#1466). Called from `apply_settings`.

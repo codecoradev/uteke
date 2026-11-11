@@ -208,6 +208,7 @@ mod engine {
              [dream]\ndedup_threshold = 0.8\n\
              [lifecycle]\nsoft_delete_only = false\n\
              [embed_fallback]\napi_key = \"k\"\nbase_url = \"https://example.test\"\nmodel = \"m\"\n\
+             [rooms]\nrequire_category_title = true\n\
              [unknown_section]\nwhatever = 1\n",
         )
         .unwrap();
@@ -217,6 +218,7 @@ mod engine {
         assert!((e.dream.dedup_threshold - 0.8).abs() < f32::EPSILON);
         assert!(!e.lifecycle.soft_delete_only);
         assert!(e.embed_fallback.is_configured());
+        assert!(e.rooms.require_category_title);
         assert!(f.store.contains_key("namespace"));
     }
 
@@ -227,6 +229,10 @@ mod engine {
         assert_eq!(f.engine.recall.default_strategy, "fusion");
         assert!(f.engine.lifecycle.soft_delete_only);
         assert!(!f.engine.embed_fallback.is_configured());
+        assert!(
+            !f.engine.rooms.require_category_title,
+            "stage 3 is off by default"
+        );
     }
 
     #[test]
@@ -238,6 +244,7 @@ mod engine {
         e.lifecycle.deprecated_ttl_days = 11;
         e.capture.enabled = true;
         e.capture.interval_minutes = 5;
+        e.rooms.require_category_title = true;
         e.embed_fallback.api_key = "k".into();
         e.embed_fallback.base_url = "https://example.test".into();
         e.embed_fallback.model = "m".into();
@@ -247,6 +254,7 @@ mod engine {
         assert_eq!(u.lifecycle_config().deprecated_ttl_days, 11);
         assert!(u.capture_settings().enabled);
         assert_eq!(u.capture_settings().interval_minutes, 5);
+        assert!(u.room_naming_settings().require_category_title);
         assert_eq!(u.fallback_settings.base_url, "https://example.test");
     }
 
