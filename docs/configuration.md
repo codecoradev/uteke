@@ -471,8 +471,23 @@ A project directory can be an untrusted clone, so `.uteke/uteke.toml` is **not**
 - the whole `[privacy]` section (a cloned repository must not switch the secret filter off)
 - the whole `[lifecycle]`, `[dream]`, `[aging]` and `[maintenance]` sections: they set the thresholds of the cycles that deprecate or delete memories (`deprecated_ttl_days`, `max_deprecate_percent`, `soft_delete_only`, the aging age, the auto-dream switch), and a cloned repository must not choose them for your store
 - the whole `[server]` section (`enabled`, `host`, `port`, `auth_token`, `read_only_token`, `cors_origins`, `allowed_hosts`)
+- the whole `[rooms]` section (a cloned repository must not loosen the room id rule)
 
 Everything else (store path, namespace, logging, `[recall]` and `[tier]` tuning, ...) can be set per project. To trust a project file completely, set `UTEKE_TRUST_PROJECT_CONFIG=1`. The CLI and `uteke-serve` apply the same rules and the same per-key merge.
+
+## Room Ids (#1715)
+
+Room ids are meant to have the shape `category:title`: lowercase, exactly one colon, at most 64 characters, `^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9._-]*$` (for example `project:uteke`, `research:docker`). The category is a recommendation (`project`, `research`, `team`, `ops`, `ref`); any category of that shape is accepted.
+
+```toml
+[rooms]
+require_category_title = false   # default; true refuses new ids of another shape
+```
+
+- `false` (default): a new room id of another shape is created, with a warning (`warnings` over HTTP, a `Warning:` line in MCP and the CLI).
+- `true`: a NEW canonical room id of another shape is refused: `room create`, the target of `room rename`, and a room that a write (`room remember`, `remember --room`) would create. HTTP answers `400` with `{"error": "invalid_room_id", "message": "...", "room_id": "..."}`; MCP errors start with `invalid_room_id:`. A refused room write stores nothing.
+
+Existing rooms, aliases of renamed rooms and reads are never refused. Restoring a backup with `uteke import` and `uteke namespace migrate` keep the ids they are given. Global file only (see [Trust](#trust-what-a-project-file-may-not-set)). This is stage 3 of #1715; it stays off until the old rooms are migrated on OSS and Cloud.
 
 ## Privacy Filter (#1464)
 

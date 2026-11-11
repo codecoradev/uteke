@@ -57,6 +57,8 @@ pub const UNTRUSTED_PROJECT_KEYS: &[&str] = &[
     "server",
     // Raw capture (#1466): a cloned repository must not turn capture on.
     "capture",
+    // Room id rule (#1715): a cloned repository must not loosen it.
+    "rooms",
 ];
 
 /// The files to resolve. Missing files are fine.
@@ -422,6 +424,8 @@ max_age_days = 0
 auto_dream_enabled = true
 [capture]
 enabled = true
+[rooms]
+require_category_title = false
 [recall]
 min_score = 0.3
 [tier]
@@ -430,7 +434,14 @@ hot_days = 1
         )
         .unwrap();
         let removed = strip_untrusted(&mut table);
-        for section in ["lifecycle", "dream", "aging", "maintenance", "capture"] {
+        for section in [
+            "lifecycle",
+            "dream",
+            "aging",
+            "maintenance",
+            "capture",
+            "rooms",
+        ] {
             assert!(
                 removed.contains(&section.to_string()),
                 "{section}: {removed:?}"

@@ -17,6 +17,14 @@
   Reads, recall, existing rooms and aliases are never warned or blocked. Stage 2 renames the old rooms through the aliases of
   #1714; stage 3 rejects new ids of the wrong shape. Owner order 2026-11-10 (contract
   amendment 4, uteke-cloud #527).
+- **`[rooms] require_category_title` (#1715, stage 3 prepared, off by default)** - with it
+  on, a new canonical room id that is not of the form `category:title` is refused instead
+  of warned: `room create`, the target of `room rename`, and a room a write would create
+  (`POST /room/remember`, MCP `uteke_remember` with `room`, `uteke remember --room`, refused
+  before the memory is stored). HTTP answers `400 invalid_room_id` (`error`, `message`,
+  `room_id`), MCP errors start with `invalid_room_id:`. Existing rooms, aliases, reads,
+  `import` and `namespace migrate` are not affected. Global `uteke.toml` only; the default
+  stays `false` until the migration of stage 2 is verified on OSS and Cloud.
 - **Renaming a room keeps its old id working (#1714)** - `room rename`, `POST /room/rename` and
   `uteke_room_rename` now record the id a room leaves as an alias of the renamed room, in
   the same transaction. Every room operation (remember, recall, room recall, stats,

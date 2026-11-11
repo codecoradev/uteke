@@ -70,13 +70,16 @@ impl crate::Uteke {
         Ok(())
     }
 
-    /// Create a new room for collaborative memory.
+    /// Create a new room for collaborative memory. With `[rooms]
+    /// require_category_title` on, an id that is not of the form
+    /// `category:title` is refused ([`Error::InvalidRoomId`], #1715 stage 3).
     pub fn create_room(
         &self,
         room_id: &str,
         title: Option<&str>,
         namespace: &str,
     ) -> Result<(), Error> {
+        crate::room_naming::check_new_room_id(room_id, self.room_naming_settings())?;
         self.store.create_room(room_id, title, namespace)
     }
 
@@ -146,6 +149,12 @@ impl crate::Uteke {
         room_id: &str,
         author: &str,
     ) -> Result<RoomRememberOutcome, Error> {
+        // A room this write would create is a new canonical id: with the shape
+        // required (#1715 stage 3) it is refused BEFORE the memory is stored, so
+        // a refused write leaves nothing behind.
+        if self.store.get_room(room_id)?.is_none() {
+            crate::room_naming::check_new_room_id(room_id, self.room_naming_settings())?;
+        }
         // Store the memory normally (lazy-loads embedder if needed),
         // keeping the honest embedding status (#1273).
         let outcome =
@@ -475,6 +484,9 @@ impl crate::Uteke {
     /// in ONE transaction (#1202). Namespace, title, and description are
     /// preserved. Errors when the room is missing or the target ID is taken.
     pub fn rename_room(&self, old_id: &str, new_id: &str) -> Result<Room, Error> {
+        // The target becomes a new canonical id (#1715 stage 3); the old id
+        // stays valid as an alias whatever its shape.
+        crate::room_naming::check_new_room_id(new_id, self.room_naming_settings())?;
         self.store.rename_room(old_id, new_id)
     }
 

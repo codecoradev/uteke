@@ -1180,6 +1180,59 @@ mod room_recall_at_tests {
         assert!(resp.get("warnings").is_none(), "{resp}");
     }
 
+    /// #1715 stage 3 (off by default): with `[rooms] require_category_title`
+    /// on, a new room id outside `category:title` is a 400 `invalid_room_id`
+    /// on create, rename and room remember; a legacy room still takes writes.
+    #[test]
+    fn required_room_id_shape_is_a_400_invalid_room_id() {
+        let app = NamespaceApp::new();
+        let call = |path: &str, body: serde_json::Value| {
+            app.call(Method::Post, path, Some(body.to_string()))
+        };
+        let (status, _) = call("/room/create", serde_json::json!({ "room_id": "legacy" }));
+        assert_eq!(status, 200);
+        app.uteke.lock().unwrap().set_room_naming_settings(
+            uteke_core::room_naming::RoomNamingSettings {
+                require_category_title: true,
+            },
+        );
+        let expect_invalid = |(status, resp): (u16, serde_json::Value), id: &str| {
+            assert_eq!(status, 400, "{resp}");
+            assert_eq!(resp["error"], "invalid_room_id", "{resp}");
+            assert_eq!(resp["room_id"], id, "{resp}");
+            assert!(
+                resp["message"].as_str().unwrap().contains("category:title"),
+                "{resp}"
+            );
+        };
+        expect_invalid(
+            call("/room/create", serde_json::json!({ "room_id": "plain" })),
+            "plain",
+        );
+        expect_invalid(
+            call(
+                "/room/rename",
+                serde_json::json!({ "from": "legacy", "to": "still-plain" }),
+            ),
+            "still-plain",
+        );
+        expect_invalid(
+            call(
+                "/room/remember",
+                serde_json::json!({ "room_id": "fresh-plain", "content": "refused note" }),
+            ),
+            "fresh-plain",
+        );
+        let (status, resp) = call(
+            "/room/remember",
+            serde_json::json!({ "room_id": "legacy", "content": "legacy note" }),
+        );
+        assert_eq!(status, 200, "{resp}");
+        let (status, resp) = call("/room/create", serde_json::json!({ "room_id": "ops:ok" }));
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+    }
+
     #[test]
     fn room_update_missing_room_returns_404() {
         let app = NamespaceApp::new();

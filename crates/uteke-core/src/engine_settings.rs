@@ -18,6 +18,10 @@ pub struct EngineSettings {
     /// `[capture]` (#1466). Global file only: listed in
     /// `UNTRUSTED_PROJECT_KEYS`, so a cloned repository cannot turn it on.
     pub capture: crate::capture::CaptureSettings,
+    /// `[rooms]` (#1715): whether a new room id must be `category:title`.
+    /// Global file only (`UNTRUSTED_PROJECT_KEYS`): a cloned repository cannot
+    /// loosen it.
+    pub rooms: crate::room_naming::RoomNamingSettings,
 }
 
 impl EngineSettings {
@@ -54,6 +58,7 @@ impl Uteke {
         self.set_dream_config(settings.dream);
         self.set_lifecycle_config(settings.lifecycle);
         self.set_capture_settings(settings.capture);
+        self.set_room_naming_settings(settings.rooms);
         if settings.embed_fallback.is_configured() {
             self.set_fallback_settings(settings.embed_fallback.clone());
         }

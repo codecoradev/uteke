@@ -233,6 +233,74 @@ mod tests {
         );
     }
 
+    /// #1715 stage 3, prepared and off by default: with
+    /// `[rooms] require_category_title` on, a NEW canonical id of another shape
+    /// is refused on create, rename and a room write, before anything is
+    /// stored. Existing rooms and aliases keep working.
+    #[test]
+    fn required_shape_refuses_only_new_canonical_ids() {
+        use crate::room_naming::RoomNamingSettings;
+        let mut u = open_keyword();
+        // Made before the rule is switched on: legacy rooms.
+        u.create_room("legacy", None, "default").unwrap();
+        u.create_room("old-name", None, "default").unwrap();
+        u.set_room_naming_settings(RoomNamingSettings {
+            require_category_title: true,
+        });
+        assert!(u.room_naming_settings().require_category_title);
+
+        let invalid = |r: Result<(), Error>, id: &str| match r {
+            Err(Error::InvalidRoomId { id: got }) => assert_eq!(got, id),
+            other => panic!("expected InvalidRoomId for {id}, got {other:?}"),
+        };
+        invalid(u.create_room("plain", None, "default"), "plain");
+        assert!(u.get_room("plain").unwrap().is_none());
+        u.create_room("lab:custom", None, "default").unwrap();
+
+        invalid(
+            u.rename_room("legacy", "still-plain").map(|_| ()),
+            "still-plain",
+        );
+        assert!(u.get_room("legacy").unwrap().is_some(), "nothing renamed");
+        u.rename_room("old-name", "ops:new-name").unwrap();
+
+        let before = u.stats(None).unwrap().total_memories;
+        let refused = u.run_remember(&req(|i| {
+            i.content = "We decided to use SQLite in a fresh plain room".into();
+            i.room = Some("fresh-plain".into());
+        }));
+        assert!(
+            matches!(refused, Err(Error::InvalidRoomId { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(
+            u.stats(None).unwrap().total_memories,
+            before,
+            "nothing stored"
+        );
+        assert!(u.get_room("fresh-plain").unwrap().is_none());
+
+        // An existing legacy room and an alias are written to as before.
+        for (n, room) in ["legacy", "old-name"].into_iter().enumerate() {
+            let run = u
+                .run_remember(&req(|i| {
+                    i.content = format!("We decided to use SQLite in legacy step {n}");
+                    i.room = Some(room.into());
+                }))
+                .unwrap();
+            assert_eq!(run.room_warning, None);
+        }
+        // A conventional new room is created without a warning.
+        let run = u
+            .run_remember(&req(|i| {
+                i.content = "We decided to use SQLite in a new team room".into();
+                i.room = Some("team:new".into());
+            }))
+            .unwrap();
+        assert_eq!(run.room_warning, None);
+        assert!(u.get_room("team:new").unwrap().is_some());
+    }
+
     #[test]
     fn remember_in_room_reporting_says_whether_it_created_the_room() {
         let u = open_keyword();

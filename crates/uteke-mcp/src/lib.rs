@@ -1405,6 +1405,7 @@ fn write_error(e: uteke_core::Error) -> String {
     match e {
         uteke_core::Error::SecretDetected { .. } => format!("secret_detected: {e}"),
         uteke_core::Error::RejectedValue { .. } => format!("rejected_value: {e}"),
+        uteke_core::Error::InvalidRoomId { .. } => format!("invalid_room_id: {e}"),
         other => format!("Failed: {other}"),
     }
 }
@@ -2827,6 +2828,16 @@ fn room_id_warning_suffix(room_id: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The error text of a refused room create or rename: `invalid_room_id: ...`
+/// when the id is refused by `[rooms] require_category_title` (#1715 stage
+/// 3), the same code the HTTP API uses; `Failed to <what> room: ...` otherwise.
+fn room_write_error(what: &str, e: uteke_core::Error) -> String {
+    match e {
+        uteke_core::Error::InvalidRoomId { .. } => format!("invalid_room_id: {e}"),
+        other => format!("Failed to {what} room: {other}"),
+    }
+}
+
 fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let title = args["title"].as_str();
@@ -2834,7 +2845,7 @@ fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     uteke
         .create_room(room_id, title, namespace)
-        .map_err(|e| format!("Failed to create room: {e}"))?;
+        .map_err(|e| room_write_error("create", e))?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2930,7 +2941,7 @@ fn exec_room_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     uteke
         .rename_room(from, to)
-        .map_err(|e| format!("Failed to rename room: {e}"))?;
+        .map_err(|e| room_write_error("rename", e))?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -4537,6 +4548,32 @@ mod namespace_deprecation_tests {
             .unwrap(),
         );
         assert!(!t.contains("Warning"), "{t}");
+    }
+
+    /// #1715 stage 3 (off by default): with `[rooms] require_category_title`
+    /// on, MCP refuses a new room id outside `category:title` with the
+    /// `invalid_room_id` code the HTTP API uses.
+    #[test]
+    fn required_room_id_shape_is_refused_with_invalid_room_id() {
+        let mut u = store();
+        u.create_room("legacy", None, "default").unwrap();
+        u.set_room_naming_settings(uteke_core::room_naming::RoomNamingSettings {
+            require_category_title: true,
+        });
+        for err in [
+            exec_room_create(&u, &serde_json::json!({"room_id": "plain"})).err(),
+            exec_room_rename(&u, &serde_json::json!({"from": "legacy", "to": "plain"})).err(),
+            exec_remember(
+                &u,
+                &serde_json::json!({"content": "refused note", "room": "fresh-plain"}),
+            )
+            .err(),
+        ] {
+            let err = err.expect("refused");
+            assert!(err.starts_with("invalid_room_id: Room id '"), "{err}");
+        }
+        let t = text(exec_room_create(&u, &serde_json::json!({"room_id": "team:ok"})).unwrap());
+        assert_eq!(t, "Room created: team:ok (namespace: default)");
     }
 
     #[test]
