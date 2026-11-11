@@ -1472,3 +1472,46 @@ mod tests {
         assert_eq!(packed.selected[0].rooms[0].room_id, "wild");
     }
 }
+
+/// Canonical room ids and point-in-time limits (#1729).
+#[cfg(test)]
+mod canonical_and_limit_tests {
+    use crate::test_support::open_keyword;
+
+    #[test]
+    fn a_renamed_rooms_old_id_gives_the_new_one_and_other_ids_stay() {
+        let u = open_keyword();
+        u.create_room("ops:old", None, "default").unwrap();
+        u.rename_room("ops:old", "ops:new").unwrap();
+        assert_eq!(u.canonical_room_id("ops:old"), "ops:new");
+        assert_eq!(u.canonical_room_id("ops:new"), "ops:new");
+        assert_eq!(u.canonical_room_id("nope:none"), "nope:none");
+    }
+
+    #[test]
+    fn recall_room_at_time_limit_zero_is_all_and_a_limit_cuts() {
+        let u = open_keyword();
+        for i in 0..3 {
+            u.remember_in_room(
+                &format!("room fact number {i}"),
+                &[],
+                None,
+                None,
+                "fact",
+                "ops:alpha",
+                "tester",
+            )
+            .unwrap();
+        }
+        let later = chrono::Utc::now() + chrono::Duration::seconds(30);
+        let count = |limit: usize| {
+            u.recall_room_at_time("ops:alpha", None, limit, later)
+                .unwrap()
+                .len()
+        };
+        assert_eq!(count(0), 3, "limit 0 means all");
+        assert_eq!(count(2), 2);
+        assert_eq!(count(1), 1);
+        assert_eq!(count(10), 3, "a limit above the number of memories");
+    }
+}

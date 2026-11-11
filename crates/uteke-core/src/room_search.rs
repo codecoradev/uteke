@@ -405,3 +405,18 @@ mod tests {
         assert_eq!(hits[0].memory_count, 1);
     }
 }
+
+/// The query terms (#1729).
+#[cfg(test)]
+mod terms_tests {
+    use super::terms;
+
+    #[test]
+    fn terms_are_lowercase_alphanumeric_without_duplicates_in_order() {
+        assert_eq!(
+            terms("Disc:tole-naik DISC naik extra"),
+            vec!["disc", "tole", "naik", "extra"]
+        );
+        assert!(terms("  --  ").is_empty());
+    }
+}
