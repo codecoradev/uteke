@@ -82,6 +82,11 @@
 
 ### Docs
 
+- **Skill: room ids of the form `category:title` (#1715)** - the `uteke-memory` skill (both
+  copies) now has a "Room ids" section: the shape, the recommended categories, the warning
+  on create, rename and the first write into a new room, the `[rooms] require_category_title`
+  setting (off by default) and how to rename an old room (the old id stays an alias). The
+  room naming row and the "Read the name" step use `project:`, `research:` and `disc:`.
 - **Skill: a "Finding the right room" procedure (#1702)** - the `uteke-memory` skill (both
   copies) now says how to locate a room on a large store without `room list`: recall by
   2-3 keywords first, then `room recall` and `room summary` once the room is known, a room
