@@ -129,6 +129,26 @@ fn the_map_rejects_an_entry_without_target_a_drop_with_targets_and_unknown_keys(
     }
 }
 
+#[test]
+fn the_namespace_name_is_one_to_128_characters() {
+    // blank names: empty and whitespace only
+    for blank in ["", "   "] {
+        let toml = format!("[map.\"{blank}\"]\ntag = \"x\"");
+        assert!(
+            NamespaceMigrationMap::parse(&toml).is_err(),
+            "accepted a blank name {blank:?}"
+        );
+    }
+    let at_limit = "a".repeat(128);
+    let over_limit = "a".repeat(129);
+    let ok = NamespaceMigrationMap::parse(&format!("[map.\"{at_limit}\"]\ntag = \"x\""))
+        .expect("128 characters is the longest allowed name");
+    assert!(ok.map.contains_key(&at_limit));
+    let err =
+        NamespaceMigrationMap::parse(&format!("[map.\"{over_limit}\"]\ntag = \"x\"")).unwrap_err();
+    assert!(err.to_string().contains("1-128 characters"), "{err}");
+}
+
 // --- dry run --------------------------------------------------------------
 
 #[test]
@@ -525,4 +545,24 @@ fn the_export_is_owner_only() {
 
     let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600, "export mode {mode:o}");
+}
+
+#[test]
+fn a_namespace_with_only_deprecated_memories_is_not_unmapped() {
+    let u = open_keyword();
+    remember(&u, "ns-live", "still active", None, None);
+    let gone = remember(&u, "ns-gone", "soft deleted", None, None);
+    u.soft_forget(&gone, "no longer true").unwrap();
+
+    let report = u.plan_namespace_migration(&map("")).unwrap();
+    let unmapped: Vec<(&str, usize)> = report
+        .unmapped
+        .iter()
+        .map(|n| (n.namespace.as_str(), n.memories))
+        .collect();
+    assert_eq!(
+        unmapped,
+        vec![("ns-live", 1)],
+        "a namespace with no active memory has nothing to migrate"
+    );
 }
