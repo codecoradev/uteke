@@ -119,7 +119,8 @@ pub(crate) fn disconnect(agent: &str, dry_run: bool, json: bool) -> Result<(), S
         dir.display()
     );
     if agent == "hermes" {
-        println!("  Also remove `provider: uteke` under `memory:` in ~/.hermes/config.yaml.");
+        println!("  If you enabled it, run `hermes plugins disable uteke` (or remove `uteke` from");
+        println!("  `plugins.enabled` in ~/.hermes/config.yaml).");
     }
     Ok(())
 }

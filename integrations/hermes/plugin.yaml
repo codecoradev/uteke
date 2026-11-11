@@ -1,8 +1,20 @@
-name: uteke-memory
-version: 2.0.0
-description: "Uteke — offline-first local memory with auto-recall. Registers a pre_llm_call plugin hook for automatic memory injection every turn. Requires uteke binary on PATH or UTEKE_BIN env var."
+name: uteke
+version: 2.1.0
+manifest_version: 2
+description: "Uteke - offline-first long-term memory with automatic recall. Registers a pre_llm_call hook that injects relevant memories into every turn. Runs the separately installed `uteke` binary (or talks to a uteke-serve / Uteke Cloud URL you set). Never downloads or updates anything."
 author: CodeCoraDev
+license: Apache-2.0
+homepage: https://github.com/codecoradev/uteke
+tags: [memory, long-term-memory, recall, offline, local-first]
+requires_hermes: ">=0.21.6"
 pip_dependencies: []
-requires_env: []
 provides_hooks:
   - pre_llm_call
+# The token is optional (HTTP transport only), so it is a secret setting, not a
+# requires_env entry: requires_env would disable the plugin without it.
+config_schema:
+  token:
+    type: secret
+    env: UTEKE_TOKEN
+    label: "uteke-serve / Uteke Cloud token"
+    description: "Bearer token for the server set in UTEKE_SERVER_URL. Leave empty to use the local uteke binary."

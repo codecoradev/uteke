@@ -1,0 +1,18 @@
+# Draft entry for NousResearch/hermes-agent plugin-catalog/uteke.yaml.
+# Replace sha with the reviewed commit on main that contains integrations/hermes/ at 2.1.0.
+name: uteke
+repo: https://github.com/codecoradev/uteke
+sha: 0000000000000000000000000000000000000000
+subdir: integrations/hermes
+version: "2.1.0"
+description: "Automatic recall for a local Uteke store (hosted, no install: see the uteke-cloud MCP). Long-term memory from Uteke, an offline Rust memory engine: before every turn it recalls relevant memories and adds them to the prompt, marked as data. Read-only, no telemetry, no self-update. Needs the uteke binary on PATH. Disclosure: runs the uteke binary as a subprocess with an allow-listed environment; with UTEKE_SERVER_URL set it sends the first 500 characters of each message and the UTEKE_TOKEN secret to that server"
+maintainer: ajianaz
+tier: community
+category: memory
+requires_hermes: ">=0.21.6"
+docs_url: https://github.com/codecoradev/uteke/blob/main/integrations/hermes/README.md
+capabilities:
+  provides_tools: []
+  provides_hooks: [pre_llm_call]
+  provides_middleware: []
+  requires_env: []
