@@ -2247,4 +2247,35 @@ mod tests {
             vec!["The cache is Redis", "Deploys use GitHub Actions"]
         );
     }
+
+    /// #1684: a limit of 0 means "no limit", for the turn count and for the
+    /// bytes, on capture and on the status warning.
+    #[test]
+    fn a_queue_limit_of_zero_means_no_limit() {
+        let mut u = open_keyword();
+        u.set_capture_settings(CaptureSettings {
+            enabled: true,
+            max_queue_turns: 0,
+            max_queue_bytes: 0,
+            ..Default::default()
+        });
+        for i in 0..3 {
+            u.capture(
+                "zero",
+                Role::User,
+                &format!("turn number {i} with some text in it"),
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            rows(
+                &u,
+                "SELECT COUNT(*) FROM observations WHERE session_id = 'zero'"
+            ),
+            3
+        );
+        assert_eq!(u.capture_status().unwrap().warning, None);
+    }
 }

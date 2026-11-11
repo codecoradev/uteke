@@ -709,4 +709,13 @@ mod tests {
         assert_eq!(facts.len(), 1);
         assert!(facts[0].priority.is_none()); // 1.5 is out of 0.0-1.0 range
     }
+
+    /// #1684: a plain string in a flat array is trimmed, and a blank one is
+    /// dropped after the trim.
+    #[test]
+    fn plain_string_facts_are_trimmed_and_blank_ones_dropped() {
+        let facts = parse_facts(r#"["  padded fact  ", "   ", "second fact\n"]"#);
+        let contents: Vec<&str> = facts.iter().map(|f| f.content.as_str()).collect();
+        assert_eq!(contents, vec!["padded fact", "second fact"]);
+    }
 }
