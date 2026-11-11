@@ -93,6 +93,37 @@ class CatalogRules(unittest.TestCase):
         with self._fake_secret_scope(get_secret), mock.patch.dict(os.environ, {"UTEKE_TOKEN": "env-token"}):
             self.assertEqual(self.plugin._get_token(), "")
 
+    def test_token_is_read_on_every_recall_not_cached_at_load(self):
+        mgr = self.plugin._RecallManager()
+        mgr._server_url = "http://uteke.invalid"
+        mgr._use_http = True
+        current = {"value": "profile-a"}
+        sent = []
+
+        def get_secret(name, default=None):
+            return current["value"]
+
+        def fake_http(url, token, query, namespace, limit):
+            sent.append(token)
+            return []
+
+        with self._fake_secret_scope(get_secret), mock.patch.object(self.plugin, "_recall_http", fake_http):
+            mgr.recall("q")
+            current["value"] = "profile-b"
+            mgr.recall("q")
+        self.assertEqual(sent, ["profile-a", "profile-b"])
+
+    def test_an_unreadable_token_is_reported_once_not_silently(self):
+        def get_secret(name, default=None):
+            raise RuntimeError("no profile secret scope active")
+
+        self.plugin._WARNED.clear()
+        with self._fake_secret_scope(get_secret), self.assertLogs(self.plugin.logger, "WARNING") as logs:
+            self.plugin._get_token()
+            self.plugin._get_token()
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("UTEKE_TOKEN", logs.output[0])
+
     def test_environment_fallback_only_without_secret_scope(self):
         with mock.patch.dict(sys.modules, {"agent": None, "agent.secret_scope": None}), \
                 mock.patch.dict(os.environ, {"UTEKE_TOKEN": "env-token"}):

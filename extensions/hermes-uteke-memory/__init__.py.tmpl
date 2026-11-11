@@ -82,6 +82,15 @@ _HTTP_RECALL_TIMEOUT = 10
 # Config
 # ---------------------------------------------------------------------------
 
+_WARNED: set = set()
+
+
+def _warn_once(key: str, message: str) -> None:
+    if key not in _WARNED:
+        _WARNED.add(key)
+        logger.warning(message)
+
+
 def _get_token() -> str:
     """The server token, through Hermes's secret scope (catalog rule 11).
 
@@ -95,8 +104,12 @@ def _get_token() -> str:
         return os.environ.get(_TOKEN_NAME, "")
     try:
         return get_secret(_TOKEN_NAME, "") or ""
-    except Exception:
-        # UnscopedSecretError and friends: no token, recall still works locally.
+    except Exception as e:
+        # UnscopedSecretError and friends: no token for this call. Say so once, so a
+        # missing token is not a silent failure; recall still works against a local store.
+        _warn_once("token-unscoped",
+                   "uteke plugin: %s is not readable in this context (%s); "
+                   "the server request is sent without it." % (_TOKEN_NAME, type(e).__name__))
         return ""
 
 
@@ -290,7 +303,6 @@ class _RecallManager:
         self._env = _child_env()
         self._namespace = "default"
         self._server_url = ""
-        self._token = ""
         self._use_http = False
         self._recall_limit = 5
         self._recall_min_score = 0.0
@@ -307,7 +319,6 @@ class _RecallManager:
         self._bin = _resolve_bin(cfg)
         self._namespace = cfg.get("namespace", "") or _resolve_agent_name()
         self._server_url = cfg.get("server_url", "").rstrip("/")
-        self._token = _get_token() if self._server_url else ""
         self._use_http = bool(self._server_url)
         self._recall_limit = int(cfg.get("recall_limit", 5) or 5)
         self._recall_min_score = float(cfg.get("recall_min_score", 0.0) or 0.0)
@@ -351,7 +362,9 @@ class _RecallManager:
 
         try:
             if self._use_http:
-                hits = _recall_http(self._server_url, self._token, query,
+                # Read per call: the secret scope is per task and profile, so a value
+                # cached at load time could belong to another profile or be missing.
+                hits = _recall_http(self._server_url, _get_token(), query,
                                    self._namespace, self._recall_limit)
             else:
                 if not self._bin:
