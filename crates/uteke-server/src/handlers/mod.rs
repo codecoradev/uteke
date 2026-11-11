@@ -49,6 +49,8 @@ mod recall_similarity_tests;
 #[cfg(test)]
 mod room_link_tests;
 mod rooms;
+#[cfg(test)]
+mod rooms_contract_tests;
 mod tags;
 #[cfg(test)]
 mod warmup_tests;

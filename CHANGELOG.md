@@ -73,6 +73,12 @@
   `limit` and the recall cache, so order and scores are unchanged and a cached hit never
   reports an old membership. A room recall without a query (the chronological list) is
   unchanged. Contract note for uteke-cloud: additive response field on CORE endpoints.
+  The field is CORE (#1713, contract amendment 4 point 1, uteke-cloud #525): its shape is
+  pinned by exact-value tests on `POST /recall` (plain, unified, `pack`, `explain`),
+  `POST /search`, `POST /room/recall` with a query, MCP `uteke_recall`, `uteke_search`,
+  `uteke_room_recall` and the CLI `--json`, which fail when the name, the sort by
+  `room_id`, the title-or-id `room_name`, the omission rule or the document exclusion
+  changes.
 
 ### Docs
 
