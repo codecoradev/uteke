@@ -360,7 +360,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
         path: "/room/remember",
         tier: Tier::Core,
         writes: true,
-        description: "Store a memory linked to a room. Accepts room_id, content, tags, type, author.",
+        description: "Store a memory linked to a room. Accepts room_id, content, tags, type, author. A room that does not exist is created; when its id is not of the shape `category:title` the response carries `warnings` with one message, as on `/room/create` (#1715).",
         request_type: Some("RoomRememberRequest"),
         response_type: Some("Memory"),
         excludes_deprecated: false,

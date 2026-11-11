@@ -385,7 +385,7 @@ Create a new memory room. Accepts `{"name": "..."}`. Room ids are meant to have 
 
 #### 🟡 `POST` `/room/remember`
 
-Store a memory linked to a room. Accepts room_id, content, tags, type, author.
+Store a memory linked to a room. Accepts room_id, content, tags, type, author. A room that does not exist is created; when its id is not of the shape `category:title` the response carries `warnings` with one message, as on `/room/create` (#1715).
 
 **Request body**: [`RoomRememberRequest`](#roomrememberrequest)
 

@@ -82,6 +82,7 @@ pub use recall_request::{
 pub use remember_request::{
     RememberInput, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
+pub use room_ops::RoomRememberOutcome;
 pub mod engine_settings;
 #[cfg(test)]
 mod isolation_tests;

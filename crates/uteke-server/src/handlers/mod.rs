@@ -1154,6 +1154,32 @@ mod room_recall_at_tests {
         assert!(resp.get("warnings").is_none(), "{resp}");
     }
 
+    /// #1715 stage 1: a room auto-created by `POST /room/remember` outside
+    /// `category:title` carries the same `warnings` entry as `POST /room/create`;
+    /// an existing room and a conventional new id carry none.
+    #[test]
+    fn a_room_auto_created_by_a_write_warns_outside_category_title() {
+        let app = NamespaceApp::new();
+        let room_remember = |room: &str, content: &str| {
+            let body =
+                serde_json::json!({ "content": content, "tags": [], "room_id": room }).to_string();
+            app.call(Method::Post, "/room/remember", Some(body))
+        };
+        let (status, resp) = room_remember("auto-room", "first note in auto room");
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(
+            resp["warnings"],
+            serde_json::json!([uteke_core::room_naming::room_id_warning("auto-room").unwrap()]),
+            "{resp}"
+        );
+        let (status, resp) = room_remember("auto-room", "second note in auto room");
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "existing room: {resp}");
+        let (status, resp) = room_remember("project:auto", "note in conventional room");
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+    }
+
     #[test]
     fn room_update_missing_room_returns_404() {
         let app = NamespaceApp::new();
