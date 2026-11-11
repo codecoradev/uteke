@@ -112,6 +112,12 @@ impl Fixture {
     fn assert_hits(&self, surface: &str, hits: &[Value]) {
         let mut seen = (false, false);
         for hit in hits {
+            // A unified response may hold document items next to memory hits:
+            // they never carry rooms (rule 5) and have no memory id.
+            if hit["result_type"] == "document" {
+                assert!(hit.get("rooms").is_none(), "{surface}: {hit}");
+                continue;
+            }
             let id = hit["memory"]["id"]
                 .as_str()
                 .or_else(|| hit["memory_id"].as_str())
