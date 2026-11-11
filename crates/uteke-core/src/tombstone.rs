@@ -550,3 +550,80 @@ mod write_path_tests {
         rejected(dst.remember("The deploy target is staging-2", &[], None, None));
     }
 }
+
+/// Restoring and removing tombstones: exact limits (#1729).
+#[cfg(test)]
+mod key_tests {
+    use super::{Tombstone, insert_all};
+    use crate::test_support::open_keyword;
+
+    fn tombstone(hash: &str) -> Tombstone {
+        Tombstone {
+            hash: hash.to_string(),
+            memory_id: None,
+            reason: "wrong".to_string(),
+            preview: "preview".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn stored_hashes(u: &crate::Uteke) -> Vec<String> {
+        u.tombstones()
+            .unwrap()
+            .into_iter()
+            .map(|t| t.hash)
+            .collect()
+    }
+
+    /// A store with one tombstone, and its hash.
+    fn with_one_tombstone() -> (crate::Uteke, String) {
+        let u = open_keyword();
+        let id = u
+            .remember("The deploy target is staging-2", &[], None, None)
+            .unwrap();
+        u.forget_with_reason(&id, Some("wrong: it is staging-3"))
+            .unwrap();
+        let hash = stored_hashes(&u).remove(0);
+        assert_eq!(hash.len(), 64);
+        (u, hash)
+    }
+
+    #[test]
+    fn only_a_sha256_hash_is_restored() {
+        let u = open_keyword();
+        let good = "a".repeat(64);
+        let not_hex = "g".repeat(64);
+        let too_short = "abc123";
+        let added = insert_all(
+            u.graph_store(),
+            &[tombstone(&good), tombstone(&not_hex), tombstone(too_short)],
+        )
+        .unwrap();
+        assert_eq!(added, 1, "64 hex digits, nothing else");
+        assert_eq!(stored_hashes(&u), vec![good]);
+    }
+
+    #[test]
+    fn a_prefix_of_seven_characters_removes_nothing() {
+        let (u, hash) = with_one_tombstone();
+        assert_eq!(u.remove_tombstone(&hash[..7]).unwrap(), 0);
+        assert_eq!(stored_hashes(&u), vec![hash]);
+    }
+
+    #[test]
+    fn a_prefix_of_eight_characters_removes_the_tombstone() {
+        let (u, hash) = with_one_tombstone();
+        assert_eq!(u.remove_tombstone(&hash[..8]).unwrap(), 1);
+        assert!(stored_hashes(&u).is_empty());
+    }
+
+    #[test]
+    fn a_wildcard_is_not_a_prefix() {
+        let (u, hash) = with_one_tombstone();
+        // eight characters, six of them a real prefix: LIKE would match it.
+        let key = format!("{}%%", &hash[..6]);
+        assert_eq!(key.len(), 8);
+        assert_eq!(u.remove_tombstone(&key).unwrap(), 0);
+        assert_eq!(stored_hashes(&u), vec![hash]);
+    }
+}
