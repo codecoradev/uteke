@@ -89,7 +89,7 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 |---------|-------------|-------------|
 | `uteke room create <ID>` | Create a room | `--title` |
 | `uteke room update <ID>` | Update title/description | `--title`, `--description` |
-| `uteke room rename <OLD> <NEW>` | Rename a room (members and document links move too) | |
+| `uteke room rename <OLD> <NEW>` | Rename a room (members and document links move too); the old id keeps working as an alias | |
 | `uteke room move-memory <MEMORY_ID>` | Move a memory between rooms, keeping link provenance | `--from`, `--to` |
 | `uteke room link <MEMORY_ID> <ROOM>` | Add an existing memory to a room without copying it (idempotent) | `--author` |
 | `uteke room add-document <ROOM> <SLUG>` | Link a document to a room | |
@@ -326,7 +326,7 @@ Keep the three axes distinct so recall stays filterable:
 | Axis | Means | Rule |
 |------|-------|------|
 | **Namespace** | Workspace / whose area | Few and coarse (e.g. one per agent family or tool). Not one per project: project identity lives in the room and tags. Avoid `repo-*` / `project:*` namespaces. Do not keep writing to `default` once you have chosen real ones |
-| **Room** | One project or discussion | One room per parent project named `<name>` (lowercase, hyphens; no `project:` / `repo-` prefix, no `-dev` suffix). Discussions `disc:<topic>`, research `riset:<topic>`. Always set `--title` |
+| **Room** | One project or discussion | Id of the form `category:title` (see "Room ids" below): one room per parent project `project:<name>` (no `repo-` prefix, no `-dev` suffix), research `research:<topic>`, discussions `disc:<topic>`. Always set `--title` |
 | **Tag** | Search aid | `project:<name>` (registry names only), `tool:<name>` for items about a specific tool or agent (`tool:claude-code`), `agent:<role>` only for the origin of a multi-profile agent |
 
 - **A room's namespace cannot be changed after creation** (#1352) and merging
@@ -335,6 +335,25 @@ Keep the three axes distinct so recall stays filterable:
 - `uteke update --tags` **replaces** the whole tag set — read the memory first
   and write back the merged list; there is no bulk add-tag operation.
 - `uteke namespace rename` changes only the memories' namespace, not the `rooms` table.
+
+### Room ids
+
+A room id has the shape `category:title`: lowercase, exactly one colon, at most 64
+characters (`^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9._-]*$`), for example `project:uteke`
+or `research:docker`. Only the shape is the rule. The category is a recommendation
+(`project`, `research`, `team`, `ops`, `ref`); a custom category of that shape such
+as `disc:` is accepted.
+
+- Creating a room with another id (`room create`, the target of `room rename`, or
+  the first `remember --room` into a new room) still works and prints a
+  `Warning:` line (HTTP: a `warnings` array). Do not ignore it: pick an id of the
+  right shape instead.
+- With `[rooms] require_category_title = true` in the global `uteke.toml`, such a
+  new id is refused (`invalid_room_id`, HTTP 400) and the write stores nothing.
+  It is off by default.
+- Existing rooms of another shape keep working and are never warned. Rename one
+  with `uteke room rename <old> <category:title>`; the old id stays valid as an
+  alias for every room command.
 
 ### Conventions first
 
@@ -365,8 +384,10 @@ so do not use it to look for a topic.
    workspace keeps a room index document (for example `room-index` or the project
    registry), `uteke doc search "<topic>" --mode hybrid` finds it. Check the
    conventions rooms the same way (see "Conventions first").
-5. **Read the name.** Project rooms are `<name>`, discussions `disc:<topic>`, research
-   `riset:<topic>`: the prefix tells you the kind of room before you open it.
+5. **Read the name.** The category of a `category:title` id tells you the kind of
+   room before you open it: `project:<name>`, `research:<topic>`, `disc:<topic>`,
+   `team:`, `ops:`, `ref:`. Older rooms may still have a plain id (`<name>`,
+   `riset:<topic>`); an old id that was renamed still works as an alias.
 6. **Keep the room id.** When a step reveals a room id, carry it into the next step so
    the follow-up is a `room recall`, not another discovery.
 
