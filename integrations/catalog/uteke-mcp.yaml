@@ -1,0 +1,18 @@
+# Draft entry for NousResearch/hermes-agent plugin-catalog/uteke-mcp.yaml.
+# Replace sha with the reviewed commit on main that contains integrations/agent-plugin/.
+name: uteke-mcp
+repo: https://github.com/codecoradev/uteke
+sha: 0000000000000000000000000000000000000000
+subdir: integrations/agent-plugin
+version: "1.0.0"
+description: "Uteke memory for any agent: the uteke skill and the uteke-mcp MCP server (recall, remember, rooms, docs), all on the local machine. Needs the uteke-mcp binary on PATH. Disclosure: the server can write and delete memories in the local store, so Hermes approval prompts apply to those tools"
+maintainer: ajianaz
+tier: community
+category: tools
+requires_hermes: ">=0.21.6"
+docs_url: https://github.com/codecoradev/uteke/blob/main/integrations/agent-plugin/README.md
+capabilities:
+  provides_tools: []
+  provides_hooks: []
+  provides_middleware: []
+  requires_env: []

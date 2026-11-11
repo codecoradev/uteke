@@ -700,7 +700,7 @@ fn init_hermes_memory_provider(json: bool) -> Result<(), String> {
         println!("{obj}");
     } else {
         println!(
-            "✓ Hermes memory-provider plugin installed: {}/",
+            "✓ Hermes plugin installed (automatic recall): {}/",
             plugin_dir.display()
         );
         if installed_to_home {
@@ -709,12 +709,12 @@ fn init_hermes_memory_provider(json: bool) -> Result<(), String> {
             println!("  Location: {}/", plugin_dir.display());
             println!("  Copy to your Hermes plugins directory to activate.");
         }
-        println!("\n  Activate it as the default memory provider in ~/.hermes/config.yaml:");
-        println!("\n    memory:");
-        println!("      provider: uteke");
+        println!("\n  Enable it in Hermes:");
+        println!("\n    hermes plugins enable uteke");
         println!("\n  Then start a new Hermes session. Recall is automatic; no tool call needed.");
-        println!("  Optional: enable LLM fact extraction by configuring extract_* in");
-        println!("  ~/.hermes/uteke.json (see docs/integrations/hermes.md).");
+        println!("  Optional server token: set UTEKE_TOKEN in Hermes (the plugin settings form or");
+        println!("  the profile .env). Other settings go in ~/.hermes/uteke.json");
+        println!("  (see docs/integrations/hermes.md).");
     }
     Ok(())
 }
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn memory_provider_manifest_declares_hooks() {
-        assert!(PLUGIN_YAML.contains("name: uteke-memory"));
+        assert!(PLUGIN_YAML.contains("name: uteke\n"));
         assert!(
             PLUGIN_YAML.contains("pre_llm_call"),
             "manifest must declare the pre_llm_call hook for auto-recall"
@@ -809,7 +809,7 @@ mod tests {
     fn hermes_integration_package_is_detectable_by_hermes_scanner() {
         // Mirror of the Desktop scanner's detectPluginComponents(): an agent
         // plugin requires BOTH a plugin manifest and a Python entry point.
-        assert!(INTEGRATION_PLUGIN_YAML.contains("name: uteke-memory"));
+        assert!(INTEGRATION_PLUGIN_YAML.contains("name: uteke\n"));
         assert!(INTEGRATION_INIT_PY.contains("def register("));
     }
 }
