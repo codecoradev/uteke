@@ -461,7 +461,7 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let tag_refs: Vec<&str> = req_data.tags.iter().map(|s| s.as_str()).collect();
             let memory_type = req_data.r#type.as_deref().unwrap_or("fact");
             let author = req_data.author.as_deref().unwrap_or("user");
-            match uteke.remember_in_room(
+            match uteke.remember_in_room_reporting(
                 &req_data.content,
                 &tag_refs,
                 req_data.metadata.clone(),
@@ -470,7 +470,8 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 &req_data.room_id,
                 author,
             ) {
-                Ok(outcome) => {
+                Ok(written) => {
+                    let outcome = written.outcome;
                     // The named writer is also the memory's own author (#1427
                     // phase 2); the "user" fallback of the room link is not.
                     if let Some(a) = req_data.author.as_deref()
@@ -478,21 +479,23 @@ pub(super) fn post_room_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     {
                         error!("Failed to set author for {}: {e}", outcome.id);
                     }
-                    ctx.ok_response_for(
-                        req,
-                        &serde_json::json!({
-                            "id": outcome.id,
-                            "room_id": uteke.canonical_room_id(&req_data.room_id),
-                            "embedding_written": outcome.embedding_written,
-                            "redacted": outcome.redacted(),
-                            "warning": uteke_core::namespace_deprecation::merge_warning(
-                                outcome.warning,
-                                uteke_core::namespace_deprecation::namespace_write_warning(
-                                    ns(&req_data.namespace),
-                                ),
+                    let mut body = serde_json::json!({
+                        "id": outcome.id,
+                        "room_id": uteke.canonical_room_id(&req_data.room_id),
+                        "embedding_written": outcome.embedding_written,
+                        "redacted": outcome.redacted(),
+                        "warning": uteke_core::namespace_deprecation::merge_warning(
+                            outcome.warning,
+                            uteke_core::namespace_deprecation::namespace_write_warning(
+                                ns(&req_data.namespace),
                             ),
-                        }),
-                    )
+                        ),
+                    });
+                    // #1715: the room this write created is outside `category:title`.
+                    if let Some(w) = written.room_warning {
+                        body["warnings"] = serde_json::json!([w]);
+                    }
+                    ctx.ok_response_for(req, &body)
                 }
                 Err(e) => ctx.core_error(req, &e),
             }

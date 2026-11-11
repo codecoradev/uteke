@@ -1431,6 +1431,10 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         text.push_str(&format!("\n⚠ Stored, but could not record {w}"));
     }
     text.push_str(&namespace_deprecation_suffix(namespace));
+    // #1715: the room this write created is outside `category:title`.
+    if let Some(w) = &run.room_warning {
+        text.push_str(&format!("\nWarning: {w}"));
+    }
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -4492,6 +4496,43 @@ mod namespace_deprecation_tests {
             exec_room_rename(
                 &u,
                 &serde_json::json!({"from": "still-plain", "to": "ops:plain"}),
+            )
+            .unwrap(),
+        );
+        assert!(!t.contains("Warning"), "{t}");
+    }
+
+    /// #1715 stage 1: `uteke_remember` into a room it creates outside
+    /// `category:title` appends the naming warning; an existing room does not.
+    #[test]
+    fn remember_warns_about_a_room_it_creates_outside_category_title() {
+        let u = store();
+        let t = text(
+            exec_remember(
+                &u,
+                &serde_json::json!({"content": "note in a fresh room", "room": "fresh-room"}),
+            )
+            .unwrap(),
+        );
+        assert!(
+            t.ends_with(&format!(
+                "\nWarning: {}",
+                uteke_core::room_naming::room_id_warning("fresh-room").unwrap()
+            )),
+            "{t}"
+        );
+        let t = text(
+            exec_remember(
+                &u,
+                &serde_json::json!({"content": "second note in that room", "room": "fresh-room"}),
+            )
+            .unwrap(),
+        );
+        assert!(!t.contains("Warning"), "{t}");
+        let t = text(
+            exec_remember(
+                &u,
+                &serde_json::json!({"content": "note in a conventional room", "room": "team:fresh"}),
             )
             .unwrap(),
         );

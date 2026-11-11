@@ -11,9 +11,10 @@
   the right shape is accepted. Stage 1: creating a room, or renaming one, to an id of
   another shape still works and now returns a warning (`warnings` on `POST /room/create`
   and `POST /room/rename`, a `Warning:` line in the MCP tools, a line on stderr and
-  `warnings` in `--json` for `uteke room create` and `uteke room rename`). Reads, recall
-  and existing rooms are never warned or blocked, and a room created by a first
-  `room remember` is not warned yet. Stage 2 renames the old rooms through the aliases of
+  `warnings` in `--json` for `uteke room create` and `uteke room rename`). A room created
+  by the first write into it (`POST /room/remember`, MCP `uteke_remember` with `room`,
+  `uteke remember --room`) gets the same warning, once, on the write that creates it.
+  Reads, recall, existing rooms and aliases are never warned or blocked. Stage 2 renames the old rooms through the aliases of
   #1714; stage 3 rejects new ids of the wrong shape. Owner order 2026-11-10 (contract
   amendment 4, uteke-cloud #527).
 - **Renaming a room keeps its old id working (#1714)** - `room rename`, `POST /room/rename` and

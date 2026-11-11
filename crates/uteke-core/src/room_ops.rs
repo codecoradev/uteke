@@ -5,6 +5,18 @@ use crate::memory::types::{Memory, RecallStrategy, SearchResult};
 use crate::memory::{Room, RoomDocument, RoomStats, RoomSummary};
 use crate::operations::RememberOutcome;
 
+/// What a room write did ([`crate::Uteke::remember_in_room_reporting`]).
+#[derive(Debug, Clone)]
+pub struct RoomRememberOutcome {
+    /// The stored memory.
+    pub outcome: RememberOutcome,
+    /// True when the room did not exist and this write created it.
+    pub room_created: bool,
+    /// The `category:title` naming warning (#1715, stage 1): set only when this
+    /// write created the room and its id is not of that shape.
+    pub room_warning: Option<String>,
+}
+
 impl crate::Uteke {
     /// Attach to each hit the rooms its memory belongs to (#1703).
     ///
@@ -107,6 +119,33 @@ impl crate::Uteke {
         room_id: &str,
         author: &str,
     ) -> Result<RememberOutcome, Error> {
+        self.remember_in_room_reporting(
+            content,
+            tags,
+            metadata,
+            namespace,
+            memory_type,
+            room_id,
+            author,
+        )
+        .map(|w| w.outcome)
+    }
+
+    /// [`Self::remember_in_room`], also reporting whether the write created the
+    /// room. A room created this way gets the same `category:title` naming
+    /// warning as `room create` (#1715, stage 1); a write into a room that
+    /// already exists (or into an alias of one, #1714) is never warned.
+    #[allow(clippy::too_many_arguments)]
+    pub fn remember_in_room_reporting(
+        &self,
+        content: &str,
+        tags: &[&str],
+        metadata: Option<serde_json::Value>,
+        namespace: Option<&str>,
+        memory_type: &str,
+        room_id: &str,
+        author: &str,
+    ) -> Result<RoomRememberOutcome, Error> {
         // Store the memory normally (lazy-loads embedder if needed),
         // keeping the honest embedding status (#1273).
         let outcome =
@@ -114,7 +153,8 @@ impl crate::Uteke {
         let memory_id = outcome.id.clone();
 
         // Ensure room exists (auto-create if needed)
-        if self.store.get_room(room_id)?.is_none() {
+        let room_created = self.store.get_room(room_id)?.is_none();
+        if room_created {
             let ns = namespace.unwrap_or(crate::memory::types::DEFAULT_NAMESPACE);
             self.store.create_room(room_id, None, ns)?;
         }
@@ -123,7 +163,16 @@ impl crate::Uteke {
         self.store
             .link_memory_to_room(room_id, &memory_id, author, "participant")?;
 
-        Ok(outcome)
+        let room_warning = if room_created {
+            crate::room_naming::room_id_warning(room_id)
+        } else {
+            None
+        };
+        Ok(RoomRememberOutcome {
+            outcome,
+            room_created,
+            room_warning,
+        })
     }
 
     /// Recall all memories in a room (cross-namespace).

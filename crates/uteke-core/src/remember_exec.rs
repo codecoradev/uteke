@@ -26,6 +26,10 @@ pub struct RememberRun {
     pub contradiction: Option<ContradictionResult>,
     /// Provenance follow-ups that failed after the memory was stored.
     pub provenance_warnings: Vec<String>,
+    /// The `category:title` naming warning for a room this write created
+    /// (#1715, stage 1). `None` without a room, for an existing room, and for
+    /// a new room whose id has that shape.
+    pub room_warning: Option<String>,
 }
 
 impl Uteke {
@@ -46,9 +50,10 @@ impl Uteke {
         let inferred = || MemoryType::infer_stored_name(content);
 
         let mut contradiction = None;
+        let mut room_warning = None;
         let outcome = if let Some(room) = req.room.as_deref() {
             let author = req.author.as_deref().unwrap_or("anonymous");
-            self.remember_in_room(
+            let written = self.remember_in_room_reporting(
                 content,
                 &tags,
                 metadata,
@@ -56,7 +61,9 @@ impl Uteke {
                 explicit.unwrap_or_else(inferred),
                 room,
                 author,
-            )?
+            )?;
+            room_warning = written.room_warning;
+            written.outcome
         } else if req.detect_contradiction {
             let (outcome, found) = self.remember_with_contradiction(
                 content,
@@ -100,6 +107,7 @@ impl Uteke {
             outcome,
             contradiction,
             provenance_warnings: warnings,
+            room_warning,
         })
     }
 }
@@ -176,6 +184,81 @@ mod tests {
             .unwrap();
         let m = stored(&u, &run);
         assert_eq!((m.source, m.source_type.as_str()), (None, "file"));
+    }
+
+    /// #1715 stage 1: a write that creates a room outside `category:title`
+    /// carries the naming warning; a write into an existing room, an alias of
+    /// one, a conventional new room, or no room carries none.
+    #[test]
+    fn a_room_created_by_a_write_is_warned_only_outside_category_title() {
+        let u = open_keyword();
+        let write = |n: usize, room: Option<&str>| {
+            u.run_remember(&req(|i| {
+                i.content = format!("We decided to use SQLite in step {n}");
+                i.room = room.map(str::to_string);
+            }))
+            .unwrap()
+        };
+
+        let first = write(1, Some("plain-room"));
+        let w = first
+            .room_warning
+            .as_deref()
+            .expect("new plain room warned");
+        assert_eq!(
+            Some(w.to_string()),
+            crate::room_naming::room_id_warning("plain-room")
+        );
+        assert!(u.get_room("plain-room").unwrap().is_some());
+
+        assert_eq!(
+            write(2, Some("plain-room")).room_warning,
+            None,
+            "existing room"
+        );
+        assert_eq!(
+            write(3, Some("lab:custom")).room_warning,
+            None,
+            "conventional id"
+        );
+        assert_eq!(write(4, None).room_warning, None, "no room");
+
+        u.rename_room("plain-room", "ops:plain").unwrap();
+        let via_alias = write(5, Some("plain-room"));
+        assert_eq!(via_alias.room_warning, None, "alias of an existing room");
+        assert_eq!(
+            u.list_rooms(None).unwrap().len(),
+            2,
+            "no room created via alias"
+        );
+    }
+
+    #[test]
+    fn remember_in_room_reporting_says_whether_it_created_the_room() {
+        let u = open_keyword();
+        let a = u
+            .remember_in_room_reporting("Fact one about quartz", &[], None, None, "fact", "r", "a")
+            .unwrap();
+        assert!(a.room_created);
+        assert!(a.room_warning.is_some());
+        let b = u
+            .remember_in_room_reporting("Fact two about orchid", &[], None, None, "fact", "r", "a")
+            .unwrap();
+        assert!(!b.room_created);
+        assert_eq!(b.room_warning, None);
+        let c = u
+            .remember_in_room_reporting(
+                "Fact three about ledger",
+                &[],
+                None,
+                None,
+                "fact",
+                "team:x",
+                "a",
+            )
+            .unwrap();
+        assert!(c.room_created);
+        assert_eq!(c.room_warning, None);
     }
 
     #[test]
