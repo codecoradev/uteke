@@ -2036,4 +2036,215 @@ mod tests {
             0
         );
     }
+    // ── #1684: killing tests for the mutants the v0.23.0 gate missed ─────
+    //
+    // Each assertion is an exact value, so a changed operator in
+    // `split_on_boundary`, `chunk_session` or the guards of `capture` fails one.
+
+    fn chunk_lens(chunks: &[String]) -> Vec<usize> {
+        chunks.iter().map(|c| c.chars().count()).collect()
+    }
+
+    #[test]
+    fn split_on_boundary_cuts_after_a_newline_in_the_second_half_of_the_window() {
+        // Window "abcdefg\nhi" (10 chars); the newline at 7 is in the second half,
+        // so the first piece keeps it (cut at 7 + 1).
+        assert_eq!(
+            split_on_boundary("abcdefg\nhijklmnop", 10),
+            vec!["abcdefg\n", "hijklmnop"]
+        );
+        // A multibyte whitespace: the cut is after its whole encoding (7 + 3 bytes).
+        assert_eq!(
+            split_on_boundary("abcdefg\u{3000}hijkl", 9),
+            vec!["abcdefg\u{3000}", "hijkl"]
+        );
+    }
+
+    #[test]
+    fn split_on_boundary_ignores_a_newline_in_the_first_half_of_the_window() {
+        // The only newline is at 2, in the first half of the 10-char window: the
+        // cut stays at the end of the window instead of leaving a 3-char piece.
+        assert_eq!(
+            split_on_boundary("ab\ncdefghijklmnopqrs", 10),
+            vec!["ab\ncdefghi", "jklmnopqrs"]
+        );
+    }
+
+    #[test]
+    fn chunks_pack_to_the_budget_exactly_and_never_over_it() {
+        // "u: " + 7 chars = 10 per turn. Two turns joined by a newline are 21
+        // chars: they fit a budget of 21, not one of 20.
+        let turns = vec![turn("u", "1234567"), turn("u", "abcdefg")];
+        let fit = chunk_session(&turns, 21);
+        assert_eq!(fit, vec!["u: 1234567\nu: abcdefg".to_string()]);
+        let over = chunk_session(&turns, 20);
+        assert_eq!(
+            over,
+            vec!["u: 1234567".to_string(), "u: abcdefg".to_string()]
+        );
+        // The running length counts each separator and each turn: in a budget of
+        // 31 the first two turns (21 chars) are one chunk and the third (21 + 1 +
+        // 10 = 32) starts another.
+        let three = vec![
+            turn("u", "1234567"),
+            turn("u", "abcdefg"),
+            turn("u", "ABCDEFG"),
+        ];
+        let chunks = chunk_session(&three, 31);
+        assert_eq!(
+            chunks,
+            vec![
+                "u: 1234567\nu: abcdefg".to_string(),
+                "u: ABCDEFG".to_string()
+            ]
+        );
+        assert_eq!(chunk_lens(&chunks), vec![21, 10]);
+    }
+
+    #[test]
+    fn no_empty_chunk_comes_out_of_empty_blank_or_oversized_input() {
+        assert!(chunk_session(&[], 100).is_empty());
+        assert!(chunk_session(&[turn("user", "   "), turn("user", "")], 100).is_empty());
+        // A budget below the role label: every piece is 1 character and still
+        // over the budget, but none of the chunks is empty.
+        let chunks = chunk_session(&[turn("assistant", "abc")], 5);
+        assert_eq!(
+            chunks,
+            vec![
+                "assistant: a".to_string(),
+                "assistant: b".to_string(),
+                "assistant: c".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_id_of_200_characters_is_accepted_and_201_is_refused() {
+        let u = open_keyword();
+        let ok = "s".repeat(MAX_SESSION_ID);
+        assert!(
+            !u.capture(&ok, Role::User, "a turn", None, None)
+                .unwrap()
+                .duplicate
+        );
+        let too_long = "s".repeat(MAX_SESSION_ID + 1);
+        let err = u
+            .capture(&too_long, Role::User, "a turn", None, None)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("A session id is required"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_tool_result_is_summarised_only_above_the_summary_length() {
+        let u = open_keyword();
+        let exact = "t".repeat(TOOL_SUMMARY_CHARS);
+        u.capture("tools", Role::Tool, &exact, None, None).unwrap();
+        let longer = format!("{exact}x");
+        u.capture("tools", Role::Tool, &longer, None, None).unwrap();
+        let stored = |seq: i64| -> String {
+            u.graph_store()
+                .query_row(
+                    "SELECT content FROM observations WHERE session_id = 'tools' AND seq = ?1",
+                    [seq],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        assert_eq!(stored(1), exact, "exactly the limit is stored as it is");
+        assert_eq!(
+            stored(2),
+            format!("{exact} [...]"),
+            "one more is summarised"
+        );
+    }
+
+    #[test]
+    fn the_queue_refuses_the_turn_that_would_pass_its_turn_limit() {
+        let mut u = open_keyword();
+        u.set_capture_settings(CaptureSettings {
+            enabled: true,
+            max_queue_turns: 2,
+            ..Default::default()
+        });
+        u.capture("q", Role::User, "first turn", None, None)
+            .unwrap();
+        u.capture("q", Role::User, "second turn", None, None)
+            .unwrap();
+        let err = u
+            .capture("q", Role::User, "third turn", None, None)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("The capture queue is full: 2 turns"),
+            "{err}"
+        );
+        // A turn already queued is a duplicate, not refused.
+        assert!(
+            u.capture("q", Role::User, "first turn", None, None)
+                .unwrap()
+                .duplicate
+        );
+    }
+
+    /// Answers one chat-completions request with a canned reply.
+    fn serve_one_reply(reply: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 4096];
+            // Read the headers, then the body they announce.
+            loop {
+                let n = stream.read(&mut chunk).unwrap();
+                buf.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&buf).to_string();
+                if let Some(split) = text.find("\r\n\r\n") {
+                    let len = text[..split]
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|v| v.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if buf.len() >= split + 4 + len {
+                        break;
+                    }
+                }
+                if n == 0 {
+                    break;
+                }
+            }
+            let body =
+                serde_json::json!({"choices": [{"message": {"content": reply}}]}).to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn the_llm_fact_source_returns_what_the_extractor_extracted() {
+        let base_url = serve_one_reply(r#"["The cache is Redis", "Deploys use GitHub Actions"]"#);
+        let extractor = crate::extraction::Extractor::new(&crate::extraction::ExtractionConfig {
+            api_key: "test-key".into(),
+            base_url,
+            ..Default::default()
+        })
+        .unwrap();
+        let facts = FactSource::extract(&extractor, "user: we cache with Redis").unwrap();
+        let contents: Vec<&str> = facts.iter().map(|f| f.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            vec!["The cache is Redis", "Deploys use GitHub Actions"]
+        );
+    }
 }
