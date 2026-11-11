@@ -264,3 +264,23 @@ format. Uses beyond this plan:
 - **Not verified here**: the validator was not run; acceptance of a hook-only
   plugin on the Memory shelf is inferred from deja-memory and from the schema,
   not confirmed with a maintainer; the exact `requires_hermes` floor.
+
+## Option D: Uteke Cloud first (added 2026-11-11)
+
+Order offered to users: **cloud first, local second.**
+
+- Hermes has a separate Nous-approved MCP catalog (`optional-mcps/<name>/manifest.yaml`,
+  presence = approval, merged by PR). Uteke Cloud fits it as a URL-only remote server:
+  `https://uteke.app/mcp`, `auth: oauth`. No install, no credential in the file.
+- `uteke.app` advertises `client_id_metadata_document_supported` and no DCR endpoint;
+  Hermes identifies itself with CIMD, so no per-install registration is needed.
+  **Unverified:** a full sign-in from Hermes (needs a live account); test with
+  `hermes mcp login uteke-cloud` before opening the PR.
+- Draft: `integrations/catalog/uteke-cloud.manifest.yaml`. Users reach it with
+  `hermes mcp install uteke-cloud`; the plugin READMEs and the plugin-catalog
+  descriptions point to it before the local options.
+- The `uteke` hook plugin stays local-only (store or `uteke-serve`); it does not sign in
+  to Uteke Cloud, and the READMEs say so. Cloud automatic recall would need a separate
+  decision (OAuth or token support in the plugin).
+- Submission order: `uteke-cloud` (optional-mcps), then `uteke` and `uteke-mcp`
+  (plugin-catalog).

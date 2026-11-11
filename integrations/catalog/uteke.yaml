@@ -5,7 +5,7 @@ repo: https://github.com/codecoradev/uteke
 sha: 0000000000000000000000000000000000000000
 subdir: integrations/hermes
 version: "2.1.0"
-description: "Automatic long-term memory from Uteke, an offline Rust memory engine: before every turn it recalls relevant memories and adds them to the prompt, marked as data. Read-only, no telemetry, no self-update. Needs the uteke binary on PATH. Disclosure: runs the uteke binary as a subprocess with an allow-listed environment; with UTEKE_SERVER_URL set it sends the first 500 characters of each message and the UTEKE_TOKEN secret to that server"
+description: "Automatic recall for a local Uteke store (hosted, no install: see the uteke-cloud MCP). Long-term memory from Uteke, an offline Rust memory engine: before every turn it recalls relevant memories and adds them to the prompt, marked as data. Read-only, no telemetry, no self-update. Needs the uteke binary on PATH. Disclosure: runs the uteke binary as a subprocess with an allow-listed environment; with UTEKE_SERVER_URL set it sends the first 500 characters of each message and the UTEKE_TOKEN secret to that server"
 maintainer: ajianaz
 tier: community
 category: memory

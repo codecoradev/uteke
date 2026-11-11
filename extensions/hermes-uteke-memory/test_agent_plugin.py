@@ -57,6 +57,13 @@ class AgentPlugin(unittest.TestCase):
             self.assertTrue(cmd.startswith("./") or not re.search(r"[/\\\s]", cmd), cmd)
             self.assertNotIn("env", s, "no credentials or env in a catalog plugin")
 
+    def test_cloud_mcp_manifest(self):
+        text = (ROOT.parent / "catalog" / "uteke-cloud.manifest.yaml").read_text()
+        for line in ("manifest_version: 1", "name: uteke-cloud", "type: http",
+                     "url: https://uteke.app/mcp", "type: oauth"):
+            self.assertIn(line, text)
+        self.assertNotRegex(text, r"(?i)(secret|token|api_key)\s*:")
+
     def test_no_binaries_or_symlinks(self):
         for p in ROOT.rglob("*"):
             self.assertFalse(p.is_symlink(), p)

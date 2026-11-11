@@ -5,7 +5,7 @@ repo: https://github.com/codecoradev/uteke
 sha: 0000000000000000000000000000000000000000
 subdir: integrations/agent-plugin
 version: "1.0.0"
-description: "Uteke memory for any agent: the uteke skill and the uteke-mcp MCP server (recall, remember, rooms, docs), all on the local machine. Needs the uteke-mcp binary on PATH. Disclosure: the server can write and delete memories in the local store, so Hermes approval prompts apply to those tools"
+description: "Local Uteke memory for any agent (for hosted memory with no install, see the uteke-cloud MCP): the uteke skill and the uteke-mcp MCP server (recall, remember, rooms, docs), all on the local machine. Needs the uteke-mcp binary on PATH. Disclosure: the server can write and delete memories in the local store, so Hermes approval prompts apply to those tools"
 maintainer: ajianaz
 tier: community
 category: tools

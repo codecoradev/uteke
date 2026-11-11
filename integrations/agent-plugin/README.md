@@ -6,7 +6,18 @@ that supports the format (Hermes Agent among them) persistent, offline memory.
 - `skills/uteke/` teaches the agent when and how to recall and remember.
 - `mcp.json` starts the `uteke-mcp` server over stdio: recall, remember, rooms, docs.
 
-## Needs
+## Easiest: Uteke Cloud
+
+No install and nothing to run: add the hosted server and sign in.
+
+```sh
+hermes mcp install uteke-cloud      # from the Hermes MCP catalog
+```
+
+(or add `https://uteke.app/mcp` as a remote MCP server; sign-in is OAuth, free during
+the open beta). Choose this package, below, when memory must stay on your machine.
+
+## Local: needs
 
 The `uteke-mcp` binary on `PATH`. It ships in each
 [Uteke release](https://github.com/codecoradev/uteke/releases/latest) next to `uteke`

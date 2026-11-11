@@ -11,7 +11,15 @@ no cloud account, nothing to run in the background.
 - **Read-only.** The plugin recalls; it never writes, edits or forgets a memory.
 - **No surprises.** It never downloads or updates anything.
 
-## Install
+## Want it hosted? Start with Uteke Cloud
+
+If you would rather not run anything locally, use [Uteke Cloud](https://uteke.app):
+`hermes mcp install uteke-cloud` adds the hosted server and you sign in once. It gives
+the agent the Uteke tools (recall, remember, rooms, docs). This plugin is the
+*automatic recall* add-on for a local store (or your own `uteke-serve`); it does not
+sign in to Uteke Cloud.
+
+## Install (local)
 
 You need the `uteke` binary first. Download it from the
 [latest release](https://github.com/codecoradev/uteke/releases/latest) (each release is

@@ -1,0 +1,36 @@
+# Draft for NousResearch/hermes-agent optional-mcps/uteke-cloud/manifest.yaml
+# (the Nous-approved MCP catalog: presence = approval, merged via PR review).
+# URL-only remote server: Hermes never installs or spawns anything for it.
+manifest_version: 1
+
+name: uteke-cloud
+description: Hosted Uteke memory. Recall, remember and organise memories and docs across sessions and agents, with no install and nothing to run locally.
+source: https://uteke.app
+
+transport:
+  type: http
+  url: https://uteke.app/mcp
+
+# Native MCP OAuth 2.1 with PKCE. The authorization server advertises
+# client_id_metadata_document_supported, so Hermes' CIMD client id is accepted
+# without a per-install registration or any credential in this file.
+auth:
+  type: oauth
+
+suggest:
+  keywords:
+    - uteke
+    - memory
+    - long-term memory
+  hosts:
+    - uteke.app
+
+post_install: |
+  Hermes opens a browser to sign in to Uteke Cloud (free during the open beta).
+  After sign-in, restart the session so the Uteke tools are loaded.
+
+  Re-run the tool checklist any time with:
+    hermes mcp configure uteke-cloud
+
+  Prefer to keep everything on your machine? Install the local `uteke-mcp`
+  plugin instead (needs the uteke-mcp binary on PATH).
