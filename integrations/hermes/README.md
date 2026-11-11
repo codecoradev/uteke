@@ -7,7 +7,7 @@ is one offline Rust binary with hybrid vector and full-text recall: no API key,
 no cloud account, nothing to run in the background.
 
 - **Local by default.** Recall runs the `uteke` binary on your machine.
-- **Optional server.** Point it at `uteke-serve` or Uteke Cloud with one setting.
+- **Optional server.** Point it at your own `uteke-serve` with one setting.
 - **Read-only.** The plugin recalls; it never writes, edits or forgets a memory.
 - **No surprises.** It never downloads or updates anything.
 
