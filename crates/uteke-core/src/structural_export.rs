@@ -1210,7 +1210,11 @@ mod document_vector_tests {
         assert_eq!(report.chunks_missing, 0);
 
         let found = dst
-            .doc_search_semantic("quokka marsupial cache", 5)
+            .doc_search_semantic(
+                "quokka marsupial cache",
+                5,
+                crate::memory::documents::DocKind::Plain,
+            )
             .unwrap();
         assert!(
             found.iter().any(|r| r.document.slug == "child"),

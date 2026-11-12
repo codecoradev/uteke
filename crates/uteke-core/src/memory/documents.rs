@@ -14,6 +14,16 @@ use serde::{Deserialize, Serialize};
 /// Maximum depth for document hierarchy.
 pub const MAX_DEPTH: i64 = 10;
 
+/// Which documents a query is about (#1731): ordinary documents, or the files
+/// of an indexed skill package (`content_type = 'skill'`). Skill files stay out
+/// of every ordinary list, search, recall and similarity answer, and only the
+/// skill library reads them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocKind {
+    Plain,
+    Skill,
+}
+
 /// A document in the knowledge base.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
@@ -636,6 +646,7 @@ impl super::Store {
                 "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE (?1 IS NULL OR namespace = ?1) \
+                 AND content_type != 'skill' \
                  ORDER BY updated_at DESC LIMIT ?2",
             )
             .map_err(|e| Error::db("prepare list documents", e))?;
@@ -697,6 +708,7 @@ impl super::Store {
                 "SELECT id, slug, title, namespace, author, version, updated_at, \
                  parent_id, depth, has_children, sort_order \
                  FROM documents WHERE parent_id IS NULL AND (?1 IS NULL OR namespace = ?1) \
+                 AND content_type != 'skill' \
                  ORDER BY sort_order, updated_at DESC LIMIT ?2",
             )
             .map_err(|e| Error::db("prepare list root documents", e))?;
@@ -1094,11 +1106,23 @@ impl super::Store {
         query: &str,
         limit: usize,
     ) -> Result<Vec<DocumentSummary>, Error> {
+        self.search_documents_fts_kind(query, limit, DocKind::Plain)
+    }
+
+    /// [`Self::search_documents_fts`] over one kind of document: ordinary
+    /// documents, or skill-package files (#1731). The kind is a SQL
+    /// condition, so it applies before the limit.
+    pub(crate) fn search_documents_fts_kind(
+        &self,
+        query: &str,
+        limit: usize,
+        kind: DocKind,
+    ) -> Result<Vec<DocumentSummary>, Error> {
         let limit = limit.min(100) as i64;
         let sql = "SELECT d.id, d.slug, d.title, d.namespace, d.author, d.version, d.updated_at, \
              d.parent_id, d.depth, d.has_children, d.sort_order \
              FROM documents d JOIN documents_fts fts ON d.rowid = fts.rowid \
-             WHERE documents_fts MATCH ?1 \
+             WHERE documents_fts MATCH ?1 AND (d.content_type = 'skill') = ?3 \
              ORDER BY rank LIMIT ?2";
 
         let mut stmt = self
@@ -1107,7 +1131,10 @@ impl super::Store {
             .map_err(|e| Error::db("prepare FTS search", e))?;
 
         let rows = stmt
-            .query_map(params![query, limit], row_to_summary)
+            .query_map(
+                params![query, limit, kind == DocKind::Skill],
+                row_to_summary,
+            )
             .map_err(|e| Error::db("FTS search query", e))?;
 
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -1133,6 +1160,19 @@ impl super::Store {
         only_id: Option<&str>,
         subtree: Option<(&str, &str)>,
     ) -> Result<Vec<crate::doc_similarity::DocVector>, Error> {
+        self.document_vectors_kind(namespace, only_id, subtree, DocKind::Plain)
+    }
+
+    /// [`Self::document_vectors`] over one kind of document (#1731); the skill
+    /// kind is the root file of each package, `SKILL.md`. With `only_id` the
+    /// kind is not applied: the caller named the document.
+    pub(crate) fn document_vectors_kind(
+        &self,
+        namespace: Option<&str>,
+        only_id: Option<&str>,
+        subtree: Option<(&str, &str)>,
+        kind: DocKind,
+    ) -> Result<Vec<crate::doc_similarity::DocVector>, Error> {
         use crate::doc_similarity::{DocVector, VectorAccumulator};
         let (root_id, pattern) = match subtree {
             Some((id, pat)) => (Some(id), Some(pat)),
@@ -1146,17 +1186,22 @@ impl super::Store {
                  FROM documents d LEFT JOIN document_chunks c ON c.document_id = d.id \
                  WHERE (?1 IS NULL OR d.namespace = ?1) AND (?2 IS NULL OR d.id = ?2) \
                    AND (?3 IS NULL OR d.id = ?3 OR d.path LIKE ?4 ESCAPE '\\') \
+                   AND (?2 IS NOT NULL OR ((d.content_type = 'skill') = ?5 \
+                        AND (?5 = 0 OR d.parent_id IS NULL))) \
                  ORDER BY d.slug, d.id, c.chunk_index",
             )
             .map_err(|e| Error::db("prepare document vectors", e))?;
         let rows = stmt
-            .query_map(params![namespace, only_id, root_id, pattern], |row| {
-                Ok((
-                    row_to_summary(row)?,
-                    row.get::<_, Option<String>>(11)?,
-                    row.get::<_, Option<Vec<u8>>>(12)?,
-                ))
-            })
+            .query_map(
+                params![namespace, only_id, root_id, pattern, kind == DocKind::Skill],
+                |row| {
+                    Ok((
+                        row_to_summary(row)?,
+                        row.get::<_, Option<String>>(11)?,
+                        row.get::<_, Option<Vec<u8>>>(12)?,
+                    ))
+                },
+            )
             .map_err(|e| Error::db("document vectors query", e))?;
 
         let mut out: Vec<DocVector> = Vec::new();

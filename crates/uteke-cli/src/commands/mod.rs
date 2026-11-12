@@ -20,6 +20,7 @@ mod release_verify;
 mod remember;
 mod room;
 mod server;
+mod skill;
 mod tags;
 mod timeline;
 mod update;
@@ -580,6 +581,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         }
 
         Commands::Doc { command } => crate::commands::doc::run(cli, uteke, command, config),
+
+        Commands::Skill { command } => skill::run(cli, uteke, command),
 
         Commands::Upgrade { yes } => upgrade::run(*yes),
 

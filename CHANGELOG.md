@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Personal skill library (#1731, LAB, stage 1: core and CLI)** - `uteke skill index <dir>`
+  reads the skills of this machine (a directory with a `SKILL.md`; no file is ever modified, links
+  are not followed, every read is bounded), records each package's hash and lints it, and embeds its
+  text files as documents with `content_type = 'skill'`, hidden from `doc list`, `doc search`,
+  `recall` and the document similarity answers. `uteke skill search` (hybrid, one hit per skill),
+  `list`, `show`, `similar` (the `SKILL.md` document vectors of #1730, also for a draft text),
+  `lint` and `approve <slug>@<hash>` follow. The hash covers the whole package (SHA-256 over every
+  file's path length, path, content length and content, sorted by path), so a changed script or
+  reference file is detected; approval is only for the current, valid version, a new hash makes a new
+  draft and stales the old approval, and an append-only ledger (triggers refuse UPDATE and DELETE)
+  records every change with the hash before and after. Schema v27 adds `skills`, `skill_versions`,
+  `skill_usage` and `skill_ledger` under the Cloud registry's names. The shared registry stays in
+  Cloud. HTTP and MCP routes for the library are not part of this stage.
 - **Similar documents and a duplicate report (#1730, LAB)** - which documents are close to this one,
   and is there already a document like this draft? `uteke doc similar <slug>` (or `--text` /
   `--file` for a draft that is not stored), `uteke doc duplicates [--subtree] [--namespace]`,

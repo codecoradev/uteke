@@ -66,6 +66,14 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doc breadcrumbs <ID_OR_SLUG>` | Show path from root | |
 | `uteke doc descendants <ID_OR_SLUG>` | List all descendants | `--max-depth`, `--limit` |
 | `uteke doc export` | Export all documents as Markdown (JSON with `--json`) | `--output`, `--front-matter` |
+| `uteke skill index <DIR>` | Index the skills under a directory (read-only on disk): package hash, lint, searchable text; new bytes make a new draft | `--owner`, `--actor` |
+| `uteke skill search <QUERY>` | Find the few skills that fit a task (hybrid) | `--limit`, `--mode`, `--approved` |
+| `uteke skill list` | List the library | `--status`, `--limit` |
+| `uteke skill show <SLUG>` | Current version, hash, files, usage, history | |
+| `uteke skill similar <SLUG>` | Skills close to this one, or to a draft (`--text`/`--file`) | `--threshold`, `--limit` |
+| `uteke skill lint [DIR]` | Check SKILL.md frontmatter (a directory, or the indexed library) | |
+| `uteke skill approve <SLUG>@<HASH>` | Record the approved package hash, the trust anchor clients check before loading | `--actor` |
+| `uteke skill record <SLUG> <EVENT>` | Count recalled / loaded / succeeded / failed on the current version | |
 
 ### Knowledge Graph
 

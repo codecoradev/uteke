@@ -225,7 +225,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 26;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 27;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

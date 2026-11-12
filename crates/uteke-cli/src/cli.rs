@@ -704,6 +704,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: DocCommands,
     },
+    /// Personal skill library — index, search and approve local skills (#1731)
+    ///
+    /// A skill is a directory with a SKILL.md. The library indexes the skills
+    /// of this machine (never modifying their files), finds the few that fit
+    /// a task by meaning, spots near-duplicates, and records which exact
+    /// version a human approved.
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
     /// Check for updates and upgrade to the latest version
     Upgrade {
         /// Skip confirmation prompt
@@ -721,6 +731,106 @@ pub enum Commands {
         /// Namespace to use (skip namespace prompt)
         #[arg(long)]
         namespace: Option<String>,
+    },
+}
+
+/// Skill library subcommands (#1731).
+#[derive(Subcommand)]
+pub enum SkillCommands {
+    /// Index the skills under a directory
+    ///
+    /// Reads every skill directory (one with a SKILL.md) under <dir>, up to
+    /// 3 levels deep, without modifying a file; records its package hash and
+    /// embeds its text files for search. New bytes make a new draft version
+    /// (an earlier approval becomes stale). Reports skills close to ones
+    /// already in the library. Needs the embedding model.
+    Index {
+        /// Directory with skills, or a single skill directory
+        dir: String,
+        /// Who owns the skills (recorded on new skills; at most 128 characters)
+        #[arg(long)]
+        owner: Option<String>,
+        /// Who is indexing (recorded in the ledger; at most 128 characters)
+        #[arg(long)]
+        actor: Option<String>,
+    },
+    /// Search the library by meaning and keywords
+    Search {
+        /// What the task needs (at most 2000 characters)
+        query: String,
+        /// Maximum skills (1 to 50)
+        #[arg(long, default_value = "5")]
+        limit: usize,
+        /// Search mode: semantic, fts, or hybrid (default)
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
+        /// Only skills whose current version is approved
+        #[arg(long)]
+        approved: bool,
+    },
+    /// List the skills of the library
+    List {
+        /// Only skills whose current version is draft or approved
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum skills (1 to 200)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Show a skill: current version, hash, files, usage, history
+    Show {
+        /// Skill slug
+        slug: String,
+    },
+    /// Skills close to a skill, or to a draft text that is not stored
+    ///
+    /// Compares SKILL.md document vectors (the same as `doc similar`):
+    /// `possible_duplicate` at 0.92 and above, `similar_to` at 0.80 and above.
+    Similar {
+        /// Skill slug (omit with --text or --file)
+        slug: Option<String>,
+        /// Draft text instead of a stored skill
+        #[arg(long, conflicts_with_all = ["slug", "file"])]
+        text: Option<String>,
+        /// Read the draft text from a file (use - for stdin)
+        #[arg(long, conflicts_with_all = ["slug", "text"])]
+        file: Option<String>,
+        /// Minimum cosine similarity, 0 to 1 (default: the configured similar_to threshold, 0.80)
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: Option<f32>,
+        /// Maximum results (1 to 100)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Check SKILL.md frontmatter: a directory, or the indexed library
+    ///
+    /// With <dir>, reads the skills there (no store needed). Without, reports
+    /// what the last index found for each skill in the library. Exits with an
+    /// error when a skill is invalid.
+    Lint {
+        /// Directory with skills (omit to lint the indexed library)
+        dir: Option<String>,
+    },
+    /// Approve version <slug>@<hash> of a skill
+    ///
+    /// Records the hash a client checks before loading the skill. The hash is
+    /// the package hash shown by `skill show` (SHA-256 over every file: path
+    /// length, path, content length, content; see docs/cli-reference.md), or
+    /// a prefix of at least 12 characters. Only the current, valid version can
+    /// be approved.
+    Approve {
+        /// <slug>@<hash>
+        reference: String,
+        /// Who approves (recorded in the ledger; at most 128 characters)
+        #[arg(long)]
+        actor: Option<String>,
+    },
+    /// Count that a skill was recalled, loaded, succeeded or failed
+    Record {
+        /// Skill slug
+        slug: String,
+        /// recalled, loaded, succeeded or failed
+        event: String,
     },
 }
 

@@ -21,6 +21,9 @@ impl super::Store {
         self.conn
             .execute_batch(SCHEMA)
             .map_err(|e| Error::db("database operation", e))?;
+        self.conn
+            .execute_batch(crate::skill_library::SKILL_SCHEMA)
+            .map_err(|e| Error::db("skill library schema", e))?;
 
         // Migration: add namespace column if missing (existing DBs)
         let has_namespace: bool = self
@@ -498,6 +501,8 @@ impl super::Store {
                 // v26: room_aliases — a rename keeps the old room id working
                 // (#1714)
                 26 => self.migrate_v25_to_v26()?,
+                // v27: the personal skill library tables (#1731)
+                27 => self.migrate_v26_to_v27()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1264,6 +1269,16 @@ CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
 CREATE INDEX IF NOT EXISTS idx_room_aliases_room ON room_aliases(room_id);",
             )
             .map_err(|e| Error::db("schema migration v25 to v26", e))?;
+        Ok(())
+    }
+
+    /// v27: the personal skill library tables (#1731). `init_schema` already
+    /// creates them on every open; the statements are idempotent.
+    fn migrate_v26_to_v27(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v26 to v27: skill library tables");
+        self.conn
+            .execute_batch(crate::skill_library::SKILL_SCHEMA)
+            .map_err(|e| Error::db("schema migration v26 to v27", e))?;
         Ok(())
     }
 

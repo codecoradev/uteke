@@ -182,7 +182,7 @@ fn check_threshold(name: &str, value: f32) -> Result<(), String> {
 }
 
 /// A threshold given by a request: finite and within `[0, 1]`.
-fn request_threshold(value: f32) -> Result<f32, Error> {
+pub(crate) fn request_threshold(value: f32) -> Result<f32, Error> {
     check_threshold("threshold", value).map_err(Error::validation)?;
     Ok(value)
 }
@@ -240,7 +240,7 @@ impl VectorAccumulator {
 }
 
 /// Cosine of two unit vectors, clamped to `[0, 1]`; `None` for different sizes.
-fn cosine(a: &[f64], b: &[f64]) -> Option<f32> {
+pub(crate) fn cosine(a: &[f64], b: &[f64]) -> Option<f32> {
     if a.len() != b.len() || a.is_empty() {
         return None;
     }
@@ -318,7 +318,7 @@ fn order_by_score(a: (f32, &str), b: (f32, &str)) -> std::cmp::Ordering {
 /// Rank `candidates` against `source`: those at or above `threshold`, best
 /// first (ties by slug), minus `exclude_id`. Returns the hits before the limit
 /// and the number of candidates without a comparable vector.
-fn rank_candidates(
+pub(crate) fn rank_candidates(
     source: &[f64],
     candidates: Vec<DocVector>,
     exclude_id: Option<&str>,
@@ -597,6 +597,25 @@ impl crate::Uteke {
         })
     }
 
+    /// The document vector of a text that is not stored: validated, chunked
+    /// and embedded like a document body. `None` when it has no usable vector.
+    pub(crate) fn candidate_text_vector(&self, text: &str) -> Result<Option<Vec<f64>>, Error> {
+        if text.trim().is_empty() {
+            return Err(Error::validation("text must not be empty"));
+        }
+        if text.chars().count() > MAX_CANDIDATE_CHARS {
+            return Err(Error::validation(format!(
+                "text is longer than {MAX_CANDIDATE_CHARS} characters"
+            )));
+        }
+        let chunks = self.embed_document_chunks("", text, &[])?;
+        let mut acc = VectorAccumulator::default();
+        for (_, embedding) in &chunks {
+            acc.add_chunk(Some(embedding));
+        }
+        Ok(acc.finish())
+    }
+
     /// Documents close to a text that is not stored (a draft): "is there
     /// already something like this?". The text is chunked and embedded exactly
     /// like a document body and compared with the document vectors, so the
@@ -616,21 +635,8 @@ impl crate::Uteke {
     ) -> Result<DocSimilarReport, Error> {
         let floor = self.similar_floor(threshold)?;
         let limit = limit.clamp(1, MAX_SIMILAR_LIMIT);
-        if text.trim().is_empty() {
-            return Err(Error::validation("text must not be empty"));
-        }
-        if text.chars().count() > MAX_CANDIDATE_CHARS {
-            return Err(Error::validation(format!(
-                "text is longer than {MAX_CANDIDATE_CHARS} characters"
-            )));
-        }
-        let chunks = self.embed_document_chunks("", text, &[])?;
-        let mut acc = VectorAccumulator::default();
-        for (_, embedding) in &chunks {
-            acc.add_chunk(Some(embedding));
-        }
         let settings = self.doc_similarity_settings;
-        let source_vector = acc.finish();
+        let source_vector = self.candidate_text_vector(text)?;
         let (mut hits, without_vector, source_embedded) = match source_vector.as_deref() {
             Some(v) => {
                 let candidates = self.store.document_vectors(namespace, None, None)?;
