@@ -206,7 +206,8 @@ mod tests {
     #[test]
     fn document_search_and_embed_text_retry_too() {
         let (u, seen) = store(1);
-        u.doc_search_semantic("rust", 3).unwrap();
+        u.doc_search_semantic("rust", 3, crate::memory::documents::DocKind::Plain)
+            .unwrap();
         assert_eq!(seen.lock().unwrap().len(), 2);
         let (u, seen) = store(1);
         assert_eq!(u.embed_text("rust").unwrap().len(), 64);

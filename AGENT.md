@@ -395,6 +395,7 @@ Every public function in `lib.rs` MUST have a corresponding CLI command AND HTTP
 | `doc_list` / `doc_list_roots` / `doc_list_children` | `uteke doc list [--tree] [--roots-only]` | `POST /doc/list` | ✅ |
 | `doc_search` (semantic/fts/hybrid) | `uteke doc search [--mode]` | `POST /doc/search` | ✅ |
 | `doc_similar` / `doc_similar_to_text` / `doc_duplicate_report` (#1730) | `uteke doc similar [slug \| --text \| --file]`, `uteke doc duplicates` | `POST /doc/similar` | ✅ |
+| `skill_index` / `skill_search` / `skill_list` / `skill_show` / `skill_similar` / `skill_similar_to_text` / `skill_approve` / `skill_record_usage` / `skill_lint_library` (#1731) | `uteke skill index\|search\|list\|show\|similar\|lint\|approve\|record` | *(not exposed yet)* | ⚠️ CLI-only |
 | `doc_move` | `uteke doc move [--parent]` | `POST /doc/move` | ✅ |
 | `doc_delete` | `uteke doc delete` | `DELETE /doc/delete` | ✅ |
 | `doc_breadcrumbs` | *(via --tree display)* | *(not exposed)* | ⚠️ CLI-only |

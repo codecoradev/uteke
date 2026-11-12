@@ -25,6 +25,10 @@ mod edges;
 mod embed;
 mod embedding;
 pub mod session_view;
+pub mod skill_library;
+#[cfg(test)]
+mod skill_library_tests;
+pub mod skill_package;
 pub use embedding::EmbeddingWarmer;
 pub mod embedding_config;
 #[cfg(test)]
@@ -241,6 +245,7 @@ pub fn validate_input_with_limits(
 }
 
 use memory::VectorIndex;
+use memory::documents::DocKind;
 use memory::store::Store;
 
 use std::path::{Path, PathBuf};
@@ -1813,6 +1818,34 @@ impl Uteke {
         parent_slug: Option<&str>,
         defer_embedding: bool,
     ) -> Result<String, Error> {
+        self.doc_upsert_full(
+            slug,
+            title,
+            content,
+            tags,
+            author,
+            parent_slug,
+            defer_embedding,
+            "markdown",
+            serde_json::Value::Null,
+        )
+    }
+
+    /// [`Self::doc_upsert_inner`] with the content type and metadata of the
+    /// document: the skill library stores package files as `skill` (#1731).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn doc_upsert_full(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        author: Option<&str>,
+        parent_slug: Option<&str>,
+        defer_embedding: bool,
+        content_type: &str,
+        metadata: serde_json::Value,
+    ) -> Result<String, Error> {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Resolve parent if specified.
@@ -1852,9 +1885,9 @@ impl Uteke {
             namespace: None,
             author: author.map(|s| s.to_string()),
             tags: tags.iter().map(|t| t.to_string()).collect(),
-            metadata: serde_json::Value::Null,
+            metadata,
             version,
-            content_type: "markdown".to_string(),
+            content_type: content_type.to_string(),
             created_at: now.clone(),
             updated_at: now,
             parent_id,
@@ -2233,6 +2266,19 @@ impl Uteke {
         mode: &str,
         namespace: Option<&str>,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        self.doc_search_kind(query, limit, mode, namespace, DocKind::Plain)
+    }
+
+    /// [`Self::doc_search_in`] over one kind of document: ordinary documents
+    /// stay apart from the files of indexed skills (#1731).
+    pub(crate) fn doc_search_kind(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: &str,
+        namespace: Option<&str>,
+        kind: DocKind,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         let limit = limit.min(50);
 
         // Over-fetch when namespace-scoping post-filters: the mode search
@@ -2247,9 +2293,9 @@ impl Uteke {
         };
 
         let mut results = match mode {
-            "semantic" => self.doc_search_semantic(query, fetch),
-            "fts" => self.doc_search_fts(query, fetch),
-            _ => self.doc_search_hybrid(query, fetch),
+            "semantic" => self.doc_search_semantic(query, fetch, kind),
+            "fts" => self.doc_search_fts(query, fetch, kind),
+            _ => self.doc_search_hybrid(query, fetch, kind),
         }?;
 
         if let Some(ns) = namespace {
@@ -2263,6 +2309,7 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        kind: DocKind,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
@@ -2277,11 +2324,12 @@ impl Uteke {
         let k = (limit * 10).min(index.len()).max(1);
         let candidates = index.search(&query_embedding, k, k * 4);
 
-        // Filter for chunk: prefixed IDs only.
+        // Filter for chunk: prefixed IDs only. All of them are kept: the kind
+        // filter below runs on the documents, and a library of skills must not
+        // crowd the ordinary documents (or the reverse) out of the window.
         let chunk_hits: Vec<(String, f32)> = candidates
             .into_iter()
             .filter(|(id, _)| id.starts_with("chunk:"))
-            .take(limit * 3)
             .collect();
 
         if chunk_hits.is_empty() {
@@ -2303,13 +2351,23 @@ impl Uteke {
             (DocumentSummary, String, String, f32),
         > = std::collections::HashMap::new();
 
+        // Chunks of the wanted kind seen so far: the window the search always
+        // had (3 per result), counted after the kind filter.
+        let mut kept_chunks = 0usize;
         for (distance, (_chunk_id, doc_id, heading, content)) in
             pair_chunk_hits(&chunk_hits, &chunks)
         {
+            if kept_chunks >= limit * 3 {
+                break;
+            }
             let score = crate::memory::vector::cosine_distance_to_similarity(distance);
 
             // Get document summary from store.
             if let Ok(Some(doc)) = self.store.get_document(doc_id) {
+                if (doc.content_type == "skill") != (kind == DocKind::Skill) {
+                    continue;
+                }
+                kept_chunks += 1;
                 let summary = crate::memory::documents::DocumentSummary {
                     id: doc.id.clone(),
                     slug: doc.slug.clone(),
@@ -2369,12 +2427,13 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        kind: DocKind,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
         let docs = self
             .store
-            .search_documents_fts(query, limit)
+            .search_documents_fts_kind(query, limit, kind)
             .unwrap_or_default();
 
         Ok(docs
@@ -2394,13 +2453,16 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        kind: DocKind,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
         let semantic_results = self
-            .doc_search_semantic(query, limit * 2)
+            .doc_search_semantic(query, limit * 2, kind)
             .unwrap_or_default();
-        let fts_results = self.doc_search_fts(query, limit * 2).unwrap_or_default();
+        let fts_results = self
+            .doc_search_fts(query, limit * 2, kind)
+            .unwrap_or_default();
 
         // Reciprocal Rank Fusion (RRF): score = sum(1 / (k + rank))
         let rrf_k: f32 = 60.0;

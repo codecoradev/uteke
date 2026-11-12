@@ -1456,6 +1456,78 @@ front-matter included, under a slug taken from the file path. For a lossless
 round trip of documents (slug, title, hierarchy, content) use
 `uteke export --full` and `uteke import --full`.
 
+## Skill Library Commands (#1731, LAB)
+
+The personal skill library: index the skills of this machine, find the few that fit a task, spot near-duplicates and record which exact version a human approved. A skill is a directory with a `SKILL.md` (YAML frontmatter with `name` and `description`, then the instructions) and any reference files below it; the directory name is the slug (lower-case letters, digits and single hyphens, at most 64 characters). The shared registry (a pool across users, GitHub ingest, team sharing) stays in Cloud. The tables use the Cloud names (`skills`, `skill_versions`, `skill_usage`, `skill_ledger`), so moving a library there is a copy.
+
+Skill files are stored as documents with `content_type = 'skill'` (slug `skill/<slug>/<path>`, `SKILL.md` the root), so search is the document engine and the embedding pipeline, but they never appear in `doc list`, `doc search`, `recall` or `doc similar` / `doc duplicates`. These commands are CLI-only for now (no HTTP route or MCP tool).
+
+### `uteke skill index`
+
+```bash
+uteke skill index ~/.claude/skills
+uteke skill index ./my-skill --owner team-a --json
+```
+
+Reads every skill directory under the given one (the directory itself when it holds a `SKILL.md`), to 3 levels deep, **without modifying any file**, symbolic links are never followed. For each skill it records the package hash, lints `SKILL.md`, and embeds the text files (`.md`, `.markdown`, `.txt`) for search; other files are hashed only. It needs the embedding model. It reports `created`, `updated`, `reverted` and `unchanged` skills, directories it could not read (`rejected`, with the reason, e.g. a directory name that is not a slug or a duplicate slug) and skills that are close to another skill (`near_duplicates`, `possible_duplicate` from 0.92 and `similar_to` from 0.80, the `[doc_similarity]` thresholds).
+
+A new hash makes a new `draft` version and the old one stops being current: an approved one becomes `stale` (the approval does not carry over), a draft becomes `archived`. Putting the exact bytes of an earlier version back makes it current again, with its approval. Only the current version is searchable.
+
+Bounds, so a hostile or accidental tree cannot exhaust memory or time: a package of at most 200 files, 1 MiB per file, 8 MiB in all and 8 directory levels (over a bound the whole package is rejected, never truncated: a hash of part of a package is not the hash of the package); at most 32 indexed text files of 128 KiB each and 512 KiB in all per package (larger ones are hashed but not searchable; `SKILL.md` must fit); 500 skills and 5000 directories per run; 2000 skills per library. One package is held in memory at a time.
+
+| Flag | Description |
+|------|-------------|
+| `<dir>` | Directory with skills, or one skill directory |
+| `--owner <name>` | Owner recorded on new skills (at most 128 characters) |
+| `--actor <name>` | Who is indexing, recorded in the ledger |
+
+### `uteke skill search`
+
+```bash
+uteke skill search "rotate the signing keys"
+uteke skill search "deploy" --limit 3 --approved --json
+```
+
+Finds skills by meaning and keywords (hybrid by default, `--mode semantic|fts|hybrid`), one hit per skill with the file that matched best. `--limit` is 1 to 50 (default 5), the query at most 2000 characters. `--approved` keeps only skills whose current version is approved. Hybrid search falls back to keywords when the embedding model is unavailable; `--mode semantic` fails instead. Read-only.
+
+### `uteke skill list` / `uteke skill show`
+
+`list [--status draft|approved] [--limit 1..200]` lists the current version of each skill by slug. `show <slug>` prints the current version (hash, status, validity, pinned, locked, name, description, files with their sizes), the usage counters, the version history (up to 50) and the last 20 ledger rows. `approved_hash` in `--json` is the hash a client may load: the current hash when it is approved, else `null`.
+
+### `uteke skill similar`
+
+```bash
+uteke skill similar deploy
+uteke skill similar --file draft/SKILL.md      # a draft that is not stored
+```
+
+Skills close to a skill, or to a draft text: the cosine of the `SKILL.md` document vectors, the same computation as [`uteke doc similar`](#uteke-doc-similar) (the mean of the chunk vectors, L2-normalised), with the same relations and `--threshold`, `--limit` (1 to 100). The skill itself is never a hit. `--text` / `--file` need the embedding model.
+
+### `uteke skill lint`
+
+```bash
+uteke skill lint ~/.claude/skills
+uteke skill lint                     # what the last index found, for the library
+```
+
+Checks `SKILL.md`. Errors (the skill is invalid and cannot be approved): no or unclosed frontmatter, no `name`, a `name` that is not a slug or differs from the directory name, no `description` or one over 1024 characters. Warnings: an empty body, a `compatibility` over 500 characters. With a directory nothing is stored and no store is needed. The exit status is 1 when a skill is invalid or a directory unreadable.
+
+### `uteke skill approve`
+
+```bash
+uteke skill approve deploy@<hash> --actor alice
+```
+
+Records that a human approved exactly this version: the trust anchor a client checks before loading the skill (compare the hash of the files it holds with `approved_hash`). `<hash>` is the full 64-character package hash or a prefix of at least 12 hexadecimal characters that names one version. Only the **current** and **valid** version can be approved; approving an approved version is a no-op (no ledger row). Every approval, and every index change, is appended to `skill_ledger` with the hash before and after; database triggers refuse to update or delete a ledger row.
+
+### The package hash
+
+The hash covers the whole package, so it detects a changed reference file or script, not only `SKILL.md`: SHA-256 over every regular file of the directory (any depth, `.git` excluded; symbolic links and special files are never followed or hashed), sorted by relative path in byte order with `/` separators, each file contributing the path length in bytes (8 bytes big-endian), the path (UTF-8), the content length (8 bytes big-endian) and the content. The length prefixes make the encoding unambiguous. The result is lower-case hex. The hash does not include the directory name or any timestamp, so the same files anywhere hash the same. `uteke skill approve` is built to be compatible with a client that hashes "path, length and bytes of every file" this way; a client that encodes the fields differently computes a different hash and must adopt this encoding.
+
+### `uteke skill record`
+
+`uteke skill record <slug> <recalled|loaded|succeeded|failed>` adds one to a counter of the skill's current version (`skill_usage`); counters start again for a new version.
+
 ## Graph API (#408, #542)
 
 ### Visualization

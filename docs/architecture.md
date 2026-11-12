@@ -334,6 +334,10 @@ Edges are namespace-scoped (no cross-namespace links). Best-effort: errors logge
 
 Document chunks are not link targets here. Documents have their own similarity (#1730): the **document vector** is the mean of a document's chunk vectors, L2-normalised, read from SQLite. `uteke doc similar`, `uteke doc duplicates`, `POST /doc/similar` and `uteke_doc_similar` compare those vectors with the same default thresholds (0.80 `similar_to`, 0.92 `possible_duplicate`, configurable in `[doc_similarity]`) and can also score a draft text that is not stored. The relation is derived on every call; no document edge is stored (`memory_edges` points at memories, and a stored copy would go stale on every update, move, delete, re-embed and threshold change).
 
+## Personal skill library (#1731)
+
+A skill (a directory with a `SKILL.md`) is indexed into four tables, `skills`, `skill_versions`, `skill_usage` and an append-only `skill_ledger`, and its current version's text files are stored as documents with `content_type = 'skill'` (slug `skill/<slug>/<path>`). Search, similarity and embedding are the document engine's; the kind is a filter at the lowest level (SQL for lists and keyword search, the window of the vector search), so skill files never reach `doc list`, `doc search`, `recall` or the `doc similar` / `doc duplicates` answers, and ordinary documents never reach `skill search`. `skill similar` is `doc similar` over the `SKILL.md` roots. The package hash (SHA-256 over every file's path length, path, content length and content) is the version identity and what `skill approve` records. See the [skill commands](cli-reference.md#skill-library-commands-1731-lab).
+
 ## Graph API (#408)
 
 `GET /graph` returns all graph nodes, edges, and stats as JSON for visualization clients:
