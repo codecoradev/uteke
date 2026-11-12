@@ -395,7 +395,7 @@ Every public function in `lib.rs` MUST have a corresponding CLI command AND HTTP
 | `doc_list` / `doc_list_roots` / `doc_list_children` | `uteke doc list [--tree] [--roots-only]` | `POST /doc/list` | ✅ |
 | `doc_search` (semantic/fts/hybrid) | `uteke doc search [--mode]` | `POST /doc/search` | ✅ |
 | `doc_similar` / `doc_similar_to_text` / `doc_duplicate_report` (#1730) | `uteke doc similar [slug \| --text \| --file]`, `uteke doc duplicates` | `POST /doc/similar` | ✅ |
-| `skill_search` / `skill_list` / `skill_show` / `skill_similar` / `skill_similar_to_text`, via `skill_remote` (#1731) | `uteke skill search\|list\|show\|similar` | `POST /skill/search`, `/skill/list`, `/skill/show`, `/skill/similar` (read-only; MCP `uteke_skill_*`) | ✅ |
+| `skill_search` / `skill_list` / `skill_show` / `skill_similar` / `skill_similar_to_text`, via `skill_remote` (#1731) | `uteke skill search\|list\|show\|similar` | `POST /skill/search`, `/skill/list`, `/skill/show`, `/skill/similar` (read-only; MCP `uteke_skill_*`). Remote answers omit `source_path`; remote draft `text` (also `POST /doc/similar`, `uteke_doc_similar`) is at most 32768 characters and at most 2 embedding requests run at once (HTTP 429 / tool error `busy`) | ✅ |
 | `skill_index` / `skill_approve` / `skill_record_usage` / `skill_lint_library` (#1731) | `uteke skill index\|approve\|record\|lint` | *(never remote: they read the local disk or change the trust anchor)* | ⚠️ CLI-only by design |
 | `doc_move` | `uteke doc move [--parent]` | `POST /doc/move` | ✅ |
 | `doc_delete` | `uteke doc delete` | `DELETE /doc/delete` | ✅ |

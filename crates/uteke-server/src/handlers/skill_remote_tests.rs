@@ -222,11 +222,16 @@ fn errors_are_400_404_and_503() {
         )
     );
     assert_eq!(
-        app.refused("/skill/similar", json!({"text": "x".repeat(131_073)})),
+        app.refused("/skill/similar", json!({"text": "x".repeat(32_769)})),
         (
             400,
-            "Validation error: text is longer than 131072 characters".to_string()
+            "Validation error: text is longer than 32768 characters".to_string()
         )
+    );
+    assert_eq!(
+        app.post("/skill/similar", json!({"text": "x".repeat(32_768)}))
+            .0,
+        200
     );
     assert_eq!(
         app.refused(
@@ -415,4 +420,73 @@ fn the_routes_are_lab_rows_that_do_not_write() {
         assert_eq!(row.request_type, Some(request), "{path}");
         assert_eq!(row.issues, &["1731"], "{path}");
     }
+}
+
+#[test]
+fn list_and_show_never_carry_the_server_path() {
+    let app = App::new();
+    for (url, body) in [
+        ("/skill/list", json!({})),
+        ("/skill/show", json!({"slug": "deploy"})),
+    ] {
+        let text = app.ok(url, body).to_string();
+        assert!(!text.contains("source_path"), "{url}: {text}");
+        assert!(!text.contains("/tmp"), "{url}: {text}");
+    }
+    let v = app.ok("/skill/show", json!({"slug": "deploy"}));
+    let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "approved_hash",
+            "created_at",
+            "current",
+            "ledger",
+            "owner",
+            "slug",
+            "updated_at",
+            "usage",
+            "versions"
+        ]
+    );
+}
+
+#[test]
+fn embedding_routes_answer_429_when_every_slot_is_taken() {
+    let app = App::new();
+    let (_a, _b) = {
+        let u = app.uteke.lock().unwrap();
+        (
+            u.remote_embed_permit().unwrap(),
+            u.remote_embed_permit().unwrap(),
+        )
+    };
+    let busy = "busy: 2 embedding requests are already running; retry in a moment";
+    for (url, body) in [
+        ("/skill/similar", json!({"text": "x"})),
+        ("/skill/search", json!({"query": "deploy"})),
+        (
+            "/skill/search",
+            json!({"query": "deploy", "mode": "semantic"}),
+        ),
+    ] {
+        assert_eq!(app.refused(url, body), (429, busy.to_string()), "{url}");
+    }
+    // Oversized is still a 400, and what does not embed still answers.
+    assert_eq!(
+        app.refused("/skill/similar", json!({"text": "x".repeat(32_769)}))
+            .0,
+        400
+    );
+    assert_eq!(
+        app.post("/skill/search", json!({"query": "deploy", "mode": "fts"}))
+            .0,
+        200
+    );
+    assert_eq!(
+        app.post("/skill/similar", json!({"slug": "deploy-copy"})).0,
+        200
+    );
+    assert_eq!(app.post("/skill/list", json!({})).0, 200);
 }

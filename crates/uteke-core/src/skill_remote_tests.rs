@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use crate::skill_library::*;
 use crate::skill_remote::*;
 use crate::test_support::open_keyword;
-use crate::{Error, Uteke};
+use crate::{Error, ErrorClass, Uteke};
 
 fn skill_md(name: &str, desc: &str, body: &str) -> String {
     format!("---\nname: {name}\ndescription: {desc}\n---\n{body}\n")
@@ -266,12 +266,12 @@ fn similar_validates_its_subject_and_bounds_the_text() {
         msg(&u, Similar, json!({"text": "  "})),
         "text must not be empty"
     );
-    // The bound is the size of the largest indexed file.
-    assert_eq!(MAX_REMOTE_TEXT_CHARS, 131_072);
+    // The remote cap is lower than the CLI's (the size of an indexed file).
+    assert_eq!(MAX_REMOTE_TEXT_CHARS, 32_768);
     let over = "a ".repeat(MAX_REMOTE_TEXT_CHARS / 2 + 1);
     assert_eq!(
         msg(&u, Similar, json!({"text": over})),
-        "text is longer than 131072 characters"
+        "text is longer than 32768 characters"
     );
     let at = "a".repeat(MAX_REMOTE_TEXT_CHARS);
     assert!(u.skill_remote(Similar, &args(json!({"text": at}))).is_ok());
@@ -409,4 +409,102 @@ fn nothing_is_written() {
     // And the usage counters stay zero: remote reads are not "recalled".
     let d = u.skill_show("deploy").unwrap();
     assert_eq!((d.usage.recalled, d.usage.loaded), (0, 0));
+}
+
+#[test]
+fn list_and_show_never_carry_the_server_path() {
+    let (u, t) = library();
+    let path = t.path().display().to_string();
+    let v = run(&u, List, json!({}));
+    let mut keys: Vec<_> = v["skills"][0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "description",
+            "hash",
+            "name",
+            "owner",
+            "slug",
+            "status",
+            "updated_at",
+            "valid"
+        ]
+    );
+    assert!(!v.to_string().contains(&path), "{v}");
+    let v = run(&u, Show, json!({"slug": "deploy"}));
+    let mut keys: Vec<_> = v.as_object().unwrap().keys().cloned().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "approved_hash",
+            "created_at",
+            "current",
+            "ledger",
+            "owner",
+            "slug",
+            "updated_at",
+            "usage",
+            "versions"
+        ]
+    );
+    assert!(!v.to_string().contains(&path), "{v}");
+    // The CLI shape keeps it.
+    assert_eq!(
+        u.skill_show("deploy").unwrap().source_path,
+        t.path().join("deploy").display().to_string()
+    );
+}
+
+#[test]
+fn embedding_requests_are_refused_when_every_slot_is_taken() {
+    let (u, _t) = library();
+    let a = u.remote_embed_permit().unwrap();
+    let _b = u.remote_embed_permit().unwrap();
+    let busy = "busy: 2 embedding requests are already running; retry in a moment";
+    for (op, v) in [
+        (Similar, json!({"text": DEPLOY_BODY})),
+        (Search, json!({"query": "deploy"})),
+        (Search, json!({"query": "deploy", "mode": "semantic"})),
+    ] {
+        let e = u.skill_remote(op, &args(v)).unwrap_err();
+        assert_eq!(
+            (e.to_string().as_str(), e.class()),
+            (busy, ErrorClass::Busy)
+        );
+    }
+    // What does not embed still answers.
+    assert!(
+        u.skill_remote(Search, &args(json!({"query": "deploy", "mode": "fts"})))
+            .is_ok()
+    );
+    assert!(
+        u.skill_remote(Similar, &args(json!({"slug": "deploy-copy"})))
+            .is_ok()
+    );
+    assert!(u.skill_remote(List, &args(json!({}))).is_ok());
+    // An oversized text is a 400 even when busy.
+    let over = "a".repeat(MAX_REMOTE_TEXT_CHARS + 1);
+    assert_eq!(
+        u.skill_remote(Similar, &args(json!({"text": over})))
+            .unwrap_err()
+            .class(),
+        ErrorClass::BadRequest
+    );
+    // A freed slot admits the next request; a finished one frees its own.
+    drop(a);
+    assert!(
+        u.skill_remote(Similar, &args(json!({"text": DEPLOY_BODY})))
+            .is_ok()
+    );
+    assert!(
+        u.skill_remote(Similar, &args(json!({"text": DEPLOY_BODY})))
+            .is_ok()
+    );
 }

@@ -845,7 +845,7 @@ fn tool_doc_similar() -> Value {
             "type": "object",
             "properties": {
                 "slug": { "type": "string", "description": "Slug (or UUID) of a stored document to find neighbours for" },
-                "text": { "type": "string", "description": "Draft text (markdown) that is not stored; use instead of slug" },
+                "text": { "type": "string", "description": "Draft text (markdown) that is not stored (at most 32768 characters; 'busy' when two embeddings already run); use instead of slug" },
                 "report": { "type": "boolean", "description": "true: report near-duplicate pairs and groups instead (no slug or text)" },
                 "subtree": { "type": "string", "description": "Report only: scan this document and its descendants" },
                 "threshold": { "type": "number", "description": "Minimum cosine similarity 0 to 1 (default 0.80; 0.92 for a report)" },
@@ -876,7 +876,7 @@ fn tool_skill_search() -> Value {
 fn tool_skill_list() -> Value {
     serde_json::json!({
         "name": "uteke_skill_list",
-        "description": "List the skills of the personal skill library by slug, with the current version of each (name, description, status, hash, validity, source path, owner). `total` counts the skills that match before the limit. Read-only; returns JSON.",
+        "description": "List the skills of the personal skill library by slug, with the current version of each (name, description, status, hash, validity, owner; no server path). `total` counts the skills that match before the limit. Read-only; returns JSON.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -909,7 +909,7 @@ fn tool_skill_similar() -> Value {
             "type": "object",
             "properties": {
                 "slug": { "type": "string", "description": "A skill of the library (at most 64 characters)" },
-                "text": { "type": "string", "description": "Draft SKILL.md text that is not stored (at most 131072 characters); use instead of slug" },
+                "text": { "type": "string", "description": "Draft SKILL.md text that is not stored (at most 32768 characters; 'busy' when two embeddings already run); use instead of slug" },
                 "threshold": { "type": "number", "description": "Minimum cosine similarity 0 to 1 (default 0.80)" },
                 "limit": { "type": "integer", "description": "Max hits, 1 to 100 (default 10)" }
             }
@@ -2393,12 +2393,14 @@ fn exec_doc_similar(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         Some(v) => Some(v.as_u64().ok_or("'limit' must be a non-negative integer")? as usize),
         None => None,
     };
+    // A draft text is embedded: bound it and the number running at once.
+    let _permit = match &query {
+        DocSimilarQuery::Text(t) => Some(uteke.remote_draft_permit(t).map_err(skill_error)?),
+        _ => None,
+    };
     let answer = uteke
         .doc_similarity_query(&query, args["namespace"].as_str(), threshold, limit)
-        .map_err(|e| match e.class() {
-            uteke_core::ErrorClass::NotFound | uteke_core::ErrorClass::BadRequest => e.to_string(),
-            _ => format!("Failed: {e}"),
-        })?;
+        .map_err(skill_error)?;
     let text = serde_json::to_string_pretty(&answer).map_err(|e| e.to_string())?;
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2427,7 +2429,9 @@ fn exec_skill(uteke: &Uteke, op: SkillRemoteOp, args: &Value) -> Result<ToolResu
 /// A client error keeps its message; anything else is reported as a failure.
 fn skill_error(e: uteke_core::Error) -> String {
     match e.class() {
-        uteke_core::ErrorClass::NotFound | uteke_core::ErrorClass::BadRequest => e.to_string(),
+        uteke_core::ErrorClass::NotFound
+        | uteke_core::ErrorClass::BadRequest
+        | uteke_core::ErrorClass::Busy => e.to_string(),
         _ => format!("Failed: {e}"),
     }
 }
@@ -6293,9 +6297,10 @@ mod skill_tool_tests {
             "Validation error: provide either 'slug' or 'text', not both"
         );
         assert_eq!(
-            err(&u, Similar, json!({"text": "x".repeat(131_073)})),
-            "Validation error: text is longer than 131072 characters"
+            err(&u, Similar, json!({"text": "x".repeat(32_769)})),
+            "Validation error: text is longer than 32768 characters"
         );
+        assert!(exec_skill(&u, Similar, &json!({"text": "x".repeat(32_768)})).is_ok());
         assert!(
             err(&u, Search, json!({"query": "x", "limit": -1}))
                 .starts_with("Validation error: invalid arguments: ")
@@ -6303,6 +6308,51 @@ mod skill_tool_tests {
         assert!(
             err(&u, Search, json!({"query": "x", "namespace": "a"}))
                 .starts_with("Validation error: invalid arguments: ")
+        );
+    }
+
+    #[test]
+    fn show_and_list_never_carry_the_server_path() {
+        let (u, _) = library();
+        for (op, args) in [
+            (SkillRemoteOp::List, json!({})),
+            (SkillRemoteOp::Show, json!({"slug": "deploy"})),
+        ] {
+            let text = run(&u, op, args).to_string();
+            assert!(!text.contains("source_path"), "{text}");
+            assert!(!text.contains("/tmp"), "{text}");
+        }
+    }
+
+    #[test]
+    fn embedding_tools_are_tool_errors_when_every_slot_is_taken() {
+        let (u, _) = library();
+        let _a = u.remote_embed_permit().unwrap();
+        let _b = u.remote_embed_permit().unwrap();
+        let busy = "busy: 2 embedding requests are already running; retry in a moment";
+        assert_eq!(err(&u, SkillRemoteOp::Similar, json!({"text": "x"})), busy);
+        assert_eq!(
+            err(&u, SkillRemoteOp::Search, json!({"query": "deploy"})),
+            busy
+        );
+        assert!(
+            exec_skill(
+                &u,
+                SkillRemoteOp::Search,
+                &json!({"query": "deploy", "mode": "fts"})
+            )
+            .is_ok()
+        );
+        // The document tool shares the bound.
+        assert_eq!(
+            exec_doc_similar(&u, &json!({"text": "x"})).err().as_deref(),
+            Some(busy)
+        );
+        assert_eq!(
+            exec_doc_similar(&u, &json!({"text": "x".repeat(32_769)}))
+                .err()
+                .as_deref(),
+            Some("Validation error: text is longer than 32768 characters")
         );
     }
 

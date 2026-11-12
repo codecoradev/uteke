@@ -12,7 +12,7 @@
   (`Uteke::skill_remote`), so they validate identically: a field that does not belong to the
   operation or is unknown is refused, and every client-supplied size is bounded (query 2000
   characters, `limit` clamped to 1-50 for search, 1-200 for list and 1-100 for similar, a draft
-  `text` at most 131072 characters, a slug 64). `index`, `approve`, `record` and `lint` are not
+  `text` at most 32768 characters, a slug 64). `index`, `approve`, `record` and `lint` are not
   remote and stay CLI-only. Skill files are no longer readable or editable as documents:
   `doc get`, `POST /doc/get`, `uteke_doc_get`, `doc update` and the children of a skill file answer
   "not found" (before, a document read by slug returned the file text). No schema change.
@@ -119,6 +119,17 @@
   changes.
 
 ### Changed
+
+- **Skill library remote surfaces: no server path, bounded embedding cost (#1731)** - `POST
+  /skill/list`, `/skill/show` and the MCP tools `uteke_skill_list` and `uteke_skill_show` no longer
+  return `source_path`, the server directory a skill was indexed from (the CLI still shows it).
+  A draft `text` sent to `POST /skill/similar`, `POST /doc/similar`, `uteke_skill_similar` or
+  `uteke_doc_similar` is now at most 32768 characters (was 131072 for skills, 200000 for documents;
+  the CLI limits are unchanged), and at most 2 remote requests that embed a string (those four with
+  `text`, and `POST /skill/search` / `uteke_skill_search` in `hybrid` or `semantic` mode) run at
+  once per server: another is refused at once with HTTP 429 (an MCP tool error `busy: ...`) instead
+  of queueing; `fts` search, a stored slug and `list`/`show` are never refused. Core: new
+  `Error::Busy` (`ErrorClass::Busy`) and `uteke_core::remote_guard`.
 
 - **The secret detector is its own crate, `uteke-privacy` (#1732)** - the detector of
   the write path (AWS, GitHub, npm, Slack, Google keys, bearer, JWT, URL passwords,
