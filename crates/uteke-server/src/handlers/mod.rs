@@ -296,6 +296,34 @@ fn handler_for(method: &str, path: &str) -> Option<Handler> {
         .map(|(_, _, h)| *h)
 }
 
+/// Whether a body sent to a similarity or skill-search route makes the server
+/// embed a client string: `Some(Some(draft))` for a draft text (its length is
+/// bounded), `Some(None)` for a skill query in `hybrid` or `semantic` mode,
+/// `None` when the request embeds nothing. Mirrors what the handlers do.
+fn remote_embed_input<'a>(path: &str, body: &'a serde_json::Value) -> Option<Option<&'a str>> {
+    let field = |k: &str| body.get(k).filter(|v| !v.is_null());
+    match path {
+        "/doc/similar" => {
+            let stored = field("id").is_some() || field("slug").is_some();
+            let report = body.get("report").and_then(|v| v.as_bool()) == Some(true);
+            (!stored && !report)
+                .then(|| field("text").and_then(|v| v.as_str()))
+                .flatten()
+                .map(Some)
+        }
+        "/skill/similar" => field("slug")
+            .is_none()
+            .then(|| field("text").and_then(|v| v.as_str()))
+            .flatten()
+            .map(Some),
+        "/skill/search" => {
+            let fts = field("mode").and_then(|v| v.as_str()) == Some("fts");
+            (!fts && field("query").is_some_and(|v| v.is_string())).then_some(None)
+        }
+        _ => None,
+    }
+}
+
 pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
     let method = req.method().clone();
     let raw_path = req.url().to_string();
@@ -410,6 +438,29 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
             }
         }
     }
+
+    // The remote routes that embed a client string take their slot BEFORE the
+    // store lock (see `ReqCtx::remote_embeds`): a third concurrent one is a
+    // 429 at once instead of queueing behind the lock. An oversized draft is a
+    // 400 first, busy or not. Held until the response is built.
+    let _embed_slot = if method == Method::Post
+        && matches!(
+            route_path,
+            "/doc/similar" | "/skill/similar" | "/skill/search"
+        )
+        && let Some(body) = preread_body(req.as_reader())
+        && let Some(draft) = remote_embed_input(route_path, &body)
+    {
+        if let Some(Err(e)) = draft.map(uteke_core::remote_guard::check_draft_len) {
+            return ctx.error_response_for(req, 400, e.to_string());
+        }
+        match ctx.remote_embeds.try_acquire() {
+            Ok(slot) => Some(slot),
+            Err(e) => return ctx.error_response_for(req, 429, e.to_string()),
+        }
+    } else {
+        None
+    };
 
     // Lock the Uteke instance for the duration of this request.
     // This serializes requests but prevents data races on the SQLite connection.
@@ -545,6 +596,7 @@ mod room_memories_namespace_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -694,6 +746,7 @@ mod room_recall_at_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -935,6 +988,7 @@ mod room_recall_at_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1387,6 +1441,7 @@ mod contradiction_api_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1527,6 +1582,7 @@ mod pack_recall_api_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1690,6 +1746,7 @@ mod explain_recall_api_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1817,6 +1874,7 @@ mod list_pagination_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1921,6 +1979,7 @@ mod payload_conformance_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
 
         let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
@@ -2001,6 +2060,7 @@ mod payload_conformance_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
@@ -2060,6 +2120,7 @@ mod payload_conformance_tests {
                     host_guard: Default::default(),
                     store_id: String::new(),
                     embed_warmer: Default::default(),
+                    remote_embeds: Default::default(),
                 };
                 let resp = route(&self.uteke, &ctx, &mut req);
                 let status = resp.status_code().0;
@@ -2170,6 +2231,7 @@ mod routes_introspection_tests {
                 host_guard: Default::default(),
                 store_id: "0123456789abcdef".to_string(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2412,6 +2474,7 @@ mod plain_remember_type_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2539,6 +2602,7 @@ mod host_guard_route_tests {
             host_guard: guard,
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let mut t = TestRequest::new().with_method(Method::Get).with_path(path);
         if let Some(h) = host {
@@ -2592,6 +2656,7 @@ mod mcp_http_hardening_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         }
     }
 
@@ -2649,6 +2714,7 @@ mod mcp_read_only_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         }
     }
 
@@ -2738,6 +2804,7 @@ mod namespace_deprecation_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -2922,6 +2989,7 @@ mod forget_route_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -3083,6 +3151,7 @@ mod rejected_value_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;

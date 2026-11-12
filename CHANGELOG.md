@@ -156,6 +156,13 @@
 
 ### Fixed
 
+- **The remote embedding guard works over HTTP (#1730, #1731)** - `uteke serve` runs a request under
+  the store lock, one at a time, so the "at most 2 concurrent embedding requests" slot of
+  `POST /doc/similar`, `/skill/similar` and `/skill/search` was taken inside the lock and could never
+  refuse anything: with the real model a burst of 30000-character drafts all answered 200 and queued
+  (20 parallel requests took up to 247 s). The slot is now taken before the lock, so the third
+  concurrent request is a 429 at once; an oversized draft is a 400 first. MCP is unchanged.
+
 - **`import` no longer skips content that was only forgotten (#1689)** - since #1633/#1636 a
   row whose content matched a soft-deleted memory was counted as `soft_deleted_skipped`
   and never stored, so re-importing after a plain `forget` (a restored backup, a benchmark

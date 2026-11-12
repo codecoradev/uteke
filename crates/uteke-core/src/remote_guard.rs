@@ -11,6 +11,10 @@
 //!   [`crate::Uteke`]; another one is refused at once with [`Error::Busy`]
 //!   (HTTP 429, an MCP tool error) instead of queueing, so a burst cannot pile
 //!   up threads and memory.
+//!
+//! A server that serialises requests on a store lock must take its slot
+//! BEFORE the lock (a gate of its own, see [`EmbedGate`]): inside the lock
+//! at most one request runs, so the per-[`crate::Uteke`] gate never trips.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,7 +29,7 @@ pub const MAX_REMOTE_DRAFT_CHARS: usize = 32_768;
 pub const MAX_REMOTE_EMBEDS: usize = 2;
 
 /// Counts the remote embedding requests in flight; one per [`crate::Uteke`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EmbedGate {
     in_flight: Arc<AtomicUsize>,
     limit: usize,
@@ -48,6 +52,11 @@ impl EmbedGate {
             in_flight: Arc::new(AtomicUsize::new(0)),
             limit,
         }
+    }
+
+    /// Requests holding a slot right now.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.load(Ordering::Acquire)
     }
 
     /// Take a slot, or `Busy` when `limit` requests already embed.
@@ -79,6 +88,21 @@ impl Default for EmbedGate {
     }
 }
 
+/// Refuse a remote draft text over [`MAX_REMOTE_DRAFT_CHARS`] characters,
+/// counting no further than the limit.
+///
+/// # Errors
+///
+/// `Validation` when the text is longer than the limit.
+pub fn check_draft_len(text: &str) -> Result<(), Error> {
+    if text.chars().take(MAX_REMOTE_DRAFT_CHARS + 1).count() > MAX_REMOTE_DRAFT_CHARS {
+        return Err(Error::validation(format!(
+            "text is longer than {MAX_REMOTE_DRAFT_CHARS} characters"
+        )));
+    }
+    Ok(())
+}
+
 impl crate::Uteke {
     /// A slot for one remote request that embeds a string (a skill search in
     /// `hybrid` or `semantic` mode). Hold it until the answer is built.
@@ -99,11 +123,7 @@ impl crate::Uteke {
     /// `Validation` over [`MAX_REMOTE_DRAFT_CHARS`] characters, `Busy` when
     /// the slots are taken.
     pub fn remote_draft_permit(&self, text: &str) -> Result<EmbedPermit, Error> {
-        if text.chars().take(MAX_REMOTE_DRAFT_CHARS + 1).count() > MAX_REMOTE_DRAFT_CHARS {
-            return Err(Error::validation(format!(
-                "text is longer than {MAX_REMOTE_DRAFT_CHARS} characters"
-            )));
-        }
+        check_draft_len(text)?;
         self.remote_embed_permit()
     }
 }

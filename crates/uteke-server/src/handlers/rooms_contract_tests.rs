@@ -101,6 +101,7 @@ impl Fixture {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(&self.uteke, &ctx, &mut req);
         assert_eq!(resp.status_code().0, 200, "{url} {body}");

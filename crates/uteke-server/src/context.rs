@@ -143,6 +143,11 @@ pub struct ReqCtx {
     /// request refreshes it from the store while it holds the lock, so a
     /// changed privacy config or embedder is picked up; shared by clones.
     pub embed_warmer: std::sync::Arc<std::sync::Mutex<Option<uteke_core::EmbeddingWarmer>>>,
+    /// Slots of the remote routes that embed a client string (draft text,
+    /// skill query). Taken BEFORE the store lock: behind it requests run one at
+    /// a time, so the gate inside `Uteke` could never refuse a burst. Shared
+    /// by clones.
+    pub remote_embeds: uteke_core::remote_guard::EmbedGate,
 }
 
 /// `Host` header policy against DNS rebinding (#1326).
@@ -483,6 +488,7 @@ mod cors_tests {
             host_guard: HostGuard::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         }
     }
 
