@@ -239,6 +239,22 @@
     },
     {
       "method": "POST",
+      "path": "/skill/search"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/list"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/show"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/similar"
+    },
+    {
+      "method": "POST",
       "path": "/doc/update"
     },
     {

@@ -90,6 +90,111 @@ pub struct DocSimilarRequest {
     pub subtree: Option<String>,
 }
 
+/// `POST /skill/search` (#1731): the skills whose files match a query. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSearchRequest {
+    /// What to look for (at most 2000 characters).
+    pub query: String,
+    /// `hybrid` (default), `semantic` or `fts`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Maximum skills, 1 to 50 (default 5).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Only skills whose current version is approved.
+    #[serde(default)]
+    pub approved_only: Option<bool>,
+}
+
+/// `POST /skill/list` (#1731): the skills of the library, by slug. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillListRequest {
+    /// `draft` or `approved`: the status of the current version.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Maximum skills, 1 to 200 (default 50).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// `POST /skill/show` (#1731): one skill with its current version, usage,
+/// version history and mutation ledger. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillShowRequest {
+    /// The skill (at most 64 characters).
+    pub slug: String,
+}
+
+/// `POST /skill/similar` (#1731): skills close to a skill or to a draft text
+/// that is not stored. Give `slug` OR `text`. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSimilarRequest {
+    /// A skill of the library.
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// A draft text that is not stored (at most 131072 characters); needs the
+    /// embedding model.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Minimum cosine similarity, 0 to 1 (default 0.80).
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// Maximum hits, 1 to 100 (default 10).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl From<SkillSearchRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillSearchRequest) -> Self {
+        Self {
+            query: Some(r.query),
+            mode: r.mode,
+            limit: r.limit,
+            approved_only: r.approved_only,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<SkillListRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillListRequest) -> Self {
+        Self {
+            status: r.status,
+            limit: r.limit,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<SkillShowRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillShowRequest) -> Self {
+        Self {
+            slug: Some(r.slug),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<SkillSimilarRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillSimilarRequest) -> Self {
+        Self {
+            slug: r.slug,
+            text: r.text,
+            threshold: r.threshold,
+            limit: r.limit,
+            ..Default::default()
+        }
+    }
+}
+
 /// The subject of a [`DocSimilarRequest`]; `id` wins over `slug` like on the
 /// other document routes.
 pub fn resolve_doc_similar(

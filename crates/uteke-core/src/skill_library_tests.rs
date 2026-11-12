@@ -146,8 +146,28 @@ fn skill_files_are_hidden_from_ordinary_documents() {
     assert!(r.hits.is_empty(), "{:?}", r.hits);
     let rep = u.doc_duplicate_report(None, None, Some(0.0), 10).unwrap();
     assert_eq!((rep.scanned, rep.total_pairs), (1, 0));
-    // A skill document is still reachable by its slug.
-    assert!(u.doc_get("skill/deploy/SKILL.md").unwrap().is_some());
+    // Not by slug or id either: skill files are read through the skill commands only.
+    assert!(u.doc_get("skill/deploy/SKILL.md").unwrap().is_none());
+    let id = u
+        .store
+        .get_document_by_slug("skill/deploy/SKILL.md")
+        .unwrap()
+        .unwrap()
+        .id;
+    assert!(u.doc_get(&id).unwrap().is_none());
+    assert!(
+        u.doc_list_children("skill/deploy/SKILL.md", 10)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(u.doc_list_children(&id, 10).unwrap().is_empty());
+    assert!(
+        u.doc_update(&id, None, Some("x"), None, None)
+            .unwrap()
+            .is_none()
+    );
+    // The skill commands still read them.
+    assert_eq!(u.skill_show("deploy").unwrap().current.file_count, 3);
 }
 
 #[test]

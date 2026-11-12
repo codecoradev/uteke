@@ -69,7 +69,7 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke skill index <DIR>` | Index the skills under a directory (read-only on disk): package hash, lint, searchable text; new bytes make a new draft | `--owner`, `--actor` |
 | `uteke skill search <QUERY>` | Find the few skills that fit a task (hybrid) | `--limit`, `--mode`, `--approved` |
 | `uteke skill list` | List the library | `--status`, `--limit` |
-| `uteke skill show <SLUG>` | Current version, hash, files, usage, history | |
+| `uteke skill show <SLUG>` | Current version, hash, files, usage, history. Over HTTP/MCP: `POST /skill/search\|list\|show\|similar` and `uteke_skill_search\|list\|show\|similar` (read-only) | |
 | `uteke skill similar <SLUG>` | Skills close to this one, or to a draft (`--text`/`--file`) | `--threshold`, `--limit` |
 | `uteke skill lint [DIR]` | Check SKILL.md frontmatter (a directory, or the indexed library) | |
 | `uteke skill approve <SLUG>@<HASH>` | Record the approved package hash, the trust anchor clients check before loading | `--actor` |

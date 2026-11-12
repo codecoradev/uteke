@@ -114,6 +114,38 @@ Rebuild the vector index from stored embeddings to fix recall desync (#1266). SQ
 
 **Response**: [`RepairReport`](#repairreport)
 
+#### 🟡 `POST` `/skill/search`
+
+Search the personal skill library (#1731): the skills whose indexed files match `query` (at most 2000 characters), best first, one hit per skill with the file and snippet that matched. `mode` is `hybrid` (default), `semantic` or `fts`; `limit` is clamped to 1 to 50 (default 5); `approved_only` keeps only skills whose current version is approved. Hybrid falls back to keywords without the embedding model, `semantic` needs it (503 without). Skill files are not documents: they never appear in `/doc/*`. Nothing is written. Read-only.
+
+**Request body**: [`SkillSearchRequest`](#skillsearchrequest)
+
+*Related: `1731`*
+
+#### 🟡 `POST` `/skill/list`
+
+List the skills of the personal library, by slug, with their current version (status, hash, validity, source path, owner). `status` keeps `draft` or `approved` skills; `limit` is clamped to 1 to 200 (default 50) and `total` counts the skills that match before the limit. Nothing is written. Read-only.
+
+**Request body**: [`SkillListRequest`](#skilllistrequest)
+
+*Related: `1731`*
+
+#### 🟡 `POST` `/skill/show`
+
+One skill: its current version (hash, status, validity and lint issues, file manifest), the hash a client may load (`approved_hash`), usage counters, the last 50 versions and the last 20 ledger rows. `slug` is at most 64 characters; 404 for an unknown skill. Nothing is written. Read-only.
+
+**Request body**: [`SkillShowRequest`](#skillshowrequest)
+
+*Related: `1731`*
+
+#### 🟡 `POST` `/skill/similar`
+
+Skills close to a skill (`slug`) or to a draft `text` that is not stored (at most 131072 characters; needs the embedding model, 503 without). Compares the `SKILL.md` document vectors: `possible_duplicate` from 0.92, `similar_to` from 0.80, `threshold` overrides the floor, `limit` is clamped to 1 to 100 (default 10). Nothing is written. Read-only.
+
+**Request body**: [`SkillSimilarRequest`](#skillsimilarrequest)
+
+*Related: `1731`*
+
 #### 🟢 `GET` `/graph`
 
 Memory graph for visualisation: live memories as nodes, `memory_edges` (auto-links, supersession) plus explicit graph edges as edges, keyed by memory id. Accepts `?namespace=...`, `?node_id=<memory id>` (that memory's neighbourhood) and `?limit=` (edges, default 500, max 5000); response carries `truncated`. Derived `referenced_by` backlinks are omitted.
@@ -883,6 +915,51 @@ Request for memory feedback / trust scoring (#718).
 | `namespace` | any | No |  |
 | `query` | `string` | Yes |  |
 | `tags` | ``string``[] | No |  |
+
+
+### `SkillListRequest`
+
+`POST /skill/list` (#1731): the skills of the library, by slug. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | any | No | Maximum skills, 1 to 200 (default 50). |
+| `status` | any | No | `draft` or `approved`: the status of the current version. |
+
+
+### `SkillSearchRequest`
+
+`POST /skill/search` (#1731): the skills whose files match a query. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `approved_only` | any | No | Only skills whose current version is approved. |
+| `limit` | any | No | Maximum skills, 1 to 50 (default 5). |
+| `mode` | any | No | `hybrid` (default), `semantic` or `fts`. |
+| `query` | `string` | Yes | What to look for (at most 2000 characters). |
+
+
+### `SkillShowRequest`
+
+`POST /skill/show` (#1731): one skill with its current version, usage,
+version history and mutation ledger. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `slug` | `string` | Yes | The skill (at most 64 characters). |
+
+
+### `SkillSimilarRequest`
+
+`POST /skill/similar` (#1731): skills close to a skill or to a draft text
+that is not stored. Give `slug` OR `text`. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | any | No | Maximum hits, 1 to 100 (default 10). |
+| `slug` | any | No | A skill of the library. |
+| `text` | any | No | A draft text that is not stored (at most 131072 characters); needs the embedding model. |
+| `threshold` | any | No | Minimum cosine similarity, 0 to 1 (default 0.80). |
 
 
 ### `TagDeleteRequest`

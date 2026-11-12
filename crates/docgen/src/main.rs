@@ -324,6 +324,16 @@ fn collect_schemas(schemas: &mut BTreeMap<&'static str, Value>) {
     add_schema!("DocGetRequest", uteke_server::types::DocGetRequest);
     add_schema!("DocMoveRequest", uteke_server::types::DocMoveRequest);
     add_schema!("DocSimilarRequest", uteke_server::types::DocSimilarRequest);
+    add_schema!(
+        "SkillSearchRequest",
+        uteke_server::types::SkillSearchRequest
+    );
+    add_schema!("SkillListRequest", uteke_server::types::SkillListRequest);
+    add_schema!("SkillShowRequest", uteke_server::types::SkillShowRequest);
+    add_schema!(
+        "SkillSimilarRequest",
+        uteke_server::types::SkillSimilarRequest
+    );
 
     // Tags
     add_schema!("TagRenameRequest", uteke_server::types::TagRenameRequest);
