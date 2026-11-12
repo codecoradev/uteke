@@ -1,4 +1,4 @@
-//! Document handlers: create, get, update, list, search, move, delete and memory references.
+//! Document handlers: create, get, update, list, search, similar, move, delete and memory references.
 
 use super::*;
 
@@ -141,6 +141,44 @@ pub(super) fn post_doc_search(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             }
         },
         Err(e) => ctx.error_response_for(req, 400, e),
+    }
+}
+
+/// POST /doc/similar (#1730): documents close to a document or a draft text,
+/// or the near-duplicate report of a namespace or subtree. Read-only.
+pub(super) fn post_doc_similar(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
+    let uteke = c.uteke;
+    let ctx = c.ctx;
+    let req = &mut *c.req;
+    let req_data = match read_body::<DocSimilarRequest>(req.as_reader()) {
+        Ok(r) => r,
+        Err(e) => return ctx.error_response_for(req, 400, e),
+    };
+    let query = match resolve_doc_similar(&req_data) {
+        Ok(q) => q,
+        Err(e) => return ctx.error_response_for(req, 400, e),
+    };
+    let result = uteke.doc_similarity_query(
+        &query,
+        req_data.namespace.as_deref(),
+        req_data.threshold,
+        req_data.limit,
+    );
+    match result {
+        Ok(answer) => ctx.ok_response_for(req, &answer),
+        Err(e) => match e.class() {
+            uteke_core::ErrorClass::NotFound => ctx.error_response_for(req, 404, e.to_string()),
+            uteke_core::ErrorClass::BadRequest => ctx.error_response_for(req, 400, e.to_string()),
+            _ if matches!(e, uteke_core::Error::Embedding { .. }) => ctx.error_response_for(
+                req,
+                503,
+                "embedding model not available for similarity search",
+            ),
+            _ => {
+                error!("doc similar error: {e}");
+                ctx.error_response_for(req, 500, "Internal server error")
+            }
+        },
     }
 }
 

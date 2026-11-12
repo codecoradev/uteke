@@ -4,6 +4,19 @@
 
 ### Added
 
+- **Similar documents and a duplicate report (#1730, LAB)** - which documents are close to this one,
+  and is there already a document like this draft? `uteke doc similar <slug>` (or `--text` /
+  `--file` for a draft that is not stored), `uteke doc duplicates [--subtree] [--namespace]`,
+  `POST /doc/similar` and the MCP tool `uteke_doc_similar` (read-only, fenced, open to read-only
+  tokens) answer with the documents at or above a cosine threshold, `possible_duplicate` from 0.92
+  and `similar_to` from 0.80 (the memory auto-link values), or with the duplicate pairs and groups
+  of a namespace or subtree. The document vector is the mean of the chunk vectors, L2-normalised,
+  read from SQLite: no extra embedding call, and it exists for restored and imported documents as
+  soon as their chunks are embedded. A document without vectors is skipped and counted
+  (`documents_without_vector`; `uteke repair --reembed` fills it). The relations are derived on
+  every call, not stored as edges, so nothing goes stale. New `[doc_similarity]` keys
+  `similar_threshold` and `duplicate_threshold` (defaults 0.80 and 0.92, validated). Nothing about
+  memories, CORE routes or the schema changes. Contradiction checks on documents are out of scope.
 - **Room ids of the form `category:title` (#1715, stage 1 of 3)** - the convention is
   `category:title` (for example `project:uteke`, `research:docker`): lowercase, exactly one
   colon, at most 64 characters. Only the shape is the rule; the category is a

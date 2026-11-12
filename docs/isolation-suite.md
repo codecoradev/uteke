@@ -18,8 +18,8 @@ A check passes only if the response scoped to one namespace holds no `of <other>
 | Transport | Where | Surfaces |
 |---|---|---|
 | Core | `crates/uteke-core/src/isolation_tests.rs` | `recall` and `recall_hybrid` (all five strategies), tag filters, unified recall (`All`, `Memory`), `search`, `list`, tag counts, `export`, `count`, scoped room recall, room listing, `graph_data`, `graph_view` |
-| HTTP | `crates/uteke-server/src/handlers/isolation_tests.rs` | `/recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `/search`, `/list`, `/recent`, `/export`, `/graph`, `/room/memories`, `/room/recall`, `/orphans`, `/tags`, `/room/list`, `/stats`, `/doc/search`, `/doc/list` |
-| MCP | `crates/uteke-mcp/src/lib.rs`, `mod isolation_tests` | `uteke_recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `uteke_search`, `uteke_list`, `uteke_graph`, `uteke_room_recall`, `uteke_room_memories`, `uteke_tags_list`, `uteke_room_list`, `uteke_stats`, `uteke_contradictions` |
+| HTTP | `crates/uteke-server/src/handlers/isolation_tests.rs` | `/recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `/search`, `/list`, `/recent`, `/export`, `/graph`, `/room/memories`, `/room/recall`, `/orphans`, `/tags`, `/room/list`, `/stats`, `/doc/search`, `/doc/list`, `/doc/similar` (a draft text and a report, both scoped) |
+| MCP | `crates/uteke-mcp/src/lib.rs`, `mod isolation_tests` | `uteke_recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `uteke_search`, `uteke_list`, `uteke_graph`, `uteke_room_recall`, `uteke_room_memories`, `uteke_tags_list`, `uteke_room_list`, `uteke_stats`, `uteke_contradictions`, `uteke_doc_similar` (a draft text and a report, both scoped) |
 | CLI | `crates/uteke-cli/tests/scope_isolation.rs` | `search`, `list` (with a tag), `export`, `room recall`, `orphans`, `tags list`, `stats`, `room list`, `contradictions list` |
 
 `uteke recall` is not in the CLI suite: it needs the ONNX runtime, which CI does not have. The same code path is covered by the core, HTTP and MCP suites.

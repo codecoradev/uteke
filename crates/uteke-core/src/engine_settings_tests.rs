@@ -209,6 +209,7 @@ mod engine {
              [lifecycle]\nsoft_delete_only = false\n\
              [embed_fallback]\napi_key = \"k\"\nbase_url = \"https://example.test\"\nmodel = \"m\"\n\
              [rooms]\nrequire_category_title = true\n\
+             [doc_similarity]\nsimilar_threshold = 0.7\nduplicate_threshold = 0.9\n\
              [unknown_section]\nwhatever = 1\n",
         )
         .unwrap();
@@ -219,6 +220,13 @@ mod engine {
         assert!(!e.lifecycle.soft_delete_only);
         assert!(e.embed_fallback.is_configured());
         assert!(e.rooms.require_category_title);
+        assert_eq!(
+            (
+                e.doc_similarity.similar_threshold,
+                e.doc_similarity.duplicate_threshold
+            ),
+            (0.7, 0.9)
+        );
         assert!(f.store.contains_key("namespace"));
     }
 
@@ -233,6 +241,12 @@ mod engine {
             !f.engine.rooms.require_category_title,
             "stage 3 is off by default"
         );
+        assert_eq!(
+            f.engine.doc_similarity,
+            crate::DocSimilaritySettings::default()
+        );
+        assert_eq!(f.engine.doc_similarity.similar_threshold, 0.80);
+        assert_eq!(f.engine.doc_similarity.duplicate_threshold, 0.92);
     }
 
     #[test]
@@ -245,6 +259,8 @@ mod engine {
         e.capture.enabled = true;
         e.capture.interval_minutes = 5;
         e.rooms.require_category_title = true;
+        e.doc_similarity.similar_threshold = 0.6;
+        e.doc_similarity.duplicate_threshold = 0.95;
         e.embed_fallback.api_key = "k".into();
         e.embed_fallback.base_url = "https://example.test".into();
         e.embed_fallback.model = "m".into();
@@ -255,6 +271,8 @@ mod engine {
         assert!(u.capture_settings().enabled);
         assert_eq!(u.capture_settings().interval_minutes, 5);
         assert!(u.room_naming_settings().require_category_title);
+        assert_eq!(u.doc_similarity_settings().similar_threshold, 0.6);
+        assert_eq!(u.doc_similarity_settings().duplicate_threshold, 0.95);
         assert_eq!(u.fallback_settings.base_url, "https://example.test");
     }
 

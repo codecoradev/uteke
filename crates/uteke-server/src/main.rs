@@ -192,6 +192,9 @@ fn main() {
                     "  POST /doc/search            → {{ query, mode?, namespace?, limit? }} → [results]"
                 );
                 println!(
+                    "  POST /doc/similar           → {{ slug | text | report, threshold?, limit?, namespace?, subtree? }} → {{ hits | pairs }}"
+                );
+                println!(
                     "  POST /doc/move              → {{ id | slug, new_parent? }} → {{ moved }}"
                 );
                 println!("  DEL  /doc/delete?id=UUID    → {{ deleted, subtree_size }}");

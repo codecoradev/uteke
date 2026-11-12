@@ -3,7 +3,8 @@
 
 use crate::{DreamConfig, FallbackSettings, LifecycleConfig, RecallSettings, TierConfig, Uteke};
 
-/// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`. Every
+/// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]`, `[embed_fallback]` and
+/// `[doc_similarity]` (and the other sections below). Every
 /// section and every key is optional: what a file omits keeps the core
 /// default. Embed it in a larger config with `#[serde(flatten)]`.
 #[derive(Clone, Default, serde::Deserialize)]
@@ -22,6 +23,8 @@ pub struct EngineSettings {
     /// Global file only (`UNTRUSTED_PROJECT_KEYS`): a cloned repository cannot
     /// loosen it.
     pub rooms: crate::room_naming::RoomNamingSettings,
+    /// `[doc_similarity]` (#1730): thresholds of document similarity.
+    pub doc_similarity: crate::doc_similarity::DocSimilaritySettings,
 }
 
 impl EngineSettings {
@@ -59,6 +62,7 @@ impl Uteke {
         self.set_lifecycle_config(settings.lifecycle);
         self.set_capture_settings(settings.capture);
         self.set_room_naming_settings(settings.rooms);
+        self.set_doc_similarity_settings(settings.doc_similarity);
         if settings.embed_fallback.is_configured() {
             self.set_fallback_settings(settings.embed_fallback.clone());
         }

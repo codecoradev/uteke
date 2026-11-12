@@ -807,6 +807,50 @@ pub enum DocCommands {
         #[arg(long, default_value = "hybrid")]
         mode: String,
     },
+    /// Documents close to a document, or to a draft text that is not stored (#1730)
+    ///
+    /// Compares the document vector (the mean of the chunk vectors) with every
+    /// other document: `possible_duplicate` at 0.92 and above, `similar_to` at
+    /// 0.80 and above (`[doc_similarity]` in uteke.toml). Give a slug, or
+    /// `--text` / `--file` for a draft: nothing is stored either way. Documents
+    /// without vectors (`uteke repair --reembed` fills them) are skipped.
+    Similar {
+        /// Document slug or ID (omit with --text or --file)
+        slug: Option<String>,
+        /// Candidate text instead of a stored document
+        #[arg(long, conflicts_with_all = ["slug", "file"])]
+        text: Option<String>,
+        /// Read the candidate text from a file (use - for stdin)
+        #[arg(long, conflicts_with_all = ["slug", "text"])]
+        file: Option<String>,
+        /// Minimum cosine similarity, 0 to 1 (default: the configured similar_to threshold, 0.80)
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: Option<f32>,
+        /// Maximum results (1 to 100)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Only compare with documents in this namespace
+        #[arg(long)]
+        namespace: Option<String>,
+    },
+    /// Report near-duplicate documents of a namespace or a subtree (#1730)
+    ///
+    /// Lists the pairs at or above the duplicate threshold (default 0.92,
+    /// `[doc_similarity] duplicate_threshold`) and the groups they form.
+    Duplicates {
+        /// Only documents under this document (itself included)
+        #[arg(long)]
+        subtree: Option<String>,
+        /// Only documents in this namespace
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Minimum cosine similarity, 0 to 1 (default: the configured possible_duplicate threshold, 0.92)
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: Option<f32>,
+        /// Maximum pairs listed (1 to 500); the groups always cover every pair
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
     /// Partially update a document — only provided fields are changed (#589)
     Update {
         /// Document slug or ID

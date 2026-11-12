@@ -129,6 +129,34 @@ pub fn open_keyword_at(path: impl AsRef<std::path::Path>) -> crate::Uteke {
     open_with_embedder_at(path, Box::new(KeywordEmbedder))
 }
 
+/// Store a document and put it in `namespace` (the public API stores documents
+/// without one), for the namespace tests of the document read paths.
+pub fn doc_upsert_in_namespace(
+    u: &crate::Uteke,
+    slug: &str,
+    content: &str,
+    namespace: &str,
+) -> String {
+    let id = u
+        .doc_upsert(slug, slug, content, &[], None)
+        .expect("doc_upsert");
+    u.store
+        .conn
+        .execute(
+            "UPDATE documents SET namespace = ?1 WHERE id = ?2",
+            rusqlite::params![namespace, id],
+        )
+        .expect("set document namespace");
+    id
+}
+
+/// Store a document whose chunks have no vectors yet, like a structural import
+/// before `uteke repair --reembed`.
+pub fn doc_upsert_unembedded(u: &crate::Uteke, slug: &str, content: &str) -> String {
+    u.doc_upsert_inner(slug, slug, content, &[], None, None, true)
+        .expect("doc_upsert_inner")
+}
+
 /// Query that matches every record of [`seed_two_scopes`] in both namespaces.
 pub const ISOLATION_QUERY: &str = "quartz meridian orchid ledger";
 /// The two namespaces of [`seed_two_scopes`].

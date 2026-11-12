@@ -323,6 +323,7 @@ fn collect_schemas(schemas: &mut BTreeMap<&'static str, Value>) {
     add_schema!("DocCreateRequest", uteke_server::types::DocCreateRequest);
     add_schema!("DocGetRequest", uteke_server::types::DocGetRequest);
     add_schema!("DocMoveRequest", uteke_server::types::DocMoveRequest);
+    add_schema!("DocSimilarRequest", uteke_server::types::DocSimilarRequest);
 
     // Tags
     add_schema!("TagRenameRequest", uteke_server::types::TagRenameRequest);
