@@ -15,8 +15,16 @@
 //! - show: a slug of at most [`MAX_SLUG_LEN`] characters; the answer holds at
 //!   most 50 versions and 20 ledger rows and the manifest of one package;
 //! - similar: a stored skill or a draft text of at most
-//!   [`MAX_REMOTE_TEXT_CHARS`] characters (the size of the largest indexed
-//!   file), `limit` clamped to `1..=100` (default 10).
+//!   [`MAX_REMOTE_TEXT_CHARS`] characters (32768; the CLI accepts more),
+//!   `limit` clamped to `1..=100` (default 10).
+//!
+//! A request that embeds a string (`similar` with `text`, `search` in
+//! `hybrid` or `semantic` mode) takes one of [`crate::remote_guard`]'s slots;
+//! when they are all taken it fails at once with [`Error::Busy`] (HTTP 429).
+//!
+//! The answers never carry `source_path`, the server directory a skill was
+//! indexed from: [`SkillRemoteSummary`] and [`SkillRemoteDetail`] are the
+//! remote shape of the CLI's `SkillSummary` and `SkillDetail`.
 //!
 //! A field that does not belong to the operation is refused, not ignored.
 
@@ -25,16 +33,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::doc_similarity::{DEFAULT_SIMILAR_LIMIT, MAX_SIMILAR_LIMIT};
 use crate::error::Error;
+use crate::remote_guard::MAX_REMOTE_DRAFT_CHARS;
 use crate::skill_library::{
-    DEFAULT_LIST_LIMIT, DEFAULT_SEARCH_LIMIT, MAX_LIST_LIMIT, MAX_SEARCH_LIMIT, SkillDetail,
-    SkillHit, SkillSimilarReport, SkillSummary,
+    DEFAULT_LIST_LIMIT, DEFAULT_SEARCH_LIMIT, LedgerEntry, MAX_LIST_LIMIT, MAX_SEARCH_LIMIT,
+    SkillDetail, SkillHit, SkillSimilarReport, SkillSummary, SkillUsage, SkillVersion, VersionLine,
 };
-use crate::skill_package::{MAX_INDEXED_FILE_BYTES, MAX_SLUG_LEN};
+use crate::skill_package::MAX_SLUG_LEN;
 
-/// Longest draft text `similar` accepts from a remote caller, in characters.
-/// An indexed skill file is at most this many bytes, so a longer draft is not
-/// a skill file.
-pub const MAX_REMOTE_TEXT_CHARS: usize = MAX_INDEXED_FILE_BYTES as usize;
+/// Longest draft text `similar` accepts from a remote caller, in characters
+/// (the same cap as `POST /doc/similar`; the CLI keeps its larger one).
+pub const MAX_REMOTE_TEXT_CHARS: usize = MAX_REMOTE_DRAFT_CHARS;
 
 /// The four read operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,7 +134,7 @@ impl SkillRemoteArgs {
 pub enum SkillRemoteAnswer {
     Search(SkillSearchAnswer),
     List(SkillListAnswer),
-    Show(Box<SkillDetail>),
+    Show(Box<SkillRemoteDetail>),
     Similar(SkillSimilarReport),
 }
 
@@ -149,7 +157,66 @@ pub struct SkillListAnswer {
     /// Skills that match the status filter, before the limit.
     pub total: usize,
     pub count: usize,
-    pub skills: Vec<SkillSummary>,
+    pub skills: Vec<SkillRemoteSummary>,
+}
+
+/// A skill in a remote listing: [`SkillSummary`] without `source_path`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkillRemoteSummary {
+    pub slug: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub status: String,
+    pub hash: String,
+    pub valid: bool,
+    pub owner: Option<String>,
+    pub updated_at: String,
+}
+
+impl From<SkillSummary> for SkillRemoteSummary {
+    fn from(s: SkillSummary) -> Self {
+        Self {
+            slug: s.slug,
+            name: s.name,
+            description: s.description,
+            status: s.status,
+            hash: s.hash,
+            valid: s.valid,
+            owner: s.owner,
+            updated_at: s.updated_at,
+        }
+    }
+}
+
+/// Everything remote `skill show` returns: [`SkillDetail`] without
+/// `source_path`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkillRemoteDetail {
+    pub slug: String,
+    pub owner: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub current: SkillVersion,
+    pub approved_hash: Option<String>,
+    pub usage: SkillUsage,
+    pub versions: Vec<VersionLine>,
+    pub ledger: Vec<LedgerEntry>,
+}
+
+impl From<SkillDetail> for SkillRemoteDetail {
+    fn from(d: SkillDetail) -> Self {
+        Self {
+            slug: d.slug,
+            owner: d.owner,
+            created_at: d.created_at,
+            updated_at: d.updated_at,
+            current: d.current,
+            approved_hash: d.approved_hash,
+            usage: d.usage,
+            versions: d.versions,
+            ledger: d.ledger,
+        }
+    }
 }
 
 fn slug_arg(slug: &str) -> Result<&str, Error> {
@@ -171,7 +238,7 @@ impl crate::Uteke {
     /// # Errors
     ///
     /// `Validation` for a missing, foreign, empty, over-long or malformed
-    /// parameter, `NotFound` for an unknown skill, an embedding error when a
+    /// parameter, `NotFound` for an unknown skill, `Busy` when the embedding slots are taken, an embedding error when a
     /// draft text or a semantic search needs a model that is not available.
     pub fn skill_remote(
         &self,
@@ -191,6 +258,12 @@ impl crate::Uteke {
                     .unwrap_or(DEFAULT_SEARCH_LIMIT)
                     .clamp(1, MAX_SEARCH_LIMIT);
                 let approved_only = args.approved_only.unwrap_or(false);
+                // `fts` never embeds; the other modes embed the query.
+                let _permit = if mode == "fts" {
+                    None
+                } else {
+                    Some(self.remote_embed_permit()?)
+                };
                 let hits = self.skill_search(query, limit, mode, approved_only)?;
                 Ok(SkillRemoteAnswer::Search(SkillSearchAnswer {
                     mode: mode.to_string(),
@@ -223,7 +296,7 @@ impl crate::Uteke {
                     limit,
                     total: total as usize,
                     count: skills.len(),
-                    skills,
+                    skills: skills.into_iter().map(Into::into).collect(),
                 }))
             }
             SkillRemoteOp::Show => {
@@ -233,7 +306,7 @@ impl crate::Uteke {
                     .as_deref()
                     .ok_or_else(|| Error::validation("'slug' is required"))?;
                 Ok(SkillRemoteAnswer::Show(Box::new(
-                    self.skill_show(slug_arg(slug)?)?,
+                    self.skill_show(slug_arg(slug)?)?.into(),
                 )))
             }
             SkillRemoteOp::Similar => {
@@ -255,11 +328,7 @@ impl crate::Uteke {
                         self.skill_similar(slug_arg(slug)?, args.threshold, limit)?
                     }
                     (None, Some(text)) => {
-                        if text.chars().count() > MAX_REMOTE_TEXT_CHARS {
-                            return Err(Error::validation(format!(
-                                "text is longer than {MAX_REMOTE_TEXT_CHARS} characters"
-                            )));
-                        }
+                        let _permit = self.remote_draft_permit(text)?;
                         self.skill_similar_to_text(text, args.threshold, limit)?
                     }
                 };

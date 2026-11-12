@@ -360,6 +360,7 @@ impl ReqCtx {
         match e.class() {
             ErrorClass::BadRequest => self.error_response_for(req, 400, e.to_string()),
             ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
+            ErrorClass::Busy => self.error_response_for(req, 429, e.to_string()),
             _ => {
                 tracing::error!("Internal error: {e}");
                 let body = match e {

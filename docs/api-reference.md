@@ -116,7 +116,7 @@ Rebuild the vector index from stored embeddings to fix recall desync (#1266). SQ
 
 #### 🟡 `POST` `/skill/search`
 
-Search the personal skill library (#1731): the skills whose indexed files match `query` (at most 2000 characters), best first, one hit per skill with the file and snippet that matched. `mode` is `hybrid` (default), `semantic` or `fts`; `limit` is clamped to 1 to 50 (default 5); `approved_only` keeps only skills whose current version is approved. Hybrid falls back to keywords without the embedding model, `semantic` needs it (503 without). Skill files are not documents: they never appear in `/doc/*`. Nothing is written. Read-only.
+Search the personal skill library (#1731): the skills whose indexed files match `query` (at most 2000 characters), best first, one hit per skill with the file and snippet that matched. `mode` is `hybrid` (default), `semantic` or `fts`; `limit` is clamped to 1 to 50 (default 5); `approved_only` keeps only skills whose current version is approved. Hybrid falls back to keywords without the embedding model, `semantic` needs it (503 without); `hybrid` and `semantic` embed the query, so 429 when two embedding requests already run (`fts` never does). Skill files are not documents: they never appear in `/doc/*`. Nothing is written. Read-only.
 
 **Request body**: [`SkillSearchRequest`](#skillsearchrequest)
 
@@ -124,7 +124,7 @@ Search the personal skill library (#1731): the skills whose indexed files match 
 
 #### 🟡 `POST` `/skill/list`
 
-List the skills of the personal library, by slug, with their current version (status, hash, validity, source path, owner). `status` keeps `draft` or `approved` skills; `limit` is clamped to 1 to 200 (default 50) and `total` counts the skills that match before the limit. Nothing is written. Read-only.
+List the skills of the personal library, by slug, with their current version (status, hash, validity, owner; never the server path it was indexed from). `status` keeps `draft` or `approved` skills; `limit` is clamped to 1 to 200 (default 50) and `total` counts the skills that match before the limit. Nothing is written. Read-only.
 
 **Request body**: [`SkillListRequest`](#skilllistrequest)
 
@@ -140,7 +140,7 @@ One skill: its current version (hash, status, validity and lint issues, file man
 
 #### 🟡 `POST` `/skill/similar`
 
-Skills close to a skill (`slug`) or to a draft `text` that is not stored (at most 131072 characters; needs the embedding model, 503 without). Compares the `SKILL.md` document vectors: `possible_duplicate` from 0.92, `similar_to` from 0.80, `threshold` overrides the floor, `limit` is clamped to 1 to 100 (default 10). Nothing is written. Read-only.
+Skills close to a skill (`slug`) or to a draft `text` that is not stored (at most 32768 characters; needs the embedding model, 503 without; 429 when two embedding requests already run). Compares the `SKILL.md` document vectors: `possible_duplicate` from 0.92, `similar_to` from 0.80, `threshold` overrides the floor, `limit` is clamped to 1 to 100 (default 10). Nothing is written. Read-only.
 
 **Request body**: [`SkillSimilarRequest`](#skillsimilarrequest)
 
@@ -316,7 +316,7 @@ Search documents by query with optional mode/namespace/limit.
 
 #### 🟡 `POST` `/doc/similar`
 
-Documents close to a stored document (`slug` or `id`) or to a draft `text` that is not stored, or, with `report: true`, the near-duplicate pairs and groups of a namespace or a `subtree`. Compares document vectors (the mean of the chunk vectors): `possible_duplicate` at 0.92 and above, `similar_to` at 0.80 and above (`[doc_similarity]` in uteke.toml), `threshold` overrides the floor, `limit` caps the hits (default 10, max 100; a report lists 50 pairs, max 500). Documents without vectors are skipped and counted in `documents_without_vector`. Nothing is written; `text` needs the embedding model (503 without). Read-only.
+Documents close to a stored document (`slug` or `id`) or to a draft `text` that is not stored, or, with `report: true`, the near-duplicate pairs and groups of a namespace or a `subtree`. Compares document vectors (the mean of the chunk vectors): `possible_duplicate` at 0.92 and above, `similar_to` at 0.80 and above (`[doc_similarity]` in uteke.toml), `threshold` overrides the floor, `limit` caps the hits (default 10, max 100; a report lists 50 pairs, max 500). Documents without vectors are skipped and counted in `documents_without_vector`. Nothing is written; `text` (at most 32768 characters) needs the embedding model (503 without; 429 when two embedding requests already run). Read-only.
 
 **Request body**: [`DocSimilarRequest`](#docsimilarrequest)
 
@@ -958,7 +958,7 @@ that is not stored. Give `slug` OR `text`. Read-only.
 |-------|------|----------|-------------|
 | `limit` | any | No | Maximum hits, 1 to 100 (default 10). |
 | `slug` | any | No | A skill of the library. |
-| `text` | any | No | A draft text that is not stored (at most 131072 characters); needs the embedding model. |
+| `text` | any | No | A draft text that is not stored (at most 32768 characters; 429 when two embeddings already run); needs the embedding model. |
 | `threshold` | any | No | Minimum cosine similarity, 0 to 1 (default 0.80). |
 
 

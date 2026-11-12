@@ -48,6 +48,12 @@ pub enum Error {
     )]
     InvalidRoomId { id: String },
 
+    /// A remote request was refused because the server is already running as
+    /// many of that kind as it allows (see `remote_guard`). Transports answer
+    /// HTTP 429 or a tool error; the message is shown as it is.
+    #[error("{0}")]
+    Busy(String),
+
     #[error("Lock error: {context}")]
     Lock { context: String },
 
@@ -70,6 +76,9 @@ pub enum ErrorClass {
     /// A new room id outside `category:title` while that shape is required:
     /// HTTP 400 `invalid_room_id` (#1715).
     InvalidRoomId,
+    /// The server is busy with as many requests of this kind as it allows:
+    /// HTTP 429 (#1731).
+    Busy,
     /// Anything else: HTTP 500.
     Internal,
 }
@@ -131,6 +140,7 @@ impl Error {
             Error::SecretDetected { .. } => ErrorClass::SecretDetected,
             Error::RejectedValue { .. } => ErrorClass::RejectedValue,
             Error::InvalidRoomId { .. } => ErrorClass::InvalidRoomId,
+            Error::Busy(_) => ErrorClass::Busy,
             Error::Io(_)
             | Error::Database { .. }
             | Error::Embedding { .. }

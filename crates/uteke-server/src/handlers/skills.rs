@@ -21,6 +21,7 @@ where
         Err(e) => match e.class() {
             uteke_core::ErrorClass::NotFound => ctx.error_response_for(req, 404, e.to_string()),
             uteke_core::ErrorClass::BadRequest => ctx.error_response_for(req, 400, e.to_string()),
+            uteke_core::ErrorClass::Busy => ctx.error_response_for(req, 429, e.to_string()),
             _ if matches!(e, uteke_core::Error::Embedding { .. }) => ctx.error_response_for(
                 req,
                 503,

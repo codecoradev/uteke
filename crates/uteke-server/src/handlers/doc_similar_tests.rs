@@ -548,3 +548,44 @@ fn the_route_is_a_lab_row_that_does_not_write() {
     // Only POST is routed.
     assert!(crate::api_registry::find("GET", "/doc/similar").is_none());
 }
+
+#[test]
+fn a_remote_draft_text_is_capped_and_bounded_in_concurrency() {
+    let app = App::library();
+    // Every chunk must hold the marker the test embedder looks for.
+    let pad = |n: usize| {
+        "AXIS "
+            .repeat(n / 5 + 1)
+            .chars()
+            .take(n)
+            .collect::<String>()
+    };
+    assert_eq!(
+        app.post("/doc/similar", json!({"text": pad(32_768)})).0,
+        200
+    );
+    assert_eq!(
+        app.refused(json!({"text": pad(32_769)})),
+        (
+            400,
+            "Validation error: text is longer than 32768 characters".to_string()
+        )
+    );
+    let (_a, _b) = {
+        let u = app.uteke.lock().unwrap();
+        (
+            u.remote_embed_permit().unwrap(),
+            u.remote_embed_permit().unwrap(),
+        )
+    };
+    assert_eq!(
+        app.refused(json!({"text": "AXIS"})),
+        (
+            429,
+            "busy: 2 embedding requests are already running; retry in a moment".to_string()
+        )
+    );
+    // A stored document and a report embed nothing.
+    assert_eq!(app.post("/doc/similar", json!({"slug": "src"})).0, 200);
+    assert_eq!(app.post("/doc/similar", json!({"report": true})).0, 200);
+}

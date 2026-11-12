@@ -24,6 +24,7 @@ pub mod dream;
 mod edges;
 mod embed;
 mod embedding;
+pub mod remote_guard;
 pub mod session_view;
 pub mod skill_library;
 #[cfg(test)]
@@ -709,6 +710,8 @@ pub struct Uteke {
     embedder_init_error: Mutex<Option<(String, std::time::Instant, bool)>>,
     /// Serializes building the embedder so a model load never runs twice.
     embedder_build: Mutex<()>,
+    /// Bounds the remote requests that embed a client-supplied string.
+    remote_embeds: remote_guard::EmbedGate,
     /// Embedding backend name ("onnx", "openai", "ollama", "custom"). Used by lazy init.
     embedder_backend: String,
     /// Caller-supplied embedding settings (from uteke.toml). Env vars still
@@ -1192,6 +1195,7 @@ impl Uteke {
             embedder: Mutex::new(embedder.map(std::sync::Arc::from)),
             embedder_init_error: Mutex::new(None),
             embedder_build: Mutex::new(()),
+            remote_embeds: remote_guard::EmbedGate::default(),
             embedder_backend,
             embedding_settings,
             fallback_settings: FallbackSettings::default(),

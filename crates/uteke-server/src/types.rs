@@ -140,8 +140,8 @@ pub struct SkillSimilarRequest {
     /// A skill of the library.
     #[serde(default)]
     pub slug: Option<String>,
-    /// A draft text that is not stored (at most 131072 characters); needs the
-    /// embedding model.
+    /// A draft text that is not stored (at most 32768 characters; 429 when two
+    /// embeddings already run); needs the embedding model.
     #[serde(default)]
     pub text: Option<String>,
     /// Minimum cosine similarity, 0 to 1 (default 0.80).
