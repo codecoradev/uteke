@@ -160,7 +160,7 @@ A client that parses the tool text itself can turn the block off with
 
 ## Available Tools
 
-Both transports expose the same 53 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 57 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -187,6 +187,10 @@ Both transports expose the same 53 tools (MCP protocol version `2025-06-18`):
 | `uteke_doc_list` | List all documents |
 | `uteke_doc_search` | Search documents |
 | `uteke_doc_similar` | Documents close to a document or to a draft text that is not stored, or (`report: true`) the near-duplicate pairs and groups of a namespace or subtree (#1730). Read-only; returns JSON |
+| `uteke_skill_search` | Search the personal skill library (#1731): the few skills whose indexed files match a task, one hit per skill with status, package hash, file and snippet. Read-only; returns JSON |
+| `uteke_skill_list` | List the skills of the library with their current version (`status` draft or approved, `limit` up to 200). Read-only; returns JSON |
+| `uteke_skill_show` | One skill: current version, `approved_hash`, file manifest, usage, versions and ledger. Read-only; returns JSON |
+| `uteke_skill_similar` | Skills close to a skill or to a draft text that is not stored. Read-only; returns JSON |
 | `uteke_doc_delete` | Delete a document |
 | `uteke_doc_update` | Partial document update with chunk rebuild (#589) |
 | `uteke_doc_move` | Move document to new parent (#438) |
@@ -310,7 +314,7 @@ OAuth-based sign-in for MCP clients is not part of the self-hosted server.
 A client authenticated with `UTEKE_READ_ONLY_TOKEN` can call these tools over
 `POST /mcp`: `uteke_recall`, `uteke_search`, `uteke_list`, `uteke_get`,
 `uteke_provenance`, `uteke_timeline`, `uteke_contradictions`, `uteke_stats`,
-`uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_similar`, `uteke_doc_list_rooms`,
+`uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_similar`, `uteke_skill_search`, `uteke_skill_list`, `uteke_skill_show`, `uteke_skill_similar`, `uteke_doc_list_rooms`,
 `uteke_graph`, `uteke_room_list`, `uteke_room_recall`, `uteke_room_memories`,
 `uteke_room_stats`, `uteke_room_search`, `uteke_room_summary`, `uteke_room_summary_document` (alias
 `uteke_room_document`), `uteke_room_list_documents` and `uteke_tags_list`.

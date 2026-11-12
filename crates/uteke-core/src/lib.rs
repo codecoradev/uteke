@@ -29,6 +29,9 @@ pub mod skill_library;
 #[cfg(test)]
 mod skill_library_tests;
 pub mod skill_package;
+pub mod skill_remote;
+#[cfg(test)]
+mod skill_remote_tests;
 pub use embedding::EmbeddingWarmer;
 pub mod embedding_config;
 #[cfg(test)]
@@ -2026,13 +2029,16 @@ impl Uteke {
         Ok(())
     }
 
-    /// Get a document by ID or slug.
+    /// Get a document by ID or slug. The files of an indexed skill (#1731) are
+    /// not documents here: they are answered by the `skill` commands only, so
+    /// `doc get`, `POST /doc/get` and `uteke_doc_get` cannot read or edit them.
     pub fn doc_get(&self, id_or_slug: &str) -> Result<Option<Document>, Error> {
         // Try by slug first, then by ID.
-        if let Some(doc) = self.store.get_document_by_slug(id_or_slug)? {
-            return Ok(Some(doc));
-        }
-        self.store.get_document(id_or_slug)
+        let doc = match self.store.get_document_by_slug(id_or_slug)? {
+            Some(doc) => Some(doc),
+            None => self.store.get_document(id_or_slug)?,
+        };
+        Ok(doc.filter(|d| d.content_type != "skill"))
     }
 
     /// Partially update a document — only provided fields are changed.
@@ -2126,9 +2132,16 @@ impl Uteke {
     ) -> Result<Vec<DocumentSummary>, Error> {
         // Resolve slug to ID first.
         let parent_id = match self.store.get_document_by_slug(parent_id_or_slug)? {
+            // The files of a skill (#1731) are not listed as documents.
+            Some(doc) if doc.content_type == "skill" => return Ok(Vec::new()),
             Some(doc) => doc.id,
             None => parent_id_or_slug.to_string(),
         };
+        if let Some(doc) = self.store.get_document(&parent_id)? {
+            if doc.content_type == "skill" {
+                return Ok(Vec::new());
+            }
+        }
         self.store.list_document_children(&parent_id, limit)
     }
 

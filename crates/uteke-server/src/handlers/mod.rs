@@ -53,6 +53,9 @@ mod room_link_tests;
 mod rooms;
 #[cfg(test)]
 mod rooms_contract_tests;
+#[cfg(test)]
+mod skill_remote_tests;
+mod skills;
 mod tags;
 #[cfg(test)]
 mod warmup_tests;
@@ -217,6 +220,11 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/doc/search", docs::post_doc_search),
     // ── Document: Similar / near-duplicates (#1730, LAB) ─────────────
     ("POST", "/doc/similar", docs::post_doc_similar),
+    // ── Skill library: read-only (#1731, LAB) ────────────────────────
+    ("POST", "/skill/search", skills::post_skill_search),
+    ("POST", "/skill/list", skills::post_skill_list),
+    ("POST", "/skill/show", skills::post_skill_show),
+    ("POST", "/skill/similar", skills::post_skill_similar),
     // ── Document: Move ───────────────────────────────────────────────
     ("POST", "/doc/move", docs::post_doc_move),
     // ── Document: Delete ─────────────────────────────────────────────

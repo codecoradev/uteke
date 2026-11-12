@@ -19,6 +19,7 @@ struct App {
 impl App {
     fn new() -> Self {
         let u = seed_two_scopes();
+        uteke_core::test_support::seed_skill_library(&u);
         // The shared vocabulary makes remember link the seeded memories, so
         // none is an orphan; one unrelated memory per scope gives `/orphans`
         // something to return.
@@ -161,6 +162,13 @@ fn surfaces(scope: &str) -> Vec<Surface> {
             json!({"report": true, "namespace": scope}),
             false,
         ),
+        // #1731: skills are global too (no namespace field): the answers hold
+        // no memory of either scope.
+        post("/skill/search", json!({"query": Q}), false),
+        post("/skill/list", json!({}), false),
+        post("/skill/show", json!({"slug": "deploy"}), false),
+        post("/skill/similar", json!({"slug": "deploy-copy"}), false),
+        post("/skill/similar", json!({"text": Q}), false),
     ];
     for strategy in ["hybrid", "vector", "fts5", "graph", "fusion"] {
         for search_type in ["memory", "all"] {

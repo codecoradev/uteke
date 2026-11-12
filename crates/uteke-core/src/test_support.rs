@@ -203,6 +203,53 @@ pub fn seed_two_scopes() -> crate::Uteke {
     u
 }
 
+/// Index three skills into `u` (the keyword embedder is enough): `deploy`
+/// (with a reference file, approved), `deploy-copy` (the same text, a draft)
+/// and `cooking` (unrelated, a draft). They share the vocabulary of
+/// [`ISOLATION_QUERY`] so a scoped query finds them; skills have no namespace.
+/// Returns the package hash of `deploy`.
+pub fn seed_skill_library(u: &crate::Uteke) -> String {
+    let dir = std::env::temp_dir().join(format!("uteke-skill-seed-{}", uuid::Uuid::new_v4()));
+    let write = |rel: &str, content: &str| {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("mkdir");
+        std::fs::write(p, content).expect("write");
+    };
+    let deploy = format!("# Deploy\n\n{ISOLATION_QUERY} deploy rollout");
+    for (slug, desc, body) in [
+        ("deploy", "Ship a release safely", deploy.as_str()),
+        ("deploy-copy", "Ship a release safely", deploy.as_str()),
+        (
+            "cooking",
+            "Cook dinner",
+            "# Cooking\n\nzebra violin tractor glacier lantern recipe",
+        ),
+    ] {
+        write(
+            &format!("{slug}/SKILL.md"),
+            &format!("---\nname: {slug}\ndescription: {desc}\n---\n{body}\n"),
+        );
+    }
+    write(
+        "deploy/references/rollback.md",
+        "# Rollback\n\nlantern harbour rollback procedure emberglow",
+    );
+    let report = u
+        .skill_index(&dir, Some("alice"), None)
+        .expect("skill_index");
+    let _ = std::fs::remove_dir_all(&dir);
+    let hash = report
+        .skills
+        .iter()
+        .find(|s| s.slug == "deploy")
+        .expect("deploy indexed")
+        .hash
+        .clone();
+    u.skill_approve("deploy", &hash, Some("alice"))
+        .expect("approve");
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

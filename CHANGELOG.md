@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Personal skill library, read-only remote surfaces (#1731, LAB, stage 2)** - `POST /skill/search`,
+  `/skill/list`, `/skill/show` and `/skill/similar` and the MCP tools `uteke_skill_search`,
+  `uteke_skill_list`, `uteke_skill_show` and `uteke_skill_similar` (in the read-only set, results
+  fenced as stored data) let an agent, tole for one, recall only the few skills a task needs over
+  the API that `uteke serve` already exposes. Both transports call one core entry point
+  (`Uteke::skill_remote`), so they validate identically: a field that does not belong to the
+  operation or is unknown is refused, and every client-supplied size is bounded (query 2000
+  characters, `limit` clamped to 1-50 for search, 1-200 for list and 1-100 for similar, a draft
+  `text` at most 131072 characters, a slug 64). `index`, `approve`, `record` and `lint` are not
+  remote and stay CLI-only. Skill files are no longer readable or editable as documents:
+  `doc get`, `POST /doc/get`, `uteke_doc_get`, `doc update` and the children of a skill file answer
+  "not found" (before, a document read by slug returned the file text). No schema change.
 - **Personal skill library (#1731, LAB, stage 1: core and CLI)** - `uteke skill index <dir>`
   reads the skills of this machine (a directory with a `SKILL.md`; no file is ever modified, links
   are not followed, every read is bounded), records each package's hash and lints it, and embeds its
@@ -16,7 +28,7 @@
   draft and stales the old approval, and an append-only ledger (triggers refuse UPDATE and DELETE)
   records every change with the hash before and after. Schema v27 adds `skills`, `skill_versions`,
   `skill_usage` and `skill_ledger` under the Cloud registry's names. The shared registry stays in
-  Cloud. HTTP and MCP routes for the library are not part of this stage.
+  Cloud. HTTP and MCP routes for the library follow in stage 2 (above).
 - **Similar documents and a duplicate report (#1730, LAB)** - which documents are close to this one,
   and is there already a document like this draft? `uteke doc similar <slug>` (or `--text` /
   `--file` for a draft that is not stored), `uteke doc duplicates [--subtree] [--namespace]`,

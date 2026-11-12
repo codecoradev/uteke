@@ -195,6 +195,14 @@ fn main() {
                     "  POST /doc/similar           → {{ slug | text | report, threshold?, limit?, namespace?, subtree? }} → {{ hits | pairs }}"
                 );
                 println!(
+                    "  POST /skill/search          → {{ query, mode?, limit?, approved_only? }} → {{ hits }}"
+                );
+                println!("  POST /skill/list            → {{ status?, limit? }} → {{ skills }}");
+                println!("  POST /skill/show            → {{ slug }} → skill detail");
+                println!(
+                    "  POST /skill/similar         → {{ slug | text, threshold?, limit? }} → {{ hits }}"
+                );
+                println!(
                     "  POST /doc/move              → {{ id | slug, new_parent? }} → {{ moved }}"
                 );
                 println!("  DEL  /doc/delete?id=UUID    → {{ deleted, subtree_size }}");
