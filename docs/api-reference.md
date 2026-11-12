@@ -282,6 +282,14 @@ Search documents by query with optional mode/namespace/limit.
 
 **Request body**: [`DocSearchRequest`](#docsearchrequest)
 
+#### 🟡 `POST` `/doc/similar`
+
+Documents close to a stored document (`slug` or `id`) or to a draft `text` that is not stored, or, with `report: true`, the near-duplicate pairs and groups of a namespace or a `subtree`. Compares document vectors (the mean of the chunk vectors): `possible_duplicate` at 0.92 and above, `similar_to` at 0.80 and above (`[doc_similarity]` in uteke.toml), `threshold` overrides the floor, `limit` caps the hits (default 10, max 100; a report lists 50 pairs, max 500). Documents without vectors are skipped and counted in `documents_without_vector`. Nothing is written; `text` needs the embedding model (503 without). Read-only.
+
+**Request body**: [`DocSimilarRequest`](#docsimilarrequest)
+
+*Related: `1730`*
+
 #### 🟡 `POST` `/doc/update`
 
 Update an existing document (content, title, tags, parent).
@@ -634,6 +642,28 @@ One turn for the capture queue (`POST /capture`, LAB).
 | `new_parent` | any | No |  |
 | `new_sort_order` | any | No | Optional sort order for the moved document (#sort-order). |
 | `slug` | any | No |  |
+
+
+### `DocSimilarRequest`
+
+`POST /doc/similar` (#1730): documents close to a document or to a draft
+text, or (with `report`) the near-duplicates of a namespace or subtree.
+
+Similar documents: give `slug` (or `id`) OR `text`, plus optional
+`threshold`, `limit`, `namespace`. Duplicate report: `report: true` plus
+optional `subtree`, `namespace`, `threshold`, `limit`; no `slug`/`text`.
+Nothing is written either way.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | any | No | Id (or slug) of a stored document. |
+| `limit` | any | No | Maximum hits (default 10, at most 100), or pairs for a report (default 50, at most 500). |
+| `namespace` | any | No | Only compare with documents of this namespace (default: all). |
+| `report` | `boolean` | No | `true`: report the near-duplicate pairs and groups of the scope. |
+| `slug` | any | No | Slug of a stored document (alias of `id`). |
+| `subtree` | any | No | Report only: the slug or id of the document whose subtree to scan. |
+| `text` | any | No | Candidate text that is not stored: the near-duplicates "before it is stored". Needs the embedding model. |
+| `threshold` | any | No | Minimum cosine similarity, 0 to 1. Default: the configured `similar_to` threshold (0.80), or `possible_duplicate` (0.92) for a report. |
 
 
 ### `ErrorResponse`

@@ -29,6 +29,8 @@ mod author_tests;
 mod capture;
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod doc_similar_tests;
 mod docs;
 #[cfg(test)]
 mod error_tests;
@@ -213,6 +215,8 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/doc/list", docs::post_doc_list),
     // ── Document: Search ────────────────────────────────────────────
     ("POST", "/doc/search", docs::post_doc_search),
+    // ── Document: Similar / near-duplicates (#1730, LAB) ─────────────
+    ("POST", "/doc/similar", docs::post_doc_similar),
     // ── Document: Move ───────────────────────────────────────────────
     ("POST", "/doc/move", docs::post_doc_move),
     // ── Document: Delete ─────────────────────────────────────────────

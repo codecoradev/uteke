@@ -235,6 +235,10 @@
     },
     {
       "method": "POST",
+      "path": "/doc/similar"
+    },
+    {
+      "method": "POST",
       "path": "/doc/update"
     },
     {

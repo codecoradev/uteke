@@ -282,7 +282,7 @@ the longest session takes: every chunk is one request of up to two minutes.
 
 ## Recall Threshold
 
-The `[recall]`, `[tier]`, `[dream]`, `[lifecycle]` and `[embed_fallback]` sections are read the same way by the CLI, `uteke-serve` and `uteke-mcp` (the global `uteke.toml`, then the project file with its untrusted keys stripped, then the `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` variables). `uteke_recall` over MCP, and MCP over HTTP, use `[recall] min_score` / `min_score_strict` as the floor and `default_strategy` as the strategy when a call gives none, exactly like `POST /recall`. With no `[recall]` section the defaults equal the built-ins, so nothing changes.
+The `[recall]`, `[tier]`, `[dream]`, `[lifecycle]`, `[embed_fallback]` and `[doc_similarity]` sections are read the same way by the CLI, `uteke-serve` and `uteke-mcp` (the global `uteke.toml`, then the project file with its untrusted keys stripped, then the `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` variables). `uteke_recall` over MCP, and MCP over HTTP, use `[recall] min_score` / `min_score_strict` as the floor and `default_strategy` as the strategy when a call gives none, exactly like `POST /recall`. With no `[recall]` section the defaults equal the built-ins, so nothing changes.
 
 Control minimum similarity score for recall results:
 
@@ -488,6 +488,22 @@ require_category_title = false   # default; true refuses new ids of another shap
 - `true`: a NEW canonical room id of another shape is refused: `room create`, the target of `room rename`, and a room that a write (`room remember`, `remember --room`) would create. HTTP answers `400` with `{"error": "invalid_room_id", "message": "...", "room_id": "..."}`; MCP errors start with `invalid_room_id:`. A refused room write stores nothing.
 
 Existing rooms, aliases of renamed rooms and reads are never refused. Restoring a backup with `uteke import` and `uteke namespace migrate` keep the ids they are given. Global file only (see [Trust](#trust-what-a-project-file-may-not-set)). This is stage 3 of #1715; it stays off until the old rooms are migrated on OSS and Cloud.
+
+## Document Similarity (#1730)
+
+`uteke doc similar`, `uteke doc duplicates`, `POST /doc/similar` and `uteke_doc_similar` label a document pair `possible_duplicate` or `similar_to` by the cosine of the two document vectors (the mean of the chunk vectors, L2-normalised). The defaults are the thresholds of the memory auto-link:
+
+```toml
+[doc_similarity]
+similar_threshold = 0.80      # default; cosine at or above: similar_to (also the default floor of a similar search)
+duplicate_threshold = 0.92    # default; cosine at or above: possible_duplicate (also the default floor of a report)
+```
+
+- Both keys are optional and are numbers from 0 to 1; a score exactly at a threshold counts.
+- A value that is not a number from 0 to 1 falls back to its default and logs a warning; a `similar_threshold` above the `duplicate_threshold` resets both to the defaults (and logs a warning). The rest of the file is read as usual.
+- A request can still pass its own `threshold` (`--threshold`, the `threshold` field), which replaces the floor of that call only.
+- The section changes nothing for memories: the auto-link of `remember` keeps 0.80 and 0.92, and the dream cycle keeps `[dream] dedup_threshold`.
+- Project files may set it (it only changes what a read reports).
 
 ## Privacy Filter (#1464)
 

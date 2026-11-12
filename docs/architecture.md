@@ -332,6 +332,8 @@ After every `remember()`, the vector index is searched for the top-20 most simil
 
 Edges are namespace-scoped (no cross-namespace links). Best-effort: errors logged, never fail `remember()`.
 
+Document chunks are not link targets here. Documents have their own similarity (#1730): the **document vector** is the mean of a document's chunk vectors, L2-normalised, read from SQLite. `uteke doc similar`, `uteke doc duplicates`, `POST /doc/similar` and `uteke_doc_similar` compare those vectors with the same default thresholds (0.80 `similar_to`, 0.92 `possible_duplicate`, configurable in `[doc_similarity]`) and can also score a draft text that is not stored. The relation is derived on every call; no document edge is stored (`memory_edges` points at memories, and a stored copy would go stale on every update, move, delete, re-embed and threshold change).
+
 ## Graph API (#408)
 
 `GET /graph` returns all graph nodes, edges, and stats as JSON for visualization clients:

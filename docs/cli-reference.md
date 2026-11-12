@@ -1320,6 +1320,54 @@ uteke doc search "API reference" --mode fts --limit 5
 | `--mode <mode>` | `hybrid` (default), `semantic`, or `fts` |
 | `--limit <n>` | Max results (default: 5) |
 
+### `uteke doc similar`
+
+Find documents that are close to a document, or to a draft text that is not stored yet (#1730). Nothing is written.
+
+```bash
+uteke doc similar deploy-runbook
+uteke doc similar deploy-runbook --threshold 0.9 --limit 5 --json
+uteke doc similar --file draft-skill.md        # a draft: is there already one like it?
+cat draft.md | uteke doc similar --file -
+uteke doc similar --text "# Rotate keys\n\nSteps to rotate the signing keys"
+```
+
+The comparison uses the **document vector**: the mean of the document's chunk vectors, L2-normalised (no extra embedding call; a draft is chunked and embedded like a document body, so its score equals the one the stored document would get). A hit carries the edge type of the memory graph: `possible_duplicate` at cosine 0.92 and above, `similar_to` at 0.80 and above, `related` only when you pass a `--threshold` below 0.80. Both limits are configurable in [`[doc_similarity]`](configuration.md#document-similarity-1730). The relations are derived from the stored vectors on every call, not stored as edges.
+
+A document without a usable vector (no chunks, a chunk not embedded yet after a structural import, vectors of another size) is skipped and counted: `documents_without_vector` in `--json`, a note in text mode. Run `uteke repair --reembed` to embed it. Asking for the neighbours of such a document returns `source_embedded: false` and no hits. `--text` and `--file` need the embedding model; a slug does not.
+
+| Argument | Description |
+|----------|-------------|
+| `<slug>` | A stored document (slug or id); omit with `--text` / `--file` |
+| `--text <text>` | Draft text instead of a stored document |
+| `--file <path>` | Read the draft from a file (`-` for stdin) |
+| `--threshold <f>` | Minimum cosine, 0 to 1 (default: 0.80, the configured `similar_threshold`) |
+| `--limit <n>` | Max results, 1 to 100 (default: 10) |
+| `--namespace <ns>` | Only compare with documents of this namespace (documents created through the API have none, so this is rarely useful) |
+
+`--json` prints `{source, threshold, similar_threshold, duplicate_threshold, source_embedded, documents_without_vector, matches, hits: [{document, score, relation}]}`; `matches` counts the hits before `--limit`.
+
+### `uteke doc duplicates`
+
+Report the near-duplicate documents of the library, a namespace or a subtree (#1730).
+
+```bash
+uteke doc duplicates
+uteke doc duplicates --subtree skills --threshold 0.9
+uteke doc duplicates --json
+```
+
+Every pair of documents at or above the duplicate threshold (default 0.92) is listed, best first, and the pairs that share a document are merged into groups. With `--subtree <slug>` only that document and its descendants are compared; with `--namespace` only that namespace; both together use the intersection. A scope of more than 2000 documents with vectors is refused (all pairs are scored): narrow it with a subtree.
+
+| Flag | Description |
+|------|-------------|
+| `--subtree <slug>` | Only this document and its descendants |
+| `--namespace <ns>` | Only documents of this namespace |
+| `--threshold <f>` | Minimum cosine, 0 to 1 (default: 0.92, the configured `duplicate_threshold`) |
+| `--limit <n>` | Max pairs listed, 1 to 500 (default: 50); the groups always cover every pair |
+
+`--json` prints `{threshold, scanned, documents_without_vector, total_pairs, pairs: [{a, b, score}], groups: [[slug, ...]]}`.
+
 ### `uteke doc update`
 
 Partially update a document — only provided fields are changed (#589). Content changes trigger chunk rebuild; metadata-only or title-only updates skip it.

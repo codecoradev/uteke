@@ -98,6 +98,129 @@ fn render_doc_tree(
     lines
 }
 
+/// Where `doc similar` takes its subject from.
+#[derive(Debug, PartialEq, Eq)]
+enum SimilarSource {
+    /// A stored document, by slug or id.
+    Document(String),
+    /// A draft text that is not stored.
+    Text(String),
+}
+
+/// Exactly one of a slug, `--text` and `--file` (`-` reads stdin through
+/// `read_stdin`; clap already refuses two at once).
+fn similar_source(
+    slug: Option<&str>,
+    text: Option<&str>,
+    file: Option<&str>,
+    read_stdin: impl FnOnce() -> Result<String, String>,
+) -> Result<SimilarSource, String> {
+    match (slug, text, file) {
+        (Some(s), None, None) => Ok(SimilarSource::Document(s.to_string())),
+        (None, Some(t), None) => Ok(SimilarSource::Text(t.to_string())),
+        (None, None, Some("-")) => read_stdin().map(SimilarSource::Text),
+        (None, None, Some(f)) => std::fs::read_to_string(f)
+            .map(SimilarSource::Text)
+            .map_err(|e| format!("Failed to read file: {e}")),
+        (None, None, None) => {
+            Err("Provide a document slug, or --text <text>, or --file <path> (- for stdin)".into())
+        }
+        _ => Err("Give only one of: a document slug, --text, --file".into()),
+    }
+}
+
+fn read_stdin_to_string() -> Result<String, String> {
+    use std::io::Read;
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+    Ok(buf)
+}
+
+/// The text view of `doc similar`.
+fn render_similar(subject: &str, r: &uteke_core::DocSimilarReport) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !r.source_embedded {
+        lines.push(match &r.source {
+            Some(_) => format!(
+                "{subject} has no vectors yet, so nothing can be compared. \
+                 Run `uteke repair --reembed` to embed its chunks."
+            ),
+            None => "The text could not be embedded.".to_string(),
+        });
+        return lines;
+    }
+    lines.push(format!(
+        "Documents similar to {subject} (threshold {:.2}; similar_to {:.2}, possible_duplicate {:.2})",
+        r.threshold, r.similar_threshold, r.duplicate_threshold
+    ));
+    lines.push("─────────────────────────────────────────────────────".to_string());
+    for h in &r.hits {
+        lines.push(format!(
+            "  {:<18} {:.3}  {:<20} {}",
+            h.relation,
+            h.score,
+            output::char_prefix(&h.document.slug, 20),
+            output::char_prefix(&h.document.title, 40),
+        ));
+    }
+    if r.hits.is_empty() {
+        lines.push("  none".to_string());
+    }
+    lines.push(String::new());
+    lines.push(if r.matches > r.hits.len() {
+        format!("{} match(es), showing {}", r.matches, r.hits.len())
+    } else {
+        format!("{} match(es)", r.matches)
+    });
+    if r.documents_without_vector > 0 {
+        lines.push(format!(
+            "{} document(s) skipped: no vectors yet (`uteke repair --reembed`)",
+            r.documents_without_vector
+        ));
+    }
+    lines
+}
+
+/// The text view of `doc duplicates`.
+fn render_duplicates(r: &uteke_core::DocDuplicateReport) -> Vec<String> {
+    let mut lines = vec![
+        format!(
+            "Near-duplicate documents (threshold {:.2}, {} document(s) scanned)",
+            r.threshold, r.scanned
+        ),
+        "─────────────────────────────────────────────────────".to_string(),
+    ];
+    for p in &r.pairs {
+        lines.push(format!(
+            "  {:.3}  {}  ~  {}",
+            p.score,
+            output::char_prefix(&p.a.slug, 28),
+            output::char_prefix(&p.b.slug, 28),
+        ));
+    }
+    if r.pairs.is_empty() {
+        lines.push("  none".to_string());
+    }
+    lines.push(String::new());
+    lines.push(if r.total_pairs > r.pairs.len() {
+        format!("{} pair(s), showing {}", r.total_pairs, r.pairs.len())
+    } else {
+        format!("{} pair(s)", r.total_pairs)
+    });
+    for (i, g) in r.groups.iter().enumerate() {
+        lines.push(format!("Group {}: {}", i + 1, g.join(", ")));
+    }
+    if r.documents_without_vector > 0 {
+        lines.push(format!(
+            "{} document(s) skipped: no vectors yet (`uteke repair --reembed`)",
+            r.documents_without_vector
+        ));
+    }
+    lines
+}
+
 /// Run document subcommands.
 pub(crate) fn run(
     cli: &Cli,
@@ -388,6 +511,59 @@ pub(crate) fn run(
                 }
                 println!();
                 println!("{} result(s)", results.len());
+            }
+        }
+
+        DocCommands::Similar {
+            slug,
+            text,
+            file,
+            threshold,
+            limit,
+            namespace,
+        } => {
+            let source = similar_source(
+                slug.as_deref(),
+                text.as_deref(),
+                file.as_deref(),
+                read_stdin_to_string,
+            )?;
+            let ns = namespace.as_deref();
+            let (subject, report) = match &source {
+                SimilarSource::Document(s) => (
+                    format!("'{s}'"),
+                    uteke.doc_similar(s, ns, *threshold, *limit),
+                ),
+                SimilarSource::Text(t) => (
+                    "the text".to_string(),
+                    uteke.doc_similar_to_text(t, ns, *threshold, *limit),
+                ),
+            };
+            let report = report.map_err(|e| format!("Failed to find similar documents: {e}"))?;
+            if cli.json {
+                output::print_json(&report);
+            } else {
+                for line in render_similar(&subject, &report) {
+                    println!("{line}");
+                }
+            }
+        }
+
+        DocCommands::Duplicates {
+            subtree,
+            namespace,
+            threshold,
+            limit,
+        } => {
+            let report = uteke
+                .doc_duplicate_report(namespace.as_deref(), subtree.as_deref(), *threshold, *limit)
+                .map_err(|e| format!("Failed to build the duplicate report: {e}"))?;
+            if cli.json {
+                output::print_json(&report);
+            } else {
+                for line in render_duplicates(&report) {
+                    println!("{line}");
+                }
             }
         }
 
@@ -753,6 +929,195 @@ mod doc_export_tests {
         assert_eq!(
             render_export(&docs, true, Some(&no_parents())),
             render_export(&docs, true, None)
+        );
+    }
+}
+
+#[cfg(test)]
+mod doc_similar_tests {
+    use super::{SimilarSource, render_duplicates, render_similar, similar_source};
+    use uteke_core::{
+        DocDuplicatePair, DocDuplicateReport, DocSimilarHit, DocSimilarReport, DocumentSummary,
+    };
+
+    fn summary(slug: &str, title: &str) -> DocumentSummary {
+        DocumentSummary {
+            id: format!("id-{slug}"),
+            slug: slug.to_string(),
+            title: title.to_string(),
+            namespace: None,
+            author: None,
+            version: 1,
+            updated_at: "2026-11-12T00:00:00Z".to_string(),
+            parent_id: None,
+            depth: 0,
+            has_children: false,
+            sort_order: 0,
+        }
+    }
+
+    fn hit(slug: &str, score: f32, relation: &str) -> DocSimilarHit {
+        DocSimilarHit {
+            document: summary(slug, &format!("Title of {slug}")),
+            score,
+            relation: relation.to_string(),
+        }
+    }
+
+    fn report(hits: Vec<DocSimilarHit>) -> DocSimilarReport {
+        DocSimilarReport {
+            source: Some(summary("src", "Source")),
+            threshold: 0.8,
+            similar_threshold: 0.8,
+            duplicate_threshold: 0.92,
+            source_embedded: true,
+            documents_without_vector: 0,
+            matches: hits.len(),
+            hits,
+        }
+    }
+
+    fn no_stdin() -> Result<String, String> {
+        panic!("stdin must not be read")
+    }
+
+    #[test]
+    fn the_source_is_exactly_one_of_slug_text_and_file() {
+        assert_eq!(
+            similar_source(Some("a"), None, None, no_stdin),
+            Ok(SimilarSource::Document("a".into()))
+        );
+        assert_eq!(
+            similar_source(None, Some("draft"), None, no_stdin),
+            Ok(SimilarSource::Text("draft".into()))
+        );
+        assert_eq!(
+            similar_source(None, None, Some("-"), || Ok("from stdin".into())),
+            Ok(SimilarSource::Text("from stdin".into()))
+        );
+        let e = similar_source(None, None, None, no_stdin).unwrap_err();
+        assert!(e.starts_with("Provide a document slug"), "{e}");
+        let e = similar_source(Some("a"), Some("t"), None, no_stdin).unwrap_err();
+        assert_eq!(e, "Give only one of: a document slug, --text, --file");
+        assert!(similar_source(None, Some("t"), Some("f"), no_stdin).is_err());
+        let e = similar_source(None, None, Some("-"), || Err("boom".into())).unwrap_err();
+        assert_eq!(e, "boom");
+    }
+
+    #[test]
+    fn a_file_is_read_as_the_candidate_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("draft.md");
+        std::fs::write(&path, "# Draft\n\nbody").unwrap();
+        assert_eq!(
+            similar_source(None, None, path.to_str(), no_stdin),
+            Ok(SimilarSource::Text("# Draft\n\nbody".into()))
+        );
+        let missing = dir.path().join("none.md");
+        let e = similar_source(None, None, missing.to_str(), no_stdin).unwrap_err();
+        assert!(e.starts_with("Failed to read file:"), "{e}");
+    }
+
+    #[test]
+    fn similar_text_lists_each_hit_with_relation_score_slug_and_title() {
+        let lines = render_similar(
+            "'src'",
+            &report(vec![
+                hit("dup", 0.96, "possible_duplicate"),
+                hit("sim", 0.8, "similar_to"),
+            ]),
+        );
+        assert_eq!(
+            lines,
+            vec![
+                "Documents similar to 'src' (threshold 0.80; similar_to 0.80, possible_duplicate 0.92)",
+                "─────────────────────────────────────────────────────",
+                "  possible_duplicate 0.960  dup                  Title of dup",
+                "  similar_to         0.800  sim                  Title of sim",
+                "",
+                "2 match(es)",
+            ]
+        );
+    }
+
+    #[test]
+    fn similar_text_says_when_there_is_nothing_and_when_the_list_is_cut() {
+        let lines = render_similar("'src'", &report(vec![]));
+        assert_eq!(lines[2], "  none");
+        assert_eq!(lines.last().unwrap(), "0 match(es)");
+        let mut cut = report(vec![hit("dup", 1.0, "possible_duplicate")]);
+        cut.matches = 5;
+        assert_eq!(
+            render_similar("'src'", &cut).last().unwrap(),
+            "5 match(es), showing 1"
+        );
+    }
+
+    #[test]
+    fn similar_text_points_to_repair_for_documents_without_vectors() {
+        let mut r = report(vec![]);
+        r.documents_without_vector = 3;
+        let lines = render_similar("'src'", &r);
+        assert_eq!(
+            lines.last().unwrap(),
+            "3 document(s) skipped: no vectors yet (`uteke repair --reembed`)"
+        );
+        r.source_embedded = false;
+        let lines = render_similar("'src'", &r);
+        assert_eq!(
+            lines,
+            vec![
+                "'src' has no vectors yet, so nothing can be compared. \
+                 Run `uteke repair --reembed` to embed its chunks."
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicates_text_lists_pairs_and_groups() {
+        let pair = |a: &str, b: &str, score: f32| DocDuplicatePair {
+            a: summary(a, a),
+            b: summary(b, b),
+            score,
+        };
+        let r = DocDuplicateReport {
+            threshold: 0.92,
+            scanned: 6,
+            documents_without_vector: 1,
+            total_pairs: 3,
+            pairs: vec![pair("a", "b", 1.0), pair("a", "c", 0.96)],
+            groups: vec![vec!["a".into(), "b".into(), "c".into()]],
+        };
+        assert_eq!(
+            render_duplicates(&r),
+            vec![
+                "Near-duplicate documents (threshold 0.92, 6 document(s) scanned)",
+                "─────────────────────────────────────────────────────",
+                "  1.000  a  ~  b",
+                "  0.960  a  ~  c",
+                "",
+                "3 pair(s), showing 2",
+                "Group 1: a, b, c",
+                "1 document(s) skipped: no vectors yet (`uteke repair --reembed`)",
+            ]
+        );
+        let empty = DocDuplicateReport {
+            threshold: 0.92,
+            scanned: 0,
+            documents_without_vector: 0,
+            total_pairs: 0,
+            pairs: vec![],
+            groups: vec![],
+        };
+        assert_eq!(
+            render_duplicates(&empty),
+            vec![
+                "Near-duplicate documents (threshold 0.92, 0 document(s) scanned)",
+                "─────────────────────────────────────────────────────",
+                "  none",
+                "",
+                "0 pair(s)",
+            ]
         );
     }
 }

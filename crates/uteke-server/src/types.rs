@@ -50,6 +50,59 @@ pub struct DocSearchRequest {
     pub mode: String,
 }
 
+/// `POST /doc/similar` (#1730): documents close to a document or to a draft
+/// text, or (with `report`) the near-duplicates of a namespace or subtree.
+///
+/// Similar documents: give `slug` (or `id`) OR `text`, plus optional
+/// `threshold`, `limit`, `namespace`. Duplicate report: `report: true` plus
+/// optional `subtree`, `namespace`, `threshold`, `limit`; no `slug`/`text`.
+/// Nothing is written either way.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocSimilarRequest {
+    /// Slug of a stored document (alias of `id`).
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// Id (or slug) of a stored document.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Candidate text that is not stored: the near-duplicates "before it is
+    /// stored". Needs the embedding model.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// `true`: report the near-duplicate pairs and groups of the scope.
+    #[serde(default)]
+    pub report: bool,
+    /// Minimum cosine similarity, 0 to 1. Default: the configured
+    /// `similar_to` threshold (0.80), or `possible_duplicate` (0.92) for a report.
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// Maximum hits (default 10, at most 100), or pairs for a report
+    /// (default 50, at most 500).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Only compare with documents of this namespace (default: all).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Report only: the slug or id of the document whose subtree to scan.
+    #[serde(default)]
+    pub subtree: Option<String>,
+}
+
+/// The subject of a [`DocSimilarRequest`]; `id` wins over `slug` like on the
+/// other document routes.
+pub fn resolve_doc_similar(
+    req: &DocSimilarRequest,
+) -> Result<uteke_core::doc_similarity::DocSimilarQuery<'_>, &'static str> {
+    uteke_core::doc_similarity::DocSimilarQuery::resolve(
+        req.id.as_deref().or(req.slug.as_deref()),
+        req.text.as_deref(),
+        req.report,
+        req.subtree.as_deref(),
+    )
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -85,7 +85,7 @@ pub struct DocumentChunk {
 }
 
 /// Summary of a document (for list views).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocumentSummary {
     pub id: String,
     pub slug: String,
@@ -1111,6 +1111,82 @@ impl super::Store {
             .map_err(|e| Error::db("FTS search query", e))?;
 
         Ok(rows.filter_map(|r| r.ok()).collect())
+    }
+
+    /// The LIKE pattern selecting a document and its descendants by `path`
+    /// (for [`Self::document_vectors`]).
+    pub(crate) fn subtree_like_pattern(doc: &Document) -> String {
+        subtree_selectors(&doc.path).1
+    }
+
+    /// Every document (optionally of one namespace, one id or one subtree)
+    /// with its document vector (#1730): the mean of its chunk vectors,
+    /// L2-normalised, `None` when a chunk has no vector or there are no
+    /// chunks. Read from SQLite, one pass, ordered by slug.
+    ///
+    /// `namespace` follows `list_documents_ns` (`None` = every document).
+    /// `subtree` is `(root id, LIKE pattern)` from [`Self::subtree_like_pattern`];
+    /// the root is kept even when its stored path is empty.
+    pub(crate) fn document_vectors(
+        &self,
+        namespace: Option<&str>,
+        only_id: Option<&str>,
+        subtree: Option<(&str, &str)>,
+    ) -> Result<Vec<crate::doc_similarity::DocVector>, Error> {
+        use crate::doc_similarity::{DocVector, VectorAccumulator};
+        let (root_id, pattern) = match subtree {
+            Some((id, pat)) => (Some(id), Some(pat)),
+            None => (None, None),
+        };
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT d.id, d.slug, d.title, d.namespace, d.author, d.version, d.updated_at, \
+                 d.parent_id, d.depth, d.has_children, d.sort_order, c.id, c.embedding \
+                 FROM documents d LEFT JOIN document_chunks c ON c.document_id = d.id \
+                 WHERE (?1 IS NULL OR d.namespace = ?1) AND (?2 IS NULL OR d.id = ?2) \
+                   AND (?3 IS NULL OR d.id = ?3 OR d.path LIKE ?4 ESCAPE '\\') \
+                 ORDER BY d.slug, d.id, c.chunk_index",
+            )
+            .map_err(|e| Error::db("prepare document vectors", e))?;
+        let rows = stmt
+            .query_map(params![namespace, only_id, root_id, pattern], |row| {
+                Ok((
+                    row_to_summary(row)?,
+                    row.get::<_, Option<String>>(11)?,
+                    row.get::<_, Option<Vec<u8>>>(12)?,
+                ))
+            })
+            .map_err(|e| Error::db("document vectors query", e))?;
+
+        let mut out: Vec<DocVector> = Vec::new();
+        let mut current: Option<(DocumentSummary, VectorAccumulator)> = None;
+        for row in rows {
+            let (summary, chunk_id, blob) =
+                row.map_err(|e| Error::db("document vectors row", e))?;
+            if current.as_ref().is_none_or(|(s, _)| s.id != summary.id) {
+                if let Some((s, acc)) = current.take() {
+                    out.push(DocVector {
+                        summary: s,
+                        vector: acc.finish(),
+                    });
+                }
+                current = Some((summary, VectorAccumulator::default()));
+            }
+            if chunk_id.is_some() {
+                let embedding = blob.map(|b| super::store::deserialize_embedding(&b));
+                if let Some((_, acc)) = current.as_mut() {
+                    acc.add_chunk(embedding.as_deref());
+                }
+            }
+        }
+        if let Some((s, acc)) = current.take() {
+            out.push(DocVector {
+                summary: s,
+                vector: acc.finish(),
+            });
+        }
+        Ok(out)
     }
 
     /// Chunks with no vector, as `(id, content)` (#1587): what a structural

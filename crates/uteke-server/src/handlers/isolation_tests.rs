@@ -149,6 +149,18 @@ fn surfaces(scope: &str) -> Vec<Surface> {
             false,
         ),
         post("/doc/list", json!({"namespace": scope}), false),
+        // #1730: documents are global (no namespace), so a scope finds none of
+        // them, and the draft text is not echoed back.
+        post(
+            "/doc/similar",
+            json!({"text": Q, "namespace": scope}),
+            false,
+        ),
+        post(
+            "/doc/similar",
+            json!({"report": true, "namespace": scope}),
+            false,
+        ),
     ];
     for strategy in ["hybrid", "vector", "fts5", "graph", "fusion"] {
         for search_type in ["memory", "all"] {

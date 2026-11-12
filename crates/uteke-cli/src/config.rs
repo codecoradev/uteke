@@ -415,6 +415,11 @@ impl Config {
 # contradict_max_memories = 200          # O(n²) scan limit
 # dedup_threshold = 0.92                # Cosine > this → merge candidate
 # orphan_importance_threshold = 0.15     # Importance < this → orphan candidate
+
+[doc_similarity]
+# Document similarity (`uteke doc similar`, `uteke doc duplicates`, #1730)
+# similar_threshold = 0.80     # Cosine ≥ this → similar_to
+# duplicate_threshold = 0.92   # Cosine ≥ this → possible_duplicate
 "#;
         std::fs::write(&config_path, default).ok();
     }

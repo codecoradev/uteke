@@ -19,6 +19,7 @@ pub mod consolidation_api;
 pub mod consolidation_exec;
 pub mod consolidation_plan;
 mod dimension_check;
+pub mod doc_similarity;
 pub mod dream;
 mod edges;
 mod embed;
@@ -115,10 +116,17 @@ pub use chunker::{
     CodeChunk, TextChunk, chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language,
     extract_imports,
 };
+pub use doc_similarity::{
+    DEFAULT_DUPLICATE_THRESHOLD, DEFAULT_REPORT_LIMIT, DEFAULT_SIMILAR_LIMIT,
+    DEFAULT_SIMILAR_THRESHOLD, DocDuplicatePair, DocDuplicateReport, DocSimilarHit,
+    DocSimilarReport, DocSimilaritySettings, MAX_REPORT_DOCUMENTS, MAX_REPORT_LIMIT,
+    MAX_SIMILAR_LIMIT,
+};
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
-    EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES,
-    EDGE_TAGGED_AS, EdgeList, MemoryEdge, backlink_type_for,
+    EDGE_POSSIBLE_DUPLICATE, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC,
+    EDGE_REPLIES_TO, EDGE_SIMILAR_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS, EdgeList, MemoryEdge,
+    backlink_type_for,
 };
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use graph::{Relationship, VALID_REL_TYPES, build_meta_relationship, is_relationship_meta};
@@ -729,6 +737,8 @@ pub struct Uteke {
     capture_settings: capture::CaptureSettings,
     /// `[rooms]` (#1715): set by `apply_settings`.
     room_naming_settings: room_naming::RoomNamingSettings,
+    /// `[doc_similarity]` (#1730): set by `apply_settings`.
+    doc_similarity_settings: doc_similarity::DocSimilaritySettings,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
     /// While non-zero, recalls do not touch what they return (access count,
@@ -1190,6 +1200,7 @@ impl Uteke {
             lifecycle_config: LifecycleConfig::default(),
             capture_settings: capture::CaptureSettings::default(),
             room_naming_settings: room_naming::RoomNamingSettings::default(),
+            doc_similarity_settings: doc_similarity::DocSimilaritySettings::default(),
             embed_cache_path,
         }
     }
