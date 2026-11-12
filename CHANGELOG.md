@@ -80,6 +80,17 @@
   `room_id`, the title-or-id `room_name`, the omission rule or the document exclusion
   changes.
 
+### Changed
+
+- **The secret detector is its own crate, `uteke-privacy` (#1732)** - the detector of
+  the write path (AWS, GitHub, npm, Slack, Google keys, bearer, JWT, URL passwords,
+  `NAME=value` with entropy checks, the allowlist) moved from `uteke-core` into
+  `crates/uteke-privacy`, so `tole` can share the same ruleset without taking
+  `uteke-core` (the crate depends on `regex` only). The API is `redact(&str, &Policy)
+  -> Redacted { text, counts }`. `uteke-core` depends on it and re-exports it from
+  `uteke_core::privacy`, which keeps its paths and its behaviour (same rules, same
+  masked shapes, same tests). The release workflow publishes `uteke-privacy` first.
+
 ### Docs
 
 - **Skill: room ids of the form `category:title` (#1715)** - the `uteke-memory` skill (both

@@ -3,7 +3,7 @@
 ## Project
 
 Uteke — local-first memory engine for AI agents.
-Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
+Rust workspace: uteke-privacy (secret detector, regex only, shared with tole), uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
 
 
 ## Session start (continuity ritual)
@@ -46,8 +46,8 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
   PR's own base branch (`base-branch: origin/${{ github.base_ref }}`); before that it
   defaulted to `origin/develop`, so PRs into `main` were reviewed against an empty
   diff. Re-run the job once; if it is still empty, investigate instead of accepting.
-- Version: single workspace version in root Cargo.toml; internal deps (uteke-core/
-  uteke-mcp) must be bumped to the same version in the release commit.
+- Version: single workspace version in root Cargo.toml; internal deps (uteke-privacy/
+  uteke-core/uteke-mcp) must be bumped to the same version in the release commit.
 - `docs/api-reference.md` is GENERATED (`cargo run -p docgen`) — never hand-edit.
 
 ## Release procedure (develop → main)
@@ -59,8 +59,9 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    (owner rule 2026-08-19, local only; the CI workflow only triggers on `develop*`
    head branches, so release PRs never run it) against the code changed since the
    previous release:
-   `git diff vPREV..develop -- crates/uteke-core > /tmp/rel.diff` then
-   `cargo mutants -p uteke-core --in-diff /tmp/rel.diff -j 2 --timeout 120`
+   `git diff vPREV..develop -- crates/uteke-core crates/uteke-privacy > /tmp/rel.diff` then
+   `cargo mutants -p uteke-core -p uteke-privacy --in-diff /tmp/rel.diff -j 2 --timeout 120`
+   (the secret detector moved to `uteke-privacy` in #1732, so its diff is in scope)
    (install with `cargo install cargo-mutants --locked`; check `df -h` first).
    Measured on v0.20.0..develop: 38 mutants, about 5 minutes. A missed mutant in
    changed code gets a killing test (exact-value assertions); a miss only reachable
@@ -69,8 +70,8 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    8 hours, not measured) is optional. If the owner explicitly releases without
    the gate, say so in the PR body.
 2. **Release-prep PR into `develop`** (`chore(release): vX.Y.Z - version bump,
-   changelog, docs sync`): workspace `Cargo.toml`, the internal deps in the three
-   crates, `Cargo.lock`, both READMEs' version line, the version line of both skill
+   changelog, docs sync`): workspace `Cargo.toml`, the internal deps in the four
+   crates (uteke-core on uteke-privacy; cli, mcp and server on uteke-core/mcp), `Cargo.lock`, both READMEs' version line, the version line of both skill
    copies (`.agents/skills/uteke-memory/SKILL.md` and
    `crates/uteke-cli/assets/uteke-memory-skill.md`, enforced by tests),
    `docs/core-contract.json` (regenerate with `cargo run -p docgen`), the
@@ -95,7 +96,7 @@ Rust workspace: uteke-core (engine), uteke-cli, uteke-server, uteke-mcp, docgen.
    (`git tag -a vX.Y.Z <sha>`) and push it. Tagging before the merge once pointed
    the tag at the previous release (v0.15.0). The Release workflow takes ~35 min
    (the legacy-ORT build is the long pole) and publishes GitHub assets, crates.io
-   (uteke-core/cli/mcp), Docker tags and opens the Homebrew tap PR.
+   (uteke-privacy, uteke-core, uteke-mcp, uteke-cli, uteke-server, in dependency order), Docker tags and opens the Homebrew tap PR.
 6. **Check the signature (no manual signing).** The Release workflow signs
    `checksums-sha256.txt` keyless with cosign and publishes
    `checksums-sha256.txt.bundle`; `uteke upgrade` verifies that bundle itself

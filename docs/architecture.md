@@ -33,6 +33,7 @@ title: Architecture
 
 | Crate | Purpose |
 |-------|---------|
+| `uteke-privacy` | Library — secret detector and redactor (regex only, no IO); published separately so `tole` shares the ruleset, re-exported as `uteke_core::privacy` |
 | `uteke-core` | Library — storage, embedding, vector search, FTS5, operations |
 | `uteke-cli` | CLI binary — clap commands, JSON output, server proxy |
 | `uteke-server` | HTTP server — persistent daemon for fast agent access |

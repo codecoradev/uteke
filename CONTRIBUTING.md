@@ -206,6 +206,7 @@ Uteke is a Cargo workspace:
 
 | Crate | Purpose |
 |-------|---------|
+| `uteke-privacy` | Library — secret detector and redactor (regex only), re-exported by `uteke-core` |
 | `uteke-core` | Library — storage, embedding, vector search, FTS5 |
 | `uteke-cli` | CLI binary — clap commands, JSON output |
 | `uteke-server` | HTTP server (`uteke-serve`) — persistent daemon for fast agent access |

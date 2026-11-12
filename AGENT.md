@@ -13,10 +13,11 @@
 
 ## Architecture
 
-### Workspace Crates (5 crates)
+### Workspace Crates (6 crates)
 
 | Crate | Path | Purpose |
 |-------|------|---------|
+| `uteke-privacy` | `crates/uteke-privacy/` | Library — secret detector and redactor (regex only, no IO), shared with tole; re-exported by `uteke-core` |
 | `uteke-core` | `crates/uteke-core/` | Library — storage, embedding, vector search, FTS5, operations |
 | `uteke-cli` | `crates/uteke-cli/` | CLI binary — clap commands, JSON output, server proxy |
 | `uteke-server` | `crates/uteke-server/` | HTTP server — persistent daemon for fast agent access |

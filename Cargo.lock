@@ -2969,6 +2969,7 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "usearch",
+ "uteke-privacy",
  "uuid",
  "vecq-core",
 ]
@@ -2983,6 +2984,15 @@ dependencies = [
  "serde_json",
  "uteke-core",
  "uuid",
+]
+
+[[package]]
+name = "uteke-privacy"
+version = "0.23.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

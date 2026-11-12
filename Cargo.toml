@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/uteke-privacy",
     "crates/uteke-core",
     "crates/uteke-cli",
     "crates/uteke-server",
