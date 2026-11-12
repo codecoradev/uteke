@@ -310,6 +310,77 @@ mod history_tests {
         assert!(!ids(&early).contains(&forgotten.as_str()));
     }
 
+    /// `older` memories written two hours ago that rank below `newer` ones
+    /// written now, all for the query "quartz". Returns the older ids, sorted.
+    fn hide_older_behind_newer(u: &Uteke, older: usize, newer: usize) -> Vec<String> {
+        let mut old_ids = Vec::new();
+        for i in 0..older {
+            let id = u
+                .remember(
+                    &format!("quartz old{i} p{i} q{i} r{i} s{i} t{i} v{i} w{i}"),
+                    &[],
+                    None,
+                    None,
+                )
+                .unwrap();
+            backdate(u, &id, 2);
+            old_ids.push(id);
+        }
+        for i in 0..newer {
+            u.remember(
+                &format!("quartz quartz quartz fa{i} fb{i} fc{i}"),
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        old_ids.sort_unstable();
+        old_ids
+    }
+
+    /// The over-fetch loop asks for `limit * 3`, `* 9`, `* 27` rows (at least
+    /// 50 each) and no further. `recall_inner` returns at most the rows it was
+    /// asked for, so a newer row set larger than the first two windows hides
+    /// the older rows until the third pass, which must widen by x3 each time.
+    #[test]
+    fn at_time_recall_widens_by_a_factor_of_three_per_pass() {
+        let u = open_keyword();
+        // limit 10: windows 50, 90, 270. 100 newer rows fill the first two.
+        let old = hide_older_behind_newer(&u, 5, 100);
+        let hour_ago = Utc::now() - Duration::hours(1);
+        let got = u
+            .recall_at_time_index("quartz", 10, None, None, hour_ago, 0.0, None, None)
+            .unwrap();
+        let mut got: Vec<String> = got.into_iter().map(|r| r.memory.id).collect();
+        got.sort_unstable();
+        assert_eq!(got, old);
+    }
+
+    /// The loop is bounded to three passes: rows past the third window stay
+    /// unseen rather than the loop running until the index is exhausted.
+    #[test]
+    fn at_time_recall_stops_after_three_passes() {
+        let u = open_keyword();
+        // limit 1: every window is 50 rows for three passes; a fourth would be
+        // 81 rows. 60 newer rows hide the single older one from all three.
+        let old = hide_older_behind_newer(&u, 1, 60);
+        assert_eq!(old.len(), 1);
+        // Precondition: the older row is past the 50-row window, inside 81.
+        let rank = |n: usize| {
+            let r = u
+                .recall_inner("quartz", n, None, None, 0.0, None, None, true)
+                .unwrap();
+            r.iter().any(|x| x.memory.id == old[0])
+        };
+        assert!(!rank(50) && rank(81), "fixture must straddle the windows");
+        let hour_ago = Utc::now() - Duration::hours(1);
+        let got = u
+            .recall_at_time_index("quartz", 1, None, None, hour_ago, 0.0, None, None)
+            .unwrap();
+        assert!(got.is_empty(), "{:?}", ids(&got));
+    }
+
     #[test]
     fn history_list_includes_rows_deprecated_after_the_instant() {
         let u = open_keyword();
