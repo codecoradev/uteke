@@ -867,7 +867,11 @@ impl crate::Uteke {
         // Validate once, before any work.
         check_label("owner", owner)?;
         check_label("actor", actor)?;
-        let found = pkg::discover_skills(root).map_err(Error::validation)?;
+        // Record an absolute source path: a relative one is useless from any
+        // other working directory (symbolic links are left as named).
+        let root = std::path::absolute(root)
+            .map_err(|e| Error::validation(format!("cannot resolve {}: {e}", root.display())))?;
+        let found = pkg::discover_skills(&root).map_err(Error::validation)?;
         let mut report = SkillIndexReport {
             scanned_dirs: found.scanned_dirs,
             created: 0,
