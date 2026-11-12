@@ -24,7 +24,11 @@
   `list`, `show`, `similar` (the `SKILL.md` document vectors of #1730, also for a draft text),
   `lint` and `approve <slug>@<hash>` follow. The hash covers the whole package (SHA-256 over every
   file's path length, path, content length and content, sorted by path), so a changed script or
-  reference file is detected; approval is only for the current, valid version, a new hash makes a new
+  reference file is detected, and it is byte-identical to the package hash tole computes for
+  `TOLE_SKILL_APPROVAL=required` (8-byte little-endian lengths, written `sha256:<hex>`; `.git` is
+  hashed; a package with a symbolic link or special file is rejected, not skipped; `approve` accepts
+  `<slug>@sha256:<hex>`, a bare hex or a prefix of 12 or more hex digits; hashes are only promised
+  equal within tole's limits, uteke's bounds are at least as strict); approval is only for the current, valid version, a new hash makes a new
   draft and stales the old approval, and an append-only ledger (triggers refuse UPDATE and DELETE)
   records every change with the hash before and after. Schema v27 adds `skills`, `skill_versions`,
   `skill_usage` and `skill_ledger` under the Cloud registry's names. The shared registry stays in

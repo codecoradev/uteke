@@ -395,6 +395,10 @@ fn approve_checks_the_hash_and_is_idempotent() {
     let u = open_keyword();
     index(&u, t.path());
     let h = hash_of(&t.path().join("cooking"));
+    // The stored hash is tole's string form, `sha256:<64 hex>`.
+    let hex = h.strip_prefix("sha256:").expect("sha256: prefix");
+    assert_eq!(hex.len(), 64);
+    assert!(hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
 
     let err = |slug: &str, hash: &str| u.skill_approve(slug, hash, None).unwrap_err();
     assert!(matches!(err("nope", &h), Error::NotFound(_)));
@@ -402,23 +406,43 @@ fn approve_checks_the_hash_and_is_idempotent() {
         err("cooking", &"0".repeat(64)),
         Error::NotFound(_)
     ));
-    // A prefix needs at least 12 characters (the length check is `parse_skill_ref`'s,
-    // here a short prefix simply matches nothing or is refused by the parser).
-    assert!(parse_skill_ref(&format!("cooking@{}", &h[..11])).is_err());
-    assert!(parse_skill_ref(&format!("cooking@{}", &h[..12])).is_ok());
+    assert!(matches!(
+        err("cooking", &format!("sha256:{}", "0".repeat(64))),
+        Error::NotFound(_)
+    ));
+    // A prefix needs at least 12 hex digits after the optional `sha256:`
+    // (the length check is `parse_skill_ref`'s and `skill_approve`'s).
+    assert!(parse_skill_ref(&format!("cooking@{}", &hex[..11])).is_err());
+    assert!(parse_skill_ref(&format!("cooking@sha256:{}", &hex[..11])).is_err());
+    assert!(parse_skill_ref(&format!("cooking@{}", &hex[..12])).is_ok());
+    assert!(parse_skill_ref(&format!("cooking@sha256:{}", &hex[..12])).is_ok());
+    assert!(err("cooking", &hex[..11]).to_string().contains("12 to 64"));
     assert!(
-        parse_skill_ref(&format!("cooking@{}0", h)).is_err(),
+        parse_skill_ref(&format!("cooking@{hex}0")).is_err(),
         "65 characters"
     );
+    assert!(parse_skill_ref(&format!("cooking@sha256:{hex}0")).is_err());
     assert!(parse_skill_ref(&format!("cooking@{}", "g".repeat(12))).is_err());
+    assert!(parse_skill_ref(&format!("cooking@sha512:{hex}")).is_err());
     assert!(parse_skill_ref("cooking").is_err());
     assert!(parse_skill_ref(&format!("Cooking@{h}")).is_err());
-    assert_eq!(
-        parse_skill_ref(&format!("cooking@{}", h.to_uppercase())).unwrap(),
-        ("cooking", h.clone())
-    );
+    // Every accepted spelling names the same hex digits.
+    for spelling in [
+        hex.to_string(),
+        h.clone(),
+        hex.to_uppercase(),
+        h.to_uppercase(),
+    ] {
+        assert_eq!(
+            parse_skill_ref(&format!("cooking@{spelling}")).unwrap(),
+            ("cooking", hex.to_string())
+        );
+    }
 
-    let a = u.skill_approve("cooking", &h[..12], Some("alice")).unwrap();
+    // Prefix of the digits after `sha256:` (not of the string with the prefix).
+    let a = u
+        .skill_approve("cooking", &hex[..12], Some("alice"))
+        .unwrap();
     assert_eq!(
         (a.hash.as_str(), a.status.as_str(), a.changed),
         (h.as_str(), "approved", true)
@@ -430,6 +454,10 @@ fn approve_checks_the_hash_and_is_idempotent() {
     );
     assert!(d.current.approved_at.is_some());
     let again = u.skill_approve("cooking", &h, Some("bob")).unwrap();
+    assert!(!again.changed);
+    let again = u
+        .skill_approve("cooking", &format!("sha256:{}", &hex[..20]), Some("bob"))
+        .unwrap();
     assert!(!again.changed);
     let d = u.skill_show("cooking").unwrap();
     assert_eq!(
@@ -786,5 +814,44 @@ fn index_records_an_absolute_source_path_for_a_relative_root() {
         Path::new(&shown.source_path).is_dir(),
         "{}",
         shown.source_path
+    );
+}
+
+/// A store written by an earlier develop build holds bare-hex hashes of the old
+/// (big-endian) encoding. They are not tole hashes and cannot be converted, so
+/// there is no migration: the next index sees a different hash and makes a new
+/// draft version, the old approval goes stale, and the old row cannot be
+/// approved.
+#[test]
+fn a_legacy_bare_hash_is_superseded_by_the_next_index() {
+    let t = library_dir();
+    let u = open_keyword();
+    index(&u, t.path());
+    let h = hash_of(&t.path().join("cooking"));
+    u.skill_approve("cooking", &h, Some("alice")).unwrap();
+    let legacy = "ab".repeat(32);
+    u.store
+        .conn
+        .execute(
+            "UPDATE skill_versions SET content_hash = ?1 WHERE content_hash = ?2",
+            [&legacy, &h],
+        )
+        .unwrap();
+    assert!(matches!(
+        u.skill_approve("cooking", &legacy[..12], None).unwrap_err(),
+        Error::NotFound(_)
+    ));
+    let r = index(&u, t.path());
+    let cooking = r.skills.iter().find(|s| s.slug == "cooking").unwrap();
+    assert_eq!(cooking.action, IndexAction::Updated, "{r:?}");
+    assert_eq!(cooking.hash, h);
+    let d = u.skill_show("cooking").unwrap();
+    assert_eq!(d.current.hash, h);
+    assert_eq!(d.current.status, "draft");
+    assert!(d.approved_hash.is_none());
+    assert!(
+        d.versions
+            .iter()
+            .any(|v| v.hash == legacy && v.status == "stale")
     );
 }

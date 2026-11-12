@@ -13,20 +13,29 @@
 //!
 //! `uteke skill approve <slug>@<hash>` records the hash of the **whole
 //! package**, so a client that checks the hash before loading a skill knows it
-//! holds exactly the bytes that were approved. The hash is SHA-256 over every
-//! file of the package, sorted by relative path (byte order, `/` separators),
-//! each file contributing, in this order:
+//! holds exactly the bytes that were approved. The hash is byte-identical to
+//! the one tole computes (`tole-core`, `skill_approval::package_hash`, tole
+//! `TOLE_SKILL_APPROVAL=required`): SHA-256 over every file of the package,
+//! sorted by relative path (byte order, `/` separators), each file
+//! contributing, in this order:
 //!
-//! 1. the length of its relative path in bytes, as 8 bytes big-endian,
+//! 1. the length of its relative path in bytes, as 8 bytes **little-endian**,
 //! 2. the path (UTF-8),
-//! 3. the length of its content in bytes, as 8 bytes big-endian,
+//! 3. the length of its content in bytes, as 8 bytes **little-endian**,
 //! 4. the content.
 //!
 //! The length prefixes make the encoding unambiguous: no two different file
-//! sets hash the same. Every regular file under the directory counts, at any
-//! depth, except the `.git` directory; symbolic links and special files are
-//! never followed or hashed (they are reported as warnings). The hash is
-//! lower-case hex, 64 characters.
+//! sets hash the same. The result is written `sha256:<64 lower-case hex>`
+//! ([`HASH_PREFIX`]); that string is what is stored, listed and approved.
+//!
+//! Every regular file under the directory counts, at any depth, hidden files
+//! and `.git` included (tole hashes them too). A package that contains a
+//! symbolic link or any other non-regular file (FIFO, socket, device) is
+//! **rejected whole**, never skipped: a link's target can change without the
+//! hash changing, and tole refuses such a package too, so both sides accept
+//! and reject the same packages. Empty directories are not hashed (but count
+//! against [`MAX_PACKAGE_ENTRIES`]). `.git` is skipped only when *discovering*
+//! skill directories under a root, never inside a package.
 //!
 //! # Bounds
 //!
@@ -34,7 +43,9 @@
 //! (a huge file, a million files, a deep or cyclic layout) cannot exhaust
 //! memory or time: see the `MAX_*` constants. A package over a bound is
 //! rejected whole, never truncated, because a hash of part of a package would
-//! not be the hash of the package.
+//! not be the hash of the package. The package bounds are at least as strict
+//! as tole's (256 files, 4 MiB, 1024 entries), so every package uteke accepts,
+//! tole accepts with the same hash.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -48,12 +59,18 @@ use sha2::{Digest, Sha256};
 pub const SKILL_FILE: &str = "SKILL.md";
 /// Longest slug (the Agent Skills limit for `name`).
 pub const MAX_SLUG_LEN: usize = 64;
-/// Files in one package (all files, indexed or not).
+/// Files in one package (all files, indexed or not). Below tole's 256.
 pub const MAX_PACKAGE_FILES: usize = 200;
 /// Bytes of one file of a package.
 pub const MAX_FILE_BYTES: u64 = 1 << 20;
-/// Bytes of a whole package.
-pub const MAX_PACKAGE_BYTES: u64 = 8 << 20;
+/// Bytes of a whole package (tole's limit, 4 MiB).
+pub const MAX_PACKAGE_BYTES: u64 = 4 << 20;
+/// Directory entries (files and directories, any depth) one package walk
+/// visits (tole's limit), so a tree of countless empty directories is refused
+/// before it costs a long walk.
+pub const MAX_PACKAGE_ENTRIES: usize = 1024;
+/// How a package hash starts: the algorithm, then 64 lower-case hex digits.
+pub const HASH_PREFIX: &str = "sha256:";
 /// Directory levels inside one package.
 pub const MAX_PACKAGE_DEPTH: usize = 8;
 /// Text files of one package that are indexed for search.
@@ -96,8 +113,6 @@ pub struct SkillPackage {
     pub files: Vec<PackageFile>,
     /// [`package_hash`] of `files`.
     pub hash: String,
-    /// Symlinks and special files that were left out.
-    pub warnings: Vec<String>,
 }
 
 /// Why a directory could not be read as a skill package.
@@ -127,19 +142,27 @@ pub fn is_valid_slug(s: &str) -> bool {
         })
 }
 
-/// The package hash (module docs): `files` is sorted here, so the order the
-/// caller holds them in does not matter.
+/// The package hash (module docs), `sha256:<hex>`, identical to tole's:
+/// `files` is sorted here, so the order the caller holds them in does not
+/// matter.
 pub fn package_hash(files: &[PackageFile]) -> String {
     let mut order: Vec<&PackageFile> = files.iter().collect();
     order.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
     let mut h = Sha256::new();
     for f in order {
-        h.update((f.path.len() as u64).to_be_bytes());
+        h.update((f.path.len() as u64).to_le_bytes());
         h.update(f.path.as_bytes());
-        h.update((f.bytes.len() as u64).to_be_bytes());
+        h.update((f.bytes.len() as u64).to_le_bytes());
         h.update(&f.bytes);
     }
-    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+    let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    format!("{HASH_PREFIX}{hex}")
+}
+
+/// The hex digits of a package hash, without [`HASH_PREFIX`]. A string
+/// without the prefix is returned as is.
+pub fn hash_hex(hash: &str) -> &str {
+    hash.strip_prefix(HASH_PREFIX).unwrap_or(hash)
 }
 
 // ── Discovery ─────────────────────────────────────────────────────────────
@@ -232,13 +255,15 @@ fn is_regular_file(p: &Path) -> bool {
 
 // ── Reading ───────────────────────────────────────────────────────────────
 
-/// Read the package in `dir`: every regular file, once, within the bounds.
+/// Read the package in `dir`: every regular file (`.git` included), once,
+/// within the bounds.
 ///
 /// # Errors
 ///
 /// A [`PackageRejection`] when the directory name is not a slug, a bound is
-/// exceeded (files, bytes, depth), a path is not UTF-8, `SKILL.md` is missing,
-/// not UTF-8 or larger than [`MAX_INDEXED_FILE_BYTES`], or a read fails.
+/// exceeded (files, bytes, entries, depth), a path is not UTF-8, the package
+/// holds a symbolic link or a special file, `SKILL.md` is missing, not UTF-8
+/// or larger than [`MAX_INDEXED_FILE_BYTES`], or a read fails.
 pub fn read_package(dir: &Path) -> Result<SkillPackage, PackageRejection> {
     let slug = dir
         .file_name()
@@ -255,14 +280,21 @@ pub fn read_package(dir: &Path) -> Result<SkillPackage, PackageRejection> {
         ));
     }
     let mut files: Vec<PackageFile> = Vec::new();
-    let mut warnings = Vec::new();
     let mut total: u64 = 0;
+    let mut seen: usize = 0;
     let mut stack: Vec<(PathBuf, String, usize)> = vec![(dir.to_path_buf(), String::new(), 0)];
     while let Some((cur, rel, depth)) = stack.pop() {
         let entries = fs::read_dir(&cur)
             .map_err(|e| reject(dir, format!("cannot read {}: {e}", cur.display())))?;
         for entry in entries {
             let entry = entry.map_err(|e| reject(dir, format!("cannot list a directory: {e}")))?;
+            seen += 1;
+            if seen > MAX_PACKAGE_ENTRIES {
+                return Err(reject(
+                    dir,
+                    format!("more than {MAX_PACKAGE_ENTRIES} entries (files and directories)"),
+                ));
+            }
             let name = entry
                 .file_name()
                 .into_string()
@@ -276,11 +308,11 @@ pub fn read_package(dir: &Path) -> Result<SkillPackage, PackageRejection> {
                 .file_type()
                 .map_err(|e| reject(dir, format!("cannot stat {rel_path}: {e}")))?;
             if ft.is_symlink() {
-                warnings.push(format!("{rel_path}: symbolic link not followed"));
+                return Err(reject(
+                    dir,
+                    format!("{rel_path}: symbolic link in a skill package"),
+                ));
             } else if ft.is_dir() {
-                if name == ".git" {
-                    continue;
-                }
                 if depth + 1 > MAX_PACKAGE_DEPTH {
                     return Err(reject(
                         dir,
@@ -309,12 +341,14 @@ pub fn read_package(dir: &Path) -> Result<SkillPackage, PackageRejection> {
                     bytes,
                 });
             } else {
-                warnings.push(format!("{rel_path}: special file ignored"));
+                return Err(reject(
+                    dir,
+                    format!("{rel_path}: not a regular file (special file in a skill package)"),
+                ));
             }
         }
     }
     files.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
-    warnings.sort();
     let skill = files
         .iter()
         .find(|f| f.path == SKILL_FILE)
@@ -334,7 +368,6 @@ pub fn read_package(dir: &Path) -> Result<SkillPackage, PackageRejection> {
         dir: dir.to_path_buf(),
         files,
         hash,
-        warnings,
     })
 }
 
@@ -689,16 +722,19 @@ mod tests {
 
     #[test]
     fn hash_is_pinned_and_order_independent() {
-        // One file: SHA-256 over len(path)=8 BE, "a", len(content)=1 BE, "x".
+        // One file: SHA-256 over len(path)=8 LE, "a", len(content)=1 LE, "x",
+        // written `sha256:<hex>` (tole's encoding).
         let one = package_hash(&[pf("a", b"x")]);
         let mut h = Sha256::new();
-        h.update(1u64.to_be_bytes());
+        h.update(1u64.to_le_bytes());
         h.update(b"a");
-        h.update(1u64.to_be_bytes());
+        h.update(1u64.to_le_bytes());
         h.update(b"x");
-        let expect: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        assert_eq!(one, expect);
-        assert_eq!(one.len(), 64);
+        let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(one, format!("sha256:{hex}"));
+        assert_eq!(one.len(), 71);
+        assert_eq!(hash_hex(&one), hex);
+        assert_eq!(hash_hex(&hex), hex, "a bare hash is left as it is");
         assert_eq!(
             package_hash(&[pf("b", b"2"), pf("a", b"1")]),
             package_hash(&[pf("a", b"1"), pf("b", b"2")])
@@ -706,8 +742,75 @@ mod tests {
         // Empty package is the hash of nothing.
         assert_eq!(
             package_hash(&[]),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    /// Test vectors computed with tole's own `skill_approval::package_hash`
+    /// and `read_package` (codecoradev/tole @ 0c212a6), on the file sets below.
+    /// Not derived from this implementation: they pin cross-implementation
+    /// compatibility (`TOLE_SKILL_APPROVAL=required`). If one fails, uteke no
+    /// longer hashes a package the way tole does; fix uteke, do not edit the
+    /// vector unless tole changed its encoding (then re-derive from tole).
+    const TOLE_EMPTY: &str =
+        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    const TOLE_SINGLE: &str =
+        "sha256:f0f5340d3d4d2e2e64563d9fa530ba57d3a865733f3761586a6d0919fe6c4399";
+    const TOLE_FULL: &str =
+        "sha256:0886321c37ecf45e90fff052843313420e85079649dd23566c03833f4e07f8d2";
+    const TOLE_SKILL_MD: &[u8] =
+        b"---\nname: demo\ndescription: A demo skill.\n---\n# Demo\n\nBody.\n";
+
+    /// A nested path, an empty file, binary bytes, non-ASCII content and file
+    /// name, and a `.git` file, all in tole's walk.
+    fn tole_full_set() -> Vec<(&'static str, Vec<u8>)> {
+        vec![
+            ("SKILL.md", TOLE_SKILL_MD.to_vec()),
+            ("references/a.md", b"ref a".to_vec()),
+            (
+                "references/sub/deep.md",
+                "h\u{e9}llo w\u{f6}rld \u{65e5}\u{672c}\u{8a9e}\n"
+                    .as_bytes()
+                    .to_vec(),
+            ),
+            ("scripts/run.sh", b"echo hi".to_vec()),
+            ("assets/empty.txt", vec![]),
+            ("assets/blob.bin", vec![0xff, 0x00, 0x80, 0x7f, 0x00]),
+            ("references/\u{fc}n\u{ef}.md", b"unicode name".to_vec()),
+            (".git/config", b"[core]\n".to_vec()),
+        ]
+    }
+
+    #[test]
+    fn hash_matches_tole_test_vectors() {
+        assert_eq!(package_hash(&[]), TOLE_EMPTY);
+        assert_eq!(package_hash(&[pf("SKILL.md", TOLE_SKILL_MD)]), TOLE_SINGLE);
+        let full: Vec<PackageFile> = tole_full_set()
+            .into_iter()
+            .map(|(p, b)| pf(p, &b))
+            .collect();
+        assert_eq!(package_hash(&full), TOLE_FULL);
+    }
+
+    #[test]
+    fn read_package_of_the_tole_vector_directory_matches_tole() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("demo");
+        for (path, bytes) in tole_full_set() {
+            let f = dir.join(path);
+            fs::create_dir_all(f.parent().unwrap()).unwrap();
+            fs::write(f, bytes).unwrap();
+        }
+        let p = read_package(&dir).unwrap();
+        assert_eq!(p.files.len(), 8, ".git is part of the package");
+        assert_eq!(p.hash, TOLE_FULL);
+        let single = t.path().join("single");
+        write(
+            &single,
+            "SKILL.md",
+            std::str::from_utf8(TOLE_SKILL_MD).unwrap(),
+        );
+        assert_eq!(read_package(&single).unwrap().hash, TOLE_SINGLE);
     }
 
     #[test]
@@ -846,12 +949,41 @@ mod tests {
         .unwrap();
         let d = discover_skills(t.path()).unwrap();
         assert_eq!(d.skills.len(), 1, "a linked directory is not followed");
-        let p = read_package(&d.skills[0]).unwrap();
-        assert_eq!(
-            p.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
-            ["SKILL.md"]
+        // tole refuses a package with a symlink, so it cannot be approved
+        // here either (a skipped link would give a hash tole never computes).
+        let r = read_package(&d.skills[0]).unwrap_err();
+        assert!(
+            r.reason.contains("secret.txt: symbolic link"),
+            "{}",
+            r.reason
         );
-        assert_eq!(p.warnings, ["secret.txt: symbolic link not followed"]);
+        // A link to a directory is refused the same way.
+        fs::remove_file(t.path().join("demo/secret.txt")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), t.path().join("demo/linked")).unwrap();
+        assert!(
+            read_package(&t.path().join("demo"))
+                .unwrap_err()
+                .reason
+                .contains("linked: symbolic link")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_special_file_makes_the_package_unreadable() {
+        let t = tempfile::tempdir().unwrap();
+        write(t.path(), "demo/SKILL.md", GOOD);
+        let fifo = t.path().join("demo/pipe");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status();
+        if !made.is_ok_and(|s| s.success()) {
+            return; // no mkfifo on this machine
+        }
+        let r = read_package(&t.path().join("demo")).unwrap_err();
+        assert!(
+            r.reason.contains("pipe: not a regular file"),
+            "{}",
+            r.reason
+        );
     }
 
     #[test]
@@ -861,12 +993,18 @@ mod tests {
         write(&dir, "SKILL.md", GOOD);
         write(&dir, "references/a.md", "ref a");
         write(&dir, "scripts/run.sh", "echo hi");
-        write(&dir, ".git/config", "ignored");
+        // `.git` is part of the package, as it is for tole.
+        write(&dir, ".git/config", "[core]");
         let p = read_package(&dir).unwrap();
         assert_eq!(p.slug, "demo");
         assert_eq!(
             p.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
-            ["SKILL.md", "references/a.md", "scripts/run.sh"]
+            [
+                ".git/config",
+                "SKILL.md",
+                "references/a.md",
+                "scripts/run.sh"
+            ]
         );
         assert_eq!(p.hash, package_hash(&p.files));
         // Same bytes elsewhere, same hash: the directory is not part of it.
@@ -874,6 +1012,7 @@ mod tests {
         write(&other, "SKILL.md", GOOD);
         write(&other, "references/a.md", "ref a");
         write(&other, "scripts/run.sh", "echo hi");
+        write(&other, ".git/config", "[core]");
         assert_eq!(read_package(&other).unwrap().hash, p.hash);
         // A changed byte changes it.
         write(&other, "scripts/run.sh", "echo ho");
@@ -923,14 +1062,22 @@ mod tests {
         assert!(read_package(&t.path().join("deep8")).is_ok());
 
         write(t.path(), "total/SKILL.md", GOOD);
-        for i in 0..9 {
+        for i in 0..4 {
             fs::write(
                 t.path().join(format!("total/f{i}.bin")),
                 vec![0u8; MAX_FILE_BYTES as usize],
             )
             .unwrap();
         }
-        assert!(rej("total").contains("larger than 8388608"));
+        assert!(rej("total").contains("larger than 4194304"));
+
+        // Directories count against the entry limit like files (tole's rule),
+        // so a tree of countless empty directories is refused.
+        write(t.path(), "dirs/SKILL.md", GOOD);
+        for i in 0..MAX_PACKAGE_ENTRIES {
+            fs::create_dir_all(t.path().join(format!("dirs/d{i}"))).unwrap();
+        }
+        assert!(rej("dirs").contains("more than 1024 entries"));
     }
 
     #[test]
