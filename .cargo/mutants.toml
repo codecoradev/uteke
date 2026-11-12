@@ -44,6 +44,12 @@ exclude_globs = [
 #     point-in-time recall is a no-op: recall_at_time already filters on the
 #     same entity and category metadata (time_travel.rs), and its result never
 #     holds more than `n` rows, so the second retain and truncate change nothing.
+#   time_travel.rs:47:39 (|| → &&) and 54:31 (< → >) in recall_at_time_index — both
+#     only change how many widening passes the over-fetch loop runs, never which
+#     rows come back: with `&&` a pass that already has enough rows widens (at
+#     most twice) and the first `limit` rows of the ranked list are the same; with
+#     `>` the exhausted-index exit never fires, and a later pass over an
+#     exhausted index returns the same candidate set.
 #   capture.rs:348:45 (+ → *) in chunk_session — `whole` is only a shortcut:
 #     when it is false, split_on_boundary(content, budget - label_len) returns
 #     the same single piece for any content that fits, and `c * l <= b < c + l`
@@ -59,4 +65,6 @@ exclude_re = [
     "capture.rs:359:43: replace > with >= in chunk_session",
     "maintenance.rs:435:.* in crate::Uteke::reembed_missing_memories",
     "recall_exec.rs:239:38: replace && with \\|\\| in Uteke::run_recall_unrooted",
+    "time_travel.rs:47:39: replace \\|\\| with && in crate::Uteke::recall_at_time_index",
+    "time_travel.rs:54:31: replace < with > in crate::Uteke::recall_at_time_index",
 ]
