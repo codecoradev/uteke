@@ -440,3 +440,89 @@ mod history_tests {
         assert!(memory_existed_at(&m, now), "deprecated after the instant");
     }
 }
+
+/// Point-in-time recall of memories deprecated since (#1729).
+#[cfg(test)]
+mod retired_filter_tests {
+    use crate::test_support::open_keyword;
+    use std::time::Duration;
+
+    #[test]
+    fn deprecated_memories_are_filtered_by_entity_at_a_point_in_time() {
+        let u = open_keyword();
+        let a = u
+            .remember(
+                "shared probe words about x",
+                &[],
+                Some(serde_json::json!({"entity": "x"})),
+                None,
+            )
+            .unwrap();
+        let b = u
+            .remember(
+                "shared probe words about y",
+                &[],
+                Some(serde_json::json!({"entity": "y"})),
+                None,
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let before_forgetting = chrono::Utc::now();
+        std::thread::sleep(Duration::from_millis(50));
+        u.soft_forget(&a, "gone").unwrap();
+        u.soft_forget(&b, "gone").unwrap();
+
+        let ids = |entity: Option<&str>| {
+            let mut ids: Vec<String> = u
+                .recall_at_time(
+                    "shared probe words",
+                    10,
+                    None,
+                    None,
+                    before_forgetting,
+                    0.0,
+                    entity,
+                    None,
+                )
+                .unwrap()
+                .into_iter()
+                .map(|r| r.memory.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut both = vec![a.clone(), b.clone()];
+        both.sort();
+        assert_eq!(ids(None), both, "both existed then");
+        assert_eq!(ids(Some("x")), vec![a]);
+        assert_eq!(ids(Some("y")), vec![b]);
+    }
+    #[test]
+    fn the_index_fetch_widens_when_the_first_window_holds_only_newer_memories() {
+        // limit 20 asks for max(20 * 3, 50) = 60 candidates: all 60 are newer
+        // than the point in time and are dropped. The next pass (20 * 9) reaches
+        // the 10 older memories. A window of limit + multiplier would stay at 50
+        // on every pass and return nothing.
+        let u = open_keyword();
+        for i in 0..10 {
+            u.remember(&format!("probe old{i}"), &[], None, None)
+                .unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let point_in_time = chrono::Utc::now();
+        std::thread::sleep(Duration::from_millis(50));
+        for i in 0..60 {
+            u.remember(&format!("probe probe probe probe new{i}"), &[], None, None)
+                .unwrap();
+        }
+        let found = u
+            .recall_at_time("probe", 20, None, None, point_in_time, 0.0, None, None)
+            .unwrap();
+        assert_eq!(found.len(), 10, "{found:?}");
+        assert!(
+            found
+                .iter()
+                .all(|r| r.memory.content.starts_with("probe old"))
+        );
+    }
+}

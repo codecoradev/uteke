@@ -907,4 +907,78 @@ mod tests {
             assert!(e.to_string().starts_with("Invalid min_trust"), "{bad}");
         }
     }
+    #[test]
+    fn an_entity_filter_over_fetches_by_the_limit_plus_ten() {
+        // limit 1 with a post-filter fetches max(3, 1 + 10) = 11 candidates:
+        // the one memory with the entity ranks 11th of 11, so a window of 10
+        // (limit * 10) misses it and one below 1 + 10 cannot even be computed.
+        let u = open_keyword();
+        for i in 0..10 {
+            u.remember(&format!("alpha alpha alpha item{i}"), &[], None, None)
+                .unwrap();
+        }
+        u.remember(
+            "alpha once among many other unrelated words here",
+            &[],
+            Some(serde_json::json!({"entity": "needle"})),
+            None,
+        )
+        .unwrap();
+        let r = req(|i| {
+            i.query = "alpha".into();
+            i.strategy = Some("fts5".into());
+            i.limit = Some(1);
+            i.entity = Some("needle".into());
+        });
+        let RecallOutput::Memories { results, .. } = run(&u, &r).unwrap() else {
+            panic!("memory-only expected");
+        };
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert_eq!(
+            results[0]
+                .memory
+                .metadata
+                .get("entity")
+                .and_then(|v| v.as_str()),
+            Some("needle")
+        );
+    }
+    fn remember_as(u: &Uteke, content: &str, author_type: &str, source_type: &str) {
+        let r = crate::remember_request::RememberRequest {
+            content: content.to_string(),
+            tags: vec![],
+            namespace: None,
+            memory_type: Some("fact".to_string()),
+            metadata: None,
+            detect_contradiction: false,
+            source: None,
+            source_type: Some(source_type.to_string()),
+            author_type: Some(author_type.to_string()),
+            room: None,
+            author: None,
+            validity: None,
+        };
+        u.run_remember(&r).unwrap();
+    }
+
+    #[test]
+    fn min_trust_keeps_the_given_tier_and_the_ones_above() {
+        let u = open_keyword();
+        remember_as(&u, "tier probe human", "human", "user");
+        remember_as(&u, "tier probe agent", "agent", "user");
+        remember_as(&u, "tier probe external", "agent", "url");
+        remember_as(&u, "tier probe derived", "agent", "derived");
+        let r = req(|i| {
+            i.query = "tier probe".into();
+            i.search_type = Some("memory".into());
+            i.strategy = Some("fts5".into());
+            i.min_trust = Some("agent".into());
+        });
+        let RecallOutput::Unified(results) = run(&u, &r).unwrap() else {
+            panic!("unified expected");
+        };
+        let mut tiers: Vec<_> = results.iter().map(|r| r.trust_tier).collect();
+        tiers.sort();
+        assert_eq!(tiers, vec![Some(TrustTier::Agent), Some(TrustTier::Human)]);
+    }
 }
