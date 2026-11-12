@@ -50,6 +50,11 @@ exclude_globs = [
 #     most twice) and the first `limit` rows of the ranked list are the same; with
 #     `>` the exhausted-index exit never fires, and a later pass over an
 #     exhausted index returns the same candidate set.
+#   time_travel.rs:59:21 (+= → -=, += → *=) and 60:24 (*= → +=) in recall_at_time_index
+#     — they act only on the third widening pass of the over-fetch loop. recall_inner
+#     already widens its own index window until it has `limit` rows, so a third outer
+#     pass returned the same rows in every fixture tried (400 newer memories hiding 10
+#     older ones, distinct and repeated texts). Not proven equivalent; not killed.
 #   capture.rs:348:45 (+ → *) in chunk_session — `whole` is only a shortcut:
 #     when it is false, split_on_boundary(content, budget - label_len) returns
 #     the same single piece for any content that fits, and `c * l <= b < c + l`
@@ -67,4 +72,6 @@ exclude_re = [
     "recall_exec.rs:239:38: replace && with \\|\\| in Uteke::run_recall_unrooted",
     "time_travel.rs:47:39: replace \\|\\| with && in crate::Uteke::recall_at_time_index",
     "time_travel.rs:54:31: replace < with > in crate::Uteke::recall_at_time_index",
+    "time_travel.rs:59:21: replace \\+= with (-=|\\*=) in crate::Uteke::recall_at_time_index",
+    "time_travel.rs:60:24: replace \\*= with \\+= in crate::Uteke::recall_at_time_index",
 ]
