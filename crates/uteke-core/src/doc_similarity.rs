@@ -347,8 +347,17 @@ fn rank_candidates(
     (hits, without_vector)
 }
 
+/// A pair found by the scan, by reference: the scan can find millions of them
+/// (up to every pair of the scope), so owned summaries are built only for the
+/// pairs a report returns.
+struct RawPair<'a> {
+    a: &'a DocumentSummary,
+    b: &'a DocumentSummary,
+    score: f32,
+}
+
 /// Every pair of `docs` at or above `threshold`, best first, `a.slug < b.slug`.
-fn duplicate_pairs(docs: &[DocVector], threshold: f32) -> Vec<DocDuplicatePair> {
+fn duplicate_pairs(docs: &[DocVector], threshold: f32) -> Vec<RawPair<'_>> {
     let with_vector: Vec<(&DocumentSummary, &[f64])> = docs
         .iter()
         .filter_map(|d| d.vector.as_deref().map(|v| (&d.summary, v)))
@@ -367,11 +376,7 @@ fn duplicate_pairs(docs: &[DocVector], threshold: f32) -> Vec<DocDuplicatePair> 
             } else {
                 (db, da)
             };
-            pairs.push(DocDuplicatePair {
-                a: (*a).clone(),
-                b: (*b).clone(),
-                score,
-            });
+            pairs.push(RawPair { a, b, score });
         }
     }
     pairs.sort_by(|x, y| {
@@ -401,14 +406,14 @@ fn find_root<'a>(parent: &mut HashMap<&'a str, &'a str>, x: &'a str) -> &'a str 
 
 /// Connected components (2 or more members) of the pair graph, as sorted slug
 /// lists, largest first, then by first slug.
-fn duplicate_groups(pairs: &[DocDuplicatePair]) -> Vec<Vec<String>> {
+fn duplicate_groups<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Vec<Vec<String>> {
     let mut parent: HashMap<&str, &str> = HashMap::new();
-    for p in pairs {
-        for s in [p.a.slug.as_str(), p.b.slug.as_str()] {
+    for (a, b) in pairs {
+        for s in [a, b] {
             parent.entry(s).or_insert(s);
         }
-        let ra = find_root(&mut parent, p.a.slug.as_str());
-        let rb = find_root(&mut parent, p.b.slug.as_str());
+        let ra = find_root(&mut parent, a);
+        let rb = find_root(&mut parent, b);
         if ra != rb {
             parent.insert(ra, rb);
         }
@@ -698,10 +703,21 @@ impl crate::Uteke {
             )));
         }
         let all_pairs = duplicate_pairs(&docs, floor);
-        let groups = duplicate_groups(&all_pairs);
+        let groups = duplicate_groups(
+            all_pairs
+                .iter()
+                .map(|p| (p.a.slug.as_str(), p.b.slug.as_str())),
+        );
         let total_pairs = all_pairs.len();
-        let mut pairs = all_pairs;
-        pairs.truncate(limit);
+        let pairs = all_pairs
+            .iter()
+            .take(limit)
+            .map(|p| DocDuplicatePair {
+                a: p.a.clone(),
+                b: p.b.clone(),
+                score: p.score,
+            })
+            .collect();
         Ok(DocDuplicateReport {
             threshold: floor,
             scanned,
@@ -1621,28 +1637,10 @@ mod tests {
 
     #[test]
     fn groups_merge_chains_and_order_by_size_then_slug() {
-        let summary = |slug: &str| DocumentSummary {
-            id: slug.to_string(),
-            slug: slug.to_string(),
-            title: slug.to_string(),
-            namespace: None,
-            author: None,
-            version: 1,
-            updated_at: String::new(),
-            parent_id: None,
-            depth: 0,
-            has_children: false,
-            sort_order: 0,
-        };
-        let p = |a: &str, b: &str| DocDuplicatePair {
-            a: summary(a),
-            b: summary(b),
-            score: 1.0,
-        };
         // x-y and y-z chain into one group; m-n is a pair; q-r is another.
-        let got = duplicate_groups(&[p("m", "n"), p("x", "y"), p("q", "r"), p("y", "z")]);
+        let got = duplicate_groups([("m", "n"), ("x", "y"), ("q", "r"), ("y", "z")]);
         assert_eq!(got, groups(&[&["x", "y", "z"], &["m", "n"], &["q", "r"]]));
-        assert!(duplicate_groups(&[]).is_empty());
+        assert!(duplicate_groups([]).is_empty());
     }
 
     #[test]
