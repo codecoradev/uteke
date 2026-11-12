@@ -39,6 +39,7 @@ impl App {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(&self.uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -164,6 +165,7 @@ fn answer(e: uteke_core::Error) -> (u16, String) {
         host_guard: Default::default(),
         store_id: String::new(),
         embed_warmer: Default::default(),
+        remote_embeds: Default::default(),
     };
     let resp = ctx.core_error(&req, &e);
     let status = resp.status_code().0;

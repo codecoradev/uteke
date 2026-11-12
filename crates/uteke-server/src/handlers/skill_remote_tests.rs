@@ -75,6 +75,7 @@ fn ctx(with_tokens: bool) -> ReqCtx {
         host_guard: Default::default(),
         store_id: String::new(),
         embed_warmer: Default::default(),
+        remote_embeds: Default::default(),
     }
 }
 
@@ -452,6 +453,59 @@ fn list_and_show_never_carry_the_server_path() {
     );
 }
 
+/// The server runs a request under the store lock, one at a time: a gate
+/// taken inside it could never refuse anything and a burst of drafts would
+/// queue for minutes. The slot is taken before the lock, so with the lock held
+/// by a slow request two embedding requests wait and the third is a 429 at once.
+#[test]
+fn the_embedding_gate_refuses_before_the_store_lock_is_taken() {
+    let app = App::new();
+    let ctx = ctx(false);
+    let store = app.uteke.lock().unwrap();
+    let embed = |body: Value| {
+        let url = if body.get("text").is_some() {
+            "/skill/similar"
+        } else {
+            "/skill/search"
+        };
+        app.call(&ctx, Method::Post, url, Some(body), None)
+    };
+    std::thread::scope(|s| {
+        let waiting = [
+            s.spawn(|| embed(json!({"text": "x"}))),
+            s.spawn(|| embed(json!({"query": "deploy"}))),
+        ];
+        let started = std::time::Instant::now();
+        while ctx.remote_embeds.in_flight() < 2 {
+            assert!(
+                started.elapsed().as_secs() < 20,
+                "both requests should hold a slot while they wait for the store"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // The store is locked, yet these answer without waiting for it.
+        for body in [
+            json!({"text": "y"}),
+            json!({"query": "deploy", "mode": "semantic"}),
+        ] {
+            let (status, v) = embed(body);
+            assert_eq!(status, 429, "{v}");
+            assert_eq!(
+                v["error"],
+                "busy: 2 embedding requests are already running; retry in a moment"
+            );
+        }
+        // An oversized draft is a 400 whether or not the server is busy.
+        let (status, _) = embed(json!({"text": "x".repeat(32_769)}));
+        assert_eq!(status, 400);
+        drop(store);
+        for h in waiting {
+            assert_eq!(h.join().unwrap().0, 200);
+        }
+    });
+    assert_eq!(ctx.remote_embeds.in_flight(), 0, "slots are released");
+}
+
 #[test]
 fn embedding_routes_answer_429_when_every_slot_is_taken() {
     let app = App::new();
@@ -489,4 +543,28 @@ fn embedding_routes_answer_429_when_every_slot_is_taken() {
         200
     );
     assert_eq!(app.post("/skill/list", json!({})).0, 200);
+}
+
+/// Only a request that really embeds a client string takes a slot.
+#[test]
+fn only_requests_that_embed_a_client_string_take_a_slot() {
+    let t = |path: &str, body: Value| super::remote_embed_input(path, &body).map(|d| d.is_some());
+    // Some(true): a bounded draft; Some(false): a skill query; None: no embedding.
+    assert_eq!(t("/doc/similar", json!({"text": "x"})), Some(true));
+    assert_eq!(t("/doc/similar", json!({"slug": "a"})), None);
+    assert_eq!(t("/doc/similar", json!({"id": "a", "text": "x"})), None);
+    assert_eq!(t("/doc/similar", json!({"report": true})), None);
+    assert_eq!(t("/doc/similar", json!({"text": 5})), None);
+    assert_eq!(t("/skill/similar", json!({"text": "x"})), Some(true));
+    assert_eq!(t("/skill/similar", json!({"slug": "a"})), None);
+    assert_eq!(t("/skill/search", json!({"query": "x"})), Some(false));
+    assert_eq!(
+        t("/skill/search", json!({"query": "x", "mode": "semantic"})),
+        Some(false)
+    );
+    assert_eq!(
+        t("/skill/search", json!({"query": "x", "mode": "fts"})),
+        None
+    );
+    assert_eq!(t("/skill/list", json!({"text": "x"})), None);
 }
