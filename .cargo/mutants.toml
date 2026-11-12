@@ -2,6 +2,7 @@
 #
 # Usage (from workspace root):
 #   cargo mutants --file crates/uteke-core/src/jaccard.rs        # single file
+#   cargo mutants -p uteke-privacy                              # the secret detector (moved from uteke-core, #1732)
 #   cargo mutants --output mutants-run.out                      # custom output dir
 #   cargo mutants -j 4 --timeout 60                              # parallel jobs + timeout
 #
