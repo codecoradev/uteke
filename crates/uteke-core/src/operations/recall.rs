@@ -1391,3 +1391,29 @@ mod mutant_kill_tests_0_21 {
         assert_eq!(got[1].score, 0.5);
     }
 }
+
+/// The hot-memory score boost (#1729).
+#[cfg(test)]
+mod hot_boost_tests {
+    use crate::test_support::open_keyword;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn only_a_hot_memory_is_boosted_and_the_score_is_capped_at_one() {
+        let u = open_keyword();
+        let id = u.remember("a probe memory", &[], None, None).unwrap();
+        let mut m = u.store.get_by_id(&id).unwrap().unwrap();
+
+        // default tiers: hot within 7 days, warm within 30, boost 0.1
+        m.last_accessed = Some(Utc::now());
+        assert!((u.hot_boosted(&m, 0.5) - 0.6).abs() < 1e-6, "hot: added");
+        assert_eq!(u.hot_boosted(&m, 0.95), 1.0, "capped at 1");
+
+        m.last_accessed = Some(Utc::now() - Duration::days(15));
+        assert_eq!(u.hot_boosted(&m, 0.5), 0.5, "warm: unchanged");
+        m.last_accessed = Some(Utc::now() - Duration::days(90));
+        assert_eq!(u.hot_boosted(&m, 0.5), 0.5, "cold: unchanged");
+        m.last_accessed = None;
+        assert_eq!(u.hot_boosted(&m, 0.5), 0.5, "never accessed: cold");
+    }
+}

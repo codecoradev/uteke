@@ -440,3 +440,61 @@ mod history_tests {
         assert!(memory_existed_at(&m, now), "deprecated after the instant");
     }
 }
+
+/// Point-in-time recall of memories deprecated since (#1729).
+#[cfg(test)]
+mod retired_filter_tests {
+    use crate::test_support::open_keyword;
+    use std::time::Duration;
+
+    #[test]
+    fn deprecated_memories_are_filtered_by_entity_at_a_point_in_time() {
+        let u = open_keyword();
+        let a = u
+            .remember(
+                "shared probe words about x",
+                &[],
+                Some(serde_json::json!({"entity": "x"})),
+                None,
+            )
+            .unwrap();
+        let b = u
+            .remember(
+                "shared probe words about y",
+                &[],
+                Some(serde_json::json!({"entity": "y"})),
+                None,
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let before_forgetting = chrono::Utc::now();
+        std::thread::sleep(Duration::from_millis(50));
+        u.soft_forget(&a, "gone").unwrap();
+        u.soft_forget(&b, "gone").unwrap();
+
+        let ids = |entity: Option<&str>| {
+            let mut ids: Vec<String> = u
+                .recall_at_time(
+                    "shared probe words",
+                    10,
+                    None,
+                    None,
+                    before_forgetting,
+                    0.0,
+                    entity,
+                    None,
+                )
+                .unwrap()
+                .into_iter()
+                .map(|r| r.memory.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut both = vec![a.clone(), b.clone()];
+        both.sort();
+        assert_eq!(ids(None), both, "both existed then");
+        assert_eq!(ids(Some("x")), vec![a]);
+        assert_eq!(ids(Some("y")), vec![b]);
+    }
+}
