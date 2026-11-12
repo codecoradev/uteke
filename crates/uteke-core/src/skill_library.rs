@@ -251,8 +251,6 @@ pub struct SkillIndexEntry {
     /// Files in the package / files indexed for search.
     pub files: usize,
     pub indexed_files: usize,
-    /// Symbolic links and special files left out.
-    pub warnings: Vec<String>,
 }
 
 /// A skill close to a skill that was just indexed.
@@ -385,8 +383,27 @@ impl UsageEvent {
     }
 }
 
-/// Split `slug@hash`. The hash must be at least [`MIN_HASH_PREFIX`] lower-case
-/// hexadecimal characters (a full 64-character hash is the normal case).
+/// The hex digits of a hash given to `approve`: `sha256:<hex>`, or bare `<hex>`
+/// (case-insensitive), at least [`MIN_HASH_PREFIX`] and at most 64 hexadecimal
+/// digits. A full hash (64 digits) is the normal case; a shorter one is a
+/// prefix of the digits after `sha256:`.
+pub fn normalize_hash_input(s: &str) -> Result<String, Error> {
+    let lower = s.to_ascii_lowercase();
+    let hex = lower.strip_prefix(pkg::HASH_PREFIX).unwrap_or(&lower);
+    if hex.len() < MIN_HASH_PREFIX || hex.len() > 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit())
+    {
+        return Err(Error::validation(format!(
+            "the hash must be {MIN_HASH_PREFIX} to 64 hexadecimal characters, optionally \
+             preceded by '{}'",
+            pkg::HASH_PREFIX
+        )));
+    }
+    Ok(hex.to_string())
+}
+
+/// Split `slug@hash`, where the hash is `sha256:<hex>`, a bare `<hex>` or a
+/// prefix of at least [`MIN_HASH_PREFIX`] hex digits (see
+/// [`normalize_hash_input`]). Returns the slug and the lower-case hex digits.
 pub fn parse_skill_ref(s: &str) -> Result<(&str, String), Error> {
     let (slug, hash) = s
         .rsplit_once('@')
@@ -396,16 +413,7 @@ pub fn parse_skill_ref(s: &str) -> Result<(&str, String), Error> {
             "'{slug}' is not a valid skill slug"
         )));
     }
-    let hash = hash.to_ascii_lowercase();
-    if hash.len() < MIN_HASH_PREFIX
-        || hash.len() > 64
-        || !hash.bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Err(Error::validation(format!(
-            "the hash must be {MIN_HASH_PREFIX} to 64 hexadecimal characters"
-        )));
-    }
-    Ok((slug, hash))
+    Ok((slug, normalize_hash_input(hash)?))
 }
 
 fn check_label(what: &str, v: Option<&str>) -> Result<Option<String>, Error> {
@@ -647,7 +655,6 @@ impl crate::Uteke {
             issues: issues.clone(),
             files: p.files.len(),
             indexed_files,
-            warnings: p.warnings.clone(),
         };
 
         // The documents must not collide with an ordinary document.
@@ -1415,8 +1422,9 @@ impl crate::Uteke {
 
     /// Record that a human approved version `hash` of skill `slug`: the trust
     /// anchor a client checks before loading it. `hash` is the package hash
-    /// ([`crate::skill_package`]) or a prefix of at least 12 hexadecimal
-    /// characters, which must name exactly one version.
+    /// ([`crate::skill_package`], `sha256:<hex>`, with or without the prefix)
+    /// or a prefix of at least 12 hexadecimal digits of the part after
+    /// `sha256:`, which must name exactly one version.
     ///
     /// Only the current version of a skill can be approved, and only a valid
     /// one. Approving an approved version changes nothing and writes no ledger
@@ -1434,7 +1442,7 @@ impl crate::Uteke {
         actor: Option<&str>,
     ) -> Result<SkillApproval, Error> {
         let actor = check_label("actor", actor)?;
-        let hash = hash.to_ascii_lowercase();
+        let hash = normalize_hash_input(hash)?;
         let (skill_id, ..) = self
             .skill_row(slug)?
             .ok_or_else(|| Error::not_found(format!("skill not found: {slug}")))?;
@@ -1446,7 +1454,8 @@ impl crate::Uteke {
         let mut stmt = tx
             .prepare(
                 "SELECT content_hash, status, valid, is_current FROM skill_versions \
-                 WHERE skill_id = ?1 AND substr(content_hash, 1, ?2) = ?3",
+                 WHERE skill_id = ?1 AND content_hash LIKE 'sha256:%' \
+                 AND substr(content_hash, 8, ?2) = ?3",
             )
             .map_err(|e| db("prepare skill approve", e))?;
         let found: Vec<(String, String, bool, bool)> = stmt
@@ -1465,7 +1474,8 @@ impl crate::Uteke {
         let (full, status, valid, current) = match found.as_slice() {
             [] => {
                 return Err(Error::not_found(format!(
-                    "skill '{slug}' has no version with hash {hash}"
+                    "skill '{slug}' has no version with hash {}{hash}",
+                    pkg::HASH_PREFIX
                 )));
             }
             [one] => one.clone(),
@@ -1479,7 +1489,7 @@ impl crate::Uteke {
             return Err(Error::validation(format!(
                 "version {} of '{slug}' was replaced by newer bytes; index the skill again and \
                  approve the current hash",
-                &full[..12]
+                &pkg::hash_hex(&full)[..12]
             )));
         }
         if status == STATUS_APPROVED {

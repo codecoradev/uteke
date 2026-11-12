@@ -137,7 +137,9 @@ fn list_and_show_report_the_indexed_library() {
     assert_eq!(d["slug"], "deploy");
     assert_eq!(d["current"]["status"], "draft");
     assert_eq!(d["current"]["file_count"], 2);
-    assert_eq!(d["current"]["hash"].as_str().unwrap().len(), 64);
+    let hash = d["current"]["hash"].as_str().unwrap();
+    assert_eq!(hash.len(), 71, "sha256: + 64 hex digits");
+    assert!(hash.starts_with("sha256:"), "{hash}");
     assert_eq!(d["approved_hash"], Value::Null);
     assert_eq!(d["ledger"][0]["action"], "created");
     let text = store.ok(&["skill", "show", "deploy"]);
@@ -261,6 +263,7 @@ fn similar_reads_the_skill_vectors() {
 fn approve_records_the_hash_and_checks_it() {
     let store = Store::seeded("approve");
     let h = full_hash(&store, "cooking");
+    let hex = h.strip_prefix("sha256:").unwrap().to_string();
     let out = store.ok(&[
         "skill",
         "approve",
@@ -275,7 +278,16 @@ fn approve_records_the_hash_and_checks_it() {
     assert_eq!(d["current"]["approved_by"], "alice");
     assert_eq!(d["ledger"][0]["action"], "approved");
     // Again: a no-op.
-    let out = store.ok(&["skill", "approve", &format!("cooking@{}", &h[..12])]);
+    let out = store.ok(&["skill", "approve", &format!("cooking@{}", &hex[..12])]);
+    assert_eq!(out, format!("cooking@{h} was already approved\n"));
+    // The same hash as a bare hex digest, and as `sha256:` plus a prefix.
+    let out = store.ok(&["skill", "approve", &format!("cooking@{hex}")]);
+    assert_eq!(out, format!("cooking@{h} was already approved\n"));
+    let out = store.ok(&[
+        "skill",
+        "approve",
+        &format!("cooking@sha256:{}", &hex[..16]),
+    ]);
     assert_eq!(out, format!("cooking@{h} was already approved\n"));
     let v = store.json(&["--json", "skill", "approve", &format!("cooking@{h}")]);
     assert_eq!(v["changed"], false);
@@ -296,7 +308,7 @@ fn approve_records_the_hash_and_checks_it() {
     );
     assert!(
         store
-            .fails(&["skill", "approve", &format!("deploy@{}", &h[..11])])
+            .fails(&["skill", "approve", &format!("deploy@{}", &hex[..11])])
             .contains("hash must be")
     );
     assert!(

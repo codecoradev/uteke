@@ -32,8 +32,9 @@ fn read_draft(file: &str) -> Result<String, String> {
     String::from_utf8(buf).map_err(|_| format!("{file} is not valid UTF-8"))
 }
 
+/// The first 12 hex digits of a package hash (`sha256:` left out).
 fn short(hash: &str) -> &str {
-    output::char_prefix(hash, 12)
+    output::char_prefix(uteke_core::skill_package::hash_hex(hash), 12)
 }
 
 fn render_index(r: &SkillIndexReport) -> Vec<String> {
@@ -67,9 +68,6 @@ fn render_index(r: &SkillIndexReport) -> Vec<String> {
                 i.message,
                 i.code
             ));
-        }
-        for w in &s.warnings {
-            lines.push(format!("      warning: {w}"));
         }
     }
     for n in &r.near_duplicates {
@@ -429,7 +427,7 @@ mod tests {
     };
     use uteke_core::skill_package::{LintIssue, PackageRejection};
 
-    const H: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const H: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     #[test]
     fn draft_reading_is_bounded() {
@@ -485,7 +483,6 @@ mod tests {
                 }],
                 files: 3,
                 indexed_files: 2,
-                warnings: vec!["x: symbolic link not followed".into()],
             }],
             near_duplicates: vec![NearDuplicate {
                 slug: "demo".into(),
@@ -501,7 +498,6 @@ mod tests {
                 "Indexed 1 skill(s): 1 new, 0 updated, 0 reverted, 0 unchanged (4 directories scanned)",
                 "  created   demo                         draft    0123456789ab  3 file(s), 2 indexed  INVALID",
                 "      error: frontmatter has no 'description' (missing-description)",
-                "      warning: x: symbolic link not followed",
                 "  demo is possible_duplicate to demo-2 (0.950)",
                 "  rejected /s/Bad: not a slug",
                 "  The scan stopped at a limit: index a narrower directory for the rest.",

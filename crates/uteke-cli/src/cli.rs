@@ -814,10 +814,10 @@ pub enum SkillCommands {
     /// Approve version <slug>@<hash> of a skill
     ///
     /// Records the hash a client checks before loading the skill. The hash is
-    /// the package hash shown by `skill show` (SHA-256 over every file: path
-    /// length, path, content length, content; see docs/cli-reference.md), or
-    /// a prefix of at least 12 characters. Only the current, valid version can
-    /// be approved.
+    /// the package hash shown by `skill show`, `sha256:<hex>` (the same hash
+    /// tole computes; see docs/cli-reference.md), with or without the
+    /// `sha256:` prefix, or a prefix of at least 12 hex digits. Only the
+    /// current, valid version can be approved.
     Approve {
         /// <slug>@<hash>
         reference: String,

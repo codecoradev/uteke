@@ -1469,11 +1469,11 @@ uteke skill index ~/.claude/skills
 uteke skill index ./my-skill --owner team-a --json
 ```
 
-Reads every skill directory under the given one (the directory itself when it holds a `SKILL.md`), to 3 levels deep, **without modifying any file**, symbolic links are never followed. For each skill it records the package hash, lints `SKILL.md`, and embeds the text files (`.md`, `.markdown`, `.txt`) for search; other files are hashed only. It needs the embedding model. It reports `created`, `updated`, `reverted` and `unchanged` skills, directories it could not read (`rejected`, with the reason, e.g. a directory name that is not a slug or a duplicate slug) and skills that are close to another skill (`near_duplicates`, `possible_duplicate` from 0.92 and `similar_to` from 0.80, the `[doc_similarity]` thresholds).
+Reads every skill directory under the given one (the directory itself when it holds a `SKILL.md`), to 3 levels deep, **without modifying any file**; a linked directory is not followed while looking for skills, and a package that contains a symbolic link or special file is rejected (listed under `rejected`) because tole refuses such a package too. For each skill it records the package hash, lints `SKILL.md`, and embeds the text files (`.md`, `.markdown`, `.txt`) for search; other files are hashed only. It needs the embedding model. It reports `created`, `updated`, `reverted` and `unchanged` skills, directories it could not read (`rejected`, with the reason, e.g. a directory name that is not a slug or a duplicate slug) and skills that are close to another skill (`near_duplicates`, `possible_duplicate` from 0.92 and `similar_to` from 0.80, the `[doc_similarity]` thresholds).
 
 A new hash makes a new `draft` version and the old one stops being current: an approved one becomes `stale` (the approval does not carry over), a draft becomes `archived`. Putting the exact bytes of an earlier version back makes it current again, with its approval. Only the current version is searchable.
 
-Bounds, so a hostile or accidental tree cannot exhaust memory or time: a package of at most 200 files, 1 MiB per file, 8 MiB in all and 8 directory levels (over a bound the whole package is rejected, never truncated: a hash of part of a package is not the hash of the package); at most 32 indexed text files of 128 KiB each and 512 KiB in all per package (larger ones are hashed but not searchable; `SKILL.md` must fit); 500 skills and 5000 directories per run; 2000 skills per library. One package is held in memory at a time.
+Bounds, so a hostile or accidental tree cannot exhaust memory or time: a package of at most 200 files, 1 MiB per file, 4 MiB in all, 1024 directory entries (files and directories) and 8 directory levels (over a bound the whole package is rejected, never truncated: a hash of part of a package is not the hash of the package); at most 32 indexed text files of 128 KiB each and 512 KiB in all per package (larger ones are hashed but not searchable; `SKILL.md` must fit); 500 skills and 5000 directories per run; 2000 skills per library. One package is held in memory at a time.
 
 | Flag | Description |
 |------|-------------|
@@ -1515,14 +1515,23 @@ Checks `SKILL.md`. Errors (the skill is invalid and cannot be approved): no or u
 ### `uteke skill approve`
 
 ```bash
-uteke skill approve deploy@<hash> --actor alice
+uteke skill approve deploy@sha256:<hash> --actor alice
 ```
 
-Records that a human approved exactly this version: the trust anchor a client checks before loading the skill (compare the hash of the files it holds with `approved_hash`). `<hash>` is the full 64-character package hash or a prefix of at least 12 hexadecimal characters that names one version. Only the **current** and **valid** version can be approved; approving an approved version is a no-op (no ledger row). Every approval, and every index change, is appended to `skill_ledger` with the hash before and after; database triggers refuse to update or delete a ledger row.
+Records that a human approved exactly this version: the trust anchor a client checks before loading the skill (compare the hash of the files it holds with `approved_hash`). `<hash>` is the package hash as `skill show` prints it, `sha256:<64 hex digits>`, written with or without the `sha256:` prefix, or a prefix of at least 12 hex digits of the part after `sha256:` that names one version (`deploy@sha256:3fa9...` and `deploy@3fa9...` are the same). Only the **current** and **valid** version can be approved; approving an approved version is a no-op (no ledger row). Every approval, and every index change, is appended to `skill_ledger` with the hash before and after; database triggers refuse to update or delete a ledger row.
 
 ### The package hash
 
-The hash covers the whole package, so it detects a changed reference file or script, not only `SKILL.md`: SHA-256 over every regular file of the directory (any depth, `.git` excluded; symbolic links and special files are never followed or hashed), sorted by relative path in byte order with `/` separators, each file contributing the path length in bytes (8 bytes big-endian), the path (UTF-8), the content length (8 bytes big-endian) and the content. The length prefixes make the encoding unambiguous. The result is lower-case hex. The hash does not include the directory name or any timestamp, so the same files anywhere hash the same. `uteke skill approve` is built to be compatible with a client that hashes "path, length and bytes of every file" this way; a client that encodes the fields differently computes a different hash and must adopt this encoding.
+The hash covers the whole package, so it detects a changed reference file or script, not only `SKILL.md`. It is **byte-identical to the hash tole computes** (`tole-core`, `skill_approval::package_hash`, used by `TOLE_SKILL_APPROVAL=required`), so a hash approved here is the hash tole checks before it loads a skill. The definition: SHA-256 over every regular file of the directory, at any depth, sorted by relative path in byte order with `/` separators, each file contributing the path length in bytes (8 bytes **little-endian**), the path (UTF-8), the content length (8 bytes **little-endian**) and the content. The length prefixes make the encoding unambiguous. The result is written `sha256:<64 lower-case hex digits>`; that string is what is stored, listed (`skill list|show --json`), recorded in the ledger and approved. The hash does not include the directory name or any timestamp, so the same files anywhere hash the same.
+
+Both sides accept and reject the same packages:
+
+- **`.git` and hidden files are hashed** like any other file, at any depth (a skill that is a git checkout is hashed with its `.git`; most of those will exceed the bounds below). `.git` is skipped only while *looking for* skill directories under the directory given to `skill index`, never inside a package.
+- **A package with a symbolic link or a special file (FIFO, socket, device) is rejected whole** and cannot be approved: a link's target can change without the hash changing. It is reported under `rejected`, not skipped.
+- Empty directories are not hashed. A directory name or file name that is not valid UTF-8 rejects the package.
+- Bounds: tole reads at most 256 files, 4 MiB and 1024 directory entries per package. uteke's bounds are at least as strict (200 files, 4 MiB, 1024 entries, plus 1 MiB per file and 8 directory levels, `SKILL.md` at most 128 KiB and UTF-8, a directory name that is a slug), so every package uteke accepts is a package tole accepts, with the same hash. The converse is not promised: a package tole accepts can be rejected here, and equality of hashes is only promised for packages within both sides' limits.
+
+The encoding is pinned by test vectors computed with tole's own function (see `skill_package.rs`, `hash_matches_tole_test_vectors`).
 
 ### `uteke skill record`
 
