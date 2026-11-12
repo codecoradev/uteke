@@ -764,3 +764,27 @@ fn fresh_store_has_the_skill_tables_at_the_current_schema() {
     );
     assert!(dup.is_err());
 }
+
+#[test]
+fn index_records_an_absolute_source_path_for_a_relative_root() {
+    let t = library_dir();
+    // The temp dir spelled relative to the working directory.
+    let cwd = std::env::current_dir().unwrap();
+    let up = "../".repeat(cwd.components().count().saturating_sub(1));
+    let rel = format!("{up}{}", t.path().to_string_lossy().trim_start_matches('/'));
+    assert!(Path::new(&rel).is_relative());
+    let u = open_keyword();
+    let r = u.skill_index(Path::new(&rel), None, None).unwrap();
+    assert_eq!(r.created, 2, "{r:?}");
+    let shown = u.skill_show("deploy").unwrap();
+    assert!(
+        Path::new(&shown.source_path).is_absolute(),
+        "{}",
+        shown.source_path
+    );
+    assert!(
+        Path::new(&shown.source_path).is_dir(),
+        "{}",
+        shown.source_path
+    );
+}
