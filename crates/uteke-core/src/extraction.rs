@@ -755,4 +755,15 @@ mod tests {
         let contents: Vec<&str> = facts.iter().map(|f| f.content.as_str()).collect();
         assert_eq!(contents, vec!["padded fact", "second fact"]);
     }
+
+    #[test]
+    fn a_413_is_too_large_whatever_its_body_says() {
+        // The 4xx arm needs a size phrase in the body; 413 does not.
+        let err = |m: &str| Error::generic(format!("Extraction endpoint returned HTTP {m}"));
+        assert!(is_input_too_large(&err("413 Request Entity: refused")));
+        assert!(is_input_too_large(&err("413")));
+        // the neighbours without a size phrase are not
+        assert!(!is_input_too_large(&err("412 Precondition: refused")));
+        assert!(!is_input_too_large(&err("414 URI: refused")));
+    }
 }
