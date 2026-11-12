@@ -497,4 +497,32 @@ mod retired_filter_tests {
         assert_eq!(ids(Some("x")), vec![a]);
         assert_eq!(ids(Some("y")), vec![b]);
     }
+    #[test]
+    fn the_index_fetch_widens_when_the_first_window_holds_only_newer_memories() {
+        // limit 20 asks for max(20 * 3, 50) = 60 candidates: all 60 are newer
+        // than the point in time and are dropped. The next pass (20 * 9) reaches
+        // the 10 older memories. A window of limit + multiplier would stay at 50
+        // on every pass and return nothing.
+        let u = open_keyword();
+        for i in 0..10 {
+            u.remember(&format!("probe old{i}"), &[], None, None)
+                .unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let point_in_time = chrono::Utc::now();
+        std::thread::sleep(Duration::from_millis(50));
+        for i in 0..60 {
+            u.remember(&format!("probe probe probe probe new{i}"), &[], None, None)
+                .unwrap();
+        }
+        let found = u
+            .recall_at_time("probe", 20, None, None, point_in_time, 0.0, None, None)
+            .unwrap();
+        assert_eq!(found.len(), 10, "{found:?}");
+        assert!(
+            found
+                .iter()
+                .all(|r| r.memory.content.starts_with("probe old"))
+        );
+    }
 }
