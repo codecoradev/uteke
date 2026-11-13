@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 use sha2::{Digest, Sha256};
 use tiny_http::Server;
 use tracing::{error, info, warn};
-use uteke_core::Uteke;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -286,46 +285,28 @@ fn main() {
     let db_path = home.join("uteke.db").to_string_lossy().to_string();
 
     info!("Opening store at: {db_path}");
-    // Embedding backend + vector engine from uteke.toml / env (#1399). Fail
-    // fast on an unsupported backend instead of opening the store with a
-    // different embedder than the operator asked for.
-    let embedding = match resolve_embedding(&config, |name| std::env::var(name).ok()) {
-        Ok(e) => e,
+    // The one open-and-configure sequence (#1754), shared with the CLI and MCP:
+    // fail fast on an unsupported embedding backend instead of opening the store
+    // with a different embedder than the operator asked for (#1399), then open
+    // the store and apply the engine settings and the privacy filter.
+    let open_config = match uteke_core::OpenConfig::load() {
+        Ok(c) => c,
         Err(msg) => {
             error!("{msg}");
             std::process::exit(1);
         }
     };
-    info!("Embedding backend: {}", embedding.backend);
-    // The engine sections: the file, then the UTEKE_RECALL_* / UTEKE_GRAPH_*
-    // overrides (as in the CLI), an unknown default strategy replaced by
-    // hybrid (#1034: a typo must not 400 every recall request), and the
-    // embedding fallback only when it is complete.
-    let mut engine = config.engine.clone();
-    engine.recall = engine.recall.with_env_overrides().sanitized();
-    let fallback = resolve_embed_fallback(&config, |k| std::env::var(k).ok());
-    if let Some(f) = &fallback {
-        info!("Embedding fallback: enabled ({})", f.base_url);
+    info!("Embedding backend: {}", open_config.embedding.backend);
+    if open_config.engine.embed_fallback.is_configured() {
+        info!(
+            "Embedding fallback: enabled ({})",
+            open_config.engine.embed_fallback.base_url
+        );
     }
-    engine.embed_fallback = fallback.unwrap_or_default();
-    let uteke = match Uteke::open_with_embedding_and_graph(
-        &db_path,
-        &embedding.backend,
-        embedding.settings,
-        engine.tier,
-        uteke_core::RecallConfig::default(),
-        engine.recall.graph_rerank(),
-        embedding.vector_backend.as_deref(),
-    ) {
-        Ok(mut u) => {
-            // [privacy] (#1464): secret filter on the write path.
-            let privacy = uteke_core::privacy::load_config();
-            info!("Privacy filter: {:?}", privacy.mode);
-            u.set_privacy_config(privacy);
-            // Tier, graph rerank, Jaccard weight, recall defaults, dream
-            // thresholds, lifecycle and the embedding fallback, applied the same
-            // way as in the CLI and MCP.
-            u.apply_settings(&engine);
+    let engine = &open_config.engine;
+    let uteke = match open_config.open(&db_path) {
+        Ok(u) => {
+            info!("Privacy filter: {:?}", u.privacy_config().mode);
             info!(
                 "Dream config loaded: dedup={:.2}, orphan_thresh={:.2}",
                 engine.dream.dedup_threshold, engine.dream.orphan_importance_threshold,
@@ -375,7 +356,14 @@ fn main() {
         auth_token_hash,
         read_only_token_hash,
         cors_origins: cors_origins.clone(),
-        recall_config: Some(engine.recall.clone()),
+        // The store's own `[recall]` defaults, the source MCP reads too (#1754).
+        recall_config: Some(
+            uteke
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .recall_settings()
+                .clone(),
+        ),
         extraction_config: Some(extraction.clone()),
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
         store_id: uteke_core::store_identity(&home),
@@ -671,64 +659,12 @@ fn main() {
 /// Minimal [server] config section for parsing uteke.toml.
 #[derive(serde::Deserialize, Default)]
 struct ServerFileConfig {
-    /// `[embedding]`: which embedder the server uses (#1399).
-    #[serde(default)]
-    embedding: uteke_core::embedding_config::EmbeddingSection,
-    /// `[vector]`: which vector engine runs when both are compiled in (#1168).
-    vector: Option<VectorFileSection>,
-    /// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`: the
-    /// engine sections, one schema shared with the CLI (#1515).
-    #[serde(flatten)]
-    engine: uteke_core::EngineSettings,
     server: Option<ServerFileSection>,
     extraction: Option<uteke_core::extraction::ExtractionConfig>,
     maintenance: Option<MaintenanceFileSection>,
     /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
     #[allow(dead_code)]
     aging: Option<AgingFileSection>,
-}
-
-/// `[vector]` in uteke.toml.
-#[derive(serde::Deserialize, Default, Clone)]
-struct VectorFileSection {
-    backend: Option<String>,
-}
-
-/// The fallback embedder to apply, or `None` when it is not fully configured
-/// (api_key, base_url AND model). Env overrides come from `lookup`.
-fn resolve_embed_fallback(
-    config: &ServerFileConfig,
-    lookup: impl Fn(&str) -> Option<String>,
-) -> Option<uteke_core::FallbackSettings> {
-    let settings = config
-        .engine
-        .embed_fallback
-        .clone()
-        .with_overrides_from(lookup);
-    settings.is_configured().then_some(settings)
-}
-
-/// What the server opens the store with.
-struct EmbeddingResolution {
-    backend: String,
-    settings: uteke_core::EmbeddingSettings,
-    vector_backend: Option<String>,
-}
-
-/// Resolve the embedder with the core's one resolution (backend list,
-/// validation, `UTEKE_EMBEDDING_*` precedence; #1399, #1537) and add the
-/// `[vector]` preference.
-fn resolve_embedding(
-    config: &ServerFileConfig,
-    get: impl Fn(&str) -> Option<String>,
-) -> Result<EmbeddingResolution, String> {
-    let resolved = config.embedding.resolve_from(get)?;
-    Ok(EmbeddingResolution {
-        backend: resolved.backend,
-        settings: resolved.settings,
-        // UTEKE_VECTOR_BACKEND (higher precedence) is read inside the core.
-        vector_backend: config.vector.as_ref().and_then(|v| v.backend.clone()),
-    })
 }
 
 /// Deprecated: superseded by [lifecycle] section (#934). Kept for backward-compat deserialization.
@@ -789,18 +725,7 @@ impl Drop for SlotGuard {
 /// Merge precedence, the untrusted-key policy and per-layer validation are
 /// shared with the CLI in `uteke_core::config_layers`.
 fn load_uteke_toml() -> ServerFileConfig {
-    let global = uteke_core::uteke_home().ok().map(|h| h.join("uteke.toml"));
-    let project = std::env::current_dir()
-        .ok()
-        .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
-    resolve_server_config(&uteke_core::config_layers::Layers {
-        global: global.as_deref(),
-        project: project.as_deref(),
-        trust_project: matches!(
-            std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
-            Ok("1") | Ok("true")
-        ),
-    })
+    uteke_core::config_layers::with_standard_layers(resolve_server_config)
 }
 
 fn resolve_server_config(layers: &uteke_core::config_layers::Layers<'_>) -> ServerFileConfig {
@@ -858,10 +783,6 @@ mod config_overlay_tests {
             server.cors_origins.as_deref(),
             Some(&["https://app.example".to_string()][..])
         );
-        assert!(
-            merged.engine.recall.min_score == 0.5,
-            "project recall tuning still applies"
-        );
     }
 
     #[test]
@@ -874,199 +795,22 @@ mod config_overlay_tests {
             Some(dummy.as_str())
         );
     }
-
-    #[test]
-    fn project_recall_keys_merge_per_key_not_per_section() {
-        // The old server overlay replaced whole sections: a project file setting
-        // one [recall] key wiped the other global [recall] keys.
-        let merged = resolve(
-            "[recall]\nmin_score = 0.3\ndefault_strategy = \"vector\"\n",
-            "[recall]\nmin_score = 0.6\n",
-            false,
-        );
-        let recall = merged.engine.recall;
-        assert_eq!(recall.min_score, 0.6);
-        assert_eq!(recall.default_strategy, "vector");
-    }
-}
-
-#[cfg(test)]
-mod embedding_config_tests {
-    //! #1399 — the server honours `[embedding]` / `[vector]` / env.
-    use super::*;
-
-    fn parse(toml_text: &str) -> ServerFileConfig {
-        toml::from_str(toml_text).expect("valid toml")
-    }
-
-    fn no_env(_: &str) -> Option<String> {
-        None
-    }
-
-    #[test]
-    fn default_is_onnx_with_empty_settings() {
-        let r = resolve_embedding(&ServerFileConfig::default(), no_env).unwrap();
-        assert_eq!(r.backend, "onnx");
-        assert!(r.settings.base_url.is_empty() && r.settings.model.is_empty());
-        assert_eq!(r.settings.dims, 0);
-        assert_eq!(r.vector_backend, None);
-    }
-
-    #[test]
-    fn toml_selects_an_external_backend_and_passes_its_settings() {
-        let cfg = parse(
-            "[embedding]\nbackend = \"openai\"\nbase_url = \"http://embor:8355/v1\"\n\
-             model = \"embeddinggemma-q4\"\ndims = 768\nendpoint_path = \"/embed\"\n\
-             [vector]\nbackend = \"vecq\"\n",
-        );
-        let r = resolve_embedding(&cfg, no_env).unwrap();
-        assert_eq!(r.backend, "openai");
-        assert_eq!(r.settings.base_url, "http://embor:8355/v1");
-        assert_eq!(r.settings.model, "embeddinggemma-q4");
-        assert_eq!(r.settings.endpoint_path, "/embed");
-        assert_eq!(r.settings.dims, 768);
-        assert_eq!(r.vector_backend.as_deref(), Some("vecq"));
-    }
-
-    #[test]
-    fn the_env_backend_is_resolved_by_the_core_rules() {
-        let cfg = parse("[embedding]\nbackend = \"ollama\"\n");
-        let env = |v: &'static str| {
-            move |n: &str| (n == "UTEKE_EMBEDDING_BACKEND").then(|| v.to_string())
-        };
-        assert_eq!(
-            resolve_embedding(&cfg, env("openai")).unwrap().backend,
-            "openai"
-        );
-        assert_eq!(
-            resolve_embedding(&cfg, env("  ")).unwrap().backend,
-            "ollama"
-        );
-        let err = resolve_embedding(&ServerFileConfig::default(), env("cohere"))
-            .err()
-            .expect("must fail");
-        assert!(
-            err.contains("cohere") && err.contains("UTEKE_EMBEDDING_BACKEND"),
-            "{err}"
-        );
-    }
-
-    #[test]
-    fn untrusted_project_file_cannot_pick_the_embedder() {
-        // The shared layered resolver strips embedding.backend / base_url from
-        // the project-local file unless the project config is trusted.
-        let dir = std::env::temp_dir().join(format!("uteke_emb_cfg_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let global = dir.join("global.toml");
-        let project = dir.join("project.toml");
-        std::fs::write(&global, "[embedding]\nbackend = \"onnx\"\n").unwrap();
-        std::fs::write(
-            &project,
-            "[embedding]\nbackend = \"openai\"\nbase_url = \"https://evil.example\"\n",
-        )
-        .unwrap();
-        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
-            global: Some(&global),
-            project: Some(&project),
-            trust_project: false,
-        });
-        let r = resolve_embedding(&cfg, no_env).unwrap();
-        assert_eq!(r.backend, "onnx");
-        assert!(r.settings.base_url.is_empty());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-#[cfg(test)]
-mod embed_fallback_config_tests {
-    //! #1355 step A — the server reads `[embed_fallback]`.
-    use super::*;
-
-    fn parse(t: &str) -> ServerFileConfig {
-        toml::from_str(t).expect("valid toml")
-    }
-
-    fn no_env(_: &str) -> Option<String> {
-        None
-    }
-
-    #[test]
-    fn absent_or_partial_section_means_no_fallback() {
-        assert!(resolve_embed_fallback(&ServerFileConfig::default(), no_env).is_none());
-        let partial = parse("[embed_fallback]\napi_key = \"k\"\nbase_url = \"https://x\"\n");
-        assert!(
-            resolve_embed_fallback(&partial, no_env).is_none(),
-            "model missing"
-        );
-    }
-
-    #[test]
-    fn a_complete_section_is_applied_with_its_endpoint_path() {
-        let cfg = parse(
-            "[embed_fallback]\napi_key = \"k\"\nbase_url = \"https://x\"\nmodel = \"m\"\nendpoint_path = \"/embed\"\n",
-        );
-        let f = resolve_embed_fallback(&cfg, no_env).expect("configured");
-        assert_eq!(
-            (f.api_key.as_str(), f.base_url.as_str()),
-            ("k", "https://x")
-        );
-        assert_eq!(
-            (f.model.as_str(), f.endpoint_path.as_str()),
-            ("m", "/embed")
-        );
-    }
-
-    #[test]
-    fn env_overrides_the_file_and_can_complete_it() {
-        let cfg = parse("[embed_fallback]\nbase_url = \"https://file\"\nmodel = \"m\"\n");
-        let f = resolve_embed_fallback(&cfg, |k| match k {
-            "UTEKE_EMBED_FALLBACK_API_KEY" => Some("env-key".to_string()),
-            "UTEKE_EMBED_FALLBACK_BASE_URL" => Some("https://env".to_string()),
-            _ => None,
-        })
-        .expect("env completes the file");
-        assert_eq!(
-            (f.api_key.as_str(), f.base_url.as_str()),
-            ("env-key", "https://env")
-        );
-    }
-
-    #[test]
-    fn untrusted_project_file_cannot_set_the_fallback_endpoint() {
-        let dir = std::env::temp_dir().join(format!("uteke_fb_cfg_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let project = dir.join("project.toml");
-        std::fs::write(
-            &project,
-            "[embed_fallback]\napi_key = \"stolen\"\nbase_url = \"https://evil.example\"\nmodel = \"m\"\n",
-        )
-        .unwrap();
-        let cfg = resolve_server_config(&uteke_core::config_layers::Layers {
-            global: None,
-            project: Some(&project),
-            trust_project: false,
-        });
-        assert!(resolve_embed_fallback(&cfg, no_env).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
 
 #[cfg(test)]
 mod recall_tuning_tests {
-    //! #1355 step B — the server reads the graph and jaccard keys of `[recall]`.
-    use super::*;
-
-    fn parse(t: &str) -> ServerFileConfig {
+    //! #1355 step B — the graph and jaccard keys of `[recall]`.
+    fn parse(t: &str) -> uteke_core::EngineSettings {
         toml::from_str(t).expect("valid toml")
     }
 
-    fn recall_of(c: ServerFileConfig) -> uteke_core::RecallSettings {
-        c.engine.recall
+    fn recall_of(c: uteke_core::EngineSettings) -> uteke_core::RecallSettings {
+        c.recall
     }
 
     #[test]
     fn defaults_match_the_core_and_the_cli() {
-        let t = recall_of(ServerFileConfig::default());
+        let t = recall_of(uteke_core::EngineSettings::default());
         let d = uteke_core::GraphRerankConfig::default();
         assert_eq!(t.graph_rerank().density_weight, d.density_weight);
         assert_eq!(t.graph_rerank().authority_weight, d.authority_weight);
@@ -1105,7 +849,7 @@ mod recall_tuning_tests {
         let cfg = parse(
             "[recall]\nmin_score = 0.4\ndefault_strategy = \"vector\"\njaccard_weight = 0.1\n",
         );
-        let r = cfg.engine.recall;
+        let r = cfg.recall;
         assert_eq!(r.min_score, 0.4);
         assert_eq!(r.default_strategy, "vector");
         assert_eq!(r.jaccard_weight, 0.1);
@@ -1114,20 +858,18 @@ mod recall_tuning_tests {
 
 #[cfg(test)]
 mod tier_config_tests {
-    //! #1355 step C — the server reads `[tier]`.
-    use super::*;
-
-    fn parse(t: &str) -> ServerFileConfig {
+    //! #1355 step C — `[tier]`.
+    fn parse(t: &str) -> uteke_core::EngineSettings {
         toml::from_str(t).expect("valid toml")
     }
 
-    fn tier_of(c: ServerFileConfig) -> uteke_core::TierConfig {
-        c.engine.tier
+    fn tier_of(c: uteke_core::EngineSettings) -> uteke_core::TierConfig {
+        c.tier
     }
 
     #[test]
     fn defaults_equal_the_core_defaults() {
-        let t = tier_of(ServerFileConfig::default());
+        let t = tier_of(uteke_core::EngineSettings::default());
         let d = uteke_core::TierConfig::default();
         assert_eq!(
             (t.hot_days, t.warm_days, t.hot_boost),

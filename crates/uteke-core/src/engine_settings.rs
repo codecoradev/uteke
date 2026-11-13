@@ -34,10 +34,24 @@ impl EngineSettings {
     /// `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` environment variables.
     /// An unreadable or invalid file is skipped with a warning (defaults).
     pub fn load() -> Self {
-        let mut engine = crate::config_layers::resolve_standard::<EngineSettings>().value;
-        engine.recall = engine.recall.with_env_overrides();
-        engine.embed_fallback = engine.embed_fallback.with_env_overrides();
-        engine
+        crate::config_layers::resolve_standard::<EngineSettings>()
+            .value
+            .with_env_overrides()
+    }
+
+    /// The `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*`
+    /// overrides from `lookup` on top of the file values: the one place they
+    /// are applied. Setting a value is idempotent, so applying it twice is safe.
+    pub fn with_env_overrides_from(mut self, lookup: impl Fn(&str) -> Option<String>) -> Self {
+        self.recall = self.recall.with_overrides_from(&lookup);
+        self.embed_fallback = self.embed_fallback.with_overrides_from(&lookup);
+        self
+    }
+
+    /// [`with_env_overrides_from`](Self::with_env_overrides_from) over the
+    /// process environment.
+    pub fn with_env_overrides(self) -> Self {
+        self.with_env_overrides_from(|k| std::env::var(k).ok())
     }
 }
 

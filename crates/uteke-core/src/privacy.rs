@@ -85,8 +85,8 @@ pub struct PrivacySettings {
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(default)]
-struct PrivacyFile {
-    privacy: PrivacySettings,
+pub(crate) struct PrivacyFile {
+    pub(crate) privacy: PrivacySettings,
 }
 
 impl PrivacyConfig {
@@ -111,10 +111,19 @@ impl PrivacyConfig {
 /// A bad value is logged and replaced by the default (`redact`): the filter
 /// never turns itself off because of a typo.
 pub fn load_config() -> PrivacyConfig {
-    let mut settings = crate::config_layers::resolve_standard::<PrivacyFile>()
+    let settings = crate::config_layers::resolve_standard::<PrivacyFile>()
         .value
         .privacy;
-    if let Ok(mode) = std::env::var("UTEKE_PRIVACY_MODE") {
+    config_with_env(settings, |k| std::env::var(k).ok())
+}
+
+/// `[privacy]` settings with `UTEKE_PRIVACY_MODE` from `lookup` on top, then
+/// the same fallbacks as [`load_config`].
+pub fn config_with_env(
+    mut settings: PrivacySettings,
+    lookup: impl Fn(&str) -> Option<String>,
+) -> PrivacyConfig {
+    if let Some(mode) = lookup("UTEKE_PRIVACY_MODE") {
         settings.mode = Some(mode);
     }
     config_or_default(&settings)

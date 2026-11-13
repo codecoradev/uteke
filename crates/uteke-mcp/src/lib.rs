@@ -1980,85 +1980,36 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             .filter_map(|v| v.as_str().map(str::to_string))
             .collect()
     });
-    let tags_ref = tags.as_deref();
     let metadata = args.get("metadata").filter(|m| !m.is_null());
 
-    // Caller validity (#1598): checked first and written only after the other
-    // fields went through, so neither a refused interval (or a deprecated
-    // memory) nor a refused field leaves a partial update behind.
-    let valid_from = str_arg(args, "valid_from")?;
-    let valid_until = str_arg(args, "valid_until")?;
-    let validity =
-        uteke_core::memory::types::Validity::parse(valid_from.as_deref(), valid_until.as_deref())
-            .map_err(|e| e.to_string())?;
-    let only_validity = validity.is_some()
-        && content.is_none()
-        && tags.is_none()
-        && metadata.is_none()
-        && importance.is_none()
-        && pinned.is_none()
-        && memory_type.is_none();
-    if let Some(v) = &validity
-        && !uteke.check_validity(&id, v).map_err(write_error)?
-    {
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text: format!("Memory not found: {id}"),
-            }],
-            is_error: true,
-        });
-    }
-
-    let outcome = if only_validity {
-        uteke_core::UpdateOutcome {
-            updated: true,
-            redactions: Vec::new(),
-        }
-    } else {
-        uteke
-            .update_memory_detailed(
-                &id,
-                content,
-                tags_ref,
-                metadata,
-                importance,
-                pinned,
-                memory_type,
-            )
-            .map_err(write_error)?
-    };
-
-    let found = outcome.updated
-        && match &validity {
-            Some(v) => uteke.set_validity(&id, v).map_err(write_error)?,
-            None => true,
-        };
-    if !found {
-        return Ok(ToolResult {
-            content: vec![McpContent::Text {
-                r#type: "text".to_string(),
-                text: format!("Memory not found: {id}"),
-            }],
-            is_error: true,
-        });
-    }
-
-    // Namespace move (#1181) — plain column update, no re-embed needed.
-    if let Some(ns) = args["namespace"].as_str() {
-        let moved = uteke
-            .move_memory(&id, ns)
-            .map_err(|e| format!("Failed: {e}"))?;
-        if !moved {
+    // One core execution (#1751): the validity is checked before the fields
+    // and written after them (#1598), then the namespace moves (#1181).
+    let request = uteke_core::UpdateRequest::decode(uteke_core::UpdateInput {
+        id: id.clone(),
+        content: content.map(str::to_string),
+        tags,
+        metadata: metadata.cloned(),
+        importance,
+        pinned,
+        memory_type: memory_type.map(str::to_string),
+        namespace: args["namespace"].as_str().map(str::to_string),
+        valid_from: str_arg(args, "valid_from")?,
+        valid_until: str_arg(args, "valid_until")?,
+    })
+    .map_err(|e| e.to_string())?;
+    let outcome = match uteke.run_update(&request) {
+        Ok(run) => run,
+        Err(uteke_core::Error::NotFound(msg)) => {
             return Ok(ToolResult {
                 content: vec![McpContent::Text {
                     r#type: "text".to_string(),
-                    text: format!("Memory not found: {id}"),
+                    text: msg,
                 }],
                 is_error: true,
             });
         }
-    }
+        Err(e) => return Err(write_error(e)),
+    };
 
     Ok(ToolResult {
         content: vec![McpContent::Text {

@@ -20,6 +20,10 @@
 //!   an unreadable or invalid layer is skipped with a warning instead of
 //!   discarding the others.
 //!
+//! The open-and-configure sequence built on top of this (resolve the engine,
+//! embedding, vector and privacy sections, open the store, apply them) is
+//! [`crate::open_config::OpenConfig`], used by the CLI, the server and MCP.
+//!
 //! Callers choose the schema type `T` (`#[serde(default)]` everywhere, so a
 //! missing key falls back to its default) and add their own environment
 //! overrides on top of the result.
@@ -139,16 +143,17 @@ fn read_layer(path: &Path) -> Option<Table> {
     }
 }
 
-/// [`resolve`] over the standard places: `{uteke_home}/uteke.toml`, then
+/// Run `f` with the standard layers: `{uteke_home}/uteke.toml`, then
 /// `$CWD/.uteke/uteke.toml`, with the project file untrusted unless
-/// `UTEKE_TRUST_PROJECT_CONFIG` is `1` or `true`. For callers that read only
-/// their own sections (the privacy filter, the engine settings of MCP).
-pub fn resolve_standard<T: DeserializeOwned + Default>() -> Resolved<T> {
+/// `UTEKE_TRUST_PROJECT_CONFIG` is `1` or `true`. The one place the standard
+/// paths and the trust switch are spelled out (the CLI, the server and MCP
+/// used to repeat them).
+pub fn with_standard_layers<R>(f: impl FnOnce(&Layers<'_>) -> R) -> R {
     let global = crate::uteke_home().ok().map(|h| h.join("uteke.toml"));
     let project = std::env::current_dir()
         .ok()
         .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
-    resolve::<T>(&Layers {
+    f(&Layers {
         global: global.as_deref(),
         project: project.as_deref(),
         trust_project: matches!(
@@ -156,6 +161,12 @@ pub fn resolve_standard<T: DeserializeOwned + Default>() -> Resolved<T> {
             Ok("1") | Ok("true")
         ),
     })
+}
+
+/// [`resolve`] over the standard places ([`with_standard_layers`]). For callers
+/// that read only their own sections.
+pub fn resolve_standard<T: DeserializeOwned + Default>() -> Resolved<T> {
+    with_standard_layers(|layers| resolve::<T>(layers))
 }
 
 /// Resolve the layers into a `T`.

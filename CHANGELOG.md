@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
+  three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
+  drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
+  `open()`): it reads the engine sections, `[embedding]`, `[vector]` and `[privacy]` from the layered
+  files, applies `UTEKE_RECALL_*`, `UTEKE_GRAPH_*`, `UTEKE_EMBED_FALLBACK_*`,
+  `UTEKE_EMBEDDING_*` and `UTEKE_PRIVACY_MODE`, opens the store and applies the settings, then the
+  privacy filter. No config key, precedence or trust rule changes. `uteke-serve` now hands the
+  engine-level similarity floor to the store like the CLI and MCP do (it was the built-in default; the
+  value was not used yet) and takes the recall defaults of `POST /recall` from the opened store, the
+  source MCP reads.
+
 ### Added
 
 - **Personal skill library, read-only remote surfaces (#1731, LAB, stage 2)** - `POST /skill/search`,
@@ -139,6 +152,17 @@
   them; the explain refusals use core's wording ("explain cannot be combined with at/before/after");
   `--explain --type memory` is refused (memory recall is the explain default). `to_http_body` now
   sends `strategy`, `explain`, `after` and `before`. See the pull request for every difference.
+
+- **One core execution for memory updates (#1751)** - `uteke update`, `PUT /memory` and
+  `uteke_update` now call `Uteke::run_update(&UpdateRequest)`, which checks the caller's validity,
+  runs the field update, and only then writes the validity and moves the namespace (#1686, #1598),
+  instead of three hand-written copies. Visible effects: a missing memory reads
+  `Memory not found: <id>` at every step in the CLI and MCP (the CLI no longer prefixes it with
+  `Failed to update memory:`, MCP returns it as a tool error instead of `Failed: ...`); an update
+  that sets nothing is refused with `No fields to update` in the CLI and MCP too (it already was
+  over HTTP, which now answers it as `Validation error: No fields to update...`); `uteke update`
+  prints the secrets-masked line that MCP and HTTP already reported; a namespace move of a
+  memory that vanished is a 404 over HTTP instead of a silent success.
 
 - **Skill library remote surfaces: no server path, bounded embedding cost (#1731)** - `POST
   /skill/list`, `/skill/show` and the MCP tools `uteke_skill_list` and `uteke_skill_show` no longer

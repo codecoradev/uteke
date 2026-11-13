@@ -3,7 +3,7 @@
 //! this closes the CLI gap.
 
 use crate::Cli;
-use uteke_core::Uteke;
+use uteke_core::{Error, UpdateInput, UpdateRequest, Uteke};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run(
@@ -19,54 +19,30 @@ pub(crate) fn run(
     valid_until: Option<&str>,
 ) -> Result<(), String> {
     tracing::info!("Updating memory: {id}");
-    // #1598: the validity is checked first and written only after the other
-    // fields went through, so neither a refused interval (or a deprecated
-    // memory) nor a refused field leaves a partial update behind.
-    let validity = uteke_core::memory::types::Validity::parse(valid_from, valid_until)
-        .map_err(|e| e.to_string())?;
-    if let Some(v) = &validity {
-        let found = uteke
-            .check_validity(id, v)
-            .map_err(|e| format!("Failed to update memory: {e}"))?;
-        if !found {
-            return Err(format!("Memory not found: {id}"));
-        }
-    }
-    let other_fields = content.is_some()
-        || tags.is_some()
-        || importance.is_some()
-        || pinned.is_some()
-        || memory_type.is_some();
+    // The order (validity checked first, written last, #1598) is core's
+    // `run_update`; this command only decodes the flags and renders.
     let tag_list: Option<Vec<String>> = tags.map(|t| {
         t.split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect()
     });
-
-    let updated = validity.is_some() && !other_fields
-        || uteke
-            .update_memory(
-                id,
-                content.as_deref(),
-                tag_list.as_deref(),
-                None,
-                importance,
-                pinned,
-                memory_type.as_deref(),
-            )
-            .map_err(|e| format!("Failed to update memory: {e}"))?;
-    if !updated {
-        return Err(format!("Memory not found: {id}"));
-    }
-    if let Some(v) = &validity {
-        let found = uteke
-            .set_validity(id, v)
-            .map_err(|e| format!("Failed to update memory: {e}"))?;
-        if !found {
-            return Err(format!("Memory not found: {id}"));
-        }
-    }
+    let req = UpdateRequest::decode(UpdateInput {
+        id: id.to_string(),
+        content,
+        tags: tag_list,
+        importance,
+        pinned,
+        memory_type,
+        valid_from: valid_from.map(str::to_string),
+        valid_until: valid_until.map(str::to_string),
+        ..Default::default()
+    })
+    .map_err(|e| e.to_string())?;
+    let run = uteke.run_update(&req).map_err(|e| match e {
+        Error::NotFound(m) => m,
+        other => format!("Failed to update memory: {other}"),
+    })?;
 
     if cli.json {
         let memory = uteke
@@ -75,6 +51,9 @@ pub(crate) fn run(
         println!("{}", serde_json::to_string_pretty(&memory).unwrap());
     } else {
         println!("✓ Memory '{id}' updated");
+        if let Some(summary) = run.redaction_summary() {
+            println!("  \u{26a0} Secrets masked in the stored text: {summary}");
+        }
     }
     Ok(())
 }
