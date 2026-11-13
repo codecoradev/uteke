@@ -217,7 +217,7 @@ Dual-axis recall boost applied after the RRF merge:
 - **Salience**: higher-scored by type weight (decision > insight > fact > note)
 - **Recency**: exponential decay `exp(-age/τ)` where τ is a per-type time constant
 
-Both are enabled by default (weight 0.1). Use `--salience false` / `--recency false` to disable. Previously opt-in (v0.7.3), now opt-out (#721). Config leaks are prevented by setting/resetting config around each query.
+Both are enabled by default (weight 0.1). Use `--salience false` / `--recency false` to disable. Previously opt-in (v0.7.3), now opt-out (#721). A per-request `--salience` / `--recency` is part of the recall request and is scoped to that one recall (`Uteke::run_recall`), so it cannot leak into a later query and nothing has to reset the engine afterwards.
 
 ### Dream Cycle (#353)
 

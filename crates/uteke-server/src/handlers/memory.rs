@@ -83,6 +83,7 @@ pub(super) fn post_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     .recall_config
                     .as_ref()
                     .map(|r| r.default_strategy.as_str()),
+                ..Default::default()
             };
             match uteke.run_recall(&typed, defaults) {
                 // A guard or an unknown strategy/search_type: 400 with the bare text.

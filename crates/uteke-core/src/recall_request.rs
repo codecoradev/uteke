@@ -75,9 +75,11 @@ impl RecallInput {
     /// server). Nothing is validated or rewritten here: the server owns that.
     /// `limit`, `tags` and `namespace` are always present; the other fields
     /// only when set, and `strict`, `enrich` and `pack` only when true. A
-    /// `pack` body always carries `budget_chars`. `after`, `before`, `strategy`
-    /// and `explain` are not part of this encoding (the CLI falls back to the
-    /// local store when those flags are used).
+    /// `pack` body always carries `budget_chars`. `after`, `before` and
+    /// `strategy` are sent when set and `explain` when true. Nothing else is
+    /// part of the wire: the per-request salience/recency weights, `related` and
+    /// `where` live on [`RecallRequest`] only, so the CLI falls back to the local
+    /// store when those flags are used.
     pub fn to_http_body(&self) -> serde_json::Value {
         let mut body = serde_json::json!({
             "query": self.query,
@@ -103,8 +105,20 @@ impl RecallInput {
         if let Some(a) = &self.at {
             body["at"] = serde_json::json!(a);
         }
+        if let Some(a) = &self.after {
+            body["after"] = serde_json::json!(a);
+        }
+        if let Some(b) = &self.before {
+            body["before"] = serde_json::json!(b);
+        }
         if let Some(t) = &self.search_type {
             body["search_type"] = serde_json::json!(t);
+        }
+        if let Some(s) = &self.strategy {
+            body["strategy"] = serde_json::json!(s);
+        }
+        if self.explain {
+            body["explain"] = serde_json::json!(true);
         }
         if self.enrich {
             body["enrich"] = serde_json::json!(true);
@@ -163,6 +177,20 @@ pub struct RecallRequest {
     pub budget_chars: Option<usize>,
     pub exclude_ids: Vec<String>,
     pub explain: bool,
+    /// Per-request salience boost: `Some(true)` the configured weight
+    /// ([`crate::recall_exec::RecallDefaults::salience_weight`]), `Some(false)`
+    /// off, `None` the engine's. Not a wire field: set with
+    /// [`Self::with_salience_recency`].
+    pub salience: Option<bool>,
+    /// Per-request recency boost, like [`Self::salience`].
+    pub recency: Option<bool>,
+    /// Graph-expand the memory recall by this many hops (`--related --depth`).
+    /// Memory-only. Not a wire field: set with [`Self::with_related`].
+    pub related_depth: Option<usize>,
+    /// Keep only JSON memories whose top-level `key` equals `value`
+    /// (`--where key=value`). Memory-only. Not a wire field: set with
+    /// [`Self::with_where`].
+    pub where_eq: Option<(String, String)>,
     // Kept raw: each is validated at the point the surface first needs it,
     // which is later than the fields above and not at all on some paths
     // (an invalid `search_type` is ignored next to `at`).
@@ -233,6 +261,10 @@ impl RecallRequest {
             budget_chars: input.budget_chars,
             exclude_ids: input.exclude_ids,
             explain: input.explain,
+            salience: None,
+            recency: None,
+            related_depth: None,
+            where_eq: None,
             search_type: input.search_type,
             strategy: input.strategy,
         })
@@ -246,6 +278,30 @@ impl RecallRequest {
         if self.search_type.is_none() {
             self.search_type = Some(search_type.to_string());
         }
+        self
+    }
+
+    /// Boost salience and/or recency for this request only (`--salience`,
+    /// `--recency`). The weights are scoped to the recall that runs it
+    /// ([`crate::Uteke::run_recall`]); nothing is written to the engine.
+    #[must_use]
+    pub fn with_salience_recency(mut self, salience: Option<bool>, recency: Option<bool>) -> Self {
+        self.salience = salience;
+        self.recency = recency;
+        self
+    }
+
+    /// Expand the memory recall through the relationship graph (`--related`).
+    #[must_use]
+    pub fn with_related(mut self, depth: usize) -> Self {
+        self.related_depth = Some(depth);
+        self
+    }
+
+    /// Keep only JSON memories whose `key` field equals `value` (`--where`).
+    #[must_use]
+    pub fn with_where(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.where_eq = Some((key.into(), value.into()));
         self
     }
 
@@ -573,6 +629,24 @@ mod tests {
                 "exclude_ids": ["x", "y"],
             })
         );
+    }
+
+    #[test]
+    fn http_body_carries_strategy_explain_and_the_time_range_only_when_set() {
+        let mut i = input("q");
+        let plain = i.to_http_body();
+        for k in ["strategy", "explain", "after", "before"] {
+            assert!(plain.get(k).is_none(), "{k}");
+        }
+        i.strategy = Some("fts5".into());
+        i.explain = true;
+        i.after = Some("2026-01-01T00:00:00Z".into());
+        i.before = Some("2026-02-01T00:00:00Z".into());
+        let body = i.to_http_body();
+        assert_eq!(body["strategy"], "fts5");
+        assert_eq!(body["explain"], true);
+        assert_eq!(body["after"], "2026-01-01T00:00:00Z");
+        assert_eq!(body["before"], "2026-02-01T00:00:00Z");
     }
 
     #[test]
