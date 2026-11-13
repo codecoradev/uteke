@@ -476,6 +476,17 @@ impl<'a> DocSimilarQuery<'a> {
     }
 }
 
+impl DocSimilarQuery<'_> {
+    /// A draft text is embedded; a stored document and a report use the
+    /// stored vectors.
+    pub fn embed_need(&self) -> Option<crate::remote_guard::EmbedNeed<'_>> {
+        match *self {
+            Self::Text(t) => Some(crate::remote_guard::EmbedNeed::Draft(t)),
+            Self::Document(_) | Self::Report { .. } => None,
+        }
+    }
+}
+
 /// The answer to a [`DocSimilarQuery`]; serializes as the report it holds.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
@@ -520,12 +531,15 @@ impl crate::Uteke {
                 threshold,
                 limit.unwrap_or(DEFAULT_SIMILAR_LIMIT),
             )?),
-            DocSimilarQuery::Text(t) => DocSimilarAnswer::Similar(self.doc_similar_to_text(
-                t,
-                namespace,
-                threshold,
-                limit.unwrap_or(DEFAULT_SIMILAR_LIMIT),
-            )?),
+            DocSimilarQuery::Text(t) => {
+                crate::remote_guard::check_draft_len(t)?;
+                DocSimilarAnswer::Similar(self.doc_similar_to_text(
+                    t,
+                    namespace,
+                    threshold,
+                    limit.unwrap_or(DEFAULT_SIMILAR_LIMIT),
+                )?)
+            }
             DocSimilarQuery::Report { subtree } => {
                 DocSimilarAnswer::Duplicates(self.doc_duplicate_report(
                     namespace,

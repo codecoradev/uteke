@@ -19,8 +19,10 @@
 //!   `limit` clamped to `1..=100` (default 10).
 //!
 //! A request that embeds a string (`similar` with `text`, `search` in
-//! `hybrid` or `semantic` mode) takes one of [`crate::remote_guard`]'s slots;
-//! when they are all taken it fails at once with [`Error::Busy`] (HTTP 429).
+//! `hybrid` or `semantic` mode) says so through
+//! [`SkillRemoteArgs::embed_need`]; the transport takes one of
+//! [`crate::remote_guard`]'s slots for it (HTTP 429 / a tool error when they
+//! are all taken). `skill_remote` itself takes none.
 //!
 //! The answers never carry `source_path`, the server directory a skill was
 //! indexed from: [`SkillRemoteSummary`] and [`SkillRemoteDetail`] are the
@@ -100,6 +102,26 @@ impl SkillRemoteArgs {
     pub fn from_json(value: &serde_json::Value) -> Result<Self, Error> {
         serde_json::from_value(value.clone())
             .map_err(|e| Error::validation(format!("invalid arguments: {e}")))
+    }
+
+    /// What `op` embeds with these arguments, from the same rules
+    /// [`crate::Uteke::skill_remote`] applies: `search` embeds its query unless
+    /// the mode is `fts`; `similar` embeds a `text` that comes without a
+    /// `slug`. A request that fails validation may still report a need (the
+    /// slot is released when it is refused).
+    pub fn embed_need(&self, op: SkillRemoteOp) -> Option<crate::remote_guard::EmbedNeed<'_>> {
+        match op {
+            SkillRemoteOp::Search => self.query.as_ref().and_then(|_| {
+                crate::remote_guard::EmbedNeed::for_search_mode(
+                    self.mode.as_deref().unwrap_or("hybrid"),
+                )
+            }),
+            SkillRemoteOp::Similar => match (self.slug.as_deref(), self.text.as_deref()) {
+                (None, Some(text)) => Some(crate::remote_guard::EmbedNeed::Draft(text)),
+                _ => None,
+            },
+            SkillRemoteOp::List | SkillRemoteOp::Show => None,
+        }
     }
 
     fn present(&self) -> [(&'static str, bool); 8] {
@@ -238,7 +260,7 @@ impl crate::Uteke {
     /// # Errors
     ///
     /// `Validation` for a missing, foreign, empty, over-long or malformed
-    /// parameter, `NotFound` for an unknown skill, `Busy` when the embedding slots are taken, an embedding error when a
+    /// parameter, `NotFound` for an unknown skill, an embedding error when a
     /// draft text or a semantic search needs a model that is not available.
     pub fn skill_remote(
         &self,
@@ -258,12 +280,6 @@ impl crate::Uteke {
                     .unwrap_or(DEFAULT_SEARCH_LIMIT)
                     .clamp(1, MAX_SEARCH_LIMIT);
                 let approved_only = args.approved_only.unwrap_or(false);
-                // `fts` never embeds; the other modes embed the query.
-                let _permit = if mode == "fts" {
-                    None
-                } else {
-                    Some(self.remote_embed_permit()?)
-                };
                 let hits = self.skill_search(query, limit, mode, approved_only)?;
                 Ok(SkillRemoteAnswer::Search(SkillSearchAnswer {
                     mode: mode.to_string(),
@@ -328,7 +344,7 @@ impl crate::Uteke {
                         self.skill_similar(slug_arg(slug)?, args.threshold, limit)?
                     }
                     (None, Some(text)) => {
-                        let _permit = self.remote_draft_permit(text)?;
+                        crate::remote_guard::check_draft_len(text)?;
                         self.skill_similar_to_text(text, args.threshold, limit)?
                     }
                 };

@@ -368,7 +368,13 @@ fn main() {
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
         store_id: uteke_core::store_identity(&home),
         embed_warmer: Default::default(),
-        remote_embeds: Default::default(),
+        // The gate of the served `Uteke`, cloned: the router takes its slots
+        // before the store lock, the core and MCP count in the same ones.
+        remote_embeds: uteke
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .embed_gate()
+            .clone(),
     };
 
     // Start server

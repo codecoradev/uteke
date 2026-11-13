@@ -228,10 +228,10 @@ pub struct ReqCtx {
     /// request refreshes it from the store while it holds the lock, so a
     /// changed privacy config or embedder is picked up; shared by clones.
     pub embed_warmer: std::sync::Arc<std::sync::Mutex<Option<uteke_core::EmbeddingWarmer>>>,
-    /// Slots of the remote routes that embed a client string (draft text,
-    /// skill query). Taken BEFORE the store lock: behind it requests run one at
-    /// a time, so the gate inside `Uteke` could never refuse a burst. Shared
-    /// by clones.
+    /// Slots of the LAB routes that embed a client string (draft text, skill or
+    /// document query): a clone of the served `Uteke`'s one gate
+    /// (`Uteke::embed_gate`). Taken BEFORE the store lock: behind it requests
+    /// run one at a time, so a slot taken there could never refuse a burst.
     pub remote_embeds: uteke_core::remote_guard::EmbedGate,
 }
 

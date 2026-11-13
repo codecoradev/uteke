@@ -310,7 +310,7 @@ List documents with optional namespace/limit/roots_only/parent filters.
 
 #### 🟡 `POST` `/doc/search`
 
-Search documents by query with optional mode/namespace/limit.
+Search documents by query with optional mode/namespace/limit. `hybrid` (default) and `semantic` embed the query, so 429 when two embedding requests already run (`fts` never does).
 
 **Request body**: [`DocSearchRequest`](#docsearchrequest)
 

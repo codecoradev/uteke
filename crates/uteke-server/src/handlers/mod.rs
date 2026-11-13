@@ -296,31 +296,56 @@ fn handler_for(method: &str, path: &str) -> Option<Handler> {
         .map(|(_, _, h)| *h)
 }
 
-/// Whether a body sent to a similarity or skill-search route makes the server
-/// embed a client string: `Some(Some(draft))` for a draft text (its length is
-/// bounded), `Some(None)` for a skill query in `hybrid` or `semantic` mode,
-/// `None` when the request embeds nothing. Mirrors what the handlers do.
-fn remote_embed_input<'a>(path: &str, body: &'a serde_json::Value) -> Option<Option<&'a str>> {
-    let field = |k: &str| body.get(k).filter(|v| !v.is_null());
-    match path {
+/// Take the slot a request needs, if it embeds a client string. The body is
+/// decoded into the typed request of its route and the CORE answers: the same
+/// `DocSimilarQuery::resolve`, `SkillRemoteArgs` and search-mode rules that
+/// decide the request give the [`EmbedNeed`](uteke_core::remote_guard::EmbedNeed),
+/// so there is no second copy of "which requests embed" here (#1753). A body
+/// that does not decode embeds nothing: its handler answers the 400.
+///
+/// Only LAB routes are listed: the memory recall routes are CORE, and a new
+/// 429 there would change the CORE contract.
+///
+/// # Errors
+///
+/// `Validation` for an oversized draft, `Busy` when the slots are taken.
+fn admit_remote_embed(
+    gate: &uteke_core::remote_guard::EmbedGate,
+    route_path: &str,
+    body: &serde_json::Value,
+) -> Result<Option<uteke_core::remote_guard::EmbedPermit>, uteke_core::Error> {
+    use serde::Deserialize;
+    use uteke_core::remote_guard::EmbedNeed;
+    use uteke_core::skill_remote::{SkillRemoteArgs, SkillRemoteOp};
+    fn skill<'a, R>(body: &'a serde_json::Value) -> Option<SkillRemoteArgs>
+    where
+        R: Deserialize<'a> + Into<SkillRemoteArgs>,
+    {
+        R::deserialize(body).ok().map(Into::into)
+    }
+    match route_path {
         "/doc/similar" => {
-            let stored = field("id").is_some() || field("slug").is_some();
-            let report = body.get("report").and_then(|v| v.as_bool()) == Some(true);
-            (!stored && !report)
-                .then(|| field("text").and_then(|v| v.as_str()))
-                .flatten()
-                .map(Some)
+            let Ok(req) = DocSimilarRequest::deserialize(body) else {
+                return Ok(None);
+            };
+            match resolve_doc_similar(&req) {
+                Ok(query) => gate.admit(query.embed_need()),
+                Err(_) => Ok(None),
+            }
         }
-        "/skill/similar" => field("slug")
-            .is_none()
-            .then(|| field("text").and_then(|v| v.as_str()))
-            .flatten()
-            .map(Some),
-        "/skill/search" => {
-            let fts = field("mode").and_then(|v| v.as_str()) == Some("fts");
-            (!fts && field("query").is_some_and(|v| v.is_string())).then_some(None)
-        }
-        _ => None,
+        "/doc/search" => match DocSearchRequest::deserialize(body) {
+            Ok(req) => gate.admit(EmbedNeed::for_search_mode(&req.mode)),
+            Err(_) => Ok(None),
+        },
+        "/skill/search" => match skill::<SkillSearchRequest>(body) {
+            Some(args) => gate.admit(args.embed_need(SkillRemoteOp::Search)),
+            None => Ok(None),
+        },
+        "/skill/similar" => match skill::<SkillSimilarRequest>(body) {
+            Some(args) => gate.admit(args.embed_need(SkillRemoteOp::Similar)),
+            None => Ok(None),
+        },
+        _ => Ok(None),
     }
 }
 
@@ -407,22 +432,35 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         return ctx.error_response_for(req, 404, "Not found");
     }
 
+    // The body of a route that needs a look before the store lock is read ONCE
+    // here and kept for its handler (`preread_body`).
+    clear_preread_body();
+    let peek = if method == Method::Post
+        && matches!(
+            route_path,
+            "/recall"
+                | "/remember"
+                | "/doc/search"
+                | "/doc/similar"
+                | "/skill/search"
+                | "/skill/similar"
+        ) {
+        preread_body(req.as_reader())
+    } else {
+        None
+    };
+
     // #1518: embed the text of a recall or a remember BEFORE the store lock.
     // The embedding is the slow part (a network round trip for a remote
     // backend) and needs no store; it lands in the embedder's cache, so the
     // call under the lock finds it there instead of every request queueing
     // behind one embedding at a time.
-    clear_preread_body();
     let warmer = ctx
         .embed_warmer
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if method == Method::Post
-        && let Some(warmer) = warmer
-        && matches!(route_path, "/recall" | "/remember")
-        && let Some(body) = preread_body(req.as_reader())
-    {
+    if let (Some(warmer), Some(body)) = (warmer, &peek) {
         // Only text the real call would embed: a recall query as sent, a
         // content after the same validation and privacy filter as a write.
         match route_path {
@@ -431,35 +469,36 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     warmer.warm_query(q);
                 }
             }
-            _ => {
+            "/remember" => {
                 if let Some(c) = body.get("content").and_then(|v| v.as_str()) {
                     warmer.warm_content(c);
                 }
             }
+            _ => {}
         }
     }
 
-    // The remote routes that embed a client string take their slot BEFORE the
+    // The LAB routes that embed a client string take their slot BEFORE the
     // store lock (see `ReqCtx::remote_embeds`): a third concurrent one is a
-    // 429 at once instead of queueing behind the lock. An oversized draft is a
-    // 400 first, busy or not. Held until the response is built.
-    let _embed_slot = if method == Method::Post
-        && matches!(
-            route_path,
-            "/doc/similar" | "/skill/similar" | "/skill/search"
-        )
-        && let Some(body) = preread_body(req.as_reader())
-        && let Some(draft) = remote_embed_input(route_path, &body)
+    // 429 at once instead of queueing behind the lock. Whether a request
+    // embeds is the core's answer (`admit_remote_embed`); an oversized draft is
+    // a 400 first, busy or not. Held until the response is built. The CORE
+    // memory routes (`/recall`, `/context`, ...) take no slot: a new 429 there
+    // would change the CORE contract.
+    let _embed_slot = match peek
+        .as_ref()
+        .map(|body| admit_remote_embed(&ctx.remote_embeds, route_path, body))
     {
-        if let Some(Err(e)) = draft.map(uteke_core::remote_guard::check_draft_len) {
-            return ctx.error_response_for(req, 400, e.to_string());
+        Some(Err(e)) => {
+            let status = if e.class() == uteke_core::ErrorClass::Busy {
+                429
+            } else {
+                400
+            };
+            return ctx.error_response_for(req, status, e.to_string());
         }
-        match ctx.remote_embeds.try_acquire() {
-            Ok(slot) => Some(slot),
-            Err(e) => return ctx.error_response_for(req, 429, e.to_string()),
-        }
-    } else {
-        None
+        Some(Ok(slot)) => slot,
+        None => None,
     };
 
     // Lock the Uteke instance for the duration of this request.

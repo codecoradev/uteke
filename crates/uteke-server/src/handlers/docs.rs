@@ -141,16 +141,7 @@ pub(super) fn post_doc_similar(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         Ok(q) => q,
         Err(e) => return ctx.error_response_for(req, 400, e),
     };
-    // A draft text is embedded: bound it and the number running at once.
-    let _permit = match &query {
-        uteke_core::doc_similarity::DocSimilarQuery::Text(t) => {
-            match uteke.remote_draft_permit(t) {
-                Ok(p) => Some(p),
-                Err(e) => return ctx.core_error(req, &e),
-            }
-        }
-        _ => None,
-    };
+    // The router took the embedding slot before the store lock (see `route`).
     let result = uteke.doc_similarity_query(
         &query,
         req_data.namespace.as_deref(),
