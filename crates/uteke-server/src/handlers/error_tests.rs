@@ -239,3 +239,105 @@ fn http_and_mcp_updates_agree_on_outcome_and_stored_state() {
         assert_eq!(h.valid_from.is_some(), m.valid_from.is_some(), "{name}");
     }
 }
+
+/// #1752: every error variant has one HTTP shape, whichever handler answers
+/// it. `Error::samples()` lists every variant (a new one fails the core test
+/// until it is listed), and this table fails until its class is placed.
+#[test]
+fn every_error_variant_has_one_http_wire_shape() {
+    use crate::context::http_wire;
+    use uteke_core::{Error, ErrorClass};
+    let mut classes = Vec::new();
+    for e in Error::samples() {
+        let wire = http_wire(&e, false);
+        let (status, error) = match e.class() {
+            ErrorClass::BadRequest => (400, e.to_string()),
+            ErrorClass::NotFound => (404, e.to_string()),
+            ErrorClass::Busy => (429, e.to_string()),
+            ErrorClass::SecretDetected => (400, "secret_detected".to_string()),
+            ErrorClass::RejectedValue => (409, "rejected_value".to_string()),
+            ErrorClass::InvalidRoomId => (400, "invalid_room_id".to_string()),
+            ErrorClass::Embedding => (500, e.to_string()),
+            ErrorClass::Internal => (500, "Internal server error".to_string()),
+        };
+        assert_eq!(wire.status, status, "{e:?}");
+        assert_eq!(wire.body["error"], json!(error), "{e:?}");
+        // The detail of an internal failure never reaches the client.
+        if e.class() == ErrorClass::Internal {
+            assert!(!wire.body.to_string().contains("detail"), "{e:?}");
+        }
+        classes.push(e.class());
+    }
+    // Every class is exercised by at least one variant.
+    for class in [
+        ErrorClass::BadRequest,
+        ErrorClass::NotFound,
+        ErrorClass::Busy,
+        ErrorClass::SecretDetected,
+        ErrorClass::RejectedValue,
+        ErrorClass::InvalidRoomId,
+        ErrorClass::Embedding,
+        ErrorClass::Internal,
+    ] {
+        assert!(classes.contains(&class), "{class:?}");
+    }
+    // The rich bodies carry their extra fields, never a value.
+    let secret = http_wire(
+        &Error::SecretDetected {
+            kinds: vec!["jwt".into()],
+        },
+        false,
+    );
+    assert_eq!(secret.body["kinds"], json!(["jwt"]));
+    let rejected = http_wire(
+        &Error::RejectedValue {
+            reason: "wrong".into(),
+        },
+        false,
+    );
+    assert_eq!(rejected.body["reason"], "wrong");
+    let room = http_wire(&Error::InvalidRoomId { id: "plain".into() }, false);
+    assert_eq!(room.body["room_id"], "plain");
+    // The bare variant drops the `Validation error: ` prefix only.
+    assert_eq!(
+        http_wire(&Error::validation("bad"), true).body["error"],
+        "bad"
+    );
+    assert_eq!(
+        http_wire(&Error::validation("bad"), false).body["error"],
+        "Validation error: bad"
+    );
+    assert_eq!(
+        http_wire(&Error::not_found("gone"), true).body["error"],
+        "gone"
+    );
+}
+
+/// `POST /recall` answers a busy or not-found core error by its class, not
+/// 500 (#1752): the status comes from the same mapping as every other route.
+#[test]
+fn a_recall_failure_is_answered_by_its_class() {
+    let (status, body) = answer(uteke_core::Error::Busy("too many".into()));
+    assert_eq!((status, body.as_str()), (429, "too many"));
+    let req: Request = TestRequest::new()
+        .with_method(Method::Post)
+        .with_path("/recall")
+        .into();
+    let ctx = ReqCtx {
+        auth_token_hash: None,
+        read_only_token_hash: None,
+        cors_origins: Vec::new(),
+        recall_config: None,
+        extraction_config: None,
+        host_guard: Default::default(),
+        store_id: String::new(),
+        embed_warmer: Default::default(),
+        remote_embeds: Default::default(),
+    };
+    let resp = ctx.core_error_bare(&req, &uteke_core::Error::validation("bad"));
+    assert_eq!(resp.status_code().0, 400);
+    let text = String::from_utf8(resp.into_reader().into_inner()).unwrap();
+    assert_eq!(text, r#"{"error":"bad"}"#);
+    let resp = ctx.core_error_embedding_503(&req, &uteke_core::Error::embed_msg("x"), "no model");
+    assert_eq!(resp.status_code().0, 503);
+}

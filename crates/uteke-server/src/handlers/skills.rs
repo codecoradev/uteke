@@ -18,20 +18,11 @@ where
     };
     match uteke.skill_remote(op, &args) {
         Ok(answer) => ctx.ok_response_for(req, &answer),
-        Err(e) => match e.class() {
-            uteke_core::ErrorClass::NotFound => ctx.error_response_for(req, 404, e.to_string()),
-            uteke_core::ErrorClass::BadRequest => ctx.error_response_for(req, 400, e.to_string()),
-            uteke_core::ErrorClass::Busy => ctx.error_response_for(req, 429, e.to_string()),
-            _ if matches!(e, uteke_core::Error::Embedding { .. }) => ctx.error_response_for(
-                req,
-                503,
-                "embedding model not available for this skill request",
-            ),
-            _ => {
-                error!("skill route error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
-        },
+        Err(e) => ctx.core_error_embedding_503(
+            req,
+            &e,
+            "embedding model not available for this skill request",
+        ),
     }
 }
 

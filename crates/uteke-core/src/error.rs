@@ -79,7 +79,12 @@ pub enum ErrorClass {
     /// The server is busy with as many requests of this kind as it allows:
     /// HTTP 429 (#1731).
     Busy,
-    /// Anything else: HTTP 500.
+    /// The embedding backend failed. The (sanitized) message tells the user
+    /// what to do, for example to run `uteke repair`, so transports show it
+    /// instead of hiding it: HTTP 500 with that message (agreed with
+    /// uteke-cloud#244).
+    Embedding,
+    /// Anything else: HTTP 500 with a generic body; the detail goes to the log.
     Internal,
 }
 
@@ -141,12 +146,38 @@ impl Error {
             Error::RejectedValue { .. } => ErrorClass::RejectedValue,
             Error::InvalidRoomId { .. } => ErrorClass::InvalidRoomId,
             Error::Busy(_) => ErrorClass::Busy,
-            Error::Io(_)
-            | Error::Database { .. }
-            | Error::Embedding { .. }
-            | Error::Lock { .. }
-            | Error::Generic(_) => ErrorClass::Internal,
+            Error::Embedding { .. } => ErrorClass::Embedding,
+            Error::Io(_) | Error::Database { .. } | Error::Lock { .. } | Error::Generic(_) => {
+                ErrorClass::Internal
+            }
         }
+    }
+
+    /// One value of every [`Error`] variant, for the table tests of the
+    /// transports: each asserts the wire shape of every class from this list.
+    /// A new variant fails the exhaustive match in `samples_cover_every_variant`
+    /// (below) until it is listed here and classified.
+    #[doc(hidden)]
+    pub fn samples() -> Vec<Error> {
+        vec![
+            Error::Io(std::io::Error::other("io detail")),
+            Error::db_msg("db detail"),
+            Error::embed_msg("embedder unavailable; run `uteke repair`"),
+            Error::validation("bad input"),
+            Error::not_found("Room not found: r1"),
+            Error::SecretDetected {
+                kinds: vec!["jwt".into(), "aws_key".into()],
+            },
+            Error::RejectedValue {
+                reason: "wrong".into(),
+            },
+            Error::InvalidRoomId { id: "plain".into() },
+            Error::Busy("too many requests".into()),
+            Error::Lock {
+                context: "index lock".into(),
+            },
+            Error::generic("generic detail"),
+        ]
     }
 
     /// Generic error with a message.
@@ -206,6 +237,31 @@ pub fn format_bytes(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The number of variants of [`Error`]; the exhaustive match below fails to
+    /// compile when a variant is added, and the assert fails until `samples()`
+    /// lists it.
+    #[test]
+    fn samples_cover_every_variant() {
+        fn index(e: &Error) -> usize {
+            match e {
+                Error::Io(_) => 0,
+                Error::Database { .. } => 1,
+                Error::Embedding { .. } => 2,
+                Error::Validation(_) => 3,
+                Error::NotFound(_) => 4,
+                Error::SecretDetected { .. } => 5,
+                Error::RejectedValue { .. } => 6,
+                Error::InvalidRoomId { .. } => 7,
+                Error::Busy(_) => 8,
+                Error::Lock { .. } => 9,
+                Error::Generic(_) => 10,
+            }
+        }
+        let mut seen: Vec<usize> = Error::samples().iter().map(index).collect();
+        seen.sort_unstable();
+        assert_eq!(seen, (0..=10).collect::<Vec<_>>());
+    }
 
     #[test]
     fn test_format_bytes() {

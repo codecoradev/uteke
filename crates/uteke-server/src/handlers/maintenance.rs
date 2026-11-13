@@ -18,15 +18,13 @@ pub(super) fn get_lifecycle_status(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let active = match uteke.count_active(ns_param) {
         Ok(v) => v,
         Err(e) => {
-            error!("lifecycle status error: {e}");
-            return ctx.error_response_for(req, 500, "Internal server error");
+            return ctx.core_error(req, &e);
         }
     };
     let deprecated = match uteke.count_deprecated(ns_param) {
         Ok(v) => v,
         Err(e) => {
-            error!("lifecycle status error: {e}");
-            return ctx.error_response_for(req, 500, "Internal server error");
+            return ctx.core_error(req, &e);
         }
     };
     #[derive(serde::Serialize)]
@@ -71,10 +69,7 @@ pub(super) fn get_lifecycle_deprecated(c: &mut Call) -> Response<Cursor<Vec<u8>>
                 },
             )
         }
-        Err(e) => {
-            error!("lifecycle deprecated list error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -89,10 +84,7 @@ pub(super) fn post_lifecycle_cycle(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match read_body::<CycleReq>(req.as_reader()) {
         Ok(req_data) => match uteke.lifecycle_cycle(ns(&req_data.namespace)) {
             Ok(result) => ctx.ok_response_for(req, &result),
-            Err(e) => {
-                error!("lifecycle cycle error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -122,10 +114,7 @@ pub(super) fn post_lifecycle_promote(c: &mut Call) -> Response<Cursor<Vec<u8>>> 
                     },
                 )
             }
-            Err(e) => {
-                error!("lifecycle promote error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -143,10 +132,7 @@ pub(super) fn post_context(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     let resp = serde_json::json!({ "context": context });
                     ctx.ok_response_for(req, &resp)
                 }
-                Err(e) => {
-                    error!("Context error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(_) => ctx.error_response_for(req, 400, "Invalid JSON body"),
@@ -166,10 +152,7 @@ pub(super) fn post_dream(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 .unwrap_or(false);
             match uteke.dream(ns, dry_run, &[]) {
                 Ok(report) => ctx.ok_response_for(req, &report),
-                Err(e) => {
-                    error!("Dream error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(_) => ctx.error_response_for(req, 400, "Invalid JSON body"),
@@ -360,10 +343,7 @@ pub(super) fn post_import(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     }
                     ctx.ok_response_for(req, &with_namespace_warning(body, import_ns))
                 }
-                Err(e) => {
-                    error!("Import error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -390,10 +370,7 @@ pub(super) fn get_export(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 None,
             )
         }
-        Err(e) => {
-            error!("Export error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -409,10 +386,7 @@ pub(super) fn post_verify(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let req = &mut *c.req;
     match uteke.verify() {
         Ok(r) => ctx.ok_response_for(req, &r),
-        Err(e) => {
-            error!("Request failed: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -422,10 +396,7 @@ pub(super) fn post_repair(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let req = &mut *c.req;
     match uteke.repair() {
         Ok(r) => ctx.ok_response_for(req, &r),
-        Err(e) => {
-            error!("Request failed: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -438,10 +409,7 @@ pub(super) fn post_prune(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let result = uteke.prune(req_data.ttl_days, ns(&req_data.namespace), req_data.dry_run);
             match result {
                 Ok(r) => ctx.ok_response_for(req, &r),
-                Err(e) => {
-                    error!("Request failed: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -458,19 +426,13 @@ pub(super) fn post_consolidate(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 let pairs = uteke.find_duplicates(ns(&req_data.namespace), req_data.threshold);
                 match pairs {
                     Ok(p) => ctx.ok_response_for(req, &p),
-                    Err(e) => {
-                        error!("Request failed: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 }
             } else {
                 let result = uteke.consolidate(ns(&req_data.namespace), req_data.threshold, false);
                 match result {
                     Ok(r) => ctx.ok_response_for(req, &r),
-                    Err(e) => {
-                        error!("Request failed: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 }
             }
         }
@@ -536,10 +498,7 @@ pub(super) fn post_aging(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             };
             match result {
                 Ok(r) => ctx.ok_response_for(req, &r),
-                Err(e) => {
-                    error!("Request failed: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -553,10 +512,7 @@ pub(super) fn post_importance(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match read_body::<ImportanceRequest>(req.as_reader()) {
         Ok(_req_data) => match uteke.recompute_importance() {
             Ok(count) => ctx.ok_response_for(req, &serde_json::json!({ "updated": count })),
-            Err(e) => {
-                error!("Request failed: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -570,10 +526,7 @@ pub(super) fn post_orphans(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         Ok(req_data) => {
             match uteke.find_orphans(ns(&req_data.namespace), req_data.threshold, req_data.limit) {
                 Ok(orphans) => ctx.ok_response_for(req, &orphans),
-                Err(e) => {
-                    error!("Request failed: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -589,10 +542,7 @@ pub(super) fn post_rebuild_backlinks(c: &mut Call) -> Response<Cursor<Vec<u8>>> 
             Ok(count) => {
                 ctx.ok_response_for(req, &serde_json::json!({ "backlinks_created": count }))
             }
-            Err(e) => {
-                error!("Request failed: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }

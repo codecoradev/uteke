@@ -4,6 +4,17 @@
 
 ### Changed
 
+- **One error-class-to-wire mapping per transport (#1752)** - `Error::class()` is now the only place
+  that classifies a core error (a new `ErrorClass::Embedding` joins the others), and each transport
+  has one function from class to wire shape: `http_wire` (HTTP status and body, with the existing
+  `secret_detected`, `rejected_value` and `invalid_room_id` bodies), `core_failure` (MCP) and
+  `cli_failure` (CLI, exit status 1 for every class as before). Every handler and tool uses it. The
+  mapping table is in `docs/architecture.md`. Observable changes: a failed MCP tool call is now a tool
+  result with `isError: true` instead of a JSON-RPC `-32603` error (bad arguments, a missing target,
+  an internal failure), its text for a client error no longer starts with `Failed: `; `POST /recall`
+  and the other routes that mapped every non-validation failure to 500 now answer by class (404, 429,
+  409, 400 for the rich classes); `POST /room/create` no longer answers a 400 `Failed to create
+  room: ...` for an internal failure (500). No CORE contract change.
 - **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
   three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
   drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
