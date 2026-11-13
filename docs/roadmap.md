@@ -11,7 +11,7 @@ Demand-gated — we build what people actually use. Track progress on [GitHub Is
 - **Personal skill library (#1731)** — `uteke skill index/search/list/show/similar/lint/approve`, package hashes equal to tole's, an append-only ledger, and read-only HTTP/MCP surfaces for an agent that recalls only the skills a task needs (schema v27)
 - **Similar documents and a duplicate report (#1730)** — `uteke doc similar`, `doc duplicates`, `POST /doc/similar`, `uteke_doc_similar`
 - **Room aliases (#1714, schema v26)** — renaming a room keeps the old id working
-- **Room ids `category:title` (#1715)** — warn on create, rename and first write; `[rooms] require_category_title` prepared and off by default; migration and enforcement follow once Cloud has aliases
+- **Room ids `category:title` (#1715)** — warn on create, rename and first write; `[rooms] require_category_title` prepared and off by default; migration of the old rooms and enforcement follow; Uteke Cloud adopts the same rules after OSS
 - **Rooms on recall hits (#1703) and room search (#1704)** — `rooms` on `recall`, `search` and `room recall` hits; `POST /room/search`, `uteke_room_search`
 - **`skip_deprecated_copies` on `import` (#1716)** — OSS and Cloud agree on rows that match only a deprecated copy
 - **`uteke-privacy` (#1732)** — the secret detector as a small crate shared with tole

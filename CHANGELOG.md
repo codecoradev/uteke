@@ -85,7 +85,8 @@ A personal skill library, similar documents, room aliases and the `category:titl
   before the memory is stored). HTTP answers `400 invalid_room_id` (`error`, `message`,
   `room_id`), MCP errors start with `invalid_room_id:`. Existing rooms, aliases, reads,
   `import` and `namespace migrate` are not affected. Global `uteke.toml` only; the default
-  stays `false` until the migration of stage 2 is verified on OSS and Cloud.
+  stays `false` until the owner flips it in a release, after the old rooms are migrated.
+  Uteke Cloud follows the same rule once it is validated in OSS.
 - **Renaming a room keeps its old id working (#1714)** - `room rename`, `POST /room/rename` and
   `uteke_room_rename` now record the id a room leaves as an alias of the renamed room, in
   the same transaction. Every room operation (remember, recall, room recall, stats,
