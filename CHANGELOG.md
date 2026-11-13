@@ -124,6 +124,22 @@
 
 ### Changed
 
+- **`uteke recall` runs through the shared recall entry point (#1750)** - the CLI no longer has
+  its own copy of the recall decision tree: it builds a `RecallRequest` and calls
+  `Uteke::run_recall`, as `POST /recall` and the MCP tool do, so a fix to the explain guards, the
+  score floor, `strict`, `min_trust` or the path choice lands once. The per-request
+  `--salience` / `--recency` weights are part of the request and scoped to that recall (no more
+  `set_salience_recency_config` / `reset_salience_recency_config` on five exits); `--related`,
+  `--depth` and `--where` are request fields too (not on the HTTP wire, no CORE change). Through a
+  server, `--strategy`, `--explain`, `--context`, `--content-format`, `--pack` and `--type` are now
+  honoured (before, `--strategy`/`--explain`/`--context`/`--content-format` silently used the local
+  store, and `--pack` and `--type` failed to parse the answer); only `--salience`, `--recency`,
+  `--related`, `--depth` and `--where`, which have no field in `POST /recall`, still use the local
+  store. `--type memory|doc` now applies `--entity`/`--category` and `--at` instead of ignoring
+  them; the explain refusals use core's wording ("explain cannot be combined with at/before/after");
+  `--explain --type memory` is refused (memory recall is the explain default). `to_http_body` now
+  sends `strategy`, `explain`, `after` and `before`. See the pull request for every difference.
+
 - **Skill library remote surfaces: no server path, bounded embedding cost (#1731)** - `POST
   /skill/list`, `/skill/show` and the MCP tools `uteke_skill_list` and `uteke_skill_show` no longer
   return `source_path`, the server directory a skill was indexed from (the CLI still shows it).

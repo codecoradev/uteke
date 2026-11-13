@@ -62,6 +62,47 @@ impl SalienceRecencyConfig {
     }
 }
 
+thread_local! {
+    /// The boost weights of the recall running on this thread, when it asked
+    /// for its own (see [`BoostScope`]).
+    static REQUEST_BOOST: std::cell::Cell<Option<SalienceRecencyConfig>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Scopes one request's boost weights to the recall running on this thread.
+///
+/// The weights used to be set on the engine (`set_salience_recency_config`)
+/// and had to be reset on every exit, or they leaked into the next query
+/// (CodeCora #387). Here they live exactly as long as the guard: dropping it
+/// restores what was there before, on every exit including an error or a
+/// panic, and nothing is written to the shared engine, so two requests on one
+/// engine never see each other's weights. Boosts are applied on the thread
+/// that runs the recall, never on a worker it spawns.
+pub(crate) struct BoostScope {
+    previous: Option<SalienceRecencyConfig>,
+}
+
+impl BoostScope {
+    /// Use `config` for recalls on this thread until the guard is dropped.
+    /// `None` leaves the engine's own weights in force.
+    pub(crate) fn enter(config: Option<SalienceRecencyConfig>) -> Self {
+        let previous =
+            REQUEST_BOOST.with(|c| c.replace(config.map(SalienceRecencyConfig::sanitized)));
+        Self { previous }
+    }
+
+    /// The weights scoped to this thread, if a request set some.
+    pub(crate) fn current() -> Option<SalienceRecencyConfig> {
+        REQUEST_BOOST.with(std::cell::Cell::get)
+    }
+}
+
+impl Drop for BoostScope {
+    fn drop(&mut self) {
+        REQUEST_BOOST.with(|c| c.set(self.previous));
+    }
+}
+
 /// Compute the salience score for a memory (0.0..=1.0).
 ///
 /// Salience is "how much this memory matters": well-accessed, important,
@@ -169,6 +210,25 @@ mod tests {
             author_type: "agent".to_string(),
             author: None,
         }
+    }
+
+    #[test]
+    fn a_boost_scope_restores_what_was_in_force_when_it_ends() {
+        assert!(BoostScope::current().is_none());
+        {
+            let _outer = BoostScope::enter(Some(SalienceRecencyConfig {
+                salience_weight: 0.3,
+                recency_weight: 4.0,
+            }));
+            // Sanitised like the engine's own config.
+            assert_eq!(BoostScope::current().unwrap().recency_weight, 1.0);
+            {
+                let _inner = BoostScope::enter(None);
+                assert!(BoostScope::current().is_none(), "None keeps the engine's");
+            }
+            assert_eq!(BoostScope::current().unwrap().salience_weight, 0.3);
+        }
+        assert!(BoostScope::current().is_none());
     }
 
     #[test]

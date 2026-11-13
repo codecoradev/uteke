@@ -1246,25 +1246,32 @@ impl Uteke {
         ))
     }
 
-    /// Override the salience/recency dual-axis boost config (#352).
+    /// Override the salience/recency dual-axis boost config (#352) for the
+    /// engine as a whole.
     ///
-    /// Used by the CLI to forward the merged `[recall]` weights and the
-    /// per-query `--salience` / `--recency` flag overrides.
+    /// A per-request override does not belong here: put it on the request
+    /// ([`RecallRequest::with_salience_recency`]) and run it with
+    /// [`Uteke::run_recall`], which scopes it to that recall and leaves the
+    /// engine untouched.
     ///
-    /// **Important:** this mutates shared state. Callers that serve
-    /// multiple queries on the same `Uteke` instance (server, MCP) MUST
-    /// call [`reset_salience_recency_config`] after the query to avoid
-    /// leaking boost state into later queries (CodeCora #387).
+    /// **Important:** this mutates shared state. A caller that uses it for one
+    /// query must call [`reset_salience_recency_config`] afterwards (CodeCora
+    /// #387).
     pub fn set_salience_recency_config(&mut self, config: salience_recency::SalienceRecencyConfig) {
         self.salience_recency_config = config.sanitized();
     }
 
-    /// Reset salience/recency boost config to its no-op default (CodeCora #387).
-    ///
-    /// Call after a per-query boost override so later queries on the same
-    /// `Uteke` instance aren't affected.
+    /// Reset the engine's salience/recency boost config to its default
+    /// (CodeCora #387).
     pub fn reset_salience_recency_config(&mut self) {
         self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
+    }
+
+    /// The boost weights in force for the recall running on this thread: the
+    /// request's own when it set some (see [`Uteke::run_recall`]), else the
+    /// engine's.
+    pub(crate) fn salience_recency_in_force(&self) -> salience_recency::SalienceRecencyConfig {
+        salience_recency::BoostScope::current().unwrap_or(self.salience_recency_config)
     }
 
     /// Set Jaccard token reranking weight (#719).

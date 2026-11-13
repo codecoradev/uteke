@@ -1367,6 +1367,74 @@ mod recall_request_cross_surface_tests {
         assert_eq!(mcp(json!({})).unwrap_err(), "Missing 'query'");
     }
 
+    /// The request `uteke recall` builds (#1750) decodes to the same typed
+    /// request through its own path, through the HTTP body it sends to a server
+    /// and through the MCP arguments, and all three give the same hits from the
+    /// same store.
+    #[test]
+    fn the_cli_http_and_mcp_run_one_request_to_one_result() {
+        use uteke_core::recall_exec::{RecallDefaults, RecallOutput};
+        let u = uteke_core::test_support::open_keyword();
+        u.remember(
+            "rust gives memory safety without a garbage collector",
+            &["lang"],
+            Some(json!({"entity": "rust"})),
+            None,
+        )
+        .unwrap();
+        u.remember("rust memory safety also helps concurrency", &[], None, None)
+            .unwrap();
+        u.remember("cooking pasta takes salt", &[], None, None)
+            .unwrap();
+
+        // What the CLI builds from `recall "memory safety" --strategy fts5 --limit 1`.
+        let cli_input = uteke_core::RecallInput {
+            query: "memory safety".into(),
+            limit: Some(1),
+            tags: Some(vec![]),
+            namespace: None,
+            search_type: Some("all".into()),
+            strategy: Some("fts5".into()),
+            ..uteke_core::RecallInput::default()
+        };
+        let local = Typed::decode(cli_input.clone()).unwrap();
+        let over_http = http(cli_input.to_http_body()).unwrap();
+        let over_mcp = mcp(json!({
+            "query": "memory safety", "limit": 1, "tags": [],
+            "type": "all", "strategy": "fts5",
+        }))
+        .unwrap();
+        assert_eq!(local, over_http);
+        assert_eq!(local, over_mcp);
+
+        let ids = |req: &Typed| match u.run_recall(req, RecallDefaults::default()).unwrap() {
+            RecallOutput::Unified(r) => r.iter().map(|h| h.memory_id.clone()).collect::<Vec<_>>(),
+            other => panic!("unified expected: {other:?}"),
+        };
+        let want = ids(&local);
+        assert_eq!(want.len(), 1);
+        assert_eq!(ids(&over_http), want);
+        assert_eq!(ids(&over_mcp), want);
+    }
+
+    /// Every field the CLI sends survives the body: `explain`, `strategy`,
+    /// `after` and `before` are no longer dropped on the way to the server.
+    #[test]
+    fn cli_via_server_body_carries_strategy_explain_and_the_time_range() {
+        let input = uteke_core::RecallInput {
+            query: "q".into(),
+            strategy: Some("graph".into()),
+            explain: true,
+            after: Some("2026-01-01T00:00:00Z".into()),
+            before: Some("2026-02-01T00:00:00Z".into()),
+            ..uteke_core::RecallInput::default()
+        };
+        let t = http(input.to_http_body()).unwrap();
+        assert!(t.explain);
+        assert!(t.after.is_some() && t.before.is_some());
+        assert_eq!(t.strategy(None).unwrap(), uteke_core::RecallStrategy::Graph);
+    }
+
     #[test]
     fn cli_via_server_body_decodes_under_the_http_policy() {
         let body = uteke_core::RecallInput {

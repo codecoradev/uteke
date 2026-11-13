@@ -134,8 +134,8 @@ uteke recall "database caching" --pack --exclude-ids abc123,def456
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
 | `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
-| `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`) |
-| `--explain` | Show the ranking signals behind each result (#1160): final score, strategy, vector similarity + rank, FTS rank, RRF score with per-channel fusion contributions, and jaccard/salience/recency/graph boost deltas. Memory-only — not available with `--type doc` |
+| `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`). Memory-only: refused with `--type memory` or `--type doc` |
+| `--explain` | Show the ranking signals behind each result (#1160): final score, strategy, vector similarity + rank, FTS rank, RRF score with per-channel fusion contributions, and jaccard/salience/recency/graph boost deltas. Memory-only: refused with `--type memory` or `--type doc`, `--at`, `--entity`, `--category`, `--enrich`, `--related`, `--where` and `--context`. The same ranking signals come back from a server |
 | `--pack` | Return a budgeted context pack (#1281) instead of a bare ranked list: `{selected, skipped, budget_used, budget_chars}`. Rank-order preserving greedy fill of the character budget; deterministic and LLM-free |
 | `--budget <chars>` | Character budget for `--pack` (default: 4000) |
 | `--exclude-ids <ids>` | Memory IDs already injected this turn, comma-separated — excluded from the pack and reported as `skipped[reason=excluded]` |
@@ -1230,6 +1230,8 @@ RUST_LOG=info uteke-serve --port 8767
 ```
 
 When `[server] enabled = true` is set in config, the CLI auto-routes commands through the server. Falls back to local store if server is not running.
+
+`uteke recall` builds one request (`uteke_core::RecallRequest`) and runs it through the same entry point (`Uteke::run_recall`) as `POST /recall` and the MCP tool, so a local store and a server give the same answer to the same command. `--strategy`, `--explain`, `--pack`, `--type`, `--at`, `--entity`, `--category`, `--enrich`, `--min`, `--strict` and `--min-trust` travel in the request body; `--context` and `--content-format` only change how the answer is printed. Five flags have no field in `POST /recall` (adding one would change a CORE endpoint): `--salience`, `--recency`, `--related`, `--depth` and `--where`. A command that uses one of them runs against the local store instead of the server.
 
 ### HTTP Endpoints
 
