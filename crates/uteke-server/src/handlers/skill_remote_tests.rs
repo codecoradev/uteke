@@ -12,6 +12,8 @@ use uteke_core::test_support::{
 struct App {
     uteke: Mutex<Uteke>,
     deploy_hash: String,
+    /// The served store's one embedding gate, as `main` hands it to the router.
+    gate: uteke_core::remote_guard::EmbedGate,
 }
 
 impl App {
@@ -19,6 +21,7 @@ impl App {
         let u = open_keyword();
         let deploy_hash = seed_skill_library(&u);
         Self {
+            gate: u.embed_gate().clone(),
             uteke: Mutex::new(u),
             deploy_hash,
         }
@@ -50,7 +53,9 @@ impl App {
     }
 
     fn post(&self, url: &str, body: Value) -> (u16, Value) {
-        self.call(&ctx(false), Method::Post, url, Some(body), None)
+        let mut ctx = ctx(false);
+        ctx.remote_embeds = self.gate.clone();
+        self.call(&ctx, Method::Post, url, Some(body), None)
     }
 
     fn ok(&self, url: &str, body: Value) -> Value {
@@ -277,8 +282,10 @@ fn a_draft_text_without_the_model_is_503_and_a_stored_slug_needs_none() {
             "down-test-embedder"
         }
     }
+    let u = open_with_embedder(Box::new(Down));
     let app = App {
-        uteke: Mutex::new(open_with_embedder(Box::new(Down))),
+        gate: u.embed_gate().clone(),
+        uteke: Mutex::new(u),
         deploy_hash: String::new(),
     };
     let (status, v) = app.post("/skill/similar", json!({"text": "anything"}));
@@ -509,13 +516,10 @@ fn the_embedding_gate_refuses_before_the_store_lock_is_taken() {
 #[test]
 fn embedding_routes_answer_429_when_every_slot_is_taken() {
     let app = App::new();
-    let (_a, _b) = {
-        let u = app.uteke.lock().unwrap();
-        (
-            u.remote_embed_permit().unwrap(),
-            u.remote_embed_permit().unwrap(),
-        )
-    };
+    let (_a, _b) = (
+        app.gate.try_acquire().unwrap(),
+        app.gate.try_acquire().unwrap(),
+    );
     let busy = "busy: 2 embedding requests are already running; retry in a moment";
     for (url, body) in [
         ("/skill/similar", json!({"text": "x"})),
@@ -524,6 +528,9 @@ fn embedding_routes_answer_429_when_every_slot_is_taken() {
             "/skill/search",
             json!({"query": "deploy", "mode": "semantic"}),
         ),
+        // LAB, so gated too (#1753); `fts` never embeds.
+        ("/doc/search", json!({"query": "deploy"})),
+        ("/doc/search", json!({"query": "deploy", "mode": "hybrid"})),
     ] {
         assert_eq!(app.refused(url, body), (429, busy.to_string()), "{url}");
     }
@@ -543,28 +550,143 @@ fn embedding_routes_answer_429_when_every_slot_is_taken() {
         200
     );
     assert_eq!(app.post("/skill/list", json!({})).0, 200);
+    assert_eq!(
+        app.post("/doc/search", json!({"query": "deploy", "mode": "fts"}))
+            .0,
+        200
+    );
 }
 
-/// Only a request that really embeds a client string takes a slot.
+/// An embedder that notes, on every call, how many slots of the router's gate
+/// are held. A route that embeds a client string while no slot is held is a
+/// route the gate does not know about: the silent failure of a rule that was
+/// copied into the router instead of asked from the core (#1753).
+struct GateProbe {
+    /// Set once the store, which owns the gate, is open.
+    gate: std::sync::Arc<std::sync::OnceLock<uteke_core::remote_guard::EmbedGate>>,
+    /// `(text, slots held while it was embedded)` per call.
+    calls: std::sync::Arc<Mutex<Vec<(String, usize)>>>,
+}
+
+impl uteke_core::Embedder for GateProbe {
+    fn embed(&self, text: &str) -> Result<Vec<f32>, uteke_core::Error> {
+        self.calls.lock().unwrap().push((
+            text.to_string(),
+            self.gate.get().map_or(0, |g| g.in_flight()),
+        ));
+        uteke_core::test_support::KeywordEmbedder.embed(text)
+    }
+    fn dims(&self) -> usize {
+        uteke_core::test_support::KeywordEmbedder.dims()
+    }
+    fn max_seq_len(&self) -> usize {
+        128
+    }
+    fn name(&self) -> &str {
+        "gate-probe"
+    }
+}
+
+/// Every LAB route and body shape that embeds a client string takes a slot,
+/// and every one that does not, does not. The probe embedder reports the slots
+/// held at the moment the handler embeds, so the table fails when a handler
+/// embeds and the gate does not know about it.
 #[test]
-fn only_requests_that_embed_a_client_string_take_a_slot() {
-    let t = |path: &str, body: Value| super::remote_embed_input(path, &body).map(|d| d.is_some());
-    // Some(true): a bounded draft; Some(false): a skill query; None: no embedding.
-    assert_eq!(t("/doc/similar", json!({"text": "x"})), Some(true));
-    assert_eq!(t("/doc/similar", json!({"slug": "a"})), None);
-    assert_eq!(t("/doc/similar", json!({"id": "a", "text": "x"})), None);
-    assert_eq!(t("/doc/similar", json!({"report": true})), None);
-    assert_eq!(t("/doc/similar", json!({"text": 5})), None);
-    assert_eq!(t("/skill/similar", json!({"text": "x"})), Some(true));
-    assert_eq!(t("/skill/similar", json!({"slug": "a"})), None);
-    assert_eq!(t("/skill/search", json!({"query": "x"})), Some(false));
-    assert_eq!(
-        t("/skill/search", json!({"query": "x", "mode": "semantic"})),
-        Some(false)
-    );
-    assert_eq!(
-        t("/skill/search", json!({"query": "x", "mode": "fts"})),
-        None
-    );
-    assert_eq!(t("/skill/list", json!({"text": "x"})), None);
+fn every_route_that_embeds_a_client_string_holds_a_slot_while_it_embeds() {
+    let calls: std::sync::Arc<Mutex<Vec<(String, usize)>>> = Default::default();
+    let gate_cell: std::sync::Arc<std::sync::OnceLock<_>> = Default::default();
+    let u = open_with_embedder(Box::new(GateProbe {
+        gate: gate_cell.clone(),
+        calls: calls.clone(),
+    }));
+    let gate = u.embed_gate().clone();
+    gate_cell.set(gate.clone()).unwrap();
+    seed_skill_library(&u);
+    u.doc_upsert("notes", "notes", "alpha beta", &[], None)
+        .unwrap();
+    let app = App {
+        deploy_hash: String::new(),
+        gate,
+        uteke: Mutex::new(u),
+    };
+    // (route, body, embeds a client string)
+    let table = [
+        ("/doc/similar", json!({"text": "alpha beta"}), true),
+        ("/doc/similar", json!({"slug": "notes"}), false),
+        ("/doc/similar", json!({"id": "notes"}), false),
+        ("/doc/similar", json!({"report": true}), false),
+        ("/doc/search", json!({"query": "alpha"}), true),
+        (
+            "/doc/search",
+            json!({"query": "alpha", "mode": "hybrid"}),
+            true,
+        ),
+        (
+            "/doc/search",
+            json!({"query": "alpha", "mode": "semantic"}),
+            true,
+        ),
+        (
+            "/doc/search",
+            json!({"query": "alpha", "mode": "fts"}),
+            false,
+        ),
+        ("/skill/similar", json!({"text": "deploy rollout"}), true),
+        ("/skill/similar", json!({"slug": "deploy-copy"}), false),
+        ("/skill/search", json!({"query": "deploy"}), true),
+        (
+            "/skill/search",
+            json!({"query": "deploy", "mode": "semantic"}),
+            true,
+        ),
+        (
+            "/skill/search",
+            json!({"query": "deploy", "mode": "fts"}),
+            false,
+        ),
+        ("/skill/list", json!({}), false),
+        ("/skill/show", json!({"slug": "deploy"}), false),
+    ];
+    for (route, body, embeds) in table {
+        let before = calls.lock().unwrap().len();
+        let (status, v) = app.post(route, body.clone());
+        assert_eq!(status, 200, "{route} {body}: {v}");
+        let seen: Vec<_> = calls.lock().unwrap()[before..].to_vec();
+        assert_eq!(
+            !seen.is_empty(),
+            embeds,
+            "{route} {body}: embedding calls {seen:?}"
+        );
+        assert!(
+            seen.iter().all(|(_, held)| *held >= 1),
+            "{route} {body} embeds without holding a slot: {seen:?}"
+        );
+        assert_eq!(app.gate.in_flight(), 0, "{route} {body}: slot released");
+    }
+}
+
+/// The classification behind which routes may be gated: the gate belongs on
+/// LAB rows only; the memory recall routes are CORE and keep their contract.
+#[test]
+fn the_gated_routes_are_lab_and_the_memory_recall_routes_are_core() {
+    use crate::api_registry::{Tier, find};
+    for path in [
+        "/doc/search",
+        "/doc/similar",
+        "/skill/search",
+        "/skill/similar",
+    ] {
+        assert_eq!(
+            find("POST", path).expect("registered").tier,
+            Tier::Lab,
+            "{path}"
+        );
+    }
+    for path in ["/recall", "/search", "/room/recall", "/remember"] {
+        assert_eq!(
+            find("POST", path).expect("registered").tier,
+            Tier::Core,
+            "{path}"
+        );
+    }
 }

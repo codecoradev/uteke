@@ -7,14 +7,21 @@
 //!
 //! - a draft text is at most [`MAX_REMOTE_DRAFT_CHARS`] characters (the CLI
 //!   keeps its own, larger limit);
-//! - at most [`MAX_REMOTE_EMBEDS`] such requests embed at the same time per
-//!   [`crate::Uteke`]; another one is refused at once with [`Error::Busy`]
-//!   (HTTP 429, an MCP tool error) instead of queueing, so a burst cannot pile
-//!   up threads and memory.
+//! - at most [`MAX_REMOTE_EMBEDS`] such requests embed at the same time; another
+//!   one is refused at once with [`Error::Busy`] (HTTP 429, an MCP tool error)
+//!   instead of queueing, so a burst cannot pile up threads and memory.
 //!
-//! A server that serialises requests on a store lock must take its slot
-//! BEFORE the lock (a gate of its own, see [`EmbedGate`]): inside the lock
-//! at most one request runs, so the per-[`crate::Uteke`] gate never trips.
+//! The core answers "does this request embed a client string?" itself, from
+//! the validation that decides the request: [`EmbedNeed`] is returned by
+//! [`crate::skill_remote::SkillRemoteArgs::embed_need`],
+//! [`crate::doc_similarity::DocSimilarQuery::embed_need`] and
+//! [`EmbedNeed::for_search_mode`]. A transport asks once, then takes its slot
+//! with [`EmbedGate::admit`]. There is ONE gate per [`crate::Uteke`]
+//! ([`crate::Uteke::embed_gate`]); the gate is a cheap clone, so a server that
+//! serialises requests on a store lock hands a clone to its router and takes
+//! the slot BEFORE the lock (inside it at most one request runs, so a gate
+//! checked there could never refuse a burst). The core entry points
+//! (`skill_remote`, `doc_similarity_query`) take no slot themselves.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -28,7 +35,26 @@ pub const MAX_REMOTE_DRAFT_CHARS: usize = 32_768;
 /// Remote embedding requests that may run at the same time.
 pub const MAX_REMOTE_EMBEDS: usize = 2;
 
-/// Counts the remote embedding requests in flight; one per [`crate::Uteke`].
+/// What a request embeds: the one answer the core gives to "does this request
+/// embed a client string?".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbedNeed<'a> {
+    /// A search query (bounded elsewhere, by the query limit of its route).
+    Query,
+    /// A draft text, at most [`MAX_REMOTE_DRAFT_CHARS`] characters.
+    Draft(&'a str),
+}
+
+impl EmbedNeed<'_> {
+    /// A document or skill search in `mode`: every mode but `fts` embeds the
+    /// query (an unknown mode falls back to `hybrid`, which does).
+    pub fn for_search_mode(mode: &str) -> Option<Self> {
+        (mode != "fts").then_some(Self::Query)
+    }
+}
+
+/// Counts the remote embedding requests in flight; one per [`crate::Uteke`],
+/// shared by its clones.
 #[derive(Debug, Clone)]
 pub struct EmbedGate {
     in_flight: Arc<AtomicUsize>,
@@ -82,6 +108,25 @@ impl EmbedGate {
     }
 }
 
+impl EmbedGate {
+    /// Bound the request and take its slot: `None` for a request that embeds
+    /// nothing. A draft over the cap is `Validation` (a 400) whether or not
+    /// the slots are taken, then `Busy` when they are.
+    ///
+    /// # Errors
+    ///
+    /// `Validation` for an oversized draft, `Busy` when the slots are taken.
+    pub fn admit(&self, need: Option<EmbedNeed<'_>>) -> Result<Option<EmbedPermit>, Error> {
+        let Some(need) = need else {
+            return Ok(None);
+        };
+        if let EmbedNeed::Draft(text) = need {
+            check_draft_len(text)?;
+        }
+        self.try_acquire().map(Some)
+    }
+}
+
 impl Default for EmbedGate {
     fn default() -> Self {
         Self::new(MAX_REMOTE_EMBEDS)
@@ -104,27 +149,11 @@ pub fn check_draft_len(text: &str) -> Result<(), Error> {
 }
 
 impl crate::Uteke {
-    /// A slot for one remote request that embeds a string (a skill search in
-    /// `hybrid` or `semantic` mode). Hold it until the answer is built.
-    ///
-    /// # Errors
-    ///
-    /// `Busy` when [`MAX_REMOTE_EMBEDS`] such requests are already running.
-    pub fn remote_embed_permit(&self) -> Result<EmbedPermit, Error> {
-        self.remote_embeds.try_acquire()
-    }
-
-    /// Check a remote draft text and take a slot for embedding it. The length
-    /// is checked first, without counting past the limit, so an oversized text
-    /// is a 400 whether or not the server is busy.
-    ///
-    /// # Errors
-    ///
-    /// `Validation` over [`MAX_REMOTE_DRAFT_CHARS`] characters, `Busy` when
-    /// the slots are taken.
-    pub fn remote_draft_permit(&self, text: &str) -> Result<EmbedPermit, Error> {
-        check_draft_len(text)?;
-        self.remote_embed_permit()
+    /// The gate of the remote requests that embed a client string. One per
+    /// [`crate::Uteke`]; clone it to take slots from another thread or before
+    /// a lock around the `Uteke`.
+    pub fn embed_gate(&self) -> &EmbedGate {
+        &self.remote_embeds
     }
 }
 
@@ -155,24 +184,50 @@ mod tests {
 
     #[test]
     fn a_draft_is_bounded_at_the_cap_in_characters_before_the_gate() {
-        let u = crate::test_support::open_keyword();
+        let gate = EmbedGate::default();
         let at = "é".repeat(MAX_REMOTE_DRAFT_CHARS);
-        assert!(u.remote_draft_permit(&at).is_ok());
+        assert!(gate.admit(Some(EmbedNeed::Draft(&at))).is_ok());
         let over = "é".repeat(MAX_REMOTE_DRAFT_CHARS + 1);
         assert_eq!(
-            u.remote_draft_permit(&over).unwrap_err().to_string(),
+            gate.admit(Some(EmbedNeed::Draft(&over)))
+                .unwrap_err()
+                .to_string(),
             "Validation error: text is longer than 32768 characters"
         );
         // Oversized is a 400 even when every slot is taken.
-        let _p1 = u.remote_embed_permit().unwrap();
-        let _p2 = u.remote_embed_permit().unwrap();
+        let _p1 = gate.try_acquire().unwrap();
+        let _p2 = gate.try_acquire().unwrap();
         assert_eq!(
-            u.remote_draft_permit("x").unwrap_err().class(),
+            gate.admit(Some(EmbedNeed::Draft("x"))).unwrap_err().class(),
             crate::ErrorClass::Busy
         );
         assert_eq!(
-            u.remote_draft_permit(&over).unwrap_err().class(),
+            gate.admit(Some(EmbedNeed::Draft(&over)))
+                .unwrap_err()
+                .class(),
             crate::ErrorClass::BadRequest
         );
+        // A request that embeds nothing needs no slot.
+        assert!(gate.admit(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_clone_of_the_gate_counts_in_the_same_slots() {
+        let u = crate::test_support::open_keyword();
+        let clone = u.embed_gate().clone();
+        let _a = clone.admit(Some(EmbedNeed::Query)).unwrap();
+        let _b = u.embed_gate().admit(Some(EmbedNeed::Query)).unwrap();
+        assert_eq!(
+            clone.admit(Some(EmbedNeed::Query)).unwrap_err().class(),
+            crate::ErrorClass::Busy
+        );
+    }
+
+    #[test]
+    fn only_a_search_mode_other_than_fts_embeds() {
+        assert_eq!(EmbedNeed::for_search_mode("fts"), None);
+        for m in ["hybrid", "semantic", "anything"] {
+            assert_eq!(EmbedNeed::for_search_mode(m), Some(EmbedNeed::Query));
+        }
     }
 }

@@ -4,6 +4,16 @@
 
 ### Changed
 
+- **The core answers "does this request embed?", one embedding gate (#1753)** - the router no longer
+  re-decides from the raw JSON which routes embed. `SkillRemoteArgs::embed_need`,
+  `DocSimilarQuery::embed_need` and `EmbedNeed::for_search_mode` give the answer from the rules that
+  decide the request; a transport asks once and takes its slot with `EmbedGate::admit` (an
+  oversized draft is a 400 before the slot, a full gate a 429, `busy: 2 embedding requests are already
+  running; retry in a moment`). There is one gate per `Uteke` (`Uteke::embed_gate`): `uteke-serve`
+  hands a clone to its router (slot taken before the store lock, as before) and MCP takes its slots
+  from the same type; `skill_remote` and `doc_similarity_query` take none. `POST /doc/search` (LAB)
+  now takes a slot in `hybrid` and `semantic` mode and answers 429 when two embedding requests run
+  (`fts` never does). The CORE recall routes get no new 429.
 - **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
   three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
   drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then

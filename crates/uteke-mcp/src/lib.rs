@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uteke_core::Uteke;
+use uteke_core::remote_guard::EmbedNeed;
 use uteke_core::skill_remote::{SkillRemoteArgs, SkillRemoteOp};
 
 // ── JSON-RPC types ──────────────────────────────────────────────────────────
@@ -2282,6 +2283,11 @@ fn exec_doc_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let mode = args["mode"].as_str().unwrap_or("hybrid");
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
 
+    // A semantic or hybrid search embeds the query: take a slot of the gate.
+    let _permit = uteke
+        .embed_gate()
+        .admit(EmbedNeed::for_search_mode(mode))
+        .map_err(skill_error)?;
     let results = uteke
         .doc_search(query, limit, mode)
         .map_err(|e| format!("Failed: {e}"))?;
@@ -2345,10 +2351,10 @@ fn exec_doc_similar(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         None => None,
     };
     // A draft text is embedded: bound it and the number running at once.
-    let _permit = match &query {
-        DocSimilarQuery::Text(t) => Some(uteke.remote_draft_permit(t).map_err(skill_error)?),
-        _ => None,
-    };
+    let _permit = uteke
+        .embed_gate()
+        .admit(query.embed_need())
+        .map_err(skill_error)?;
     let answer = uteke
         .doc_similarity_query(&query, args["namespace"].as_str(), threshold, limit)
         .map_err(skill_error)?;
@@ -2366,6 +2372,10 @@ fn exec_doc_similar(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 /// validated by `Uteke::skill_remote`, the entry point of the HTTP routes too.
 fn exec_skill(uteke: &Uteke, op: SkillRemoteOp, args: &Value) -> Result<ToolResult, String> {
     let parsed = SkillRemoteArgs::from_json(args).map_err(skill_error)?;
+    let _permit = uteke
+        .embed_gate()
+        .admit(parsed.embed_need(op))
+        .map_err(skill_error)?;
     let answer = uteke.skill_remote(op, &parsed).map_err(skill_error)?;
     let text = serde_json::to_string_pretty(&answer).map_err(|e| e.to_string())?;
     Ok(ToolResult {
@@ -6278,8 +6288,8 @@ mod skill_tool_tests {
     #[test]
     fn embedding_tools_are_tool_errors_when_every_slot_is_taken() {
         let (u, _) = library();
-        let _a = u.remote_embed_permit().unwrap();
-        let _b = u.remote_embed_permit().unwrap();
+        let _a = u.embed_gate().try_acquire().unwrap();
+        let _b = u.embed_gate().try_acquire().unwrap();
         let busy = "busy: 2 embedding requests are already running; retry in a moment";
         assert_eq!(err(&u, SkillRemoteOp::Similar, json!({"text": "x"})), busy);
         assert_eq!(

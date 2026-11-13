@@ -626,7 +626,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
         path: "/doc/search",
         tier: Tier::Lab,
         writes: false,
-        description: "Search documents by query with optional mode/namespace/limit.",
+        description: "Search documents by query with optional mode/namespace/limit. `hybrid` (default) and `semantic` embed the query, so 429 when two embedding requests already run (`fts` never does).",
         request_type: Some("DocSearchRequest"),
         response_type: None,
         excludes_deprecated: false,

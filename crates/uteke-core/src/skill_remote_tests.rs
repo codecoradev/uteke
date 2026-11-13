@@ -463,33 +463,8 @@ fn list_and_show_never_carry_the_server_path() {
 }
 
 #[test]
-fn embedding_requests_are_refused_when_every_slot_is_taken() {
+fn an_oversized_draft_is_a_client_error_in_the_core_too() {
     let (u, _t) = library();
-    let a = u.remote_embed_permit().unwrap();
-    let _b = u.remote_embed_permit().unwrap();
-    let busy = "busy: 2 embedding requests are already running; retry in a moment";
-    for (op, v) in [
-        (Similar, json!({"text": DEPLOY_BODY})),
-        (Search, json!({"query": "deploy"})),
-        (Search, json!({"query": "deploy", "mode": "semantic"})),
-    ] {
-        let e = u.skill_remote(op, &args(v)).unwrap_err();
-        assert_eq!(
-            (e.to_string().as_str(), e.class()),
-            (busy, ErrorClass::Busy)
-        );
-    }
-    // What does not embed still answers.
-    assert!(
-        u.skill_remote(Search, &args(json!({"query": "deploy", "mode": "fts"})))
-            .is_ok()
-    );
-    assert!(
-        u.skill_remote(Similar, &args(json!({"slug": "deploy-copy"})))
-            .is_ok()
-    );
-    assert!(u.skill_remote(List, &args(json!({}))).is_ok());
-    // An oversized text is a 400 even when busy.
     let over = "a".repeat(MAX_REMOTE_TEXT_CHARS + 1);
     assert_eq!(
         u.skill_remote(Similar, &args(json!({"text": over})))
@@ -497,14 +472,51 @@ fn embedding_requests_are_refused_when_every_slot_is_taken() {
             .class(),
         ErrorClass::BadRequest
     );
-    // A freed slot admits the next request; a finished one frees its own.
-    drop(a);
-    assert!(
-        u.skill_remote(Similar, &args(json!({"text": DEPLOY_BODY})))
-            .is_ok()
-    );
-    assert!(
-        u.skill_remote(Similar, &args(json!({"text": DEPLOY_BODY})))
-            .is_ok()
-    );
+}
+
+/// The answer to "does this request embed?" is the truth: with an embedder
+/// that records its calls, `embed_need` says so exactly when the operation
+/// embeds a client string. This is the test that fails when the rule of
+/// `skill_remote` changes and `embed_need` does not (#1753).
+#[test]
+fn embed_need_is_true_exactly_when_the_operation_embeds_a_client_string() {
+    use crate::remote_guard::EmbedNeed;
+    let (rec, seen) = crate::test_support::RecordingEmbedder::new();
+    let u = crate::test_support::open_with_embedder(Box::new(rec));
+    crate::test_support::seed_skill_library(&u);
+    let cases: [(SkillRemoteOp, serde_json::Value, Option<EmbedNeed<'static>>); 9] = [
+        (Search, json!({"query": "deploy"}), Some(EmbedNeed::Query)),
+        (
+            Search,
+            json!({"query": "deploy", "mode": "semantic"}),
+            Some(EmbedNeed::Query),
+        ),
+        (Search, json!({"query": "deploy", "mode": "fts"}), None),
+        (Search, json!({}), None),
+        (
+            Similar,
+            json!({"text": DEPLOY_BODY}),
+            Some(EmbedNeed::Draft(DEPLOY_BODY)),
+        ),
+        (Similar, json!({"slug": "deploy-copy"}), None),
+        (Similar, json!({"slug": "deploy-copy", "text": "x"}), None),
+        (List, json!({}), None),
+        (Show, json!({"slug": "deploy"}), None),
+    ];
+    for (op, v, expected) in cases {
+        let a = args(v.clone());
+        let need = a.embed_need(op);
+        assert_eq!(need, expected, "{op:?} {v}");
+        let before = seen.lock().unwrap().len();
+        let _ = u.skill_remote(op, &a);
+        let embedded = seen.lock().unwrap().len() > before;
+        // Every request that is valid and embeds is announced; one that does
+        // not embed is never announced.
+        if embedded {
+            assert!(need.is_some(), "{op:?} {v} embeds but embed_need is None");
+        }
+        if need.is_none() {
+            assert!(!embedded, "{op:?} {v}");
+        }
+    }
 }

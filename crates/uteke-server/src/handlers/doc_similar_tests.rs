@@ -63,12 +63,16 @@ impl uteke_core::Embedder for DownEmbedder {
 
 struct App {
     uteke: Mutex<Uteke>,
+    /// The served store's one embedding gate, as `main` hands it to the router.
+    gate: uteke_core::remote_guard::EmbedGate,
 }
 
 impl App {
     fn new() -> Self {
+        let u = open_with_embedder(Box::new(MarkerEmbedder));
         Self {
-            uteke: Mutex::new(open_with_embedder(Box::new(MarkerEmbedder))),
+            gate: u.embed_gate().clone(),
+            uteke: Mutex::new(u),
         }
     }
 
@@ -123,7 +127,9 @@ impl App {
     }
 
     fn post(&self, url: &str, body: Value) -> (u16, Value) {
-        self.call(&ctx(false), Method::Post, url, Some(body), None)
+        let mut ctx = ctx(false);
+        ctx.remote_embeds = self.gate.clone();
+        self.call(&ctx, Method::Post, url, Some(body), None)
     }
 
     /// 200 and the body.
@@ -495,8 +501,10 @@ fn unknown_documents_are_404() {
 
 #[test]
 fn a_draft_text_without_the_model_is_503_and_a_stored_slug_needs_none() {
+    let u = open_with_embedder(Box::new(DownEmbedder));
     let app = App {
-        uteke: Mutex::new(open_with_embedder(Box::new(DownEmbedder))),
+        gate: u.embed_gate().clone(),
+        uteke: Mutex::new(u),
     };
     let (status, v) = app.post("/doc/similar", json!({"text": "AXIS"}));
     assert_eq!(status, 503, "{v}");
@@ -572,13 +580,10 @@ fn a_remote_draft_text_is_capped_and_bounded_in_concurrency() {
             "Validation error: text is longer than 32768 characters".to_string()
         )
     );
-    let (_a, _b) = {
-        let u = app.uteke.lock().unwrap();
-        (
-            u.remote_embed_permit().unwrap(),
-            u.remote_embed_permit().unwrap(),
-        )
-    };
+    let (_a, _b) = (
+        app.gate.try_acquire().unwrap(),
+        app.gate.try_acquire().unwrap(),
+    );
     assert_eq!(
         app.refused(json!({"text": "AXIS"})),
         (
