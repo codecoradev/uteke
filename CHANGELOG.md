@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
+  three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
+  drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
+  `open()`): it reads the engine sections, `[embedding]`, `[vector]` and `[privacy]` from the layered
+  files, applies `UTEKE_RECALL_*`, `UTEKE_GRAPH_*`, `UTEKE_EMBED_FALLBACK_*`,
+  `UTEKE_EMBEDDING_*` and `UTEKE_PRIVACY_MODE`, opens the store and applies the settings, then the
+  privacy filter. No config key, precedence or trust rule changes. `uteke-serve` now hands the
+  engine-level similarity floor to the store like the CLI and MCP do (it was the built-in default; the
+  value was not used yet) and takes the recall defaults of `POST /recall` from the opened store, the
+  source MCP reads.
+
 ### Added
 
 - **Personal skill library, read-only remote surfaces (#1731, LAB, stage 2)** - `POST /skill/search`,

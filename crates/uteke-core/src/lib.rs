@@ -97,6 +97,7 @@ pub mod engine_settings;
 #[cfg(test)]
 mod isolation_tests;
 pub mod list_exec;
+pub mod open_config;
 mod orphans;
 pub mod provenance;
 mod recall_cache;
@@ -168,6 +169,7 @@ pub use embed::Embedder;
 pub use embed::OnnxEmbedder;
 pub use engine_settings::EngineSettings;
 pub use error::{Error, ErrorClass, format_bytes};
+pub use open_config::OpenConfig;
 pub use recall_settings::RecallSettings;
 pub use types::{
     CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedOptions, ReembedReport,
