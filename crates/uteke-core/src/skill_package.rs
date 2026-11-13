@@ -1123,4 +1123,101 @@ mod tests {
         let over = vec![b'x'; 128 * 1024 + 1];
         assert!(!manifest(&[pf("SKILL.md", b"x"), pf("a.md", &over)])[1].indexed);
     }
+
+    #[test]
+    fn discovery_counts_every_directory_it_scans() {
+        let t = tempfile::tempdir().unwrap();
+        write(t.path(), "a/SKILL.md", GOOD);
+        write(t.path(), "b/inner/SKILL.md", GOOD);
+        fs::create_dir_all(t.path().join("c")).unwrap();
+        let d = discover_skills(t.path()).unwrap();
+        // root, a, b, b/inner, c
+        assert_eq!(d.scanned_dirs, 5);
+        assert_eq!(d.skills.len(), 2);
+        assert!(!d.truncated);
+    }
+
+    #[test]
+    fn a_package_may_hold_exactly_the_entry_limit_and_no_more() {
+        let t = tempfile::tempdir().unwrap();
+        let ok = t.path().join("ok");
+        write(&ok, "SKILL.md", GOOD);
+        // SKILL.md plus empty directories: entries count files and directories.
+        for i in 0..MAX_PACKAGE_ENTRIES - 1 {
+            fs::create_dir_all(ok.join(format!("d{i}"))).unwrap();
+        }
+        assert!(read_package(&ok).is_ok());
+        fs::create_dir_all(ok.join("one-more")).unwrap();
+        let e = read_package(&ok).unwrap_err();
+        assert!(
+            e.reason.contains("more than 1024 entries"),
+            "unexpected reason: {}",
+            e.reason
+        );
+    }
+
+    #[test]
+    fn a_package_may_hold_exactly_the_byte_limit_and_no_more() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("big");
+        write(&dir, "SKILL.md", GOOD);
+        let mib = usize::try_from(MAX_FILE_BYTES).unwrap();
+        let total = usize::try_from(MAX_PACKAGE_BYTES).unwrap();
+        // Three files of exactly the per-file limit, and one that makes the
+        // package exactly `MAX_PACKAGE_BYTES`.
+        for i in 0..3 {
+            fs::write(dir.join(format!("f{i}.bin")), vec![b'a'; mib]).unwrap();
+        }
+        let rest = total - GOOD.len() - 3 * mib;
+        fs::write(dir.join("last.bin"), vec![b'b'; rest]).unwrap();
+        let p = read_package(&dir).unwrap();
+        assert_eq!(p.files.iter().map(|f| f.bytes.len()).sum::<usize>(), total);
+        fs::write(dir.join("last.bin"), vec![b'b'; rest + 1]).unwrap();
+        let e = read_package(&dir).unwrap_err();
+        assert!(
+            e.reason.contains("larger than 4194304 bytes"),
+            "unexpected reason: {}",
+            e.reason
+        );
+    }
+
+    /// A frontmatter whose closing `---` line ends exactly `consumed` bytes in,
+    /// counting the newline after it (the parser counts one for the last line
+    /// even when the text ends there).
+    fn frontmatter_of_consumed_size(consumed: usize) -> String {
+        let head = "---\nname: a\n";
+        let tail = "---";
+        // "k: " + pad + "\n"
+        let pad = consumed - 1 - head.len() - tail.len() - 4;
+        format!("{head}k: {}\n{tail}", "y".repeat(pad))
+    }
+
+    #[test]
+    fn frontmatter_closes_at_exactly_sixteen_kib_and_not_one_byte_later() {
+        let ok = frontmatter_of_consumed_size(MAX_FRONTMATTER_BYTES);
+        assert!(parse_frontmatter(&ok).is_ok());
+        let over = frontmatter_of_consumed_size(MAX_FRONTMATTER_BYTES + 1);
+        let e = parse_frontmatter(&over).unwrap_err();
+        assert_eq!(e, "frontmatter is not closed within 16 KiB");
+    }
+
+    #[test]
+    fn a_description_may_be_exactly_the_limit_long() {
+        let md = |n: usize| {
+            format!(
+                "---\nname: demo\ndescription: {}\n---\n# Demo\n\nSteps.\n",
+                "d".repeat(n)
+            )
+        };
+        let codes = |n: usize| -> Vec<String> {
+            lint_skill("demo", &md(n))
+                .1
+                .into_iter()
+                .map(|i| i.code)
+                .collect()
+        };
+        assert!(!codes(MAX_DESCRIPTION_CHARS).contains(&"description-too-long".to_string()));
+        assert!(codes(MAX_DESCRIPTION_CHARS + 1).contains(&"description-too-long".to_string()));
+        assert!(!codes(1).contains(&"description-too-long".to_string()));
+    }
 }
