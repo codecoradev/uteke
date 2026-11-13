@@ -855,3 +855,325 @@ fn a_legacy_bare_hash_is_superseded_by_the_next_index() {
             .any(|v| v.hash == legacy && v.status == "stale")
     );
 }
+
+#[test]
+fn a_usage_event_parses_from_exactly_its_four_names() {
+    assert_eq!(UsageEvent::parse("recalled"), Some(UsageEvent::Recalled));
+    assert_eq!(UsageEvent::parse("loaded"), Some(UsageEvent::Loaded));
+    assert_eq!(UsageEvent::parse("succeeded"), Some(UsageEvent::Succeeded));
+    assert_eq!(UsageEvent::parse("failed"), Some(UsageEvent::Failed));
+    assert_eq!(UsageEvent::parse("Recalled"), None);
+    assert_eq!(UsageEvent::parse(""), None);
+    assert_eq!(UsageEvent::parse("used"), None);
+}
+
+#[test]
+fn an_actor_label_is_bounded_at_exactly_the_name_limit_in_characters() {
+    let t = library_dir();
+    let u = open_keyword();
+    index(&u, t.path());
+    let h = hash_of(&t.path().join("deploy"));
+    // Multi-byte characters: the bound counts characters, not bytes.
+    let at = "é".repeat(MAX_NAME_CHARS);
+    assert!(u.skill_approve("deploy", &h, Some(&at)).is_ok());
+    let over = "é".repeat(MAX_NAME_CHARS + 1);
+    let e = u.skill_approve("deploy", &h, Some(&over)).unwrap_err();
+    assert!(
+        e.to_string().contains("at most 128 characters"),
+        "unexpected error: {e}"
+    );
+    // A control character is refused at any length.
+    assert!(u.skill_approve("deploy", &h, Some("a\nb")).is_err());
+}
+
+#[test]
+fn the_valid_and_current_flags_are_reported_by_show_list_and_search() {
+    let t = library_dir();
+    // No description: a lint error, so the skill is indexed but not valid.
+    put(
+        t.path(),
+        "broken/SKILL.md",
+        "---\nname: broken\n---\n# Broken\n\nuniquebrokenword procedure\n",
+    );
+    let u = open_keyword();
+    index(&u, t.path());
+
+    let good = u.skill_show("deploy").unwrap();
+    assert!(good.current.valid);
+    assert!(good.current.current);
+    let bad = u.skill_show("broken").unwrap();
+    assert!(!bad.current.valid);
+    assert!(bad.current.current);
+
+    let list = u.skill_list(None, 10).unwrap();
+    let valid_of = |slug: &str| list.iter().find(|s| s.slug == slug).unwrap().valid;
+    assert!(valid_of("deploy"));
+    assert!(valid_of("cooking"));
+    assert!(!valid_of("broken"));
+
+    let hits = u.skill_search("uniquebrokenword", 5, "fts", false).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(!hits[0].valid);
+    let hits = u.skill_search("emberglow", 5, "fts", false).unwrap();
+    assert!(hits[0].valid);
+}
+
+/// The ids of the skill documents of `slug`, sorted.
+fn skill_doc_ids_of(u: &Uteke, slug: &str) -> Vec<String> {
+    let mut stmt = u
+        .store
+        .conn
+        .prepare("SELECT id FROM documents WHERE content_type = 'skill' AND slug LIKE ?1")
+        .unwrap();
+    let mut ids: Vec<String> = stmt
+        .query_map([format!("skill/{slug}/%")], |r| r.get::<_, String>(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    ids.sort();
+    ids
+}
+
+#[test]
+fn an_unchanged_reindex_keeps_the_documents_and_a_damaged_one_replaces_them_all() {
+    let t = library_dir();
+    let u = open_keyword();
+    index(&u, t.path());
+    let before = skill_doc_ids_of(&u, "deploy");
+    assert_eq!(
+        before.len(),
+        2,
+        "SKILL.md and the reference file; scripts are not indexed"
+    );
+
+    // Complete and unchanged: nothing is rewritten.
+    index(&u, t.path());
+    assert_eq!(skill_doc_ids_of(&u, "deploy"), before);
+
+    // One document lost: the run drops what is left and indexes the files
+    // again, so every id is new.
+    let leaf: String = u
+        .store
+        .conn
+        .query_row(
+            "SELECT id FROM documents WHERE slug = 'skill/deploy/references/rollback.md'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    u.doc_delete(&leaf).unwrap();
+    assert_eq!(skill_doc_ids_of(&u, "deploy").len(), 1);
+    index(&u, t.path());
+    let after = skill_doc_ids_of(&u, "deploy");
+    assert_eq!(after.len(), 2);
+    assert!(
+        after.iter().all(|id| !before.contains(id)),
+        "the repair must replace every document: {before:?} -> {after:?}"
+    );
+}
+
+#[test]
+fn a_single_file_skill_whose_document_is_gone_gets_it_back() {
+    let t = tempfile::tempdir().unwrap();
+    put(
+        t.path(),
+        "solo/SKILL.md",
+        &skill_md("solo", "One file only", "# Solo\n\nsingleton procedure"),
+    );
+    let u = open_keyword();
+    index(&u, t.path());
+    let ids = skill_doc_ids_of(&u, "solo");
+    assert_eq!(ids.len(), 1);
+    u.doc_delete(&ids[0]).unwrap();
+    assert!(skill_doc_ids_of(&u, "solo").is_empty());
+    index(&u, t.path());
+    assert_eq!(skill_doc_ids_of(&u, "solo").len(), 1);
+}
+
+#[test]
+fn an_unchanged_package_refreshes_where_it_lives_and_who_owns_it_only_when_they_change() {
+    let a = tempfile::tempdir().unwrap();
+    put(
+        a.path(),
+        "deploy/SKILL.md",
+        &skill_md("deploy", "Ship a release safely", DEPLOY_BODY),
+    );
+    let u = open_keyword();
+    u.skill_index(a.path(), None, None).unwrap();
+    let first = u.skill_show("deploy").unwrap();
+    assert_eq!(first.owner, None);
+
+    // Same bytes, same place, same (absent) owner: nothing is written.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    u.skill_index(a.path(), None, None).unwrap();
+    assert_eq!(u.skill_show("deploy").unwrap().updated_at, first.updated_at);
+
+    // A new owner on the same bytes is recorded.
+    u.skill_index(a.path(), Some("alice"), None).unwrap();
+    let owned = u.skill_show("deploy").unwrap();
+    assert_eq!(owned.owner.as_deref(), Some("alice"));
+    assert_ne!(owned.updated_at, first.updated_at);
+
+    // The same owner again, and no owner at all, write nothing and keep it.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    u.skill_index(a.path(), Some("alice"), None).unwrap();
+    assert_eq!(u.skill_show("deploy").unwrap().updated_at, owned.updated_at);
+    u.skill_index(a.path(), None, None).unwrap();
+    let kept = u.skill_show("deploy").unwrap();
+    assert_eq!(kept.owner.as_deref(), Some("alice"));
+    assert_eq!(kept.updated_at, owned.updated_at);
+
+    // The same bytes in another directory: the skill now lives there.
+    let b = tempfile::tempdir().unwrap();
+    put(
+        b.path(),
+        "deploy/SKILL.md",
+        &skill_md("deploy", "Ship a release safely", DEPLOY_BODY),
+    );
+    u.skill_index(b.path(), None, None).unwrap();
+    let moved = u.skill_show("deploy").unwrap();
+    assert_ne!(moved.source_path, owned.source_path);
+    assert!(
+        moved
+            .source_path
+            .contains(&b.path().file_name().unwrap().to_string_lossy().to_string())
+    );
+    assert_eq!(moved.owner.as_deref(), Some("alice"));
+}
+
+fn scores(u: &Uteke, query: &str, mode: &str) -> Vec<(String, f32, String)> {
+    u.skill_search(query, 5, mode, false)
+        .unwrap()
+        .into_iter()
+        .map(|h| (h.slug, h.score, h.file))
+        .collect()
+}
+
+fn close(a: f32, b: f32) -> bool {
+    (a - b).abs() < 1e-6
+}
+
+#[test]
+fn skill_search_scores_follow_the_rank_formulas_of_each_mode() {
+    let t = library_dir();
+    let u = open_keyword();
+    index(&u, t.path());
+
+    // fts: the first file of a skill adds 1 / (rank of the skill); later
+    // files of the same skill add nothing.
+    let fts = scores(&u, "lantern harbour", "fts");
+    assert_eq!(
+        fts.iter().map(|h| h.0.as_str()).collect::<Vec<_>>(),
+        ["deploy", "cooking"]
+    );
+    assert!(close(fts[0].1, 1.0) && close(fts[1].1, 0.5), "{fts:?}");
+    assert_eq!(fts[0].2, "references/rollback.md");
+    assert_eq!(fts[1].2, "SKILL.md");
+
+    // hybrid: 1 / (60 + rank) from each list the skill appears in.
+    let h = scores(&u, "lantern harbour", "hybrid");
+    assert!(close(h[0].1, 2.0 / 61.0), "{h:?}");
+    assert!(close(h[1].1, 2.0 / 62.0), "{h:?}");
+    let h = scores(&u, "quartz meridian orchid", "hybrid");
+    assert_eq!(h[0].0, "deploy");
+    assert!(close(h[0].1, 2.0 / 61.0), "{h:?}");
+    assert_eq!(h[1].0, "cooking");
+    assert!(close(h[1].1, 1.0 / 62.0), "{h:?}");
+
+    // semantic: the similarity of the skill's best file, counted once.
+    let sem = u
+        .doc_search_semantic("lantern harbour", 5, crate::DocKind::Skill)
+        .unwrap();
+    let best = |skill: &str| {
+        sem.iter()
+            .find(|r| r.document.slug.starts_with(&format!("skill/{skill}/")))
+            .unwrap()
+            .score
+    };
+    let s = scores(&u, "lantern harbour", "semantic");
+    assert_eq!(
+        s.iter().map(|h| h.0.as_str()).collect::<Vec<_>>(),
+        ["deploy", "cooking"]
+    );
+    assert!(
+        close(s[0].1, best("deploy")) && close(s[1].1, best("cooking")),
+        "{s:?}"
+    );
+    assert!(close(s[0].1, 0.5), "{s:?}");
+    assert_eq!(s[0].2, "references/rollback.md");
+}
+
+#[test]
+fn skills_without_a_vector_are_counted_not_scored() {
+    let t = library_dir();
+    put(
+        t.path(),
+        "baking/SKILL.md",
+        &skill_md("baking", "Bake bread", "# Baking\n\nflour oven yeast"),
+    );
+    let u = open_keyword();
+    index(&u, t.path());
+    for slug in ["cooking", "baking"] {
+        u.store
+            .conn
+            .execute(
+                "UPDATE document_chunks SET embedding = NULL WHERE document_id IN \
+                 (SELECT id FROM documents WHERE slug LIKE ?1)",
+                [format!("skill/{slug}/%")],
+            )
+            .unwrap();
+    }
+    let r = u.skill_similar("deploy", Some(0.0), 10).unwrap();
+    assert!(r.source_embedded);
+    assert_eq!(r.skills_without_vector, 2);
+    assert!(
+        r.hits
+            .iter()
+            .all(|h| h.slug != "cooking" && h.slug != "baking")
+    );
+}
+
+#[test]
+fn the_children_of_a_plain_document_are_listed_and_those_of_a_skill_file_are_not() {
+    let t = library_dir();
+    let u = open_keyword();
+    u.doc_upsert("guide", "Guide", "# Guide\n\nintro", &[], None)
+        .unwrap();
+    u.doc_upsert_with_parent(
+        "guide/one",
+        "One",
+        "# One\n\nfirst",
+        &[],
+        None,
+        Some("guide"),
+    )
+    .unwrap();
+    index(&u, t.path());
+
+    let kids = u.doc_list_children("guide", 10).unwrap();
+    assert_eq!(
+        kids.iter().map(|k| k.slug.as_str()).collect::<Vec<_>>(),
+        ["guide/one"]
+    );
+    // By id as well as by slug.
+    let id = u.doc_get("guide").unwrap().unwrap().id;
+    assert_eq!(u.doc_list_children(&id, 10).unwrap().len(), 1);
+
+    // `skill/deploy/references/rollback.md` hangs under `skill/deploy/SKILL.md`
+    // in the table; the library does not show it as a document child.
+    assert!(
+        u.doc_list_children("skill/deploy/SKILL.md", 10)
+            .unwrap()
+            .is_empty()
+    );
+    let skill_id: String = u
+        .store
+        .conn
+        .query_row(
+            "SELECT id FROM documents WHERE slug = 'skill/deploy/SKILL.md'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(u.doc_list_children(&skill_id, 10).unwrap().is_empty());
+}

@@ -177,6 +177,20 @@ mod tests {
     }
 
     #[test]
+    fn in_flight_counts_the_permits_held_right_now() {
+        let gate = EmbedGate::new(2);
+        assert_eq!(gate.in_flight(), 0);
+        let a = gate.try_acquire().unwrap();
+        assert_eq!(gate.in_flight(), 1);
+        let b = gate.try_acquire().unwrap();
+        assert_eq!(gate.in_flight(), 2);
+        drop(a);
+        assert_eq!(gate.in_flight(), 1);
+        drop(b);
+        assert_eq!(gate.in_flight(), 0);
+    }
+
+    #[test]
     fn the_defaults_are_pinned() {
         assert_eq!(MAX_REMOTE_DRAFT_CHARS, 32_768);
         assert_eq!(MAX_REMOTE_EMBEDS, 2);

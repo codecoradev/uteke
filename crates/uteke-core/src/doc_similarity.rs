@@ -1730,4 +1730,72 @@ mod tests {
         assert_eq!(MAX_SIMILAR_LIMIT, 100);
         assert_eq!(MAX_REPORT_LIMIT, 500);
     }
+
+    #[test]
+    fn only_a_draft_text_needs_an_embedding() {
+        use crate::remote_guard::EmbedNeed;
+        assert_eq!(
+            DocSimilarQuery::Text("a draft").embed_need(),
+            Some(EmbedNeed::Draft("a draft"))
+        );
+        assert_eq!(DocSimilarQuery::Document("a/b").embed_need(), None);
+        assert_eq!(DocSimilarQuery::Report { subtree: None }.embed_need(), None);
+        assert_eq!(
+            DocSimilarQuery::Report { subtree: Some("a") }.embed_need(),
+            None
+        );
+    }
+
+    #[test]
+    fn doc_search_modes_rank_by_their_own_signal() {
+        let u = open();
+        add(&u, "doc-a", "AXIS");
+        add(&u, "doc-b", "R43");
+        add(&u, "doc-c", "R34");
+
+        // semantic: the cosine of the query vector, in order.
+        let sem = u.doc_search("AXIS", 5, "semantic").unwrap();
+        let sem: Vec<(&str, f32)> = sem
+            .iter()
+            .map(|r| (r.document.slug.as_str(), r.score))
+            .collect();
+        assert_eq!(sem.len(), 3, "{sem:?}");
+        assert_eq!(sem[0].0, "doc-a");
+        assert!((sem[0].1 - 1.0).abs() < 1e-5, "{sem:?}");
+        assert_eq!(sem[1].0, "doc-b");
+        assert!((sem[1].1 - 0.8).abs() < 1e-5, "{sem:?}");
+        assert_eq!(sem[2].0, "doc-c");
+        assert!((sem[2].1 - 0.6).abs() < 1e-5, "{sem:?}");
+
+        // fts: only the document that holds the word.
+        let fts = u.doc_search("AXIS", 5, "fts").unwrap();
+        assert_eq!(
+            fts.iter()
+                .map(|r| r.document.slug.as_str())
+                .collect::<Vec<_>>(),
+            ["doc-a"]
+        );
+
+        // hybrid: both signals fused, and a limit of 1 still answers.
+        let hyb = u.doc_search("AXIS", 5, "hybrid").unwrap();
+        assert_eq!(hyb.len(), 3);
+        assert_eq!(hyb[0].document.slug, "doc-a");
+        let one = u.doc_search("AXIS", 1, "hybrid").unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].document.slug, "doc-a");
+        assert!(one[0].score < sem[0].1, "an RRF score is not a cosine");
+    }
+
+    #[test]
+    fn a_duplicate_report_compares_exactly_the_documents_limit_and_no_more() {
+        let u = open();
+        for i in 0..MAX_REPORT_DOCUMENTS {
+            add(&u, &format!("d{i}"), "AXIS");
+        }
+        let r = u.doc_duplicate_report(None, None, None, 5).unwrap();
+        assert_eq!(r.scanned, MAX_REPORT_DOCUMENTS);
+        add(&u, "one-more", "AXIS");
+        let e = u.doc_duplicate_report(None, None, None, 5).unwrap_err();
+        assert!(e.to_string().contains("2001 documents with vectors"), "{e}");
+    }
 }
