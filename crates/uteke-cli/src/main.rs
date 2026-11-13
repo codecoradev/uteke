@@ -16,7 +16,6 @@ use cli::{Cli, Commands};
 use config::Config;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use uteke_core::Uteke;
 
 /// Global flag set by SIGINT handler.
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -198,9 +197,10 @@ fn main() {
     Config::write_default_config();
     let config = Config::load();
 
-    // Resolve the embedder early (fail-fast before store open): the backend, its
-    // settings and the UTEKE_EMBEDDING_* environment, in one place in the core.
-    let embedding = match config.embedding.resolve() {
+    // Resolve the open-time config early (fail-fast before store open): the
+    // engine sections, the embedder, `[vector]` and `[privacy]` with the
+    // environment on top, in one place in the core (#1754).
+    let open_config = match uteke_core::OpenConfig::load() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Config error: {e}");
@@ -258,25 +258,8 @@ fn main() {
 
     tracing::debug!("Opening store at: {store_path}");
 
-    let mut uteke = match Uteke::open_with_embedding_and_graph(
-        &store_path,
-        &embedding.backend,
-        embedding.settings,
-        config.engine.tier,
-        config.engine.recall.recall_config(),
-        config.engine.recall.graph_rerank(),
-        // Runtime vector-engine preference from uteke.toml [vector] (#1168).
-        // UTEKE_VECTOR_BACKEND env (higher precedence) is read inside core.
-        Some(config.vector.backend.as_str()),
-    ) {
-        Ok(mut u) => {
-            // #719, #731, #928, #1355: Jaccard weight, dream thresholds, lifecycle
-            // and the embedding fallback, applied the same way as in the server.
-            u.apply_settings(&config.engine);
-            // #1464: secret filter on the write path ([privacy] in uteke.toml)
-            u.set_privacy_config(uteke_core::privacy::load_config());
-            u
-        }
+    let mut uteke = match open_config.open(&store_path) {
+        Ok(u) => u,
         Err(e) => {
             eprintln!("Error: Failed to open memory store: {e}");
             std::process::exit(1);

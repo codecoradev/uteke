@@ -27,16 +27,6 @@ impl Default for StoreConfig {
     }
 }
 
-/// Vector engine configuration (#1168).
-///
-/// Which engine the index runs on when BOTH are compiled in. Slim builds
-/// (one engine) ignore this — the compiled-in engine always runs.
-#[derive(serde::Deserialize, Clone, Default)]
-pub struct VectorConfig {
-    /// "usearch" or "vecq". Empty = compiled-in default (usearch when present).
-    pub backend: String,
-}
-
 /// `[embedding]`: the core's section type, resolved in one place (#1537).
 pub type EmbeddingConfig = uteke_core::embedding_config::EmbeddingSection;
 
@@ -147,8 +137,6 @@ impl Default for MaintenanceConfig {
 #[serde(default)]
 pub struct Config {
     pub store: StoreConfig,
-    #[serde(default)]
-    pub vector: VectorConfig,
     pub embedding: EmbeddingConfig,
     pub extraction: ExtractionConfig,
     /// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`:
@@ -180,7 +168,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             store: StoreConfig::default(),
-            vector: VectorConfig::default(),
             embedding: EmbeddingConfig::default(),
             extraction: ExtractionConfig::default(),
             engine: uteke_core::EngineSettings::default(),
@@ -225,15 +212,6 @@ impl Default for LimitsConfig {
     }
 }
 
-/// Opt-in escape hatch: allow the project-local `.uteke/uteke.toml` to set
-/// endpoints, API keys and the server address.
-fn project_config_trusted() -> bool {
-    matches!(
-        std::env::var("UTEKE_TRUST_PROJECT_CONFIG").as_deref(),
-        Ok("1") | Ok("true")
-    )
-}
-
 impl Config {
     /// Load config with layered resolution:
     /// 1. Defaults
@@ -246,15 +224,7 @@ impl Config {
         // Migrate legacy config.toml → uteke.toml at global location
         migrate_legacy_global();
 
-        let global = global_config_path();
-        let project = std::env::current_dir()
-            .ok()
-            .map(|cwd| cwd.join(".uteke").join("uteke.toml"));
-        let config = Self::from_layers(&Layers {
-            global: global.as_deref(),
-            project: project.as_deref(),
-            trust_project: project_config_trusted(),
-        });
+        let config = uteke_core::config_layers::with_standard_layers(Self::from_layers);
 
         // Layer 3: environment variables (override config file)
         config.apply_env_overrides()
@@ -295,25 +265,15 @@ impl Config {
             }
         }
 
-        // Recall thresholds, strategy and graph-rerank weights (UTEKE_RECALL_*,
-        // UTEKE_GRAPH_*): validated in the core.
-        self.engine.recall = std::mem::take(&mut self.engine.recall).with_env_overrides();
-
-        // Vector engine override (#1168). Ignored when the requested engine
-        // is not compiled in (resolution falls back with a warning in core).
-        if let Ok(v) = std::env::var("UTEKE_VECTOR_BACKEND") {
-            if !v.is_empty() {
-                self.vector.backend = v;
-            }
-        }
-
-        // The `UTEKE_EMBEDDING_*` variables are applied by `EmbeddingSection::resolve`.
+        // Recall thresholds, strategy, graph-rerank weights and the embedding
+        // fallback (UTEKE_RECALL_*, UTEKE_GRAPH_*, UTEKE_EMBED_FALLBACK_*):
+        // applied and validated in the core, the same call the open-time
+        // config makes (#1754). `UTEKE_VECTOR_BACKEND` and the
+        // `UTEKE_EMBEDDING_*` variables are applied there too.
+        self.engine = self.engine.with_env_overrides();
 
         // Extraction (import --extract, extract-queue). All optional.
         self.extraction = std::mem::take(&mut self.extraction).with_env_overrides();
-
-        // Embed fallback (cloud API when local ONNX fails). All optional.
-        self.engine.embed_fallback = self.engine.embed_fallback.clone().with_env_overrides();
 
         self
     }
