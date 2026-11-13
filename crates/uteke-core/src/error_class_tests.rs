@@ -8,7 +8,7 @@ fn every_variant_has_a_class() {
     let io = Error::Io(std::io::Error::other("x"));
     assert_eq!(io.class(), ErrorClass::Internal);
     assert_eq!(Error::db_msg("x").class(), ErrorClass::Internal);
-    assert_eq!(Error::embed_msg("x").class(), ErrorClass::Internal);
+    assert_eq!(Error::embed_msg("x").class(), ErrorClass::Embedding);
     assert_eq!(Error::lock("x").class(), ErrorClass::Internal);
     assert_eq!(Error::generic("x").class(), ErrorClass::Internal);
     assert_eq!(Error::validation("x").class(), ErrorClass::BadRequest);

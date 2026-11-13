@@ -364,69 +364,72 @@ fn handle_request(
                 return serde_json::to_value(refused).map_err(|e| e.to_string());
             }
 
-            let mut result = match tool_name {
-                "uteke_remember" => exec_remember(uteke, &arguments)?,
-                "uteke_recall" => exec_recall(uteke, &arguments)?,
-                "uteke_search" => exec_search(uteke, &arguments)?,
-                "uteke_list" => exec_list(uteke, &arguments)?,
-                "uteke_get" => exec_get(uteke, &arguments)?,
-                "uteke_provenance" => exec_provenance(uteke, &arguments)?,
-                "uteke_timeline" => exec_timeline(uteke, &arguments)?,
-                "uteke_contradictions" => exec_contradictions(uteke, &arguments)?,
-                "uteke_contradictions_undo" => exec_contradictions_undo(uteke, &arguments)?,
-                "uteke_supersede" => exec_supersede(uteke, &arguments)?,
-                "uteke_update" => exec_update(uteke, &arguments)?,
-                "uteke_forget" => exec_forget(uteke, &arguments)?,
-                "uteke_stats" => exec_stats(uteke, &arguments)?,
-                "uteke_context" => exec_context(uteke, &arguments)?,
-                "uteke_dream" => exec_dream(uteke, &arguments)?,
-                "uteke_capture" => exec_capture(uteke, &arguments)?,
-                "uteke_verify" => exec_verify(uteke)?,
-                "uteke_repair" => exec_repair(uteke)?,
-                "uteke_doc_create" => exec_doc_create(uteke, &arguments)?,
-                "uteke_doc_update" => exec_doc_update(uteke, &arguments)?,
-                "uteke_doc_get" => exec_doc_get(uteke, &arguments)?,
-                "uteke_doc_list" => exec_doc_list(uteke, &arguments)?,
-                "uteke_doc_search" => exec_doc_search(uteke, &arguments)?,
-                "uteke_doc_similar" => exec_doc_similar(uteke, &arguments)?,
-                "uteke_skill_search" => exec_skill(uteke, SkillRemoteOp::Search, &arguments)?,
-                "uteke_skill_list" => exec_skill(uteke, SkillRemoteOp::List, &arguments)?,
-                "uteke_skill_show" => exec_skill(uteke, SkillRemoteOp::Show, &arguments)?,
-                "uteke_skill_similar" => exec_skill(uteke, SkillRemoteOp::Similar, &arguments)?,
-                "uteke_doc_delete" => exec_doc_delete(uteke, &arguments)?,
-                "uteke_doc_move" => exec_doc_move(uteke, &arguments)?,
-                "uteke_graph" => exec_graph(uteke, &arguments)?,
-                "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments)?,
-                "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments)?,
-                "uteke_room_create" => exec_room_create(uteke, &arguments)?,
-                "uteke_room_list" => exec_room_list(uteke, &arguments)?,
-                "uteke_room_delete" => exec_room_delete(uteke, &arguments)?,
-                "uteke_room_rename" => exec_room_rename(uteke, &arguments)?,
-                "uteke_room_update" => exec_room_update(uteke, &arguments)?,
-                "uteke_room_memory_move" => exec_room_memory_move(uteke, &arguments)?,
-                "uteke_room_link_memory" => exec_room_link_memory(uteke, &arguments)?,
-                "uteke_room_recall" => exec_room_recall(uteke, &arguments)?,
-                "uteke_room_memories" => exec_room_memories(uteke, &arguments)?,
-                "uteke_room_stats" => exec_room_stats(uteke, &arguments)?,
-                "uteke_room_search" => exec_room_search(uteke, &arguments)?,
-                "uteke_room_summary" => exec_room_summary(uteke, &arguments)?,
+            // A failed tool call is a tool error, not a JSON-RPC error (see
+            // `core_failure`): `Err(text)` of an executor becomes `isError`.
+            let outcome: Result<ToolResult, String> = match tool_name {
+                "uteke_remember" => exec_remember(uteke, &arguments),
+                "uteke_recall" => exec_recall(uteke, &arguments),
+                "uteke_search" => exec_search(uteke, &arguments),
+                "uteke_list" => exec_list(uteke, &arguments),
+                "uteke_get" => exec_get(uteke, &arguments),
+                "uteke_provenance" => exec_provenance(uteke, &arguments),
+                "uteke_timeline" => exec_timeline(uteke, &arguments),
+                "uteke_contradictions" => exec_contradictions(uteke, &arguments),
+                "uteke_contradictions_undo" => exec_contradictions_undo(uteke, &arguments),
+                "uteke_supersede" => exec_supersede(uteke, &arguments),
+                "uteke_update" => exec_update(uteke, &arguments),
+                "uteke_forget" => exec_forget(uteke, &arguments),
+                "uteke_stats" => exec_stats(uteke, &arguments),
+                "uteke_context" => exec_context(uteke, &arguments),
+                "uteke_dream" => exec_dream(uteke, &arguments),
+                "uteke_capture" => exec_capture(uteke, &arguments),
+                "uteke_verify" => exec_verify(uteke),
+                "uteke_repair" => exec_repair(uteke),
+                "uteke_doc_create" => exec_doc_create(uteke, &arguments),
+                "uteke_doc_update" => exec_doc_update(uteke, &arguments),
+                "uteke_doc_get" => exec_doc_get(uteke, &arguments),
+                "uteke_doc_list" => exec_doc_list(uteke, &arguments),
+                "uteke_doc_search" => exec_doc_search(uteke, &arguments),
+                "uteke_doc_similar" => exec_doc_similar(uteke, &arguments),
+                "uteke_skill_search" => exec_skill(uteke, SkillRemoteOp::Search, &arguments),
+                "uteke_skill_list" => exec_skill(uteke, SkillRemoteOp::List, &arguments),
+                "uteke_skill_show" => exec_skill(uteke, SkillRemoteOp::Show, &arguments),
+                "uteke_skill_similar" => exec_skill(uteke, SkillRemoteOp::Similar, &arguments),
+                "uteke_doc_delete" => exec_doc_delete(uteke, &arguments),
+                "uteke_doc_move" => exec_doc_move(uteke, &arguments),
+                "uteke_graph" => exec_graph(uteke, &arguments),
+                "uteke_graph_add_edge" => exec_graph_add_edge(uteke, &arguments),
+                "uteke_graph_remove_edge" => exec_graph_remove_edge(uteke, &arguments),
+                "uteke_room_create" => exec_room_create(uteke, &arguments),
+                "uteke_room_list" => exec_room_list(uteke, &arguments),
+                "uteke_room_delete" => exec_room_delete(uteke, &arguments),
+                "uteke_room_rename" => exec_room_rename(uteke, &arguments),
+                "uteke_room_update" => exec_room_update(uteke, &arguments),
+                "uteke_room_memory_move" => exec_room_memory_move(uteke, &arguments),
+                "uteke_room_link_memory" => exec_room_link_memory(uteke, &arguments),
+                "uteke_room_recall" => exec_room_recall(uteke, &arguments),
+                "uteke_room_memories" => exec_room_memories(uteke, &arguments),
+                "uteke_room_stats" => exec_room_stats(uteke, &arguments),
+                "uteke_room_search" => exec_room_search(uteke, &arguments),
+                "uteke_room_summary" => exec_room_summary(uteke, &arguments),
                 "uteke_room_summary_document" | "uteke_room_document" => {
-                    exec_room_document(uteke, &arguments)?
+                    exec_room_document(uteke, &arguments)
                 }
-                "uteke_room_add_document" => exec_room_add_document(uteke, &arguments)?,
-                "uteke_room_remove_document" => exec_room_remove_document(uteke, &arguments)?,
-                "uteke_room_list_documents" => exec_room_list_documents(uteke, &arguments)?,
-                "uteke_doc_list_rooms" => exec_doc_list_rooms(uteke, &arguments)?,
-                "uteke_tags_list" => exec_tags_list(uteke, &arguments)?,
-                "uteke_tags_rename" => exec_tags_rename(uteke, &arguments)?,
-                "uteke_tags_delete" => exec_tags_delete(uteke, &arguments)?,
-                "uteke_namespace_rename" => exec_namespace_rename(uteke, &arguments)?,
-                "uteke_namespace_delete" => exec_namespace_delete(uteke, &arguments)?,
-                "uteke_pin" => exec_pin(uteke, &arguments)?,
-                "uteke_unpin" => exec_unpin(uteke, &arguments)?,
+                "uteke_room_add_document" => exec_room_add_document(uteke, &arguments),
+                "uteke_room_remove_document" => exec_room_remove_document(uteke, &arguments),
+                "uteke_room_list_documents" => exec_room_list_documents(uteke, &arguments),
+                "uteke_doc_list_rooms" => exec_doc_list_rooms(uteke, &arguments),
+                "uteke_tags_list" => exec_tags_list(uteke, &arguments),
+                "uteke_tags_rename" => exec_tags_rename(uteke, &arguments),
+                "uteke_tags_delete" => exec_tags_delete(uteke, &arguments),
+                "uteke_namespace_rename" => exec_namespace_rename(uteke, &arguments),
+                "uteke_namespace_delete" => exec_namespace_delete(uteke, &arguments),
+                "uteke_pin" => exec_pin(uteke, &arguments),
+                "uteke_unpin" => exec_unpin(uteke, &arguments),
                 _ => return Err(format!("Unknown tool: {tool_name}")),
             };
 
+            let mut result = outcome.unwrap_or_else(tool_error);
             apply_fence(tool_name, &mut result, fence_enabled());
 
             Ok(serde_json::to_value(result).map_err(|e| e.to_string())?)
@@ -551,7 +554,7 @@ fn exec_provenance(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let report = uteke
         .provenance(&id)
-        .map_err(|e| format!("Failed: {e}"))?
+        .map_err(core_failure)?
         .ok_or_else(|| format!("Memory not found: {id}"))?;
 
     let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
@@ -587,9 +590,7 @@ fn exec_timeline(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id = resolve_id(uteke, id_arg)?;
     let limit = args["limit"].as_u64().unwrap_or(100).min(1000) as usize;
 
-    let events = uteke
-        .timeline(&id, limit)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let events = uteke.timeline(&id, limit).map_err(core_failure)?;
 
     let text = serde_json::to_string_pretty(&events).unwrap_or_else(|_| "[]".to_string());
     Ok(ToolResult {
@@ -637,7 +638,7 @@ fn exec_contradictions(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
 
     let resolutions = uteke
         .contradiction_resolutions(namespace, limit)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     let text = serde_json::to_string_pretty(&resolutions).unwrap_or_else(|_| "[]".to_string());
     Ok(ToolResult {
@@ -654,10 +655,7 @@ fn exec_contradictions_undo(uteke: &Uteke, args: &Value) -> Result<ToolResult, S
     let id_arg = args["id"].as_str().ok_or("Missing 'id'")?;
     let id = resolve_id(uteke, id_arg)?;
 
-    match uteke
-        .undo_supersession(&id)
-        .map_err(|e| format!("Failed: {e}"))?
-    {
+    match uteke.undo_supersession(&id).map_err(core_failure)? {
         Some(winner) => {
             let text = format!(
                 "\u{2713} Restored memory {id}\n  was superseded by {winner}\n  supersession edges removed \u{2014} the pair is no longer flagged"
@@ -1494,15 +1492,35 @@ fn namespace_deprecation_suffix(namespace: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-/// The error text of a failed write. Strict privacy mode (#1464) is
-/// recognisable: it starts with `secret_detected`, the same code the HTTP API
-/// uses.
-fn write_error(e: uteke_core::Error) -> String {
-    match e {
-        uteke_core::Error::SecretDetected { .. } => format!("secret_detected: {e}"),
-        uteke_core::Error::RejectedValue { .. } => format!("rejected_value: {e}"),
-        uteke_core::Error::InvalidRoomId { .. } => format!("invalid_room_id: {e}"),
-        other => format!("Failed: {other}"),
+/// The one MCP mapping from an error class to its wire shape (#1752): every
+/// core error is a TOOL error (`isError: true` with this text), never a
+/// JSON-RPC error. The MCP spec reserves protocol errors for malformed
+/// requests (parse error, unknown method or tool, missing params); a failure
+/// of the tool itself, bad arguments, a missing target and a busy server
+/// included, is reported in the tool result so the model can read it and
+/// retry. The text starts with the same code the HTTP API answers for the
+/// three rich classes (`secret_detected`, `rejected_value`,
+/// `invalid_room_id`); a client error shows its message as it is; anything
+/// else is `Failed: ...`.
+fn core_failure(e: uteke_core::Error) -> String {
+    use uteke_core::ErrorClass;
+    match e.class() {
+        ErrorClass::SecretDetected => format!("secret_detected: {e}"),
+        ErrorClass::RejectedValue => format!("rejected_value: {e}"),
+        ErrorClass::InvalidRoomId => format!("invalid_room_id: {e}"),
+        ErrorClass::BadRequest | ErrorClass::NotFound | ErrorClass::Busy => e.to_string(),
+        ErrorClass::Embedding | ErrorClass::Internal => format!("Failed: {e}"),
+    }
+}
+
+/// A failed tool call as the MCP result: `isError: true` with the text.
+fn tool_error(text: String) -> ToolResult {
+    ToolResult {
+        content: vec![McpContent::Text {
+            r#type: "text".to_string(),
+            text,
+        }],
+        is_error: true,
     }
 }
 
@@ -1510,7 +1528,7 @@ fn exec_remember(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let req = decode_remember_args(args)?;
     let namespace = req.namespace.as_deref();
     // The write and its provenance follow-ups run in the core (#1516).
-    let run = uteke.run_remember(&req).map_err(write_error)?;
+    let run = uteke.run_remember(&req).map_err(core_failure)?;
     let outcome = run.outcome;
 
     let mut text = format!("✓ Stored memory with ID: {}", outcome.id);
@@ -1615,7 +1633,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let output = uteke.run_recall(&req, defaults).map_err(|e| match e {
         // The wire name of `search_type` is `type` on this tool.
         uteke_core::Error::Validation(msg) => msg.replace("omit search_type", "omit type"),
-        other => format!("Failed: {other}"),
+        other => core_failure(other),
     })?;
 
     let text_result = |text: String| ToolResult {
@@ -1832,7 +1850,7 @@ fn exec_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     // The same page / point-in-time / envelope choice as `POST /list` (#1439).
     use uteke_core::list_exec::ListOutput;
-    let (memories, footer) = match uteke.run_list(&req).map_err(|e| format!("Failed: {e}"))? {
+    let (memories, footer) = match uteke.run_list(&req).map_err(core_failure)? {
         ListOutput::Memories(m) => (m, None),
         ListOutput::Page {
             memories,
@@ -1909,7 +1927,7 @@ fn exec_supersede(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let (o, n) = uteke
         .supersede(&old_id, &new_id, reason)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     let mut text = format!("✓ Superseded {o} → {n}");
     text.push_str("\n  old memory soft-deprecated (restore: uteke lifecycle promote)");
@@ -1935,7 +1953,7 @@ fn exec_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let m = uteke
         .get_by_id(&id)
-        .map_err(|e| format!("Failed: {e}"))?
+        .map_err(core_failure)?
         .ok_or_else(|| format!("Memory not found: {id}"))?;
 
     let body = serde_json::json!({
@@ -2008,7 +2026,7 @@ fn exec_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 is_error: true,
             });
         }
-        Err(e) => return Err(write_error(e)),
+        Err(e) => return Err(core_failure(e)),
     };
 
     Ok(ToolResult {
@@ -2046,7 +2064,7 @@ fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let reason = args["reason"].as_str();
     uteke
         .forget_with_reason(&id, reason)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
     let rejected = reason.is_some_and(uteke_core::tombstone::is_wrong_reason);
 
     Ok(ToolResult {
@@ -2065,7 +2083,7 @@ fn exec_forget(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
 
-    let stats = uteke.stats(namespace).map_err(|e| format!("Failed: {e}"))?;
+    let stats = uteke.stats(namespace).map_err(core_failure)?;
 
     // #1052: agents need triage fields on one call — tiers, pinned/deprecated
     // split, and (when unscoped) the per-namespace breakdown.
@@ -2123,7 +2141,7 @@ fn exec_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let results = uteke
         .search(query, limit, tags_ref, namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     if results.is_empty() {
         return Ok(ToolResult {
@@ -2164,7 +2182,7 @@ fn exec_doc_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let id = uteke
         .doc_upsert_with_parent(slug, title, content, &tags, None, parent)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2224,9 +2242,7 @@ fn exec_doc_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_doc_get(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id_or_slug = args["id_or_slug"].as_str().ok_or("Missing 'id_or_slug'")?;
 
-    let doc = uteke
-        .doc_get(id_or_slug)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let doc = uteke.doc_get(id_or_slug).map_err(core_failure)?;
 
     match doc {
         Some(d) => Ok(ToolResult {
@@ -2250,9 +2266,7 @@ fn exec_doc_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let limit = args["limit"].as_u64().unwrap_or(20) as usize;
     let namespace = args["namespace"].as_str();
 
-    let docs = uteke
-        .doc_list(namespace, limit)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let docs = uteke.doc_list(namespace, limit).map_err(core_failure)?;
 
     if docs.is_empty() {
         return Ok(ToolResult {
@@ -2283,9 +2297,7 @@ fn exec_doc_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let mode = args["mode"].as_str().unwrap_or("hybrid");
     let limit = args["limit"].as_u64().unwrap_or(5) as usize;
 
-    let results = uteke
-        .doc_search(query, limit, mode)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let results = uteke.doc_search(query, limit, mode).map_err(core_failure)?;
 
     if results.is_empty() {
         return Ok(ToolResult {
@@ -2347,12 +2359,12 @@ fn exec_doc_similar(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     };
     // A draft text is embedded: bound it and the number running at once.
     let _permit = match &query {
-        DocSimilarQuery::Text(t) => Some(uteke.remote_draft_permit(t).map_err(skill_error)?),
+        DocSimilarQuery::Text(t) => Some(uteke.remote_draft_permit(t).map_err(core_failure)?),
         _ => None,
     };
     let answer = uteke
         .doc_similarity_query(&query, args["namespace"].as_str(), threshold, limit)
-        .map_err(skill_error)?;
+        .map_err(core_failure)?;
     let text = serde_json::to_string_pretty(&answer).map_err(|e| e.to_string())?;
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2366,8 +2378,8 @@ fn exec_doc_similar(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 /// The four read-only skill tools (#1731): the arguments are parsed and
 /// validated by `Uteke::skill_remote`, the entry point of the HTTP routes too.
 fn exec_skill(uteke: &Uteke, op: SkillRemoteOp, args: &Value) -> Result<ToolResult, String> {
-    let parsed = SkillRemoteArgs::from_json(args).map_err(skill_error)?;
-    let answer = uteke.skill_remote(op, &parsed).map_err(skill_error)?;
+    let parsed = SkillRemoteArgs::from_json(args).map_err(core_failure)?;
+    let answer = uteke.skill_remote(op, &parsed).map_err(core_failure)?;
     let text = serde_json::to_string_pretty(&answer).map_err(|e| e.to_string())?;
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2378,20 +2390,10 @@ fn exec_skill(uteke: &Uteke, op: SkillRemoteOp, args: &Value) -> Result<ToolResu
     })
 }
 
-/// A client error keeps its message; anything else is reported as a failure.
-fn skill_error(e: uteke_core::Error) -> String {
-    match e.class() {
-        uteke_core::ErrorClass::NotFound
-        | uteke_core::ErrorClass::BadRequest
-        | uteke_core::ErrorClass::Busy => e.to_string(),
-        _ => format!("Failed: {e}"),
-    }
-}
-
 fn exec_doc_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id = args["id"].as_str().ok_or("Missing 'id'")?;
 
-    let (deleted, chunks) = uteke.doc_delete(id).map_err(|e| format!("Failed: {e}"))?;
+    let (deleted, chunks) = uteke.doc_delete(id).map_err(core_failure)?;
 
     if deleted {
         Ok(ToolResult {
@@ -2416,9 +2418,7 @@ fn exec_doc_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let id = args["id"].as_str().ok_or("Missing 'id'")?;
     let parent = args["parent"].as_str();
 
-    let moved = uteke
-        .doc_move(id, parent, None)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let moved = uteke.doc_move(id, parent, None).map_err(core_failure)?;
 
     let msg = match parent {
         Some(p) => format!("Moved document: {id} -> parent: {p} ({moved} row(s) updated)"),
@@ -2443,7 +2443,7 @@ fn exec_graph(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let view = uteke
         .graph_view(namespace, None, limit)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     let mut text = format!(
         "Graph: {} nodes, {} edges, {} relation types{}",
@@ -2514,7 +2514,7 @@ fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
                 is_error: true,
             });
         }
-        Err(e) => return Err(format!("Failed: {e}")),
+        Err(e) => return Err(core_failure(e)),
     }
     match uteke.get_by_id(&target) {
         Ok(Some(_)) => {}
@@ -2527,12 +2527,12 @@ fn exec_graph_add_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, String
                 is_error: true,
             });
         }
-        Err(e) => return Err(format!("Failed: {e}")),
+        Err(e) => return Err(core_failure(e)),
     }
 
     let gs = uteke.graph();
     gs.add_edge_for_memories(&source, &target, edge_type, weight)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2552,7 +2552,7 @@ fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
     let gs = uteke.graph();
     let removed = gs
         .remove_edge_between(&source, &target)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     if removed {
         Ok(ToolResult {
@@ -2576,9 +2576,7 @@ fn exec_graph_remove_edge(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
 fn exec_context(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
 
-    let context = uteke
-        .build_context(namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let context = uteke.build_context(namespace).map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2590,7 +2588,7 @@ fn exec_context(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 }
 
 fn exec_verify(uteke: &Uteke) -> Result<ToolResult, String> {
-    let report = uteke.verify().map_err(|e| format!("Failed: {e}"))?;
+    let report = uteke.verify().map_err(core_failure)?;
     let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2602,7 +2600,7 @@ fn exec_verify(uteke: &Uteke) -> Result<ToolResult, String> {
 }
 
 fn exec_repair(uteke: &Uteke) -> Result<ToolResult, String> {
-    let report = uteke.repair().map_err(|e| format!("Failed: {e}"))?;
+    let report = uteke.repair().map_err(core_failure)?;
     let text = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2639,7 +2637,7 @@ fn exec_capture(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             args["source"].as_str(),
             args["namespace"].as_str(),
         )
-        .map_err(write_error)?;
+        .map_err(core_failure)?;
     let text = if out.duplicate {
         format!("Already captured: {}", out.id)
     } else {
@@ -2701,7 +2699,7 @@ fn exec_dream(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // First pass: always compute the DRY report to learn projected changes.
     let preview = uteke
         .dream(namespace, true, &phases)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     if !dry_run && preview.total_changes > LARGE_BATCH_THRESHOLD && !confirm_large {
         return Ok(ToolResult {
@@ -2756,7 +2754,7 @@ fn exec_dream(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // Applying run (scoped, or confirm_large, and under threshold / confirmed).
     let report = uteke
         .dream(namespace, false, &phases)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     let mut lines = vec![format!(
         "Dream cycle applied: {} changes, {} warnings, {} errors ({}ms){}",
@@ -2868,7 +2866,7 @@ fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
                 a.budget_chars,
                 &a.exclude_ids,
             )
-            .map_err(|e| format!("Failed: {e}"))?;
+            .map_err(core_failure)?;
         // Nothing matched at all: say so. Otherwise return the pack even when
         // `selected` is empty, so `skipped` explains why (excluded / budget).
         if pack.selected.is_empty() && pack.skipped.is_empty() {
@@ -2881,7 +2879,7 @@ fn exec_room_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let results = uteke
         .recall_room_semantic_filtered(room_id, query, a.limit, None, a.min_score, tags)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     if results.is_empty() {
         return Ok(text_result("No memories found in room.".to_string()));
@@ -2899,7 +2897,7 @@ fn exec_room_memories(uteke: &Uteke, args: &Value) -> Result<ToolResult, String>
 
     let memories = uteke
         .recall_room(room_id, author, limit)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     if memories.is_empty() {
         return Ok(ToolResult {
@@ -2938,16 +2936,6 @@ fn room_id_warning_suffix(room_id: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The error text of a refused room create or rename: `invalid_room_id: ...`
-/// when the id is refused by `[rooms] require_category_title` (#1715 stage
-/// 3), the same code the HTTP API uses; `Failed to <what> room: ...` otherwise.
-fn room_write_error(what: &str, e: uteke_core::Error) -> String {
-    match e {
-        uteke_core::Error::InvalidRoomId { .. } => format!("invalid_room_id: {e}"),
-        other => format!("Failed to {what} room: {other}"),
-    }
-}
-
 fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
     let title = args["title"].as_str();
@@ -2955,7 +2943,7 @@ fn exec_room_create(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     uteke
         .create_room(room_id, title, namespace)
-        .map_err(|e| room_write_error("create", e))?;
+        .map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -2992,9 +2980,7 @@ fn exec_room_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
 
     let rooms = filter_rooms_by_name(
-        uteke
-            .list_rooms(namespace)
-            .map_err(|e| format!("Failed: {e}"))?,
+        uteke.list_rooms(namespace).map_err(core_failure)?,
         args["name"].as_str(),
     );
 
@@ -3028,9 +3014,7 @@ fn exec_room_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_room_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
-    let unlinked = uteke
-        .delete_room(room_id)
-        .map_err(|e| format!("Failed to delete room: {e}"))?;
+    let unlinked = uteke.delete_room(room_id).map_err(core_failure)?;
 
     let text = format!(
         "Room '{room_id}' unregistered. {unlinked} memory link(s) removed; the memories are retained, no longer linked to any room. To delete a memory, use uteke_forget with its id."
@@ -3049,9 +3033,7 @@ fn exec_room_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let from = args["from"].as_str().ok_or("Missing 'from'")?;
     let to = args["to"].as_str().ok_or("Missing 'to'")?;
 
-    uteke
-        .rename_room(from, to)
-        .map_err(|e| room_write_error("rename", e))?;
+    uteke.rename_room(from, to).map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -3072,7 +3054,7 @@ fn exec_room_update(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let room = uteke
         .update_room(room_id, title, description)
-        .map_err(|e| format!("Failed to update room: {e}"))?
+        .map_err(core_failure)?
         .ok_or_else(|| format!("Room not found: {room_id}"))?;
 
     let title_out = room.title.as_deref().unwrap_or("(none)");
@@ -3095,7 +3077,7 @@ fn exec_room_memory_move(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
 
     let moved = uteke
         .move_memory_to_room(memory_id, from_room, to_room)
-        .map_err(|e| format!("Failed to move memory: {e}"))?;
+        .map_err(core_failure)?;
     if moved == 0 {
         return Err(format!(
             "Memory '{memory_id}' has no link in room '{from_room}'"
@@ -3119,7 +3101,7 @@ fn exec_room_link_memory(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
     let memory_id = resolve_id(uteke, memory_arg)?;
     let linked = uteke
         .add_memory_to_room(&memory_id, room_id, author)
-        .map_err(|e| format!("Failed to link memory: {e}"))?;
+        .map_err(core_failure)?;
     let text = if linked {
         format!("✓ Memory '{memory_id}' added to room '{room_id}'")
     } else {
@@ -3141,7 +3123,7 @@ fn exec_room_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let full_ids = args["full_ids"].as_bool().unwrap_or(false);
     let hits = uteke
         .search_rooms(query, limit, namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
     let text = if hits.is_empty() {
         "No rooms found.".to_string()
     } else {
@@ -3185,9 +3167,7 @@ fn exec_room_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_room_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
-    let stats = uteke
-        .room_stats(room_id)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let stats = uteke.room_stats(room_id).map_err(core_failure)?;
 
     let stats = match stats {
         Some(s) => s,
@@ -3225,9 +3205,7 @@ fn exec_room_stats(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 fn exec_room_summary(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
-    let summary = uteke
-        .room_summary(room_id)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let summary = uteke.room_summary(room_id).map_err(core_failure)?;
 
     let summary = match summary {
         Some(s) => s,
@@ -3293,9 +3271,7 @@ fn exec_room_summary(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> 
 fn exec_room_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
-    let doc = uteke
-        .room_summary_document(room_id)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let doc = uteke.room_summary_document(room_id).map_err(core_failure)?;
 
     let doc = match doc {
         Some(d) => d,
@@ -3344,7 +3320,7 @@ fn exec_room_add_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, Str
 
     uteke
         .room_add_document(room_id, doc_slug)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -3361,7 +3337,7 @@ fn exec_room_remove_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, 
 
     uteke
         .room_remove_document(room_id, doc_slug)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     Ok(ToolResult {
         content: vec![McpContent::Text {
@@ -3375,9 +3351,7 @@ fn exec_room_remove_document(uteke: &Uteke, args: &Value) -> Result<ToolResult, 
 fn exec_room_list_documents(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let room_id = args["room_id"].as_str().ok_or("Missing 'room_id'")?;
 
-    let docs = uteke
-        .room_list_documents(room_id)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let docs = uteke.room_list_documents(room_id).map_err(core_failure)?;
 
     let text = if docs.is_empty() {
         format!("No documents linked to room '{room_id}'.")
@@ -3404,9 +3378,7 @@ fn exec_room_list_documents(uteke: &Uteke, args: &Value) -> Result<ToolResult, S
 fn exec_doc_list_rooms(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let doc_slug = args["doc_slug"].as_str().ok_or("Missing 'doc_slug'")?;
 
-    let rooms = uteke
-        .document_list_rooms(doc_slug)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let rooms = uteke.document_list_rooms(doc_slug).map_err(core_failure)?;
 
     let text = if rooms.is_empty() {
         format!("No rooms reference document '{doc_slug}'.")
@@ -3435,9 +3407,7 @@ fn exec_tags_list(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let namespace = args["namespace"].as_str();
     let sort = args["sort"].as_str().unwrap_or("count");
 
-    let mut tags = uteke
-        .tags_with_counts(namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let mut tags = uteke.tags_with_counts(namespace).map_err(core_failure)?;
 
     if sort == "alpha" {
         tags.sort_by(|a, b| a.name.cmp(&b.name));
@@ -3474,7 +3444,7 @@ fn exec_tags_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
 
     let count = uteke
         .rename_tag(old_tag, new_tag, namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     if count == 0 {
         return Ok(ToolResult {
@@ -3502,9 +3472,7 @@ fn exec_tags_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     let tag = args["tag"].as_str().ok_or("Missing 'tag'")?;
     let namespace = args["namespace"].as_str();
 
-    let count = uteke
-        .delete_tag(tag, namespace)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let count = uteke.delete_tag(tag, namespace).map_err(core_failure)?;
 
     if count == 0 {
         return Ok(ToolResult {
@@ -3530,9 +3498,7 @@ fn exec_namespace_rename(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
     let from = args["from"].as_str().ok_or("Missing 'from'")?;
     let to = args["to"].as_str().ok_or("Missing 'to'")?;
 
-    let result = uteke
-        .rename_namespace(from, to)
-        .map_err(|e| format!("Failed: {e}"))?;
+    let result = uteke.rename_namespace(from, to).map_err(core_failure)?;
 
     let kind = if result.target_existed {
         "merged into existing"
@@ -3559,7 +3525,7 @@ fn exec_namespace_delete(uteke: &Uteke, args: &Value) -> Result<ToolResult, Stri
 
     let result = uteke
         .delete_namespace(name, strategy, target)
-        .map_err(|e| format!("Failed: {e}"))?;
+        .map_err(core_failure)?;
 
     let text = match result.strategy.as_str() {
         "merge" => format!(
@@ -3602,7 +3568,7 @@ fn exec_pin(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             }],
             is_error: true,
         }),
-        Err(e) => Err(format!("Failed: {e}")),
+        Err(e) => Err(core_failure(e)),
     }
 }
 
@@ -3625,7 +3591,7 @@ fn exec_unpin(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
             }],
             is_error: true,
         }),
-        Err(e) => Err(format!("Failed: {e}")),
+        Err(e) => Err(core_failure(e)),
     }
 }
 
@@ -6479,5 +6445,67 @@ mod skill_tool_tests {
         );
         assert_eq!(before, after);
         assert_eq!(u.skill_show("deploy").unwrap().usage.recalled, 0);
+    }
+}
+
+#[cfg(test)]
+mod error_wire_tests {
+    use super::*;
+    use serde_json::json;
+    use uteke_core::{Error, ErrorClass};
+
+    /// #1752: every error variant has one MCP shape, a tool error text; the
+    /// match fails to compile when an `ErrorClass` is added.
+    #[test]
+    fn every_error_variant_has_one_mcp_text() {
+        for e in Error::samples() {
+            let shown = e.to_string();
+            let want = match e.class() {
+                ErrorClass::SecretDetected => format!("secret_detected: {shown}"),
+                ErrorClass::RejectedValue => format!("rejected_value: {shown}"),
+                ErrorClass::InvalidRoomId => format!("invalid_room_id: {shown}"),
+                ErrorClass::BadRequest | ErrorClass::NotFound | ErrorClass::Busy => shown.clone(),
+                ErrorClass::Embedding | ErrorClass::Internal => format!("Failed: {shown}"),
+            };
+            assert_eq!(core_failure(e), want, "{shown}");
+        }
+    }
+
+    fn rpc(u: &Uteke, tool: &str, args: Value) -> Value {
+        let raw = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool, "arguments": args}})
+        .to_string();
+        serde_json::from_str(&handle_jsonrpc(u, &raw).expect("a response")).unwrap()
+    }
+
+    /// Bad arguments and a missing target are tool errors; only a malformed
+    /// request is a protocol error.
+    #[test]
+    fn tool_failures_are_tool_errors_and_protocol_problems_are_rpc_errors() {
+        let u = Uteke::open_with_backend(":memory:", None).unwrap();
+        for (tool, args) in [
+            ("uteke_get", json!({})),
+            ("uteke_get", json!({"id": "no-such-memory"})),
+            ("uteke_remember", json!({"content": ""})),
+            ("uteke_room_delete", json!({"room_id": "ghost"})),
+        ] {
+            let resp = rpc(&u, tool, args.clone());
+            assert!(resp.get("error").is_none(), "{tool} {args}: {resp}");
+            assert_eq!(resp["result"]["isError"], true, "{tool} {args}: {resp}");
+            assert!(
+                resp["result"]["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|t| !t.is_empty()),
+                "{resp}"
+            );
+        }
+        let resp = rpc(&u, "uteke_no_such_tool", json!({}));
+        assert_eq!(resp["error"]["code"], -32603, "{resp}");
+        let raw = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call"}).to_string();
+        let resp: Value = serde_json::from_str(&handle_jsonrpc(&u, &raw).unwrap()).unwrap();
+        assert!(resp.get("error").is_some(), "{resp}");
+        let raw = json!({"jsonrpc": "2.0", "id": 1, "method": "no/such"}).to_string();
+        let resp: Value = serde_json::from_str(&handle_jsonrpc(&u, &raw).unwrap()).unwrap();
+        assert!(resp.get("error").is_some(), "{resp}");
     }
 }

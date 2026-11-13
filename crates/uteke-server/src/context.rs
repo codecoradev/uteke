@@ -101,6 +101,91 @@ pub fn constant_time_eq_digest(a: &[u8; 32], b: &[u8; 32]) -> bool {
     result == 0
 }
 
+/// The status and JSON body of an HTTP answer to a core error.
+#[derive(Debug, PartialEq)]
+pub struct HttpWire {
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
+/// The one mapping from an error class to its HTTP answer (#1752). Every
+/// handler answers a core error through it (`ReqCtx::core_error`); see the
+/// table in `docs/architecture.md`. `bare_validation` answers a `Validation`
+/// error with its bare message instead of its `Display` text.
+pub fn http_wire(e: &uteke_core::Error, bare_validation: bool) -> HttpWire {
+    use uteke_core::{Error, ErrorClass};
+    let plain = |status: u16, msg: String| HttpWire {
+        status,
+        body: serde_json::json!({ "error": msg }),
+    };
+    match e.class() {
+        ErrorClass::BadRequest => match e {
+            Error::Validation(msg) if bare_validation => plain(400, msg.clone()),
+            _ => plain(400, e.to_string()),
+        },
+        ErrorClass::NotFound => plain(404, e.to_string()),
+        ErrorClass::Busy => plain(429, e.to_string()),
+        // Strict privacy mode (#1464): 400 with the kinds found, never the values.
+        ErrorClass::SecretDetected => {
+            let kinds: &[String] = match e {
+                Error::SecretDetected { kinds } => kinds,
+                _ => &[],
+            };
+            HttpWire {
+                status: 400,
+                body: serde_json::json!({
+                    "error": "secret_detected",
+                    "message": format!(
+                        "the content contains a secret ({}); remove it or set [privacy] mode to redact",
+                        kinds.join(", ")
+                    ),
+                    "kinds": kinds,
+                }),
+            }
+        }
+        // The value was forgotten as wrong (#1597): 409 with the recorded
+        // reason, never the value.
+        ErrorClass::RejectedValue => {
+            let reason = match e {
+                Error::RejectedValue { reason } => reason.as_str(),
+                _ => "",
+            };
+            HttpWire {
+                status: 409,
+                body: serde_json::json!({
+                    "error": "rejected_value",
+                    "message": "this value was forgotten as wrong and cannot be stored again; remove its tombstone (`uteke tombstone remove`) to allow it",
+                    "reason": reason,
+                }),
+            }
+        }
+        // A new room id outside `category:title` while `[rooms]
+        // require_category_title` is on (#1715 stage 3).
+        ErrorClass::InvalidRoomId => {
+            let id = match e {
+                Error::InvalidRoomId { id } => id.as_str(),
+                _ => "",
+            };
+            HttpWire {
+                status: 400,
+                body: serde_json::json!({
+                    "error": "invalid_room_id",
+                    "message": e.to_string(),
+                    "room_id": id,
+                }),
+            }
+        }
+        ErrorClass::Embedding => {
+            tracing::error!("Embedding error: {e}");
+            plain(500, e.to_string())
+        }
+        ErrorClass::Internal => {
+            tracing::error!("Internal error: {e}");
+            plain(500, "Internal server error".to_string())
+        }
+    }
+}
+
 /// API key role (#409).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ApiRole {
@@ -344,110 +429,48 @@ impl ReqCtx {
         )
     }
 
-    /// Answer a core error by its class: 400 for a bad request, 404 when the
-    /// named thing does not exist, `secret_detected` in strict privacy mode,
-    /// 500 otherwise. A 400 or 404 carries the error's own message. A 500
-    /// carries the generic `Internal server error` and the detail goes to the
-    /// log, except for an embedding failure, whose (sanitized) message tells
-    /// the user what to do, for example to run `uteke repair` (agreed with
-    /// uteke-cloud#244).
+    /// Answer a core error by its class: the one HTTP mapping (see
+    /// [`http_wire`]). A 400 or 404 carries the error's own message, a 500 the
+    /// generic `Internal server error` (the detail goes to the log) except for
+    /// an embedding failure, whose sanitized message tells the user what to do.
     pub fn core_error(&self, req: &Request, e: &uteke_core::Error) -> Response<Cursor<Vec<u8>>> {
-        use uteke_core::{Error, ErrorClass};
-        if let Error::SecretDetected { kinds } = e {
-            return self.secret_detected_response(req, kinds);
-        }
-        if let Error::RejectedValue { reason } = e {
-            return self.rejected_value_response(req, reason);
-        }
-        if let Error::InvalidRoomId { id } = e {
-            return self.invalid_room_id_response(req, id, &e.to_string());
-        }
-        match e.class() {
-            ErrorClass::BadRequest => self.error_response_for(req, 400, e.to_string()),
-            ErrorClass::NotFound => self.error_response_for(req, 404, e.to_string()),
-            ErrorClass::Busy => self.error_response_for(req, 429, e.to_string()),
-            _ => {
-                tracing::error!("Internal error: {e}");
-                let body = match e {
-                    Error::Embedding { .. } => e.to_string(),
-                    _ => "Internal server error".to_string(),
-                };
-                self.error_response_for(req, 500, body)
-            }
-        }
+        self.wire_response(req, http_wire(e, false))
     }
 
-    /// The value was forgotten as wrong (#1597): 409 `rejected_value` with the
-    /// recorded reason, never the value.
-    pub fn rejected_value_response(
+    /// Like [`ReqCtx::core_error`], but a `Validation` error answers its bare
+    /// message, without the `Validation error: ` prefix: the text that
+    /// `POST /recall`, `POST /room/search` and `POST /namespaces/rename`
+    /// answered before the mapping was unified.
+    pub fn core_error_bare(
         &self,
         req: &Request,
-        reason: &str,
+        e: &uteke_core::Error,
     ) -> Response<Cursor<Vec<u8>>> {
-        let data = serde_json::json!({
-            "error": "rejected_value",
-            "message": "this value was forgotten as wrong and cannot be stored again; remove its tombstone (`uteke tombstone remove`) to allow it",
-            "reason": reason,
-        })
-        .to_string();
+        self.wire_response(req, http_wire(e, true))
+    }
+
+    /// Like [`ReqCtx::core_error`], but an embedding failure answers 503 with
+    /// `unavailable` (the routes whose answer needs the embedding model).
+    pub fn core_error_embedding_503(
+        &self,
+        req: &Request,
+        e: &uteke_core::Error,
+        unavailable: &str,
+    ) -> Response<Cursor<Vec<u8>>> {
+        if e.class() == uteke_core::ErrorClass::Embedding {
+            tracing::error!("Embedding error: {e}");
+            return self.error_response_for(req, 503, unavailable);
+        }
+        self.core_error(req, e)
+    }
+
+    fn wire_response(&self, req: &Request, wire: HttpWire) -> Response<Cursor<Vec<u8>>> {
         let mut headers = self.cors_headers_for(req);
         headers.push(json_header());
         Response::new(
-            StatusCode::from(409),
+            StatusCode::from(wire.status),
             headers,
-            Cursor::new(data.into_bytes()),
-            None,
-            None,
-        )
-    }
-
-    /// The privacy filter rejected the write in strict mode (#1464): 400 with
-    /// the kinds found, never the values.
-    /// A new room id outside `category:title` while `[rooms]
-    /// require_category_title` is on (#1715 stage 3): 400 `invalid_room_id`.
-    pub fn invalid_room_id_response(
-        &self,
-        req: &Request,
-        room_id: &str,
-        message: &str,
-    ) -> Response<Cursor<Vec<u8>>> {
-        let data = serde_json::json!({
-            "error": "invalid_room_id",
-            "message": message,
-            "room_id": room_id,
-        })
-        .to_string();
-        let mut headers = self.cors_headers_for(req);
-        headers.push(json_header());
-        Response::new(
-            StatusCode::from(400),
-            headers,
-            Cursor::new(data.into_bytes()),
-            None,
-            None,
-        )
-    }
-
-    pub fn secret_detected_response(
-        &self,
-        req: &Request,
-        kinds: &[String],
-    ) -> Response<Cursor<Vec<u8>>> {
-        let data = serde_json::json!({
-            "error": "secret_detected",
-            "message": format!(
-                "the content contains a secret ({}); remove it or set [privacy] mode to redact",
-                kinds.join(", ")
-            ),
-            "kinds": kinds,
-        })
-        .to_string();
-        let mut headers = self.cors_headers_for(req);
-        headers.push(json_header());
-        Response::new(
-            StatusCode::from(400),
-            headers,
-            Cursor::new(data.into_bytes()),
+            Cursor::new(wire.body.to_string().into_bytes()),
             None,
             None,
         )

@@ -4,6 +4,7 @@ mod cli;
 mod commands;
 mod config;
 mod connect;
+mod exit;
 mod extract;
 mod hook_run;
 mod init;
@@ -236,10 +237,7 @@ fn main() {
             Err(e) if e == "unsupported" => {
                 tracing::info!("Command not supported via server, using local store");
             }
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
+            Err(e) => exit::exit_with(exit::message_failure(&e)),
         }
     }
 
@@ -261,8 +259,9 @@ fn main() {
     let mut uteke = match open_config.open(&store_path) {
         Ok(u) => u,
         Err(e) => {
-            eprintln!("Error: Failed to open memory store: {e}");
-            std::process::exit(1);
+            let mut failure = exit::cli_failure(&e);
+            failure.message = format!("Error: Failed to open memory store: {e}");
+            exit::exit_with(failure);
         }
     };
 
@@ -289,8 +288,7 @@ fn main() {
     }
 
     if let Err(e) = result {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+        exit::exit_with(exit::message_failure(&e));
     }
 }
 
