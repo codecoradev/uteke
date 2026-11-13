@@ -124,6 +124,17 @@
 
 ### Changed
 
+- **One core execution for memory updates (#1751)** - `uteke update`, `PUT /memory` and
+  `uteke_update` now call `Uteke::run_update(&UpdateRequest)`, which checks the caller's validity,
+  runs the field update, and only then writes the validity and moves the namespace (#1686, #1598),
+  instead of three hand-written copies. Visible effects: a missing memory reads
+  `Memory not found: <id>` at every step in the CLI and MCP (the CLI no longer prefixes it with
+  `Failed to update memory:`, MCP returns it as a tool error instead of `Failed: ...`); an update
+  that sets nothing is refused with `No fields to update` in the CLI and MCP too (it already was
+  over HTTP, which now answers it as `Validation error: No fields to update...`); `uteke update`
+  prints the secrets-masked line that MCP and HTTP already reported; a namespace move of a
+  memory that vanished is a 404 over HTTP instead of a silent success.
+
 - **Skill library remote surfaces: no server path, bounded embedding cost (#1731)** - `POST
   /skill/list`, `/skill/show` and the MCP tools `uteke_skill_list` and `uteke_skill_show` no longer
   return `source_path`, the server directory a skill was indexed from (the CLI still shows it).

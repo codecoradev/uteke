@@ -92,6 +92,7 @@ pub use remember_request::{
     RememberInput, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
 pub use room_ops::RoomRememberOutcome;
+pub use update_exec::{UpdateInput, UpdateRequest, UpdateRun};
 pub mod engine_settings;
 #[cfg(test)]
 mod isolation_tests;
@@ -119,6 +120,7 @@ mod timeline;
 pub mod tombstone;
 mod types;
 pub mod update_check;
+pub mod update_exec;
 
 pub use chunker::{
     CodeChunk, TextChunk, chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language,

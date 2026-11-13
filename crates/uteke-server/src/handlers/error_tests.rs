@@ -185,3 +185,57 @@ fn a_500_hides_the_detail_except_for_an_embedding_failure() {
     assert_eq!(status, 500);
     assert!(msg.contains("uteke repair"), "{msg}");
 }
+
+/// #1751: `PUT /memory` and `uteke_update` run the same core execution, so
+/// the same update leaves the same stored state and is accepted or refused
+/// alike (refused fields leave the validity alone, a missing memory is not
+/// found). Each case runs against two fresh stores, one per transport.
+#[test]
+fn http_and_mcp_updates_agree_on_outcome_and_stored_state() {
+    let cases: Vec<(&str, Value)> = vec![
+        (
+            "fields+validity",
+            json!({"importance": 0.9, "valid_until": "2099-01-01T00:00:00Z"}),
+        ),
+        (
+            "validity only",
+            json!({"valid_until": "2099-01-01T00:00:00Z"}),
+        ),
+        (
+            "refused field + validity",
+            json!({"importance": 7.0, "valid_until": "2099-01-01T00:00:00Z"}),
+        ),
+        (
+            "bad type + validity",
+            json!({"memory_type": "nope", "valid_until": "2099-01-01T00:00:00Z"}),
+        ),
+        ("bad interval", json!({"valid_from": "soon"})),
+        ("nothing", json!({})),
+    ];
+    for (name, fields) in cases {
+        let http = App::new();
+        let (_, ok) = http.call(Method::Post, "/remember", Some(json!({"content": "probe"})));
+        let id = ok["id"].as_str().unwrap().to_string();
+        let mut body = fields.clone();
+        body["id"] = json!(id);
+        let (status, _) = http.call(Method::Put, "/memory", Some(body));
+
+        let mcp_store = Uteke::open_with_backend(":memory:", None).unwrap();
+        let mid = mcp_store.remember("probe", &[], None, None).unwrap();
+        let mut args = fields.clone();
+        args["id"] = json!(mid);
+        let raw = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "uteke_update", "arguments": args}})
+        .to_string();
+        let out: Value =
+            serde_json::from_str(&uteke_mcp::handle_jsonrpc(&mcp_store, &raw).unwrap()).unwrap();
+        let mcp_ok = out["result"]["isError"] != json!(true) && out.get("error").is_none();
+
+        assert_eq!(status == 200, mcp_ok, "{name}: http {status}, mcp {out}");
+        let h = http.uteke.lock().unwrap().get_by_id(&id).unwrap().unwrap();
+        let m = mcp_store.get_by_id(&mid).unwrap().unwrap();
+        assert_eq!(h.importance, m.importance, "{name}");
+        assert_eq!(h.valid_until, m.valid_until, "{name}");
+        assert_eq!(h.valid_from.is_some(), m.valid_from.is_some(), "{name}");
+    }
+}
