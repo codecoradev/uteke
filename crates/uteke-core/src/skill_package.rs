@@ -1220,4 +1220,23 @@ mod tests {
         assert!(codes(MAX_DESCRIPTION_CHARS + 1).contains(&"description-too-long".to_string()));
         assert!(!codes(1).contains(&"description-too-long".to_string()));
     }
+
+    #[test]
+    fn compatibility_may_be_exactly_five_hundred_characters() {
+        let md = |n: usize| {
+            format!(
+                "---\nname: demo\ndescription: Does a demo.\ncompatibility: {}\n---\n# Demo\n\nSteps.\n",
+                "c".repeat(n)
+            )
+        };
+        let long = |n: usize| -> bool {
+            lint_skill("demo", &md(n))
+                .1
+                .iter()
+                .any(|i| i.code == "compatibility-too-long")
+        };
+        assert!(!long(1));
+        assert!(!long(500));
+        assert!(long(501));
+    }
 }
