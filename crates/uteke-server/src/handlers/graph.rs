@@ -17,10 +17,7 @@ pub(super) fn get_graph(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         .unwrap_or(uteke_core::graph_view::GRAPH_VIEW_DEFAULT_LIMIT);
     match uteke.graph_view(ns.as_deref(), node_id.as_deref(), limit) {
         Ok(data) => ctx.ok_response_for(req, &data),
-        Err(e) => {
-            error!("Graph data error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -68,8 +65,7 @@ pub(super) fn post_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         );
                     }
                     Err(e) => {
-                        error!("Graph resolve error: {e}");
-                        return ctx.error_response_for(req, 500, "Internal server error");
+                        return ctx.core_error(req, &e);
                     }
                 }
             }
@@ -91,8 +87,7 @@ pub(super) fn post_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let (src_node, tgt_node) = match (ensure(&req_data.source), ensure(&req_data.target)) {
                 (Ok(s), Ok(t)) => (s, t),
                 (Err(e), _) | (_, Err(e)) => {
-                    error!("Graph ensure_node error: {e}");
-                    return ctx.error_response_for(req, 500, "Internal server error");
+                    return ctx.core_error(req, &e);
                 }
             };
 
@@ -105,10 +100,7 @@ pub(super) fn post_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "target_node": tgt_node,
                     }),
                 ),
-                Err(e) => {
-                    error!("Graph add_edge error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -145,8 +137,7 @@ pub(super) fn delete_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     );
                 }
                 (Err(e), _) | (_, Err(e)) => {
-                    error!("Graph node resolve error: {e}");
-                    return ctx.error_response_for(req, 500, "Internal server error");
+                    return ctx.core_error(req, &e);
                 }
             };
             match gs.remove_edge(&src_node, &tgt_node) {
@@ -154,10 +145,7 @@ pub(super) fn delete_graph_edge(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(false) => {
                     ctx.error_response_for(req, 404, format!("Edge not found: {src} -> {tgt}"))
                 }
-                Err(e) => {
-                    error!("Graph remove_edge error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         _ => ctx.error_response_for(
@@ -181,10 +169,7 @@ pub(super) fn get_provenance(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match uteke.provenance(&id) {
         Ok(Some(report)) => ctx.ok_response_for(req, &report),
         Ok(None) => ctx.error_response_for(req, 404, format!("Memory not found: {id}")),
-        Err(e) => {
-            error!("Provenance error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -201,10 +186,7 @@ pub(super) fn get_contradictions(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         .min(MAX_LIST_LIMIT);
     match uteke.contradiction_resolutions(ns.as_deref(), limit) {
         Ok(resolutions) => ctx.ok_response_for(req, &resolutions),
-        Err(e) => {
-            error!("Contradiction resolutions error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -232,10 +214,7 @@ pub(super) fn post_contradictions_undo(c: &mut Call) -> Response<Cursor<Vec<u8>>
                 404,
                 format!("No supersession found for memory: {}", req_data.id),
             ),
-            Err(e) => {
-                error!("Contradiction undo error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -256,10 +235,7 @@ pub(super) fn get_timeline(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         .unwrap_or(50);
     match uteke.timeline(&id, limit) {
         Ok(events) => ctx.ok_response_for(req, &events),
-        Err(e) => {
-            error!("Timeline error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -275,9 +251,6 @@ pub(super) fn get_edges(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     };
     match uteke.edges_for(&id) {
         Ok(edges) => ctx.ok_response_for(req, &edges),
-        Err(e) => {
-            error!("Edges error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }

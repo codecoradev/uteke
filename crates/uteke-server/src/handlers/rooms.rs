@@ -16,10 +16,7 @@ pub(super) fn post_room_summary(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             Ok(None) => {
                 ctx.error_response_for(req, 404, format!("Room not found: {}", req_data.room_id))
             }
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -39,10 +36,7 @@ pub(super) fn post_room_summary_document(c: &mut Call) -> Response<Cursor<Vec<u8
             Ok(None) => {
                 ctx.error_response_for(req, 404, format!("Room not found: {}", req_data.room_id))
             }
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -87,8 +81,7 @@ pub(super) fn post_room_consolidate(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 ) {
                     Ok(exec) => serde_json::to_value(&exec).unwrap_or_default(),
                     Err(e) => {
-                        error!("Internal error: {e}");
-                        return ctx.error_response_for(req, 500, "Internal server error");
+                        return ctx.core_error(req, &e);
                     }
                 }
             } else {
@@ -102,8 +95,7 @@ pub(super) fn post_room_consolidate(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "plan": dry.plan,
                     }),
                     Err(e) => {
-                        error!("Internal error: {e}");
-                        return ctx.error_response_for(req, 500, "Internal server error");
+                        return ctx.core_error(req, &e);
                     }
                 }
             };
@@ -128,10 +120,7 @@ pub(super) fn post_room_document(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             Ok(None) => {
                 ctx.error_response_for(req, 404, format!("Room not found: {}", req_data.room_id))
             }
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -162,10 +151,7 @@ pub(super) fn get_room_memories(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let namespace = query_str.and_then(|q| parse_query_param(q, "namespace"));
     match uteke.recall_room_scoped(&room_id, author.as_deref(), namespace.as_deref(), limit) {
         Ok(memories) => ctx.ok_response_for(req, &memories),
-        Err(e) => {
-            error!("Internal error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -211,10 +197,7 @@ pub(super) fn post_room_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 };
                 match recalled {
                     Ok(memories) => ctx.ok_response_for(req, &memories),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 }
             } else {
                 // Semantic recall with query
@@ -244,10 +227,7 @@ pub(super) fn post_room_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 };
                 match recalled {
                     Ok(results) => ctx.ok_response_for(req, &results),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 }
             }
         }
@@ -288,11 +268,7 @@ pub(super) fn post_room_create(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     }
                     ctx.ok_response_for(req, &body)
                 }
-                Err(e @ uteke_core::Error::InvalidRoomId { .. }) => ctx.core_error(req, &e),
-                Err(e) => {
-                    let msg = format!("Failed to create room: {e}");
-                    ctx.error_response_for(req, 400, &msg)
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -513,10 +489,7 @@ pub(super) fn get_room_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let ns_param = parse_query_namespace(path);
     match uteke.list_rooms(ns_param.as_deref()) {
         Ok(rooms) => ctx.ok_response_for(req, &rooms),
-        Err(e) => {
-            error!("Internal error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -534,10 +507,7 @@ pub(super) fn post_room_stats(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             Ok(None) => {
                 ctx.error_response_for(req, 404, format!("Room not found: {}", req_data.room_id))
             }
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -565,11 +535,7 @@ pub(super) fn post_room_search(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 ns(&req_data.namespace),
             ) {
                 Ok(hits) => ctx.ok_response_for(req, &hits),
-                Err(uteke_core::Error::Validation(msg)) => ctx.error_response_for(req, 400, msg),
-                Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error_bare(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -592,8 +558,7 @@ pub(super) fn post_room_document_list(c: &mut Call) -> Response<Cursor<Vec<u8>>>
                 &serde_json::json!({ "room_id": uteke.canonical_room_id(&req_data.room_id), "doc_slugs": slugs }),
             ),
             Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
+                ctx.core_error(req, &e)
             }
         },
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -613,15 +578,7 @@ pub(super) fn put_room_document_add(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match read_body::<RoomDocAddReq>(req.as_reader()) {
         Ok(req_data) => match uteke.room_add_document(&req_data.room_id, &req_data.doc_slug) {
             Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "linked", "room_id": uteke.canonical_room_id(&req_data.room_id), "doc_slug": req_data.doc_slug })),
-            Err(e) => match e {
-                uteke_core::Error::Validation(_) => {
-                    ctx.error_response_for(req, 400, e.to_string())
-                }
-                _ => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
-            },
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -641,8 +598,7 @@ pub(super) fn delete_room_document_remove(c: &mut Call) -> Response<Cursor<Vec<u
         Ok(req_data) => match uteke.room_remove_document(&req_data.room_id, &req_data.doc_slug) {
             Ok(()) => ctx.ok_response_for(req, &serde_json::json!({ "status": "unlinked", "room_id": uteke.canonical_room_id(&req_data.room_id), "doc_slug": req_data.doc_slug })),
             Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
+                ctx.core_error(req, &e)
             }
         },
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -664,10 +620,7 @@ pub(super) fn post_doc_room_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 req,
                 &serde_json::json!({ "doc_slug": req_data.doc_slug, "room_ids": room_ids }),
             ),
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -713,8 +666,7 @@ pub(super) fn delete_room_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             ctx.error_response_for(req, 404, e.to_string())
         }
         Err(e) => {
-            error!("Internal error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
+            ctx.core_error(req, &e)
         }
     }
 }

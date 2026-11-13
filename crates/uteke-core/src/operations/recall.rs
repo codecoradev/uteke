@@ -381,17 +381,13 @@ impl crate::Uteke {
     /// Shared by the cache-miss and cache-hit paths of `recall_hybrid` so
     /// both produce identical scores for the same query (#1037).
     fn apply_salience_recency_boosts(&self, results: &mut Vec<SearchResult>, limit: usize) {
-        if self.salience_recency_config.is_noop() {
+        let config = self.salience_recency_in_force();
+        if config.is_noop() {
             return;
         }
         let now = chrono::Utc::now();
         for sr in results.iter_mut() {
-            sr.score = crate::salience_recency::apply_boosts(
-                sr.score,
-                &sr.memory,
-                now,
-                self.salience_recency_config,
-            );
+            sr.score = crate::salience_recency::apply_boosts(sr.score, &sr.memory, now, config);
         }
         results.sort_by(|a, b| {
             b.score

@@ -14,6 +14,18 @@
   from the same type; `skill_remote` and `doc_similarity_query` take none. `POST /doc/search` (LAB)
   now takes a slot in `hybrid` and `semantic` mode and answers 429 when two embedding requests run
   (`fts` never does). The CORE recall routes get no new 429.
+
+- **One error-class-to-wire mapping per transport (#1752)** - `Error::class()` is now the only place
+  that classifies a core error (a new `ErrorClass::Embedding` joins the others), and each transport
+  has one function from class to wire shape: `http_wire` (HTTP status and body, with the existing
+  `secret_detected`, `rejected_value` and `invalid_room_id` bodies), `core_failure` (MCP) and
+  `cli_failure` (CLI, exit status 1 for every class as before). Every handler and tool uses it. The
+  mapping table is in `docs/architecture.md`. Observable changes: a failed MCP tool call is now a tool
+  result with `isError: true` instead of a JSON-RPC `-32603` error (bad arguments, a missing target,
+  an internal failure), its text for a client error no longer starts with `Failed: `; `POST /recall`
+  and the other routes that mapped every non-validation failure to 500 now answer by class (404, 429,
+  409, 400 for the rich classes); `POST /room/create` no longer answers a 400 `Failed to create
+  room: ...` for an internal failure (500). No CORE contract change.
 - **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
   three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
   drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
@@ -146,6 +158,22 @@
   changes.
 
 ### Changed
+
+- **`uteke recall` runs through the shared recall entry point (#1750)** - the CLI no longer has
+  its own copy of the recall decision tree: it builds a `RecallRequest` and calls
+  `Uteke::run_recall`, as `POST /recall` and the MCP tool do, so a fix to the explain guards, the
+  score floor, `strict`, `min_trust` or the path choice lands once. The per-request
+  `--salience` / `--recency` weights are part of the request and scoped to that recall (no more
+  `set_salience_recency_config` / `reset_salience_recency_config` on five exits); `--related`,
+  `--depth` and `--where` are request fields too (not on the HTTP wire, no CORE change). Through a
+  server, `--strategy`, `--explain`, `--context`, `--content-format`, `--pack` and `--type` are now
+  honoured (before, `--strategy`/`--explain`/`--context`/`--content-format` silently used the local
+  store, and `--pack` and `--type` failed to parse the answer); only `--salience`, `--recency`,
+  `--related`, `--depth` and `--where`, which have no field in `POST /recall`, still use the local
+  store. `--type memory|doc` now applies `--entity`/`--category` and `--at` instead of ignoring
+  them; the explain refusals use core's wording ("explain cannot be combined with at/before/after");
+  `--explain --type memory` is refused (memory recall is the explain default). `to_http_body` now
+  sends `strategy`, `explain`, `after` and `before`. See the pull request for every difference.
 
 - **One core execution for memory updates (#1751)** - `uteke update`, `PUT /memory` and
   `uteke_update` now call `Uteke::run_update(&UpdateRequest)`, which checks the caller's validity,

@@ -32,8 +32,7 @@ pub(super) fn post_doc_create(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     {
                         ctx.error_response_for(req, 400, e.to_string())
                     } else {
-                        error!("doc create error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
+                        ctx.core_error(req, &e)
                     }
                 }
             }
@@ -53,10 +52,7 @@ pub(super) fn post_doc_get(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 Ok(None) => {
                     ctx.error_response_for(req, 404, format!("document not found: {id_or_slug}"))
                 }
-                Err(e) => {
-                    error!("doc get error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             },
             Err(e) => ctx.error_response_for(req, 400, e),
         },
@@ -82,10 +78,7 @@ pub(super) fn post_doc_update(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         404,
                         format!("document not found: {id_or_slug}"),
                     ),
-                    Err(e) => {
-                        error!("doc update error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -110,10 +103,7 @@ pub(super) fn post_doc_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             };
             match result {
                 Ok(docs) => ctx.ok_response_for(req, &docs),
-                Err(e) => {
-                    error!("doc list error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -127,18 +117,11 @@ pub(super) fn post_doc_search(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match read_body::<DocSearchRequest>(req.as_reader()) {
         Ok(req_data) => match uteke.doc_search(&req_data.query, req_data.limit, &req_data.mode) {
             Ok(results) => ctx.ok_response_for(req, &results),
-            Err(e) => {
-                if e.to_string().contains("embed") {
-                    ctx.error_response_for(
-                        req,
-                        503,
-                        "embedding model not available for semantic search",
-                    )
-                } else {
-                    error!("doc search error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
-            }
+            Err(e) => ctx.core_error_embedding_503(
+                req,
+                &e,
+                "embedding model not available for semantic search",
+            ),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -167,19 +150,11 @@ pub(super) fn post_doc_similar(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     );
     match result {
         Ok(answer) => ctx.ok_response_for(req, &answer),
-        Err(e) => match e.class() {
-            uteke_core::ErrorClass::NotFound => ctx.error_response_for(req, 404, e.to_string()),
-            uteke_core::ErrorClass::BadRequest => ctx.error_response_for(req, 400, e.to_string()),
-            _ if matches!(e, uteke_core::Error::Embedding { .. }) => ctx.error_response_for(
-                req,
-                503,
-                "embedding model not available for similarity search",
-            ),
-            _ => {
-                error!("doc similar error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
-        },
+        Err(e) => ctx.core_error_embedding_503(
+            req,
+            &e,
+            "embedding model not available for similarity search",
+        ),
     }
 }
 
@@ -194,13 +169,7 @@ pub(super) fn post_doc_move(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 let new_sort_order = req_data.new_sort_order;
                 match uteke.doc_move(id_or_slug, new_parent, new_sort_order) {
                     Ok(moved) => ctx.ok_response_for(req, &serde_json::json!({"moved": moved})),
-                    Err(e) if e.class() == uteke_core::ErrorClass::NotFound => {
-                        ctx.error_response_for(req, 404, e.to_string())
-                    }
-                    Err(e) => {
-                        error!("doc move error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 }
             }
             Err(e) => ctx.error_response_for(req, 400, e),
@@ -236,10 +205,7 @@ pub(super) fn delete_doc_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             req,
             &serde_json::json!({"deleted": deleted, "subtree_size": subtree}),
         ),
-        Err(e) => {
-            error!("doc delete error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -261,10 +227,7 @@ pub(super) fn post_doc_mem_refs(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     "memory_ids": memory_ids,
                 }),
             ),
-            Err(e) => {
-                error!("doc/mem-refs error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
