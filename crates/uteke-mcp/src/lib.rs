@@ -1608,6 +1608,7 @@ fn exec_recall(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
         min_score: Some(recall.min_score),
         min_score_strict: Some(recall.min_score_strict),
         default_strategy: Some(recall.default_strategy.as_str()),
+        ..Default::default()
     };
     // The same decision tree as `POST /recall` (#1439): a guard failure or an
     // unknown strategy/type is the bare message; anything else is `Failed: ...`.
