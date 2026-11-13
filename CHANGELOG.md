@@ -2,43 +2,27 @@
 
 ## [Unreleased]
 
-### Changed
+## [0.24.0] - 2026-11-13
 
-- **The core answers "does this request embed?", one embedding gate (#1753)** - the router no longer
-  re-decides from the raw JSON which routes embed. `SkillRemoteArgs::embed_need`,
-  `DocSimilarQuery::embed_need` and `EmbedNeed::for_search_mode` give the answer from the rules that
-  decide the request; a transport asks once and takes its slot with `EmbedGate::admit` (an
-  oversized draft is a 400 before the slot, a full gate a 429, `busy: 2 embedding requests are already
-  running; retry in a moment`). There is one gate per `Uteke` (`Uteke::embed_gate`): `uteke-serve`
-  hands a clone to its router (slot taken before the store lock, as before) and MCP takes its slots
-  from the same type; `skill_remote` and `doc_similarity_query` take none. `POST /doc/search` (LAB)
-  now takes a slot in `hybrid` and `semantic` mode and answers 429 when two embedding requests run
-  (`fts` never does). The CORE recall routes get no new 429.
+A personal skill library, similar documents, room aliases and the `category:title` room convention, rooms on recall hits, room search, a read-only skill and document similarity surface for tole, the secret detector as its own crate, and a round of refactors that put the CLI, `uteke-serve` and `uteke-mcp` on one core path. Two schema steps (v26 `room_aliases`, v27 the skill tables), both forward-only: an older binary ignores the new tables.
 
-- **One error-class-to-wire mapping per transport (#1752)** - `Error::class()` is now the only place
-  that classifies a core error (a new `ErrorClass::Embedding` joins the others), and each transport
-  has one function from class to wire shape: `http_wire` (HTTP status and body, with the existing
-  `secret_detected`, `rejected_value` and `invalid_room_id` bodies), `core_failure` (MCP) and
-  `cli_failure` (CLI, exit status 1 for every class as before). Every handler and tool uses it. The
-  mapping table is in `docs/architecture.md`. Observable changes: a failed MCP tool call is now a tool
-  result with `isError: true` instead of a JSON-RPC `-32603` error (bad arguments, a missing target,
-  an internal failure), its text for a client error no longer starts with `Failed: `; `POST /recall`
-  and the other routes that mapped every non-validation failure to 500 now answer by class (404, 429,
-  409, 400 for the rich classes); `POST /room/create` no longer answers a 400 `Failed to create
-  room: ...` for an internal failure (500). No CORE contract change.
-- **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
-  three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
-  drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
-  `open()`): it reads the engine sections, `[embedding]`, `[vector]` and `[privacy]` from the layered
-  files, applies `UTEKE_RECALL_*`, `UTEKE_GRAPH_*`, `UTEKE_EMBED_FALLBACK_*`,
-  `UTEKE_EMBEDDING_*` and `UTEKE_PRIVACY_MODE`, opens the store and applies the settings, then the
-  privacy filter. No config key, precedence or trust rule changes. `uteke-serve` now hands the
-  engine-level similarity floor to the store like the CLI and MCP do (it was the built-in default; the
-  value was not used yet) and takes the recall defaults of `POST /recall` from the opened store, the
-  source MCP reads.
+**Upgrade notes**
+
+- A failed MCP tool call is now a tool result with `isError: true` instead of a JSON-RPC `-32603` error, and the text of a client error no longer starts with `Failed: `. HTTP routes that answered every non-validation failure with 500 now answer by error class (404, 429, 409, 400), `POST /recall` included. See "Changed".
+- Renaming a room keeps the old id as an alias; a new room id outside `category:title` is accepted with a `warnings` entry. `[rooms] require_category_title` stays off by default.
+- Skill files are no longer readable or editable as documents (`doc get`, `doc update`).
+- Remote requests that embed a client string are capped at 32768 characters and at most 2 run at once; another is refused with HTTP 429 (`busy`). `POST /doc/search` in `hybrid` or `semantic` mode now takes a slot.
+- The release workflow publishes a new crate first: `uteke-privacy`.
+- Contract notes for uteke-cloud: #523 and #525 (`rooms` on hits, CORE), #526 (room alias), #527 (`category:title`), #528 (`skip_deprecated_copies`).
 
 ### Added
 
+- **Catalog-grade Hermes plugin and a portable Agent Plugin (#1727)** - the native Hermes hook
+  plugin (key `uteke`, 2.1.0) reads the token only through the Hermes secret scope and per recall,
+  passes an allow-listed child environment, has no update check and marks recalled text as data.
+  `integrations/agent-plugin` is a portable Agent Plugin (`uteke-mcp`: a skill and a stdio server)
+  with a static validator test, plus a draft MCP catalog manifest for `https://uteke.app/mcp` and
+  draft catalog entries. The READMEs offer Uteke Cloud before the local options.
 - **Personal skill library, read-only remote surfaces (#1731, LAB, stage 2)** - `POST /skill/search`,
   `/skill/list`, `/skill/show` and `/skill/similar` and the MCP tools `uteke_skill_search`,
   `uteke_skill_list`, `uteke_skill_show` and `uteke_skill_similar` (in the read-only set, results
@@ -158,6 +142,39 @@
   changes.
 
 ### Changed
+
+- **The core answers "does this request embed?", one embedding gate (#1753)** - the router no longer
+  re-decides from the raw JSON which routes embed. `SkillRemoteArgs::embed_need`,
+  `DocSimilarQuery::embed_need` and `EmbedNeed::for_search_mode` give the answer from the rules that
+  decide the request; a transport asks once and takes its slot with `EmbedGate::admit` (an
+  oversized draft is a 400 before the slot, a full gate a 429, `busy: 2 embedding requests are already
+  running; retry in a moment`). There is one gate per `Uteke` (`Uteke::embed_gate`): `uteke-serve`
+  hands a clone to its router (slot taken before the store lock, as before) and MCP takes its slots
+  from the same type; `skill_remote` and `doc_similarity_query` take none. `POST /doc/search` (LAB)
+  now takes a slot in `hybrid` and `semantic` mode and answers 429 when two embedding requests run
+  (`fts` never does). The CORE recall routes get no new 429.
+
+- **One error-class-to-wire mapping per transport (#1752)** - `Error::class()` is now the only place
+  that classifies a core error (a new `ErrorClass::Embedding` joins the others), and each transport
+  has one function from class to wire shape: `http_wire` (HTTP status and body, with the existing
+  `secret_detected`, `rejected_value` and `invalid_room_id` bodies), `core_failure` (MCP) and
+  `cli_failure` (CLI, exit status 1 for every class as before). Every handler and tool uses it. The
+  mapping table is in `docs/architecture.md`. Observable changes: a failed MCP tool call is now a tool
+  result with `isError: true` instead of a JSON-RPC `-32603` error (bad arguments, a missing target,
+  an internal failure), its text for a client error no longer starts with `Failed: `; `POST /recall`
+  and the other routes that mapped every non-validation failure to 500 now answer by class (404, 429,
+  409, 400 for the rich classes); `POST /room/create` no longer answers a 400 `Failed to create
+  room: ...` for an internal failure (500). No CORE contract change.
+- **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
+  three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
+  drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
+  `open()`): it reads the engine sections, `[embedding]`, `[vector]` and `[privacy]` from the layered
+  files, applies `UTEKE_RECALL_*`, `UTEKE_GRAPH_*`, `UTEKE_EMBED_FALLBACK_*`,
+  `UTEKE_EMBEDDING_*` and `UTEKE_PRIVACY_MODE`, opens the store and applies the settings, then the
+  privacy filter. No config key, precedence or trust rule changes. `uteke-serve` now hands the
+  engine-level similarity floor to the store like the CLI and MCP do (it was the built-in default; the
+  value was not used yet) and takes the recall defaults of `POST /recall` from the opened store, the
+  source MCP reads.
 
 - **`uteke recall` runs through the shared recall entry point (#1750)** - the CLI no longer has
   its own copy of the recall decision tree: it builds a `RecallRequest` and calls
