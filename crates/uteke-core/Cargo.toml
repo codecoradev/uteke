@@ -37,7 +37,7 @@ usearch = { version = "2", optional = true }
 vecq-core = { version = "0.3", optional = true }
 uuid = { version = "1", features = ["v4", "v7"] }
 # Secret detector, shared with tole (#1732). The path is dropped on publish, the version stays.
-uteke-privacy = { path = "../uteke-privacy", version = "0.23.0", features = ["serde"] }
+uteke-privacy = { path = "../uteke-privacy", version = "0.24.0", features = ["serde"] }
 # Allowlist regexes in the privacy config (#1464). Already in the graph via tokenizers.
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }

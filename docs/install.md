@@ -21,7 +21,7 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 Pin a specific version:
 
 ```bash
-UTEKE_VERSION=v0.23.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
+UTEKE_VERSION=v0.24.0 curl -fsSL https://raw.githubusercontent.com/codecoradev/uteke/main/install.sh | sh
 ```
 
 ## Install via Homebrew (macOS Apple Silicon & Linux)
@@ -53,7 +53,7 @@ Download from [GitHub Releases](https://github.com/codecoradev/uteke/releases).
 Asset names carry the version, so set it once (see the releases page for the latest):
 
 ```bash
-V=v0.23.0
+V=v0.24.0
 BASE=https://github.com/codecoradev/uteke/releases/download/$V
 
 # Linux (x86_64) — tarball also contains libonnxruntime.so* (required for embeddings)
@@ -119,7 +119,7 @@ uteke --version
 
 ```bash
 $ uteke --version
-uteke 0.23.0
+uteke 0.24.0
 
 $ uteke doctor
 ✓ Database     OK

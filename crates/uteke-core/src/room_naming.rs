@@ -15,7 +15,7 @@
 //! write would create) is refused with [`crate::Error::InvalidRoomId`] instead
 //! of warned. Existing rooms, aliases and reads are never refused, and restoring
 //! a backup (`import`) keeps its ids. The owner flips the default in a release
-//! once the migration is verified on OSS and Cloud.
+//! once the old rooms are migrated. OSS goes first; Uteke Cloud follows.
 
 /// `[rooms]` in `uteke.toml` (#1715).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]

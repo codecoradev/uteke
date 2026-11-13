@@ -208,7 +208,7 @@ Docker automatically pulls the correct architecture.
 | Tag | Description |
 |-----|-------------|
 | `latest` | Latest stable release |
-| `0.23.0` | Specific version (no `v` prefix) |
+| `0.24.0` | Specific version (no `v` prefix) |
 | `0.22` | Minor version (latest patch) |
 
 ## CLI in Docker
@@ -230,7 +230,7 @@ docker run --rm -v uteke-data:/data \
 
 ```bash
 curl http://localhost:8767/health
-# → {"status":"ok","version":"0.23.0","memories":0,"namespaces":0,"api_versions":["v1","v2"],"api_latest":"v2"}
+# → {"status":"ok","version":"0.24.0","memories":0,"namespaces":0,"api_versions":["v1","v2"],"api_latest":"v2"}
 ```
 
 With an auth token configured, a request without the token gets only
