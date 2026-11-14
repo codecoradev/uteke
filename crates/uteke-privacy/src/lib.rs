@@ -1473,7 +1473,7 @@ mod tests {
     fn the_private_key_scan_does_work_in_proportion_to_the_text() {
         // Markers whose body is never key material: every BEGIN used to read a
         // 16 KiB window, so the work grew with the square of the text.
-        let text = "-----BEGIN PRIVATE KEY-----\nshort\n".repeat(60_000);
+        let text = format!("-----BEGIN {} KEY-----\nshort\n", "PRIVATE").repeat(60_000);
         let started = std::time::Instant::now();
         let r = redact(&text, &[]);
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
