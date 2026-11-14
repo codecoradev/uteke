@@ -256,6 +256,13 @@ A personal skill library, similar documents, room aliases and the `category:titl
   a row marked `deprecated` in the file, and anything blocked by `forget --reason`
   (`rejected_values`, #1627, unchanged).
 
+### Security
+
+- **Dependencies bumped past three open advisories (#1770)** - `quinn-udp` 0.5.16
+  (RUSTSEC-2026-0538, a receive loop could spin after a truncated datagram), `rustix` 1.1.6
+  (RUSTSEC-2026-0486) and `tokio` 1.54.1 (RUSTSEC-2026-0386). `Cargo.lock` only; the scheduled
+  `cargo audit` on develop failed on the first one. The yanked `chacha20 0.10.1` stays a warning.
+
 ## [0.23.0] - 2026-11-05
 
 Capture, tombstones, honest time travel, a read-only viewer, agent hooks and a Cloud-export import path. Three schema steps (v23 `rejected_values`, v24 `observations`, v25 `idx_memories_source`), all forward-only: an older binary ignores the new tables and the index.
