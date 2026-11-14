@@ -262,6 +262,11 @@ A personal skill library, similar documents, room aliases and the `category:titl
   (RUSTSEC-2026-0538, a receive loop could spin after a truncated datagram), `rustix` 1.1.6
   (RUSTSEC-2026-0486) and `tokio` 1.54.1 (RUSTSEC-2026-0386). `Cargo.lock` only; the scheduled
   `cargo audit` on develop failed on the first one. The yanked `chacha20 0.10.1` stays a warning.
+- **Secret detector fixes (#1772, #1773, #1774)** - the private-key scan reads a bounded total in
+  proportion to the text (a text made of many BEGIN markers no longer takes seconds; past the cap
+  the rest is masked), a single-token value assigned to a password name is redacted even when it
+  holds a non-ASCII character (non-ASCII prose is still left alone), and `sk-ant-<kind><nn>-` keys
+  are detected whatever their `-` and `_` separators. All three predate v0.23.0.
 
 ## [0.23.0] - 2026-11-05
 

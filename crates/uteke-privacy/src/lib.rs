@@ -172,6 +172,14 @@ const RULES: &[Rule] = &[
     },
     Rule {
         kind: "api-key",
+        // An Anthropic key has a fixed `sk-ant-<kind><nn>-` prefix and a long
+        // random base64url body whose `-` and `_` can fall anywhere, so the
+        // generic rule below (one 20+ character part) misses some of them.
+        pattern: r"\b(sk-ant-(?:api|admin|oat|sid)[0-9]{2}-)[A-Za-z0-9_-]{40,}",
+        mask: |c| Some(format!("{}[REDACTED:api-key]", &c[1])),
+    },
+    Rule {
+        kind: "api-key",
         pattern: r"\b(sk-)[A-Za-z0-9_-]{20,}\b",
         // A real key is one long random run (`sk-proj-<24+ characters>`, a
         // 32+ hex body) with mixed case and a digit; a hyphenated name such as
@@ -674,8 +682,11 @@ fn is_benign_value(v: &str, segs: &[String], password: bool) -> bool {
         && v.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"+/".contains(&b))
         && char_classes(v) >= 3;
+    // Non-ASCII text is prose or a localized message, except a single token
+    // assigned to a password name: `password=Pässwörd123!x` is a password.
+    let prose = !v.is_ascii() && !(password && !v.contains(char::is_whitespace));
     v.contains("::")
-        || !v.is_ascii()
+        || prose
         || is_variable_reference(v)
         || is_placeholder(v)
         || is_uuid(v)
@@ -763,6 +774,10 @@ fn is_pem_line(line: &str) -> bool {
 const MAX_PEM_BYTES: usize = 16 * 1024;
 /// The most a block of key lines is followed to its end.
 const MAX_PEM_WIDENED_BYTES: usize = 1 << 20;
+/// The private-key scan may read this many bytes per byte of text, plus
+/// `PEM_WORK_BASE`, over all BEGIN markers of one call.
+const PEM_WORK_PER_BYTE: usize = 16;
+const PEM_WORK_BASE: usize = 4 << 20;
 /// How much of the text after `name=` is read first as the value (one that
 /// runs past it is read to its true end).
 const MAX_VALUE_BYTES: usize = 4096;
@@ -829,6 +844,14 @@ fn is_pem_body(body: &str) -> bool {
 fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usize) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
+    // Every BEGIN reads a window after it, so a text made of markers that never
+    // become a key would read `MAX_PEM_BYTES` per marker. The total read is
+    // capped in proportion to the text; past it the rest is masked (fail
+    // closed) rather than scanned.
+    let mut budget = text
+        .len()
+        .saturating_mul(PEM_WORK_PER_BYTE)
+        .saturating_add(PEM_WORK_BASE);
     for caps in private_key_begin().captures_iter(text) {
         let Some(begin) = caps.get(0) else {
             continue;
@@ -840,6 +863,20 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
         // A key is a few KiB; do not search the rest of a huge text per BEGIN.
         let full = &text[begin.end()..];
         let mut after = bounded(full, MAX_PEM_BYTES);
+        // What is read is the text up to the END line (the whole window when
+        // there is none), up to three times below (END lookup, key-line check,
+        // body check).
+        let cost = after
+            .find(&end_marker)
+            .map_or(after.len(), |rel| rel + end_marker.len())
+            .saturating_mul(3);
+        if cost > budget {
+            out.push_str(&text[last..begin.start()]);
+            out.push_str("[REDACTED:private-key]");
+            *count += 1;
+            return out;
+        }
+        budget -= cost;
         // A longer block (every line so far is key material) is read whole.
         if after.len() < full.len()
             && !after.contains(&end_marker)
@@ -849,6 +886,14 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
                 .is_some_and(|(whole, _)| whole.lines().all(is_pem_line))
         {
             after = bounded(full, MAX_PEM_WIDENED_BYTES);
+            let widened = after.len().saturating_mul(3);
+            if widened > budget {
+                out.push_str(&text[last..begin.start()]);
+                out.push_str("[REDACTED:private-key]");
+                *count += 1;
+                return out;
+            }
+            budget -= widened;
         }
         let end = match after.find(&end_marker) {
             Some(rel) if is_pem_body(&after[..rel]) => begin.end() + rel + end_marker.len(),
@@ -1422,5 +1467,73 @@ mod tests {
             err.to_string()
                 .starts_with("invalid privacy allowlist regex '(unclosed'")
         );
+    }
+
+    #[test]
+    fn the_private_key_scan_does_work_in_proportion_to_the_text() {
+        // Markers whose body is never key material: every BEGIN used to read a
+        // 16 KiB window, so the work grew with the square of the text.
+        let text = "-----BEGIN PRIVATE KEY-----\nshort\n".repeat(60_000);
+        let started = std::time::Instant::now();
+        let r = redact(&text, &[]);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        // Past the work cap the rest is masked, not scanned.
+        assert!(r.text.contains("[REDACTED:private-key]"));
+        assert!(r.text.len() < text.len());
+    }
+
+    #[test]
+    fn many_real_keys_stay_under_the_private_key_work_cap() {
+        let doc = format!("note\n{}\nmore text\n", pem()).repeat(400);
+        let r = redact(&doc, &[]);
+        assert_eq!(r.text.matches("[REDACTED:private-key]").count(), 400);
+        assert!(r.text.contains("more text"));
+        assert!(!r.text.contains("MIIEvQIBADANBgkqhkiG9w0BAQEFAASC"));
+    }
+
+    #[test]
+    fn a_password_with_a_non_ascii_character_is_redacted() {
+        for line in [
+            format!("password={}", "P\u{e4}ssw\u{f6}rd123!x"),
+            format!("DB_PASSWORD={}{}", "hunter2hunter2", "\u{20ac}"),
+        ] {
+            let r = redact(&line, &[]);
+            assert!(!r.is_clean(), "{line}");
+            assert!(r.text.contains("[REDACTED"), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_non_ascii_sentence_after_a_password_name_is_still_prose() {
+        let r = redact(
+            "password=\"Kata sandi salah, coba lagi \u{2014} segera\"",
+            &[],
+        );
+        assert!(r.is_clean(), "{r:?}");
+    }
+
+    #[test]
+    fn an_anthropic_key_is_detected_whatever_its_separators() {
+        // No `-`/`_` separated part reaches 20 characters.
+        let body = [
+            "Ab3dE5gH7jK9",
+            "_mN1pQ3rS5tU",
+            "-7vW9xY1zA3bC",
+            "_5dF7gH9jK1mN",
+            "-3pQ5rS7tU9vW",
+            "_1xY3zA5bC7dE",
+        ]
+        .concat();
+        let key = format!("{}{}", "sk-ant-api03-", body);
+        let r = redact(&format!("ANTHROPIC key is {key} ok"), &[]);
+        assert!(!r.is_clean());
+        assert!(!r.text.contains(&body));
+        assert!(r.text.contains("sk-ant-api03-[REDACTED:api-key]"));
+    }
+
+    #[test]
+    fn a_hyphenated_name_with_the_ant_word_is_not_a_key() {
+        let r = redact("pip install sk-ant-colony-optimization-toolkit-v2", &[]);
+        assert!(r.is_clean(), "{r:?}");
     }
 }
