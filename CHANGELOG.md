@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`POST /doc/search` and `uteke_doc_search` bound the query (#1777)** - a remote document search took a
+  query of any length (up to the 10 MB request limit) and embedded it under an embedding slot. The query
+  is now at most 2000 characters in every mode, the same bound as a remote skill search: a longer one is a
+  400 (an MCP tool error) before a slot is taken. `POST /doc/search` is LAB; the CLI is unchanged.
+
 ## [0.24.0] - 2026-11-13
 
 A personal skill library, similar documents, room aliases and the `category:title` room convention, rooms on recall hits, room search, a read-only skill and document similarity surface for tole, the secret detector as its own crate, and a round of refactors that put the CLI, `uteke-serve` and `uteke-mcp` on one core path. Two schema steps (v26 `room_aliases`, v27 the skill tables), both forward-only: an older binary ignores the new tables.

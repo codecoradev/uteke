@@ -154,6 +154,30 @@ fn search_limits_and_query_are_bounded() {
 }
 
 #[test]
+fn a_doc_search_query_is_bounded_in_every_mode() {
+    let app = App::new();
+    for mode in ["fts", "hybrid", "semantic"] {
+        assert_eq!(
+            app.refused(
+                "/doc/search",
+                json!({"query": "a".repeat(2001), "mode": mode})
+            ),
+            (
+                400,
+                "Validation error: query is longer than 2000 characters".to_string()
+            ),
+            "{mode}"
+        );
+    }
+    // At the bound the query is searched: fts answers a list, even an empty one.
+    let (status, body) = app.post(
+        "/doc/search",
+        json!({"query": "a".repeat(2000), "mode": "fts"}),
+    );
+    assert_eq!((status, body.is_array()), (200, true));
+}
+
+#[test]
 fn list_show_and_similar_answer_with_exact_values() {
     let app = App::new();
     let v = app.ok("/skill/list", json!({}));
