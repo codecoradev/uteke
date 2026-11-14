@@ -18,8 +18,8 @@ A check passes only if the response scoped to one namespace holds no `of <other>
 | Transport | Where | Surfaces |
 |---|---|---|
 | Core | `crates/uteke-core/src/isolation_tests.rs` | `recall` and `recall_hybrid` (all five strategies), tag filters, unified recall (`All`, `Memory`), `search`, `list`, tag counts, `export`, `count`, scoped room recall, room listing, `graph_data`, `graph_view` |
-| HTTP | `crates/uteke-server/src/handlers/isolation_tests.rs` | `/recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `/search`, `/list`, `/recent`, `/export`, `/graph`, `/room/memories`, `/room/recall`, `/orphans`, `/tags`, `/room/list`, `/stats`, `/doc/search`, `/doc/list` |
-| MCP | `crates/uteke-mcp/src/lib.rs`, `mod isolation_tests` | `uteke_recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `uteke_search`, `uteke_list`, `uteke_graph`, `uteke_room_recall`, `uteke_room_memories`, `uteke_tags_list`, `uteke_room_list`, `uteke_stats`, `uteke_contradictions` |
+| HTTP | `crates/uteke-server/src/handlers/isolation_tests.rs` | `/recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `/search`, `/list`, `/recent`, `/export`, `/graph`, `/room/memories`, `/room/recall`, `/orphans`, `/tags`, `/room/list`, `/stats`, `/doc/search`, `/doc/list`, `/doc/similar` (a draft text and a report, both scoped), `/skill/search`, `/skill/list`, `/skill/show`, `/skill/similar` (skills have no namespace: no memory of either scope appears) |
+| MCP | `crates/uteke-mcp/src/lib.rs`, `mod isolation_tests` | `uteke_recall` (five strategies × `memory`/`all`, `pack`, `explain`, tags), `uteke_search`, `uteke_list`, `uteke_graph`, `uteke_room_recall`, `uteke_room_memories`, `uteke_tags_list`, `uteke_room_list`, `uteke_stats`, `uteke_contradictions`, `uteke_doc_similar` (a draft text and a report, both scoped), `uteke_skill_search`, `uteke_skill_list`, `uteke_skill_show`, `uteke_skill_similar` (no namespace: no memory of either scope appears) |
 | CLI | `crates/uteke-cli/tests/scope_isolation.rs` | `search`, `list` (with a tag), `export`, `room recall`, `orphans`, `tags list`, `stats`, `room list`, `contradictions list` |
 
 `uteke recall` is not in the CLI suite: it needs the ONNX runtime, which CI does not have. The same code path is covered by the core, HTTP and MCP suites.
@@ -30,6 +30,7 @@ These read surfaces take no scope, and each is listed with its reason in the sui
 
 - **Fetch by ID** (`GET /memory`, `/provenance`, `/timeline`, `/edges`, `POST /memory/doc-refs`, `uteke_get`, `uteke_provenance`, `uteke_timeline`): IDs are global handles.
 - **By room or slug** (`/room/summary`, `/room/stats`, `/doc/get`, `uteke_room_stats`, ...): the room or the document is the scope; documents are global.
+- **Room search** (`/room/search`, `uteke_room_search`, #1704): takes a namespace, so it is scope-checked in the core and MCP suites (the rooms of the scope only, and only that scope's memories as matches).
 - **No records**: `/health`, `/guide`, `/routes`, `/store`, `/namespaces`.
 - **`SearchType::Document`**: the global document view; it returns documents only, never a memory, and `All` and `Memory` never return a document when scoped (pinned in the core suite).
 

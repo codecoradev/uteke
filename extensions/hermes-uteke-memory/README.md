@@ -49,23 +49,23 @@ The `uteke-memory` plugin is a lightweight Hermes plugin that provides
 | `plugin.yaml.tmpl` | Hermes plugin manifest |
 
 The `.tmpl` suffix is because `uteke init --agent hermes` strips it when
-installing to `~/.hermes/plugins/uteke-memory/`.
+installing to `~/.hermes/plugins/uteke/`.
 
 ## Install
 
 ```bash
 # Copy to Hermes plugins dir
-cp -r extensions/hermes-uteke-memory ~/.hermes/plugins/uteke-memory/
-cd ~/.hermes/plugins/uteke-memory/
+cp -r extensions/hermes-uteke-memory ~/.hermes/plugins/uteke/
+cd ~/.hermes/plugins/uteke/
 for f in *.tmpl; do mv "$f" "${f%.tmpl}"; done
 
 # Enable in config.yaml
-hermes config set plugins.enabled.0 uteke-memory
+hermes config set plugins.enabled.0 uteke
 
 # Or edit manually:
 # plugins:
 #   enabled:
-#     - uteke-memory
+#     - uteke
 ```
 
 ## Config
@@ -76,7 +76,7 @@ hermes config set plugins.enabled.0 uteke-memory
 | `UTEKE_HOME` | (inherit) | HOME dir for uteke store |
 | `UTEKE_NAMESPACE` | (agent profile) | Memory namespace |
 | `UTEKE_SERVER_URL` | (empty) | HTTP URL for uteke-serve |
-| `UTEKE_TOKEN` | (empty) | Bearer token for uteke-serve |
+| `UTEKE_TOKEN` | (empty) | Bearer token for uteke-serve; read through Hermes secret scope, never from `uteke.json` |
 | `UTEKE_RECALL_LIMIT` | `5` | Memories per turn |
 | `UTEKE_RECALL_MIN_SCORE` | `0` | Min score (`0` keeps every hit; default fusion scores top out near 0.04, #1593) |
 | `UTEKE_RECALL_TIMEOUT` | `15` | Max seconds per recall |

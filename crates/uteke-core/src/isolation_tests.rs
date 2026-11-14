@@ -295,3 +295,69 @@ fn graph_views_and_listings_of_namespaces_stay_in_scope() {
         }
     }
 }
+
+/// #1703: the rooms a hit reports are the rooms of that memory, so a scoped
+/// search or recall never shows the room of the other namespace.
+#[test]
+fn rooms_on_hits_stay_in_scope() {
+    let s = seed();
+    for scope in SCOPES {
+        let own_room = format!("room-{scope}");
+        let foreign_room = format!("room-{}", other(scope));
+        let mut hits = s.u.search(QUERY, 20, None, Some(scope)).unwrap();
+        let req = crate::RecallRequest::decode(crate::RecallInput {
+            query: QUERY.into(),
+            namespace: Some(scope.into()),
+            strategy: Some("fts5".into()),
+            ..Default::default()
+        })
+        .unwrap();
+        let crate::recall_exec::RecallOutput::Memories { results, .. } =
+            s.u.run_recall(&req, Default::default()).unwrap()
+        else {
+            panic!("memory-only recall expected")
+        };
+        hits.extend(results);
+        assert!(!hits.is_empty(), "search/recall scoped to {scope} has hits");
+        let mut roomed = 0;
+        for hit in &hits {
+            for room in &hit.rooms {
+                assert_ne!(room.room_id, foreign_room, "{scope} saw {foreign_room}");
+                assert_eq!(room.room_id, own_room);
+                roomed += 1;
+            }
+        }
+        assert!(roomed > 0, "the {scope} room memory reports its room");
+    }
+}
+
+/// #1704: room search scoped to a namespace never returns the other
+/// namespace's room, through either arm.
+#[test]
+fn room_search_stays_in_scope() {
+    let s = seed();
+    for scope in SCOPES {
+        let hits = s.u.search_rooms(QUERY, 20, Some(scope)).unwrap();
+        assert!(!hits.is_empty(), "room search scoped to {scope} has hits");
+        for hit in &hits {
+            assert_eq!(hit.room_id, format!("room-{scope}"));
+            assert!(
+                hit.matches.iter().all(|m| {
+                    s.u.get(&m.memory_id)
+                        .ok()
+                        .is_some_and(|mem| mem.namespace == scope)
+                }),
+                "a match shown for {scope} is another scope's memory"
+            );
+        }
+        // A title/id match for the other scope's room is not returned either.
+        let by_name =
+            s.u.search_rooms(&format!("room-{}", other(scope)), 20, Some(scope));
+        assert!(
+            by_name
+                .unwrap()
+                .iter()
+                .all(|h| h.room_id != format!("room-{}", other(scope)))
+        );
+    }
+}

@@ -6,6 +6,7 @@
 **Runs:** Modal x86_64, fan-out ×10 shards, fusion = zero-config default strategy, CPU-only,
 no LLM in the retrieval path. Wall clock: 23 min (fusion).
 **Raw artifacts (committed):** [`results/`](results/) — audit snippet at the bottom.
+**End-to-end QA (canonical):** 72.2% (1,112/1,540 answerable), sonnet-5-5 answerer and judge, 2026-11-09 — see [canonical run](#end-to-end-qa-canonical-run-2026-11-09-sonnet-5-5-answerer-and-judge). The 2026-11-08 haiku-judged run is kept as a cross-judge reference.
 
 ## Headline (fusion default, v0.17.0)
 
@@ -108,3 +109,140 @@ print("cov@5   :", sum(m["recall_all@5"] for m in s) / len(s))         # 0.776
 `recall_any@k` recomputes from `retrieved_session_ids` vs the dataset's
 `answer_session_ids` (0.840 @5). Same commands work for `vector-1536.jsonl` /
 `fts5-1536.jsonl`.
+
+## End-to-end QA accuracy (answer + judge)
+
+First end-to-end QA run (2026-11-08, tracked as #1691) — layers ON TOP of the
+retrieval benchmark above: adapter (full recall payload as context, session-date
+anchors) → answerer → judge. Retrieval metrics and QA accuracy are different
+claims and are reported separately.
+
+**Setup.** Binary built from develop `3bc72c1c` (v0.23.0 + the #1690
+import-tombstone fix — exercised by this harness's per-question forget+re-import
+cycle). Harness: external answer+judge runkit (agent-memory-benchmark) via the
+internal uteke provider patch series; artifacts stay out of the product repo per
+the #1230/#1235 governance. Answerer `claude-sonnet-5-5`, judge
+`claude-haiku-4-5`, Anthropic OpenAI-compat layer, strict JSON schema, temp 1
+(Sonnet 5.x rejects <1), max_tokens 4000. Local box, zero LLM in the retrieval
+path; wall ~1.5 h for the full run.
+
+**Result (as run) — 1,540/1,540 answerable QA: 80.4% (1,238 correct). Corrected headline: 74.5% (1,147/1,540) — see the correction below.**
+
+| Category | n | QA accuracy (as run) | corrected | retrieval any@5 (ref) |
+|---|---|---|---|---|
+| open-domain | 841 | 0.854 | 0.772 | 0.855 |
+| single-hop | 282 | 0.770 | 0.755 | 0.894 |
+| temporal | 321 | 0.748 | 0.704 | 0.816 |
+| multi-hop | 96 | 0.656 | 0.615 | 0.630 |
+
+Per-conversation range 73.8%–95.1% (best conv-30 95.1%, conv-26 92.8%) — no
+single-unit anomaly.
+
+**Reading (as run).** Only multi-hop QA lands above its retrieval any@5
+(0.656 vs 0.630); temporal sits below it (0.748 vs 0.816). Single-hop shows the
+largest QA-vs-retrieval gap (0.770 vs 0.894): most single-hop questions cite
+~2.7 gold sessions and the judge is strict about enumeration completeness. Not
+apples-to-apples with any single-conversation or different-provider runs (e.g.
+earlier GLM answerer experiments at 86.0–86.8%). After the correction below, no
+category reaches its retrieval any@5.
+
+**Adversarial abstention (446 no-evidence QA, excluded above).** Custom pass
+reusing the run's store: regex-classified refusals 211/446 (47.3%); judge audit
+of 75 sampled answers (seed 42) — 80% regex precision, and 44% of
+regex-"concrete" answers were also refusals — yielding a corrected estimate of
+**~61% proper abstention (~272/446)**. The remaining ~39% fabricated answers are
+the abstention-layer headroom (prompt v2 teaches qualified abstention but does
+not enforce it).
+
+> **Correction (2026-11-09): judge-credited abstentions on answerable questions.**
+> The as-run 80.4% credits answers that abstain. Examples, all `correct=true`:
+> conv-43_q54 (gold "2022", answer "The context does not say when, or whether,
+> John took a trip…"), conv-43_q104 (gold "sage"), conv-43_q125, conv-44_q103,
+> conv-44_q104. An abstention on an answerable question is wrong; the adversarial
+> analysis above counts abstention as right only for unanswerable questions, so
+> the two are now scored consistently.
+>
+> Method: [`scripts/reclassify_abstention.py`](scripts/reclassify_abstention.py)
+> nominates `correct=true` rows whose answer's opening 50 characters match an
+> abstention pattern ("does not say", "not mentioned", "cannot be determined",
+> "no information", "not specified", "context does not", …). Only the answer is
+> searched: `judge_reason` and later hedges ("the exact date isn't specified")
+> also appear on concrete correct answers. Deterministic, stdlib-only; the raw
+> receipts are untouched and the derived rows are in
+> `results/qa-e2e-2026-11-08-reclassified.jsonl` (`reclassified: true`).
+>
+> Each nominated row was then read in full and labeled by hand
+> ([`scripts/abstention_labels.json`](scripts/abstention_labels.json)): ABSTAIN =
+> no candidate answer offered (flipped to false), HEDGED-ANSWER = opens with doubt
+> but then offers a candidate or inference (judge credit kept, `hedged_answer: true`).
+>
+> **Corrected headline: 74.5% (1,147/1,540); 91 rows reclassified** (as-run 80.4%,
+> 1,238, kept above as disclosure). Corrected per type: open-domain 649/841 =
+> 77.2%, single-hop 213/282 = 75.5%, temporal 226/321 = 70.4%, multi-hop
+> 59/96 = 61.5%. Disclosure: 13 hedged-answer rows stay credited (a hedge that
+> offers a concrete candidate for the question asked keeps the credit; an
+> explicit refusal of the question asked is flipped). The regex is a lower bound: abstentions phrased outside the
+> pattern (or opening past 50 characters) stay credited.
+>
+> Also fixed in this section: multi-hop n is 96 (not 92) and the total is 1,540
+> (not 1,536; 1,536 is the retrieval basis above), and the "at-or-above retrieval"
+> claim held only for multi-hop.
+
+**Raw artifacts (committed):** `results/qa-e2e-2026-11-08.jsonl` (per-question
+receipts), `results/adversarial-results.json` (446 answers + classification),
+`results/adversarial-audit.json` (75 judge audits).
+
+Audit snippet:
+
+```python
+import json
+rows = [json.loads(l) for l in open("results/qa-e2e-2026-11-08.jsonl")]
+print(len(rows), sum(r["correct"] for r in rows) / len(rows))  # 1540 0.804
+```
+
+## End-to-end QA, canonical run (2026-11-09): sonnet-5-5 answerer and judge
+
+**Canonical e2e headline: 72.2% (1,112/1,540 answerable).** Same adapter and
+dataset as the first run above (full locomo10, 1,540 answerable QA), same
+answerer `claude-sonnet-5-5`, but the judge is also `claude-sonnet-5-5`
+(Anthropic OpenAI-compat layer, temp 1, max_tokens 4000). Binary from develop,
+fresh store. As-run = corrected: **0 rows reclassified.**
+
+| Category | n | correct | QA accuracy |
+|---|---|---|---|
+| open-domain | 841 | 634 | 75.4% |
+| temporal | 321 | 231 | 72.0% |
+| single-hop | 282 | 187 | 66.3% |
+| multi-hop | 96 | 60 | 62.5% |
+| **all** | **1,540** | **1,112** | **72.2%** |
+
+Per-conversation range 55.9% (conv-41) to 95.1% (conv-30). The conv-30 canary
+is identical to its full-run result (95.1%, 77/81), an internal consistency check.
+
+**Hedged rows.** 27 correct rows match the abstention pattern. Each was audited
+one by one: all are hedged-but-answering (the stated candidate matches the gold
+answer), so they keep the credit under the same convention as the haiku run's
+13 hedged rows. Nothing was flipped.
+
+**Raw artifacts (committed):** `results/qa-e2e-2026-11-09-sonnet55.jsonl`
+(1,540 per-question receipts).
+
+```python
+import json
+rows = [json.loads(l) for l in open("results/qa-e2e-2026-11-09-sonnet55.jsonl")]
+print(len(rows), sum(r["correct"] for r in rows))  # 1540 1112
+```
+
+### Cross-judge reference (same answerer, judge swapped)
+
+| Run | Judge | Headline |
+|---|---|---|
+| 2026-11-08 | claude-haiku-4-5 | 80.4% as-run; 74.5% corrected (91 abstentions flipped, 13 hedged) |
+| 2026-11-09 (canonical) | claude-sonnet-5-5 | 72.2% (as-run = corrected; 27 hedged, 0 flipped) |
+
+Both runs use the same answerer (`claude-sonnet-5-5`) and setup. Swapping only the
+judge shifts the as-run headline by 8.2 points (80.4% to 72.2%) on an identical
+setup. Abstention-pattern rows credited as correct fell from 104 to 27, largely because the sonnet judge does not credit the abstentions the haiku judge did.
+e2e QA numbers are judge-dependent and not comparable across judge setups, which
+is the evidence behind the policy in
+[`docs/benchmark-positioning.md`](../../docs/benchmark-positioning.md).

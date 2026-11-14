@@ -21,6 +21,9 @@ impl super::Store {
         self.conn
             .execute_batch(SCHEMA)
             .map_err(|e| Error::db("database operation", e))?;
+        self.conn
+            .execute_batch(crate::skill_library::SKILL_SCHEMA)
+            .map_err(|e| Error::db("skill library schema", e))?;
 
         // Migration: add namespace column if missing (existing DBs)
         let has_namespace: bool = self
@@ -495,6 +498,11 @@ impl super::Store {
                 // v25: index on memories.source — the session view looks
                 // memories up by source (#1670)
                 25 => self.migrate_v24_to_v25()?,
+                // v26: room_aliases — a rename keeps the old room id working
+                // (#1714)
+                26 => self.migrate_v25_to_v26()?,
+                // v27: the personal skill library tables (#1731)
+                27 => self.migrate_v26_to_v27()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1242,6 +1250,35 @@ CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
         self.conn
             .execute_batch("CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);")
             .map_err(|e| Error::db("schema migration v24 to v25", e))?;
+        Ok(())
+    }
+
+    /// v26: the `room_aliases` table (#1714). `SCHEMA` already creates it on
+    /// every open (IF NOT EXISTS); the step creates it for a store opened by
+    /// the migration path and records the version. Forward-only: an older
+    /// binary ignores the extra table.
+    fn migrate_v25_to_v26(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v25 to v26: room_aliases table");
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS room_aliases (
+    alias_id   TEXT PRIMARY KEY,
+    room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_aliases_room ON room_aliases(room_id);",
+            )
+            .map_err(|e| Error::db("schema migration v25 to v26", e))?;
+        Ok(())
+    }
+
+    /// v27: the personal skill library tables (#1731). `init_schema` already
+    /// creates them on every open; the statements are idempotent.
+    fn migrate_v26_to_v27(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v26 to v27: skill library tables");
+        self.conn
+            .execute_batch(crate::skill_library::SKILL_SCHEMA)
+            .map_err(|e| Error::db("schema migration v26 to v27", e))?;
         Ok(())
     }
 

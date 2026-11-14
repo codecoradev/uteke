@@ -377,11 +377,7 @@ fn is_noise(sentence: &str) -> bool {
     }
 
     // Code lines (4+ space indent)
-    if sentence.starts_with("    ") {
-        return true;
-    }
-
-    false
+    sentence.starts_with("    ")
 }
 
 /// Score a sentence's salience — how likely it contains a durable fact.

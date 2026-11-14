@@ -67,12 +67,18 @@ impl Env {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child
+        // A hook may exit without reading its stdin (no `uteke` on PATH): the
+        // write then races the exit and can fail with a broken pipe, which is
+        // what the agent sees too and not a test failure. Any other error is.
+        if let Err(e) = child
             .stdin
             .take()
             .unwrap()
             .write_all(payload.to_string().as_bytes())
-            .unwrap();
+            && e.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            panic!("write the hook payload: {e}");
+        }
         child.wait_with_output().unwrap()
     }
 

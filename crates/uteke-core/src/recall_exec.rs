@@ -22,7 +22,16 @@ pub struct RecallDefaults<'a> {
     pub min_score: Option<f64>,
     pub min_score_strict: Option<f64>,
     pub default_strategy: Option<&'a str>,
+    /// Weight of `salience: true` (`[recall] salience_weight`); the built-in
+    /// 0.15 when absent.
+    pub salience_weight: Option<f32>,
+    /// Weight of `recency: true` (`[recall] recency_weight`); the built-in
+    /// 0.15 when absent.
+    pub recency_weight: Option<f32>,
 }
+
+/// The built-in weight of an explicit `salience: true` / `recency: true`.
+const BOOST_ON_WEIGHT: f32 = 0.15;
 
 /// What a recall produced, before a surface renders it.
 #[derive(Debug)]
@@ -47,7 +56,58 @@ fn bad(msg: &str) -> Error {
 
 impl Uteke {
     /// Run `req` as `POST /recall` always has. See the module documentation.
+    ///
+    /// Every memory hit in the output carries the rooms its memory belongs to
+    /// (#1703). They are looked up once, after the ranking and the cut to
+    /// `limit`, so the result order and scores are exactly those of the
+    /// recall itself.
+    ///
+    /// A request's own salience/recency weights apply to this recall only: they
+    /// are scoped to it and dropped on every exit, so no caller touches the
+    /// engine's state and a failed recall cannot leak them (CodeCora #387).
     pub fn run_recall(
+        &self,
+        req: &RecallRequest,
+        defaults: RecallDefaults<'_>,
+    ) -> Result<RecallOutput, Error> {
+        let _boost = crate::salience_recency::BoostScope::enter(self.request_boost(req, defaults));
+        let mut output = self.run_recall_unrooted(req, defaults)?;
+        match &mut output {
+            RecallOutput::Explained(items) => self.attach_rooms_explained(items)?,
+            RecallOutput::Packed(pack) => self.attach_rooms_unified(&mut pack.selected)?,
+            RecallOutput::Unified(results) => self.attach_rooms_unified(results)?,
+            RecallOutput::Memories { results, .. } => self.attach_rooms(results)?,
+        }
+        Ok(output)
+    }
+
+    /// The weights a request asks for, or `None` to keep the engine's. An axis
+    /// the request does not name keeps the engine's weight.
+    fn request_boost(
+        &self,
+        req: &RecallRequest,
+        defaults: RecallDefaults<'_>,
+    ) -> Option<crate::SalienceRecencyConfig> {
+        if req.salience.is_none() && req.recency.is_none() {
+            return None;
+        }
+        let engine = self.salience_recency_config;
+        let axis = |asked: Option<bool>, configured: Option<f32>, engine: f32| match asked {
+            Some(true) => configured.unwrap_or(BOOST_ON_WEIGHT),
+            Some(false) => 0.0,
+            None => engine,
+        };
+        Some(crate::SalienceRecencyConfig {
+            salience_weight: axis(
+                req.salience,
+                defaults.salience_weight,
+                engine.salience_weight,
+            ),
+            recency_weight: axis(req.recency, defaults.recency_weight, engine.recency_weight),
+        })
+    }
+
+    fn run_recall_unrooted(
         &self,
         req: &RecallRequest,
         defaults: RecallDefaults<'_>,
@@ -86,6 +146,9 @@ impl Uteke {
                     "explain cannot be combined with entity/category/enrich",
                 ));
             }
+            if req.related_depth.is_some() || req.where_eq.is_some() {
+                return Err(bad("explain cannot be combined with related/where"));
+            }
             return filter
                 .fetch(
                     self,
@@ -111,6 +174,11 @@ impl Uteke {
             if point_in_time.is_some() || has_temporal {
                 return Err(bad(
                     "pack is not supported with at/after/before filters; rerun without time filters",
+                ));
+            }
+            if req.related_depth.is_some() || req.where_eq.is_some() {
+                return Err(bad(
+                    "pack is not supported with related/where; rerun without them",
                 ));
             }
             let search_type = req
@@ -141,6 +209,17 @@ impl Uteke {
                 req.budget_chars_or_default(),
                 &req.exclude_ids,
             )));
+        }
+
+        // Related and where (memory-only): exclusive with the unified surface
+        // and with each other's time travel, rather than silently dropped.
+        if req.related_depth.is_some() || req.where_eq.is_some() {
+            if req.search_type_raw().is_some() {
+                return Err(bad("related/where are memory-only: omit search_type"));
+            }
+            if point_in_time.is_some() && req.related_depth.is_some() {
+                return Err(bad("related cannot be combined with at"));
+            }
         }
 
         // Unified search (#531): when a search_type was given and there is no
@@ -184,7 +263,8 @@ impl Uteke {
         // resolved strategy applies. recall_hybrid has no native
         // entity/category support, so they are post-filters with a 3x
         // over-fetch (as in recall_unified_memories).
-        let needs_post_filter = entity_filter.is_some() || category_filter.is_some();
+        let needs_post_filter =
+            entity_filter.is_some() || category_filter.is_some() || req.where_eq.is_some();
         let mut results = filter.fetch(
             self,
             limit,
@@ -198,13 +278,26 @@ impl Uteke {
                     // Time travel: the strategy does not apply to point-in-time recall.
                     self.recall_at_time(
                         &req.query,
-                        n,
+                        if req.where_eq.is_some() {
+                            fetch_limit
+                        } else {
+                            n
+                        },
                         tags_filter,
                         namespace,
                         pit,
                         min_score,
                         entity_filter,
                         category_filter,
+                    )?
+                } else if let Some(depth) = req.related_depth {
+                    self.recall_related(
+                        &req.query,
+                        fetch_limit,
+                        tags_filter,
+                        namespace,
+                        min_score,
+                        depth,
                     )?
                 } else {
                     self.recall_hybrid(
@@ -216,13 +309,22 @@ impl Uteke {
                         min_score,
                     )?
                 };
-                if needs_post_filter && point_in_time.is_none() {
+                if needs_post_filter {
+                    // `recall_at_time` takes entity/category itself.
+                    let by_metadata = point_in_time.is_none();
                     found.retain(|sr| {
-                        entity_filter.is_none_or(|ent| {
-                            sr.memory.metadata.get("entity").and_then(|v| v.as_str()) == Some(ent)
-                        }) && category_filter.is_none_or(|cat| {
-                            sr.memory.metadata.get("category").and_then(|v| v.as_str()) == Some(cat)
-                        })
+                        (!by_metadata
+                            || (entity_filter.is_none_or(|ent| {
+                                sr.memory.metadata.get("entity").and_then(|v| v.as_str())
+                                    == Some(ent)
+                            }) && category_filter.is_none_or(|cat| {
+                                sr.memory.metadata.get("category").and_then(|v| v.as_str())
+                                    == Some(cat)
+                            })))
+                            && req
+                                .where_eq
+                                .as_ref()
+                                .is_none_or(|(k, v)| json_field_equals(&sr.memory, k, v))
                     });
                     found.truncate(n);
                 }
@@ -241,10 +343,29 @@ impl Uteke {
     }
 }
 
+/// `--where key=value`: the memory holds JSON whose top-level `key` is a string,
+/// number, bool or null that prints as `value`. Arrays and objects never match.
+fn json_field_equals(memory: &crate::Memory, key: &str, value: &str) -> bool {
+    if memory.content_type != "json" {
+        return false;
+    }
+    let Ok(serde_json::Value::Object(obj)) = serde_json::from_str(&memory.content) else {
+        return false;
+    };
+    match obj.get(key) {
+        Some(serde_json::Value::String(s)) => s == value,
+        Some(serde_json::Value::Number(n)) => n.to_string() == value,
+        Some(serde_json::Value::Bool(b)) => b.to_string() == value,
+        Some(serde_json::Value::Null) => value == "null",
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::RecallInput;
+    use crate::RecallStrategy;
     use crate::TrustTier;
     use crate::test_support::open_keyword;
 
@@ -400,6 +521,167 @@ mod tests {
             i.strategy = Some("fts5".into());
         });
         assert!(matches!(run(&u, &r), Ok(RecallOutput::Unified(_))));
+    }
+
+    // ── #1703: the rooms of each hit ─────────────────────────────────────
+
+    /// A memory in two rooms (one titled, one not) and one in no room, all
+    /// matching `rust memory safety`.
+    fn roomed_store() -> (Uteke, String) {
+        let u = open_keyword();
+        u.remember("rust memory safety in no room", &[], None, None)
+            .unwrap();
+        u.create_room("beta", Some("Beta room"), "default").unwrap();
+        let id = u
+            .remember_in_room(
+                "rust memory safety in two rooms",
+                &[],
+                None,
+                None,
+                "fact",
+                "alpha",
+                "tester",
+            )
+            .unwrap()
+            .id;
+        assert!(u.add_memory_to_room(&id, "beta", "tester").unwrap());
+        (u, id)
+    }
+
+    fn expected_rooms() -> Vec<crate::RoomRef> {
+        vec![
+            crate::RoomRef {
+                room_id: "alpha".into(),
+                room_name: "alpha".into(),
+            },
+            crate::RoomRef {
+                room_id: "beta".into(),
+                room_name: "Beta room".into(),
+            },
+        ]
+    }
+
+    #[test]
+    fn memory_hits_carry_their_rooms_and_the_ranking_is_untouched() {
+        let (u, id) = roomed_store();
+        let rooms_of = |hits: &[SearchResult]| {
+            hits.iter()
+                .map(|h| (h.memory.id.clone(), h.rooms.clone()))
+                .collect::<Vec<_>>()
+        };
+        let hits = memories(&u, &req(|i| i.strategy = Some("fts5".into())));
+        assert_eq!(hits.len(), 2);
+        for (hit_id, rooms) in rooms_of(&hits) {
+            if hit_id == id {
+                assert_eq!(rooms, expected_rooms());
+            } else {
+                assert!(rooms.is_empty(), "a memory in no room has none");
+            }
+        }
+        // Same order and scores as the recall without the room lookup.
+        let bare = u
+            .recall_hybrid(
+                "rust memory safety",
+                10,
+                None,
+                None,
+                RecallStrategy::Fts5,
+                0.0,
+            )
+            .unwrap();
+        let order = |v: &[SearchResult]| v.iter().map(|h| h.memory.id.clone()).collect::<Vec<_>>();
+        assert_eq!(order(&hits), order(&bare));
+        for (a, b) in hits.iter().zip(&bare) {
+            assert_eq!(a.score, b.score);
+        }
+    }
+
+    #[test]
+    fn unified_packed_and_explained_hits_carry_their_rooms() {
+        let (u, id) = roomed_store();
+        let unified = req(|i| {
+            i.search_type = Some("memory".into());
+            i.strategy = Some("fts5".into());
+        });
+        let RecallOutput::Unified(results) = run(&u, &unified).unwrap() else {
+            panic!("unified expected")
+        };
+        let hit = results
+            .iter()
+            .find(|r| r.memory_id.as_deref() == Some(id.as_str()))
+            .unwrap();
+        assert_eq!(hit.rooms, expected_rooms());
+        assert!(
+            results
+                .iter()
+                .filter(|r| r.memory_id.as_deref() != Some(id.as_str()))
+                .all(|r| r.rooms.is_empty())
+        );
+
+        let packed = req(|i| {
+            i.pack = true;
+            i.strategy = Some("fts5".into());
+        });
+        let RecallOutput::Packed(pack) = run(&u, &packed).unwrap() else {
+            panic!("pack expected")
+        };
+        let hit = pack
+            .selected
+            .iter()
+            .find(|r| r.memory_id.as_deref() == Some(id.as_str()))
+            .unwrap();
+        assert_eq!(hit.rooms, expected_rooms());
+
+        let explained = req(|i| {
+            i.explain = true;
+            i.strategy = Some("fts5".into());
+        });
+        let RecallOutput::Explained(items) = run(&u, &explained).unwrap() else {
+            panic!("explain expected")
+        };
+        let hit = items.iter().find(|e| e.result.memory.id == id).unwrap();
+        assert_eq!(hit.result.rooms, expected_rooms());
+    }
+
+    #[test]
+    fn the_rooms_field_is_omitted_when_empty_and_listed_otherwise() {
+        let (u, id) = roomed_store();
+        let hits = memories(&u, &req(|i| i.strategy = Some("fts5".into())));
+        for hit in &hits {
+            let json = serde_json::to_value(hit).unwrap();
+            if hit.memory.id == id {
+                assert_eq!(
+                    json["rooms"],
+                    serde_json::json!([
+                        {"room_id": "alpha", "room_name": "alpha"},
+                        {"room_id": "beta", "room_name": "Beta room"},
+                    ])
+                );
+            } else {
+                assert!(json.get("rooms").is_none(), "no key for a roomless hit");
+            }
+        }
+    }
+
+    #[test]
+    fn a_stale_cached_recall_never_reports_old_membership() {
+        let (u, id) = roomed_store();
+        let q = || req(|i| i.strategy = Some("fts5".into()));
+        let first = memories(&u, &q());
+        assert!(
+            !first
+                .iter()
+                .find(|h| h.memory.id == id)
+                .unwrap()
+                .rooms
+                .is_empty()
+        );
+        // Leave one room, then ask the same question again.
+        u.create_room("gamma", Some("Gamma"), "default").unwrap();
+        assert!(u.add_memory_to_room(&id, "gamma", "tester").unwrap());
+        let second = memories(&u, &q());
+        let rooms = &second.iter().find(|h| h.memory.id == id).unwrap().rooms;
+        assert_eq!(rooms.len(), 3, "the new room shows at once: {rooms:?}");
     }
 
     // ── #1650: strict filters on similarity, #1651: min_trust ───────────
@@ -724,5 +1006,360 @@ mod tests {
             .unwrap_err();
             assert!(e.to_string().starts_with("Invalid min_trust"), "{bad}");
         }
+    }
+    #[test]
+    fn an_entity_filter_over_fetches_by_the_limit_plus_ten() {
+        // limit 1 with a post-filter fetches max(3, 1 + 10) = 11 candidates:
+        // the one memory with the entity ranks 11th of 11, so a window of 10
+        // (limit * 10) misses it and one below 1 + 10 cannot even be computed.
+        let u = open_keyword();
+        for i in 0..10 {
+            u.remember(&format!("alpha alpha alpha item{i}"), &[], None, None)
+                .unwrap();
+        }
+        u.remember(
+            "alpha once among many other unrelated words here",
+            &[],
+            Some(serde_json::json!({"entity": "needle"})),
+            None,
+        )
+        .unwrap();
+        let r = req(|i| {
+            i.query = "alpha".into();
+            i.strategy = Some("fts5".into());
+            i.limit = Some(1);
+            i.entity = Some("needle".into());
+        });
+        let RecallOutput::Memories { results, .. } = run(&u, &r).unwrap() else {
+            panic!("memory-only expected");
+        };
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert_eq!(
+            results[0]
+                .memory
+                .metadata
+                .get("entity")
+                .and_then(|v| v.as_str()),
+            Some("needle")
+        );
+    }
+    fn remember_as(u: &Uteke, content: &str, author_type: &str, source_type: &str) {
+        let r = crate::remember_request::RememberRequest {
+            content: content.to_string(),
+            tags: vec![],
+            namespace: None,
+            memory_type: Some("fact".to_string()),
+            metadata: None,
+            detect_contradiction: false,
+            source: None,
+            source_type: Some(source_type.to_string()),
+            author_type: Some(author_type.to_string()),
+            room: None,
+            author: None,
+            validity: None,
+        };
+        u.run_remember(&r).unwrap();
+    }
+
+    #[test]
+    fn min_trust_keeps_the_given_tier_and_the_ones_above() {
+        let u = open_keyword();
+        remember_as(&u, "tier probe human", "human", "user");
+        remember_as(&u, "tier probe agent", "agent", "user");
+        remember_as(&u, "tier probe external", "agent", "url");
+        remember_as(&u, "tier probe derived", "agent", "derived");
+        let r = req(|i| {
+            i.query = "tier probe".into();
+            i.search_type = Some("memory".into());
+            i.strategy = Some("fts5".into());
+            i.min_trust = Some("agent".into());
+        });
+        let RecallOutput::Unified(results) = run(&u, &r).unwrap() else {
+            panic!("unified expected");
+        };
+        let mut tiers: Vec<_> = results.iter().map(|r| r.trust_tier).collect();
+        tiers.sort();
+        assert_eq!(tiers, vec![Some(TrustTier::Agent), Some(TrustTier::Human)]);
+    }
+
+    // ── The decision tree behind `run_recall`, branch by branch ───────────
+    // `uteke recall`, `POST /recall` and the MCP tool all land here, so these
+    // are the tests of all three.
+
+    fn two_rust_memories() -> Uteke {
+        let u = open_keyword();
+        u.remember(
+            "rust gives memory safety without a garbage collector",
+            &[],
+            Some(serde_json::json!({"entity": "rust"})),
+            None,
+        )
+        .unwrap();
+        u.remember("rust memory safety also helps concurrency", &[], None, None)
+            .unwrap();
+        u
+    }
+
+    fn fts(i: &mut RecallInput) {
+        i.query = "memory safety".into();
+        i.strategy = Some("fts5".into());
+    }
+
+    #[test]
+    fn the_config_defaults_fill_what_the_request_leaves_out() {
+        let u = two_rust_memories();
+        let r = req(fts);
+        let strict_floor = RecallDefaults {
+            min_score: Some(5.0),
+            ..RecallDefaults::default()
+        };
+        let RecallOutput::Memories { results, min_score } = u.run_recall(&r, strict_floor).unwrap()
+        else {
+            panic!("memory-only expected");
+        };
+        assert!(results.is_empty(), "the configured floor applies");
+        assert_eq!(min_score, 5.0, "and the output says which floor");
+        // The request's own floor wins over the configured one.
+        let own = req(|i| {
+            fts(i);
+            i.min_score = Some(0.0);
+        });
+        let RecallOutput::Memories { results, .. } = u.run_recall(&own, strict_floor).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(results.len(), 2);
+
+        // The configured strategy applies when the request names none, and a
+        // bad one is an error on every path.
+        let none = req(|i| i.query = "memory safety".into());
+        let bad = RecallDefaults {
+            default_strategy: Some("nope"),
+            ..RecallDefaults::default()
+        };
+        assert!(msg(u.run_recall(&none, bad).unwrap_err()).starts_with("Invalid strategy: 'nope'"));
+        let fine = RecallDefaults {
+            default_strategy: Some("fts5"),
+            ..RecallDefaults::default()
+        };
+        assert!(u.run_recall(&none, fine).is_ok());
+        // ... and the request's strategy wins over the configured one.
+        assert!(u.run_recall(&req(fts), bad).is_ok());
+    }
+
+    #[test]
+    fn point_in_time_recall_reads_the_state_at_that_time() {
+        let u = two_rust_memories();
+        let at = |ts: &str| {
+            req(|i| {
+                fts(i);
+                i.at = Some(ts.into());
+            })
+        };
+        assert_eq!(memories(&u, &at("2999-01-01T00:00:00Z")).len(), 2);
+        assert!(memories(&u, &at("2001-01-01T00:00:00Z")).is_empty());
+        // The entity filter reaches the point-in-time path too.
+        let by_entity = req(|i| {
+            fts(i);
+            i.at = Some("2999-01-01T00:00:00Z".into());
+            i.entity = Some("rust".into());
+        });
+        assert_eq!(memories(&u, &by_entity).len(), 1);
+    }
+
+    #[test]
+    fn pack_and_explain_run_and_return_their_own_output() {
+        let u = two_rust_memories();
+        let packed = req(|i| {
+            fts(i);
+            i.pack = true;
+            i.budget_chars = Some(5000);
+        });
+        let RecallOutput::Packed(pack) = run(&u, &packed).unwrap() else {
+            panic!("pack expected");
+        };
+        assert_eq!(pack.selected.len(), 2);
+        assert_eq!(pack.budget_chars, 5000);
+        let excluded = req(|i| {
+            fts(i);
+            i.pack = true;
+            i.exclude_ids = vec![pack.selected[0].memory_id.clone().unwrap()];
+        });
+        let RecallOutput::Packed(pack) = run(&u, &excluded).unwrap() else {
+            panic!()
+        };
+        assert_eq!(pack.selected.len(), 1);
+        assert_eq!(pack.skipped.len(), 1);
+
+        let explained = req(|i| {
+            fts(i);
+            i.explain = true;
+        });
+        let RecallOutput::Explained(items) = run(&u, &explained).unwrap() else {
+            panic!("explained expected");
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].explanation.strategy, "fts5");
+    }
+
+    #[test]
+    fn related_recall_is_memory_only_and_not_a_point_in_time() {
+        let u = two_rust_memories();
+        let related = req(fts).with_related(2);
+        assert_eq!(memories(&u, &related).len(), 2);
+        let with_entity = req(|i| {
+            fts(i);
+            i.entity = Some("rust".into());
+        })
+        .with_related(1);
+        assert_eq!(memories(&u, &with_entity).len(), 1);
+
+        let at = req(|i| {
+            fts(i);
+            i.at = Some("2999-01-01T00:00:00Z".into());
+        })
+        .with_related(1);
+        assert_eq!(
+            msg(run(&u, &at).unwrap_err()),
+            "related cannot be combined with at"
+        );
+        let typed = req(|i| {
+            fts(i);
+            i.search_type = Some("memory".into());
+        })
+        .with_related(1);
+        assert_eq!(
+            msg(run(&u, &typed).unwrap_err()),
+            "related/where are memory-only: omit search_type"
+        );
+    }
+
+    #[test]
+    fn where_keeps_json_memories_whose_field_matches() {
+        let u = open_keyword();
+        u.remember(
+            r#"{"lang":"rust","n":3,"ok":true,"gone":null}"#,
+            &[],
+            None,
+            None,
+        )
+        .unwrap();
+        u.remember(r#"{"lang":"go","n":4}"#, &[], None, None)
+            .unwrap();
+        u.remember("lang rust in prose, not json", &[], None, None)
+            .unwrap();
+        let q = |k: &str, v: &str| {
+            memories(
+                &u,
+                &req(|i| {
+                    i.query = "lang".into();
+                    i.strategy = Some("fts5".into());
+                })
+                .with_where(k, v),
+            )
+            .len()
+        };
+        assert_eq!(q("lang", "rust"), 1);
+        assert_eq!(q("n", "3"), 1);
+        assert_eq!(q("ok", "true"), 1);
+        assert_eq!(q("gone", "null"), 1);
+        assert_eq!(q("lang", "python"), 0);
+        assert_eq!(q("missing", "x"), 0);
+        // It also reaches the point-in-time path.
+        let at = req(|i| {
+            i.query = "lang".into();
+            i.strategy = Some("fts5".into());
+            i.at = Some("2999-01-01T00:00:00Z".into());
+        })
+        .with_where("lang", "go");
+        assert_eq!(memories(&u, &at).len(), 1);
+    }
+
+    #[test]
+    fn explain_and_pack_refuse_related_and_where() {
+        let u = two_rust_memories();
+        for with in [
+            (|r: RecallRequest| r.with_related(1)) as fn(RecallRequest) -> RecallRequest,
+            |r| r.with_where("k", "v"),
+        ] {
+            let explain = with(req(|i| i.explain = true));
+            assert_eq!(
+                msg(run(&u, &explain).unwrap_err()),
+                "explain cannot be combined with related/where"
+            );
+            let pack = with(req(|i| i.pack = true));
+            assert_eq!(
+                msg(run(&u, &pack).unwrap_err()),
+                "pack is not supported with related/where; rerun without them"
+            );
+        }
+    }
+
+    /// The scores of a plain recall, by memory id, under `with`'s boost request.
+    fn scores(
+        u: &Uteke,
+        defaults: RecallDefaults<'_>,
+        salience: Option<bool>,
+        recency: Option<bool>,
+    ) -> Vec<f32> {
+        let r = req(fts).with_salience_recency(salience, recency);
+        let RecallOutput::Memories { results, .. } = u.run_recall(&r, defaults).unwrap() else {
+            panic!()
+        };
+        let mut s: Vec<f32> = results.iter().map(|r| r.score).collect();
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        s
+    }
+
+    #[test]
+    fn a_request_scopes_its_own_boost_weights_to_its_recall() {
+        let u = two_rust_memories();
+        let heavy = RecallDefaults {
+            salience_weight: Some(0.5),
+            recency_weight: Some(0.5),
+            ..RecallDefaults::default()
+        };
+        let none = RecallDefaults::default();
+        let off = scores(&u, none, Some(false), Some(false));
+        let engine = scores(&u, none, None, None);
+        let on = scores(&u, heavy, Some(true), Some(true));
+        // Off is the bare score, the engine's own weights (0.1) boost it, and
+        // an explicit `true` takes the configured weight.
+        assert!(
+            off[0] < engine[0] && engine[0] < on[0],
+            "{off:?} {engine:?} {on:?}"
+        );
+        // One axis only: the other keeps the engine's weight.
+        let sal_off = scores(&u, none, Some(false), None);
+        assert!(off[0] < sal_off[0] && sal_off[0] < engine[0]);
+        // `true` without a configured weight is the built-in 0.15.
+        let built_in = scores(&u, none, Some(true), Some(true));
+        assert!(engine[0] < built_in[0] && built_in[0] < on[0]);
+    }
+
+    #[test]
+    fn a_requests_boost_weights_never_outlive_it() {
+        let u = two_rust_memories();
+        let engine_before = scores(&u, RecallDefaults::default(), None, None);
+        // Every exit: a success, a guard failure, and an unknown strategy.
+        let _ = scores(&u, RecallDefaults::default(), Some(false), Some(false));
+        for bad in [
+            req(|i| {
+                i.explain = true;
+                i.entity = Some("e".into());
+            }),
+            req(|i| i.strategy = Some("nope".into())),
+            req(|i| i.pack = true).with_related(1),
+        ] {
+            let bad = bad.with_salience_recency(Some(false), Some(false));
+            assert!(run(&u, &bad).is_err());
+            assert!(crate::salience_recency::BoostScope::current().is_none());
+        }
+        assert_eq!(u.salience_recency_config.salience_weight, 0.1);
+        assert_eq!(
+            scores(&u, RecallDefaults::default(), None, None),
+            engine_before,
+            "a later recall is unaffected"
+        );
     }
 }

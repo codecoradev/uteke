@@ -10,10 +10,7 @@ pub(super) fn get_tags(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let ns = parse_query_namespace(path);
     match uteke.tags_with_counts(ns.as_deref()) {
         Ok(tags) => ctx.ok_response_for(req, &tags),
-        Err(e) => {
-            error!("Tags list error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -27,8 +24,7 @@ pub(super) fn post_tags_rename(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 match uteke.rename_tag(&req_data.old, &req_data.new, ns(&req_data.namespace)) {
                     Ok(count) => count,
                     Err(e) => {
-                        error!("Tag rename error: {e}");
-                        return ctx.error_response_for(req, 500, "Internal server error");
+                        return ctx.core_error(req, &e);
                     }
                 };
             ctx.ok_response_for(
@@ -54,8 +50,7 @@ pub(super) fn post_tags_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             let count = match uteke.delete_tag(&req_data.tag, ns(&req_data.namespace)) {
                 Ok(count) => count,
                 Err(e) => {
-                    error!("Tag delete error: {e}");
-                    return ctx.error_response_for(req, 500, "Internal server error");
+                    return ctx.core_error(req, &e);
                 }
             };
             ctx.ok_response_for(

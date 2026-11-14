@@ -138,6 +138,11 @@ impl super::Store {
         title: Option<&str>,
         namespace: &str,
     ) -> Result<(), Error> {
+        if let Some(target) = self.alias_target(room_id)? {
+            return Err(Error::Validation(format!(
+                "Room id is an alias of {target}: {room_id}"
+            )));
+        }
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
@@ -154,8 +159,30 @@ impl super::Store {
         Ok(())
     }
 
+    /// The room an alias points to, or `None` when `id` is not an alias (#1714).
+    fn alias_target(&self, id: &str) -> Result<Option<String>, Error> {
+        self.conn
+            .query_row(
+                "SELECT room_id FROM room_aliases WHERE alias_id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| Error::db("room alias lookup", e))
+    }
+
+    /// Resolve a room id to its canonical id (#1714): an alias gives the room
+    /// it points to, every other id comes back unchanged (a missing room then
+    /// fails or returns `None` in the caller, as before). An alias never
+    /// equals a room id, so resolving twice is harmless.
+    pub fn canonical_room(&self, id: &str) -> Result<String, Error> {
+        Ok(self.alias_target(id)?.unwrap_or_else(|| id.to_string()))
+    }
+
     /// Get a room by ID.
     pub fn get_room(&self, room_id: &str) -> Result<Option<Room>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         self.conn
             .query_row(
                 "SELECT id, title, namespace, created_at, updated_at, description \
@@ -247,6 +274,10 @@ impl super::Store {
     /// Returns the renamed `Room`. Errors when the room does not exist or
     /// the target ID is already taken.
     pub fn rename_room(&self, old_id: &str, new_id: &str) -> Result<Room, Error> {
+        // The source may be an alias of the room: the room it points to is
+        // the one renamed (#1714).
+        let old_id = self.canonical_room(old_id)?;
+        let old_id = old_id.as_str();
         if old_id == new_id {
             return Err(Error::Validation(
                 "Rename source and target room IDs are identical".to_string(),
@@ -274,15 +305,33 @@ impl super::Store {
         if taken {
             return Err(Error::Validation(format!("Room already exists: {new_id}")));
         }
+        // A target that is an alias of ANOTHER room would shadow it; an alias
+        // of this same room is a former name and may be taken back.
+        let reclaim = match self.alias_target(new_id)? {
+            Some(other) if other != old_id => {
+                return Err(Error::Validation(format!(
+                    "Room id is an alias of {other}: {new_id}"
+                )));
+            }
+            Some(_) => true,
+            None => false,
+        };
 
         let tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| Error::db("rename room: begin tx", e))?;
+        if reclaim {
+            tx.execute(
+                "DELETE FROM room_aliases WHERE alias_id = ?1",
+                params![new_id],
+            )
+            .map_err(|e| Error::db("rename room: reclaim former name", e))?;
+        }
         // FK-safe order: insert the new registry row FIRST, then repoint the
         // children, then drop the old row — every intermediate state keeps
-        // every room_memories/room_documents FK satisfied (no ON UPDATE
-        // CASCADE on these FKs).
+        // every room_memories/room_documents/room_aliases FK satisfied (no ON
+        // UPDATE CASCADE on these FKs).
         let now = chrono::Utc::now().to_rfc3339();
         tx.execute(
             "INSERT INTO rooms (id, title, namespace, created_at, updated_at, description) \
@@ -300,8 +349,20 @@ impl super::Store {
             params![new_id, old_id],
         )
         .map_err(|e| Error::db("rename room: move document links", e))?;
+        // Earlier names of this room follow it (A -> B, then B -> C: A and B
+        // both resolve to C), and the name it leaves becomes an alias.
+        tx.execute(
+            "UPDATE room_aliases SET room_id = ?1 WHERE room_id = ?2",
+            params![new_id, old_id],
+        )
+        .map_err(|e| Error::db("rename room: repoint aliases", e))?;
         tx.execute("DELETE FROM rooms WHERE id = ?1", params![old_id])
             .map_err(|e| Error::db("rename room: remove old row", e))?;
+        tx.execute(
+            "INSERT INTO room_aliases (alias_id, room_id, created_at) VALUES (?1, ?2, ?3)",
+            params![old_id, new_id, now],
+        )
+        .map_err(|e| Error::db("rename room: record alias", e))?;
         tx.commit()
             .map_err(|e| Error::db("rename room: commit", e))?;
 
@@ -321,6 +382,8 @@ impl super::Store {
         title: Option<&str>,
         description: Option<&str>,
     ) -> Result<Option<Room>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let room = match self.get_room(room_id)? {
             Some(r) => r,
             None => return Ok(None),
@@ -352,6 +415,10 @@ impl super::Store {
         from_room: &str,
         to_room: &str,
     ) -> Result<usize, Error> {
+        let from_room = self.canonical_room(from_room)?;
+        let from_room = from_room.as_str();
+        let to_room = self.canonical_room(to_room)?;
+        let to_room = to_room.as_str();
         if from_room == to_room {
             return Err(Error::Validation(
                 "Move source and target rooms are identical".to_string(),
@@ -416,6 +483,8 @@ impl super::Store {
     /// Only counts active (non-deprecated) memories — matches the behavior of
     /// `recall_room` and `room_summary` which also filter `deprecated = 0` (#784).
     pub fn room_stats(&self, room_id: &str) -> Result<Option<RoomStats>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let room = match self.get_room(room_id)? {
             Some(r) => r,
             None => return Ok(None),
@@ -479,6 +548,8 @@ impl super::Store {
         author: &str,
         role: &str,
     ) -> Result<(), Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let now = chrono::Utc::now().to_rfc3339();
         self.conn
             .execute(
@@ -521,6 +592,52 @@ impl super::Store {
         Ok(map)
     }
 
+    /// The rooms of the given memories, as `memory_id -> rooms` (#1703).
+    ///
+    /// Only the ids asked for are looked up (the recall path must not read the
+    /// whole `room_memories` table, unlike [`Self::room_ids_by_memory`]). Each
+    /// list is sorted by room id; `room_name` is the room title, or the id when
+    /// the title is unset or blank. Memories in no room are absent.
+    pub fn room_refs_for_memories(
+        &self,
+        memory_ids: &[&str],
+    ) -> Result<std::collections::HashMap<String, Vec<super::types::RoomRef>>, Error> {
+        // Stay well under SQLite's bound-variable limit.
+        const CHUNK: usize = 400;
+        let mut map: std::collections::HashMap<String, Vec<super::types::RoomRef>> =
+            Default::default();
+        for chunk in memory_ids.chunks(CHUNK) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT rm.memory_id, r.id, COALESCE(NULLIF(TRIM(r.title), ''), r.id) \
+                 FROM room_memories rm JOIN rooms r ON r.id = rm.room_id \
+                 WHERE rm.memory_id IN ({marks}) \
+                 ORDER BY rm.memory_id, r.id"
+            );
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| Error::db("prepare room refs for memories", e))?;
+            let rows = stmt
+                .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .map_err(|e| Error::db("query room refs for memories", e))?;
+            for row in rows {
+                let (memory, room_id, room_name) =
+                    row.map_err(|e| Error::db("read room refs for memories", e))?;
+                map.entry(memory)
+                    .or_default()
+                    .push(super::types::RoomRef { room_id, room_name });
+            }
+        }
+        Ok(map)
+    }
+
     /// Add an EXISTING memory to a room without copying it (#1589).
     ///
     /// Both must exist (`NotFound` otherwise). Idempotent: a memory already in
@@ -532,6 +649,8 @@ impl super::Store {
         room_id: &str,
         author: &str,
     ) -> Result<bool, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let exists = |sql: &str, id: &str| -> Result<bool, Error> {
             self.conn
                 .query_row(sql, params![id], |row| row.get::<_, bool>(0))
@@ -576,6 +695,8 @@ impl super::Store {
         author: Option<&str>,
         point_in_time: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<crate::memory::types::Memory>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let pit = point_in_time.to_rfc3339();
         let mut stmt = self
             .conn
@@ -622,6 +743,8 @@ impl super::Store {
         namespace: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::memory::types::Memory>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         // limit=0 means "return all" — omit LIMIT clause (#623).
         let no_limit = limit == 0;
         // Dynamic WHERE, but every literal fragment stays in the SQL text and
@@ -708,6 +831,8 @@ impl super::Store {
         room_id: &str,
         author: Option<&str>,
     ) -> Result<Vec<String>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let sql = match author {
             Some(_) => {
                 "SELECT rm.memory_id FROM room_memories rm \
@@ -744,6 +869,8 @@ impl super::Store {
 
     /// Generate a room summary with LLM-free topic clustering.
     pub fn room_summary(&self, room_id: &str) -> Result<Option<RoomSummary>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let room = match self.get_room(room_id)? {
             Some(r) => r,
             None => return Ok(None),
@@ -1037,6 +1164,8 @@ impl super::Store {
     ///
     /// Returns the number of memory links that were removed.
     pub fn delete_room(&self, room_id: &str) -> Result<usize, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let memory_links = self
             .get_room_memory_ids(room_id, None)
             .map_err(|e| Error::db_msg(format!("failed to count room memories: {e}")))?
@@ -1057,6 +1186,8 @@ impl super::Store {
     /// Sections: pinned first, then grouped by type (decision, fact, procedure, preference, context).
     /// Empty sections are omitted.
     pub fn room_summary_document(&self, room_id: &str) -> Result<Option<RoomDocument>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let room = match self.get_room(room_id)? {
             Some(r) => r,
             None => return Ok(None),
@@ -1239,6 +1370,8 @@ impl super::Store {
     /// `Validation` error (→ 400) rather than a dangling insert or a raw FK
     /// violation surfacing as a 500 (#698).
     pub fn room_add_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let room_exists: bool = self
             .conn
             .query_row(
@@ -1277,6 +1410,8 @@ impl super::Store {
 
     /// Unlink a document from a room.
     pub fn room_remove_document(&self, room_id: &str, doc_slug: &str) -> Result<(), Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         self.conn
             .execute(
                 "DELETE FROM room_documents WHERE room_id = ?1 AND doc_slug = ?2",
@@ -1288,6 +1423,8 @@ impl super::Store {
 
     /// List document slugs linked to a room.
     pub fn room_list_documents(&self, room_id: &str) -> Result<Vec<String>, Error> {
+        let room_id = self.canonical_room(room_id)?;
+        let room_id = room_id.as_str();
         let mut stmt = self
             .conn
             .prepare("SELECT doc_slug FROM room_documents WHERE room_id = ?1 ORDER BY added_at")

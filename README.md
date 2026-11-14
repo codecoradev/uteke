@@ -14,6 +14,8 @@
   <a href="https://github.com/codecoradev/uteke/releases"><img src="https://img.shields.io/github/v/release/codecoradev/uteke?style=flat-square&color=green" alt="Latest Release" /></a>
   <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=flat-square" alt="License: Apache 2.0" /></a>
   <a href="https://github.com/codecoradev/uteke/stargazers"><img src="https://img.shields.io/github/stars/codecoradev/uteke?style=flat-square&color=yellow" alt="GitHub Stars" /></a>
+  <a href="https://hub.docker.com/r/codecoradev/uteke"><img src="https://img.shields.io/docker/pulls/codecoradev/uteke?style=flat-square&logo=docker&logoColor=white&label=Docker%20pulls&color=2496ED" alt="Docker Hub pulls" /></a>
+  <a href="https://github.com/codecoradev/uteke/releases"><img src="https://img.shields.io/github/downloads/codecoradev/uteke/total?style=flat-square&logo=github&label=release%20downloads&color=blueviolet" alt="GitHub release downloads" /></a>
   <a href="#benchmarks"><img src="https://img.shields.io/badge/LongMemEval--S_recall@5-98.2%25-1F908C.svg?style=flat-square" alt="LongMemEval-S recall@5: 98.2%" /></a>
 </p>
 
@@ -51,7 +53,7 @@ Uteke gives all of them one long-term memory that runs on your own machine:
 - **Verifiable recall.** [98.2% recall@5 on LongMemEval-S](#benchmarks), with the stricter numbers shown next to it and the raw outputs in this repo.
 - **Fast and cheap to query.** ~45 ms warm recall, 0 LLM tokens per query, CPU only.
 - **One binary.** No Python, no Docker, no vector database, no API key. The embedding model (~200 MB) downloads once.
-- **One memory, every agent.** Claude Code, Claude Desktop, Cursor, Hermes and any MCP client share the same store. [Rooms](docs/rooms.md) record which agent or person wrote what.
+- **One memory, every agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes and any MCP client share the same store. [Rooms](docs/rooms.md) record which agent or person wrote what.
 - **Finds by meaning and by keyword.** Local vectors and SQLite full-text search, fused into one ranking ([how it works](#how-it-works)).
 - **Remembers over time.** Point-in-time recall (`--at`), a relationship graph, a document engine, and decay for stale memories.
 - **Private by default.** No telemetry. Secrets such as API keys are masked before a memory is stored.
@@ -74,6 +76,10 @@ uteke recall "when do we deploy?"
 # Look at what is stored, in a read-only browser page
 uteke view
 ```
+
+<p align="center">
+  <img src="docs/assets/uteke-demo.gif" width="760" alt="Terminal demo: uteke remember stores two notes, then uteke recall 'which port is the database on?' returns the Postgres port note and 'what is our release process?' returns the deploy note, with no shared keywords." />
+</p>
 
 No API keys, no Python, no cloud account. The first run downloads the embedding model (~200 MB, one time).
 
@@ -142,12 +148,17 @@ Same engine, two ways to run it.
 
 <sub>¹ Their published numbers on the same benchmark and 500-question split, on their own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory publishes MRR 88.2%, which is a different metric.</sub>
 
-**Stable across releases** (full 500 questions, scored from committed raw, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#four-release-stability-full-500-question-basis-scored-from-committed-raw)):
+<details>
+<summary>Stability across releases and results per question type</summary>
 
-| Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
-|---|---|---|---|---|
-| recall_any@5 | 98.2% | 98.4% | 98.2% | 98.2% |
-| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% |
+**Stable across releases** (full 500 questions, scored from committed raw, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)):
+
+| Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b |
+|---|---|---|---|---|---|
+| recall_any@5 | 98.2% | 98.4% | 98.2% | 98.2% | 98.2% |
+| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | 88.0% |
+
+<sub>Re-validated 2026-11-08 after the #1690 import fix: strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence.</sub>
 
 **By question type** (recall_any@5, v0.20.0):
 
@@ -157,8 +168,12 @@ Same engine, two ways to run it.
 
 Every question's evidence lands in the top 50 (zero misses). What's left is ordering when a question needs several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling, and most misses lose exactly one session.
 
+</details>
+
 > **🎯 Don't trust our benchmark. Run it yourself.** Public dataset, committed raw outputs for every validated release, scoring you can recompute in ~20 lines of Python. Verifying the committed results takes a minute and needs no embedder; re-running all 500 questions costs about $10.
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipts for the headline number (v0.19.0 run)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
+
+**LoCoMo.** LoCoMo end-to-end QA measures answer accuracy, and the result depends on the LLM answerer and the LLM judge used. In an internal comparison, identical answers were scored up to 8 points apart when only the judge model was swapped. For that reason we do not publish a single LoCoMo number in this README. The full table, the per-judge figures and the receipts are in [benchmarks/locomo/RESULTS.md](benchmarks/locomo/RESULTS.md). Retrieval recall, which needs no judge, remains the metric we rely on.
 
 `uteke bench --counts 100,1000,10000` measures latency and throughput on your own machine. 📖 [Benchmark docs](docs/benchmarks.md)
 
@@ -171,6 +186,7 @@ Every question's evidence lands in the top 50 (zero misses). What's left is orde
 | **Claude Code** | `.mcp.json`: `{ "mcpServers": { "uteke": { "command": "uteke-mcp" } } }` · [details](docs/mcp.md#claude-code) |
 | **Claude Desktop** | [config snippet](docs/mcp.md#claude-desktop) |
 | **Cursor** | same `.mcp.json` as Claude Code · [details](docs/mcp.md#cursor) |
+| **Codex** | `uteke connect codex` installs recall and capture hooks · [details](docs/integrations/codex.md) |
 | **Hermes** | stdio or HTTP · [details](docs/mcp.md#hermes) |
 | **Any MCP client** | stdio (`uteke-mcp`) or Streamable HTTP (`uteke-serve`) · [transports](docs/mcp.md#transport-comparison) |
 | **Claude on the web, desktop or mobile** | add `https://uteke.app/mcp` as a connector, sign in ([Uteke Cloud](https://uteke.app/?utm_source=github&utm_medium=readme&utm_campaign=prove-the-recall)) |

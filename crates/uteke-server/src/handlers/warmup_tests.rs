@@ -126,6 +126,7 @@ impl App {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         Self {
             seen,

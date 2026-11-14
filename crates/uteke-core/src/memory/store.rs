@@ -171,6 +171,15 @@ CREATE TABLE IF NOT EXISTS room_documents (
 CREATE INDEX IF NOT EXISTS idx_room_documents_room ON room_documents(room_id);
 CREATE INDEX IF NOT EXISTS idx_room_documents_slug ON room_documents(doc_slug);
 
+-- v26: room aliases (#1714). A rename keeps the old id working: alias_id points
+-- at the canonical room. An alias is never also a room id; the code enforces it.
+CREATE TABLE IF NOT EXISTS room_aliases (
+    alias_id   TEXT PRIMARY KEY,
+    room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_aliases_room ON room_aliases(room_id);
+
 -- v23: rejected-value tombstones (#1597). Not touched by prune, TTL or forget.
 CREATE TABLE IF NOT EXISTS rejected_values (
     hash       TEXT PRIMARY KEY,
@@ -216,7 +225,7 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 25;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 27;
 
 /// Persistent SQLite store for memories.
 pub struct Store {

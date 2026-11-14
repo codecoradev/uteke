@@ -129,6 +129,7 @@ impl crate::Uteke {
                 memory,
                 score,
                 similarity: Some(similarity),
+                rooms: Vec::new(),
             });
         }
         results.sort_by(|a, b| {
@@ -309,6 +310,77 @@ mod history_tests {
         assert!(!ids(&early).contains(&forgotten.as_str()));
     }
 
+    /// `older` memories written two hours ago that rank below `newer` ones
+    /// written now, all for the query "quartz". Returns the older ids, sorted.
+    fn hide_older_behind_newer(u: &Uteke, older: usize, newer: usize) -> Vec<String> {
+        let mut old_ids = Vec::new();
+        for i in 0..older {
+            let id = u
+                .remember(
+                    &format!("quartz old{i} p{i} q{i} r{i} s{i} t{i} v{i} w{i}"),
+                    &[],
+                    None,
+                    None,
+                )
+                .unwrap();
+            backdate(u, &id, 2);
+            old_ids.push(id);
+        }
+        for i in 0..newer {
+            u.remember(
+                &format!("quartz quartz quartz fa{i} fb{i} fc{i}"),
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+        }
+        old_ids.sort_unstable();
+        old_ids
+    }
+
+    /// The over-fetch loop asks for `limit * 3`, `* 9`, `* 27` rows (at least
+    /// 50 each) and no further. `recall_inner` returns at most the rows it was
+    /// asked for, so a newer row set larger than the first two windows hides
+    /// the older rows until the third pass, which must widen by x3 each time.
+    #[test]
+    fn at_time_recall_widens_by_a_factor_of_three_per_pass() {
+        let u = open_keyword();
+        // limit 10: windows 50, 90, 270. 100 newer rows fill the first two.
+        let old = hide_older_behind_newer(&u, 5, 100);
+        let hour_ago = Utc::now() - Duration::hours(1);
+        let got = u
+            .recall_at_time_index("quartz", 10, None, None, hour_ago, 0.0, None, None)
+            .unwrap();
+        let mut got: Vec<String> = got.into_iter().map(|r| r.memory.id).collect();
+        got.sort_unstable();
+        assert_eq!(got, old);
+    }
+
+    /// The loop is bounded to three passes: rows past the third window stay
+    /// unseen rather than the loop running until the index is exhausted.
+    #[test]
+    fn at_time_recall_stops_after_three_passes() {
+        let u = open_keyword();
+        // limit 1: every window is 50 rows for three passes; a fourth would be
+        // 81 rows. 60 newer rows hide the single older one from all three.
+        let old = hide_older_behind_newer(&u, 1, 60);
+        assert_eq!(old.len(), 1);
+        // Precondition: the older row is past the 50-row window, inside 81.
+        let rank = |n: usize| {
+            let r = u
+                .recall_inner("quartz", n, None, None, 0.0, None, None, true)
+                .unwrap();
+            r.iter().any(|x| x.memory.id == old[0])
+        };
+        assert!(!rank(50) && rank(81), "fixture must straddle the windows");
+        let hour_ago = Utc::now() - Duration::hours(1);
+        let got = u
+            .recall_at_time_index("quartz", 1, None, None, hour_ago, 0.0, None, None)
+            .unwrap();
+        assert!(got.is_empty(), "{:?}", ids(&got));
+    }
+
     #[test]
     fn history_list_includes_rows_deprecated_after_the_instant() {
         let u = open_keyword();
@@ -437,5 +509,91 @@ mod history_tests {
         assert!(!memory_existed_at(&m, now));
         m.deprecated_at = Some(now + Duration::seconds(30));
         assert!(memory_existed_at(&m, now), "deprecated after the instant");
+    }
+}
+
+/// Point-in-time recall of memories deprecated since (#1729).
+#[cfg(test)]
+mod retired_filter_tests {
+    use crate::test_support::open_keyword;
+    use std::time::Duration;
+
+    #[test]
+    fn deprecated_memories_are_filtered_by_entity_at_a_point_in_time() {
+        let u = open_keyword();
+        let a = u
+            .remember(
+                "shared probe words about x",
+                &[],
+                Some(serde_json::json!({"entity": "x"})),
+                None,
+            )
+            .unwrap();
+        let b = u
+            .remember(
+                "shared probe words about y",
+                &[],
+                Some(serde_json::json!({"entity": "y"})),
+                None,
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let before_forgetting = chrono::Utc::now();
+        std::thread::sleep(Duration::from_millis(50));
+        u.soft_forget(&a, "gone").unwrap();
+        u.soft_forget(&b, "gone").unwrap();
+
+        let ids = |entity: Option<&str>| {
+            let mut ids: Vec<String> = u
+                .recall_at_time(
+                    "shared probe words",
+                    10,
+                    None,
+                    None,
+                    before_forgetting,
+                    0.0,
+                    entity,
+                    None,
+                )
+                .unwrap()
+                .into_iter()
+                .map(|r| r.memory.id)
+                .collect();
+            ids.sort();
+            ids
+        };
+        let mut both = vec![a.clone(), b.clone()];
+        both.sort();
+        assert_eq!(ids(None), both, "both existed then");
+        assert_eq!(ids(Some("x")), vec![a]);
+        assert_eq!(ids(Some("y")), vec![b]);
+    }
+    #[test]
+    fn the_index_fetch_widens_when_the_first_window_holds_only_newer_memories() {
+        // limit 20 asks for max(20 * 3, 50) = 60 candidates: all 60 are newer
+        // than the point in time and are dropped. The next pass (20 * 9) reaches
+        // the 10 older memories. A window of limit + multiplier would stay at 50
+        // on every pass and return nothing.
+        let u = open_keyword();
+        for i in 0..10 {
+            u.remember(&format!("probe old{i}"), &[], None, None)
+                .unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let point_in_time = chrono::Utc::now();
+        std::thread::sleep(Duration::from_millis(50));
+        for i in 0..60 {
+            u.remember(&format!("probe probe probe probe new{i}"), &[], None, None)
+                .unwrap();
+        }
+        let found = u
+            .recall_at_time("probe", 20, None, None, point_in_time, 0.0, None, None)
+            .unwrap();
+        assert_eq!(found.len(), 10, "{found:?}");
+        assert!(
+            found
+                .iter()
+                .all(|r| r.memory.content.starts_with("probe old"))
+        );
     }
 }

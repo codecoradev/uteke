@@ -431,6 +431,10 @@ mod tests {
         let out = remove_ids(&mut idx, ["a", "b", "ghost"], &FAST);
         assert!(out.is_clean());
         assert_eq!(out.missing, 1);
+        assert_eq!(
+            out.attempts, FAST.attempts,
+            "the outcome carries the policy"
+        );
         assert!(idx.present.is_empty());
         assert_eq!(idx.save_calls, 1, "one save for the whole batch");
     }
@@ -452,6 +456,20 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("uteke repair"), "{err}");
+    }
+
+    #[test]
+    fn remove_ids_reports_the_policy_attempts_when_persist_fails() {
+        let mut idx = FakeIndex::new(2);
+        idx.present.insert("a".into());
+        idx.save_failures_left = 99;
+        let out = remove_ids(&mut idx, ["a"], &FAST);
+        assert_eq!(out.attempts, 3);
+        assert!(
+            out.error_message()
+                .unwrap()
+                .contains("index persist failed after 3 attempts")
+        );
     }
 
     #[test]

@@ -1,0 +1,241 @@
+# Directory and list submissions
+
+Status as of 2026-11-10. Rules below were read from each list's own
+CONTRIBUTING file or docs that day; re-read the file before opening a PR, since
+these lists change often. Tick a box when done, so nothing is submitted twice.
+
+## 0. Already done (do not repeat)
+
+- [x] Official MCP Registry: `io.github.codecoradev/uteke` 0.23.0, active
+      (remote `https://uteke.app/mcp`). Published by `.github/workflows/mcp-registry.yml`.
+- [x] awesome-rust: already listed under Applications > MLOps
+      (`rust-unofficial/awesome-rust`). Optional: refresh its one-line description.
+- [x] GitHub repo description and 20 topics, social preview image.
+- [x] crates.io, Homebrew tap, Docker Hub, GitHub Releases (cosign-signed).
+
+## 1. Free, automatic: wait, then verify
+
+These import the official registry or crawl GitHub. No action except a check.
+Look again about a week after 2026-11-10; if an entry is missing then, use the
+manual route in the same row.
+
+| Where | Expected | If missing |
+|---|---|---|
+| Claude app / host MCP catalog | next refresh of the registry copy (hourly poll) | none, just wait |
+| PulseMCP | ingests the registry; its submit form is closed | none (do not email) |
+| Glama | indexes GitHub and the registry | section 2, step 1 |
+| mcp.directory | imports the registry | `/submit` form |
+| API Tracker (apitracker.io/mcp-servers) | imports the registry | submit form |
+| ClaudePluginHub | crawls GitHub | submit the repo URL |
+
+- [ ] Verify each row once, a week later.
+
+## 2. The critical chain: Glama, then awesome-mcp-servers
+
+`punkpeye/awesome-mcp-servers` (about 97k stars, about 4,600 entries) is the
+biggest single list. Its CI expects every new entry to carry a Glama score
+badge, so Glama comes first.
+
+1. [ ] **Glama listing.** Search `glama.ai/mcp/servers` for `uteke` (nothing on
+       2026-11-10). If absent, use "Add Server" (needs a signed-in account:
+       GitHub works; the email route has a captcha, so an owner must do it).
+       Then **claim** it (`glama.json` is already in the repo root, naming
+       `ajianaz`; redo the "Claim ownership" flow so Glama reads it).
+       Glama grades licence, quality and maintenance; Apache-2.0 helps.
+2. [ ] Open `https://glama.ai/mcp/servers/codecoradev/uteke` and confirm the
+       badge image `.../badges/score.svg` renders.
+3. [ ] **PR to awesome-mcp-servers**, section "Knowledge & Memory". Fork,
+       branch `add-uteke`, one line, keep alphabetical order among neighbours
+       (the guideline; check the lines around yours on the day):
+
+```markdown
+- [codecoradev/uteke](https://github.com/codecoradev/uteke) [![codecoradev/uteke MCP server](https://glama.ai/mcp/servers/codecoradev/uteke/badges/score.svg)](https://glama.ai/mcp/servers/codecoradev/uteke) 🦀 🏠 ☁️ 🍎 🪟 🐧 - Long-term memory for AI agents: one offline Rust binary with hybrid vector and full-text recall, rooms for shared memory, point-in-time recall. Also hosted as Uteke Cloud.
+```
+
+   Legend: 🦀 Rust, 🏠 local, ☁️ cloud, 🍎🪟🐧 macOS/Windows/Linux.
+   The list fast-tracks agent-authored PRs that end the title with `🤖🤖🤖`;
+   only add it if an agent opens the PR. The queue is long (3,800+ open PRs on
+   2026-10-31): expect weeks. After the merge, check the entry is still in the
+   README a month later (a previous submitter reported theirs dropped).
+
+## 3. Remote list: awesome-remote-mcp-servers (uncertain)
+
+`punkpeye/awesome-remote-mcp-servers` is for hosted servers. Requirements:
+public URL that answers `initialize`, Streamable HTTP, public sign-up allowed,
+and a Glama **connector** listing with its badge.
+
+Uteke Cloud answers `initialize` with `401` plus `WWW-Authenticate` and OAuth
+metadata (checked 2026-11-10). The list has a 🔐 marker for OAuth servers, but
+Glama may flag a token-gated endpoint as unhealthy. So:
+
+- [ ] Add the connector on Glama (`glama.ai/mcp/connectors`); wait for its
+      health check. Only if it is healthy, open the PR (three-line entry,
+      section "Knowledge & Memory", marker 🔐). Otherwise skip, do not argue.
+
+## 4. Memory-specific lists (no Glama needed)
+
+- [x] `topoteretes/awesome-ai-memory`: PR #126 open (2026-11-10). Table row. Columns: Name, URL,
+      Open/Close, GitHub URL, Category, Storage. Row: `Uteke | https://uteke.app |
+      Managed, Open source | https://github.com/codecoradev/uteke | Memory Tool |
+      Vector`. (Its README says "open a pull request"; there is no CONTRIBUTING file.)
+- [x] `TeleAI-UAGI/Awesome-Agent-Memory`: PR #190 open (2026-11-10), entry #41 by star count
+      (285 stars; below 100 stars an entry goes in the collapsed Emerging section, so
+      this stays valid while stars stay above ~90). Description is capped at 25 words.
+- [ ] Hermes Atlas (`hermesatlas.com`, repo `ksimback/hermes-ecosystem`): submit through the
+      "Suggest a Repo" issue form (prefilled link in the session notes; category
+      "Memory & Context"). The form sets a label the automation needs, so use the web form, not `gh issue create`.
+      Previously noted as "Best memory providers" list:
+      Uteke has a Hermes integration (`docs/integrations/hermes.md`). Find its
+      submission route first (not read yet); competitors listed there include
+      mnemosyne, ClawMem, Sibyl-Memory.
+- [ ] `hesreallyhim/awesome-claude-code`: one submission through their issue
+      form (Uteke ships Claude Code hooks via `uteke connect claude`). They
+      reject promotion-style entries, so describe the hooks, not the product.
+      Requirement: 100+ stars (285 today) or 14+ days old. One shot only.
+
+## 5. Assistant marketplaces (need prerequisites)
+
+| Where | What it takes | Cost | Decision |
+|---|---|---|---|
+| Cursor Marketplace | open source; `.cursor-plugin/plugin.json` + root `mcp.json`; publisher application at cursor.com/marketplace/publish; manual review | free | worth it |
+| cursor.directory | GitHub repo, Agent Plugins format | free | do with the row above |
+| Cline marketplace | issue on `cline/mcp-marketplace` with repo URL, 400x400 PNG logo, reason; needs `llms-install.md` | free | worth it |
+| Gemini CLI extensions | `gemini-extension.json` at repo root + repo topic `gemini-cli-extension`; crawled within a day | free | cheapest win |
+| Claude connector / plugin directory | portal needs a Claude Team or Enterprise org (about $50/month), privacy-policy URL, tool annotations, a test account | paid | owner decision |
+| Docker MCP Catalog | PR to `docker/mcp-registry`; our image's entrypoint always runs `uteke-serve` (HTTP), not stdio `uteke-mcp` | free | blocked until a stdio mode exists |
+| MCP Market | GitHub repo URL; free queue 4 to 6 weeks, or $29 for 24 hours | free / $29 | free queue |
+| mcpservers.org | free form | free | do |
+| Microsoft MCP Center | comment on a GitHub issue, 1 to 2 weeks, about 110 curated servers | free | low value, skip for now |
+| mcp.so | $39 only path found; reports of a stub duplicate | $39 | skip |
+| Smithery | proxy shut down 2026-10-31 | n/a | skip |
+| LobeHub | claiming needs broad GitHub OAuth scopes | n/a | skip |
+| goose | closed; points to the official registry | n/a | skip |
+
+## 6. Prerequisites in this repo (do before sections 3 and 5)
+
+Checked against `crates/uteke-mcp/src/lib.rs` on 2026-11-10:
+
+- [ ] **Tool annotations** (`title`, `readOnlyHint`, `destructiveHint`,
+      `openWorldHint`) are absent. Required by Anthropic, shown by Cursor and Smithery.
+- [ ] **`resources/list` and `prompts/list`** are not handled. Scanners expect
+      empty lists, not "method not found".
+- [ ] Errors from tools should come back as results with `isError: true`
+      (partly done; verify per tool).
+- [x] `llms-install.md` at the repo root (Cline installs from it).
+- [ ] A privacy-policy URL on uteke.app.
+- [x] Manifests `glama.json` and `gemini-extension.json` (version kept in step by
+      `registry_manifests_match_workspace_version`).
+- [ ] Manifest `.cursor-plugin/plugin.json` (with the Cursor Marketplace application).
+- [x] Repo topic `gemini-cli-extension` (swapped in for `rag`, 2026-11-10).
+
+The first three touch the MCP surface. Per AGENTS.md, read
+`kontrak-core-cloud` first; if CORE semantics change, a uteke-cloud contract
+issue comes first. Adding annotations and empty lists should be additive.
+
+## 7. Launch posts (owner decision, outside the lists)
+
+Listings bring steady trickle; a spike on Trendshift needs one concentrated
+post. Candidates: Show HN, r/rust, r/mcp (the 70+ memory systems landscape
+thread), r/LocalLLaMA, X, dev.to, This Week in Rust (submit a PR to
+`rust-lang/this-week-in-rust`). One post per channel, at least a few days apart,
+after the README demo and social preview are live (both are).
+
+## Order of work
+
+1. Section 6 prerequisites that are cheap (`glama.json`, `llms-install.md`,
+   `gemini-extension.json`) in one PR.
+2. Section 2 (Glama, then awesome-mcp-servers). Longest queue, start first.
+3. Section 4 and the free rows of section 5 (one PR each).
+4. Section 1 verification a week later.
+5. Section 6 MCP annotations as their own code PR; then Cursor, Cline, and,
+   if wanted, the Claude directories.
+
+## 8. `brew install uteke` without a tap (homebrew-core)
+
+Today users run `brew install codecoradev/tap/uteke`. After `brew tap codecoradev/tap`
+once, `brew install uteke` and `brew upgrade uteke` already work, because no
+homebrew-core formula named `uteke` exists (checked 2026-11-10).
+
+The bare name without any tap needs homebrew-core. Checked against docs.brew.sh:
+
+- Notability for a self-submission: 90 forks, 90 watchers or 225 stars. Stars are 285: met.
+  The repository is older than 30 days: met.
+- **Not met: the formula must build from source.** The tap formula installs
+  prebuilt release tarballs, which homebrew-core rejects (prebuilt-only belongs in a cask
+  or a tap). A core formula needs `depends_on "rust" => :build`, a SHA-256-checked
+  tag archive, `cargo install` with the locked dependency set, a working `livecheck`.
+- ONNX Runtime: the tap ships its own `libonnxruntime`. A core formula should use
+  Homebrew's `onnxruntime` (1.31.1, bottled for macOS and Linux) through
+  `ORT_LIB_PATH`; `ort` is built with `load-dynamic` and `api-18`, so this should work but is untested.
+- Self-updating software must have its self-update disabled where possible: `uteke upgrade`
+  and the daily release check need an off switch for packaged builds.
+- The first run downloads a ~200 MB embedding model. Likely acceptable (data, not software), but a reviewer may ask.
+- Must build and pass tests on the homebrew-core CI matrix: macOS (Intel included) and Linux.
+  Uteke has no macOS Intel prebuilt; a source build removes that gap.
+
+Steps if pursued: (1) source formula in a scratch tap, `brew install --build-from-source`,
+`brew test`, `brew audit --new --strict`; (2) decide how packaged builds disable
+`uteke upgrade`; (3) PR to `Homebrew/homebrew-core`. Keep the tap formula as the fast prebuilt path.
+
+### Feasibility test, 2026-11-10 (macOS arm64, Homebrew 7.0.13)
+
+A throwaway source formula `uteke-src` (below, `keg_only`) in a local tap:
+
+| Check | Result |
+|---|---|
+| `brew install --build-from-source` (cli, server, mcp; `usearch` C++ included) | built in about 4.5 minutes, Rust 1.99.1 |
+| Embeddings with Homebrew's `onnxruntime` 1.31.1 through `ORT_LIB_PATH` | works: `--strategy vector` scored 0.83 on a query with no shared keyword |
+| `brew test` | passes |
+| `brew audit --new --strict --online` | passes (one style fix: `formula_opt_lib`) |
+
+Still open before a PR to `Homebrew/homebrew-core`:
+
+1. `uteke upgrade` has no Homebrew detection and would overwrite the binary in the
+   Cellar. Refuse when the executable path contains `/Cellar/` and point to `brew upgrade`.
+   (The wrapper below only sets `UTEKE_NO_UPDATE_CHECK`, which stops the daily check.)
+2. Linux build and test: only homebrew-core CI (or a Linux host) can confirm it.
+3. Rename to `uteke`, drop `keg_only`. The tap formula `codecoradev/tap/uteke` stays as the prebuilt path.
+4. `Cargo.lock` pins `chacha20 0.10.1` (yanked; 0.10.2 exists), pulled in by `rand 0.10.2`.
+   The build only warns, but `cargo update -p chacha20` should land before submitting.
+
+Side effect of the test: Homebrew upgraded the build dependencies on the host
+(rust, onnxruntime, cmake, llvm, protobuf and others). Clean up with
+`brew uninstall uteke-src` and `brew untap local/uteke-test`.
+
+```ruby
+class UtekeSrc < Formula
+  desc "Long-term memory for AI agents: offline hybrid vector and full-text recall"
+  homepage "https://uteke.app"
+  url "https://github.com/codecoradev/uteke/archive/refs/tags/v0.23.0.tar.gz"
+  sha256 "4d3e2c219ddf1256fe1974827e2eb806b795040fc03bb9bc1c2b1b407f84599d"
+  license "Apache-2.0"
+
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
+
+  keg_only "local feasibility test of a homebrew-core style formula"
+
+  depends_on "cmake" => :build
+  depends_on "rust" => :build
+  depends_on "onnxruntime"
+
+  def install
+    %w[uteke-cli uteke-server uteke-mcp].each do |crate|
+      system "cargo", "install", *std_cargo_args(path: "crates/#{crate}")
+    end
+
+    # ort is built with load-dynamic: point it at Homebrew's libonnxruntime FILE.
+    ort_lib = formula_opt_lib("onnxruntime")/shared_library("libonnxruntime")
+    %w[uteke uteke-serve uteke-mcp].each do |name|
+      libexec.install bin/name
+      (bin/name).write_env_script libexec/name, ORT_LIB_PATH: ort_lib, UTEKE_NO_UPDATE_CHECK: "1"
+    end
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/uteke --version")
+  end
+end
+```

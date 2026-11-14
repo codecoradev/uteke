@@ -29,6 +29,8 @@ mod author_tests;
 mod capture;
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod doc_similar_tests;
 mod docs;
 #[cfg(test)]
 mod error_tests;
@@ -49,6 +51,11 @@ mod recall_similarity_tests;
 #[cfg(test)]
 mod room_link_tests;
 mod rooms;
+#[cfg(test)]
+mod rooms_contract_tests;
+#[cfg(test)]
+mod skill_remote_tests;
+mod skills;
 mod tags;
 #[cfg(test)]
 mod warmup_tests;
@@ -177,6 +184,8 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/room/remember", rooms::post_room_remember),
     ("GET", "/room/list", rooms::get_room_list),
     ("POST", "/room/stats", rooms::post_room_stats),
+    // ── Room search (#1704, LAB) ─────────────────────────────────────
+    ("POST", "/room/search", rooms::post_room_search),
     // ── Room ↔ Document junction (#689) ──────────────────────────────
     (
         "POST",
@@ -209,6 +218,13 @@ const HANDLERS: &[(&str, &str, Handler)] = &[
     ("POST", "/doc/list", docs::post_doc_list),
     // ── Document: Search ────────────────────────────────────────────
     ("POST", "/doc/search", docs::post_doc_search),
+    // ── Document: Similar / near-duplicates (#1730, LAB) ─────────────
+    ("POST", "/doc/similar", docs::post_doc_similar),
+    // ── Skill library: read-only (#1731, LAB) ────────────────────────
+    ("POST", "/skill/search", skills::post_skill_search),
+    ("POST", "/skill/list", skills::post_skill_list),
+    ("POST", "/skill/show", skills::post_skill_show),
+    ("POST", "/skill/similar", skills::post_skill_similar),
     // ── Document: Move ───────────────────────────────────────────────
     ("POST", "/doc/move", docs::post_doc_move),
     // ── Document: Delete ─────────────────────────────────────────────
@@ -278,6 +294,59 @@ fn handler_for(method: &str, path: &str) -> Option<Handler> {
         .iter()
         .find(|(m, p, _)| *m == method && *p == path)
         .map(|(_, _, h)| *h)
+}
+
+/// Take the slot a request needs, if it embeds a client string. The body is
+/// decoded into the typed request of its route and the CORE answers: the same
+/// `DocSimilarQuery::resolve`, `SkillRemoteArgs` and search-mode rules that
+/// decide the request give the [`EmbedNeed`](uteke_core::remote_guard::EmbedNeed),
+/// so there is no second copy of "which requests embed" here (#1753). A body
+/// that does not decode embeds nothing: its handler answers the 400.
+///
+/// Only LAB routes are listed: the memory recall routes are CORE, and a new
+/// 429 there would change the CORE contract.
+///
+/// # Errors
+///
+/// `Validation` for an oversized draft, `Busy` when the slots are taken.
+fn admit_remote_embed(
+    gate: &uteke_core::remote_guard::EmbedGate,
+    route_path: &str,
+    body: &serde_json::Value,
+) -> Result<Option<uteke_core::remote_guard::EmbedPermit>, uteke_core::Error> {
+    use serde::Deserialize;
+    use uteke_core::remote_guard::EmbedNeed;
+    use uteke_core::skill_remote::{SkillRemoteArgs, SkillRemoteOp};
+    fn skill<'a, R>(body: &'a serde_json::Value) -> Option<SkillRemoteArgs>
+    where
+        R: Deserialize<'a> + Into<SkillRemoteArgs>,
+    {
+        R::deserialize(body).ok().map(Into::into)
+    }
+    match route_path {
+        "/doc/similar" => {
+            let Ok(req) = DocSimilarRequest::deserialize(body) else {
+                return Ok(None);
+            };
+            match resolve_doc_similar(&req) {
+                Ok(query) => gate.admit(query.embed_need()),
+                Err(_) => Ok(None),
+            }
+        }
+        "/doc/search" => match DocSearchRequest::deserialize(body) {
+            Ok(req) => gate.admit(EmbedNeed::for_search_mode(&req.mode)),
+            Err(_) => Ok(None),
+        },
+        "/skill/search" => match skill::<SkillSearchRequest>(body) {
+            Some(args) => gate.admit(args.embed_need(SkillRemoteOp::Search)),
+            None => Ok(None),
+        },
+        "/skill/similar" => match skill::<SkillSimilarRequest>(body) {
+            Some(args) => gate.admit(args.embed_need(SkillRemoteOp::Similar)),
+            None => Ok(None),
+        },
+        _ => Ok(None),
+    }
 }
 
 pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<Cursor<Vec<u8>>> {
@@ -363,22 +432,35 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
         return ctx.error_response_for(req, 404, "Not found");
     }
 
+    // The body of a route that needs a look before the store lock is read ONCE
+    // here and kept for its handler (`preread_body`).
+    clear_preread_body();
+    let peek = if method == Method::Post
+        && matches!(
+            route_path,
+            "/recall"
+                | "/remember"
+                | "/doc/search"
+                | "/doc/similar"
+                | "/skill/search"
+                | "/skill/similar"
+        ) {
+        preread_body(req.as_reader())
+    } else {
+        None
+    };
+
     // #1518: embed the text of a recall or a remember BEFORE the store lock.
     // The embedding is the slow part (a network round trip for a remote
     // backend) and needs no store; it lands in the embedder's cache, so the
     // call under the lock finds it there instead of every request queueing
     // behind one embedding at a time.
-    clear_preread_body();
     let warmer = ctx
         .embed_warmer
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    if method == Method::Post
-        && let Some(warmer) = warmer
-        && matches!(route_path, "/recall" | "/remember")
-        && let Some(body) = preread_body(req.as_reader())
-    {
+    if let (Some(warmer), Some(body)) = (warmer, &peek) {
         // Only text the real call would embed: a recall query as sent, a
         // content after the same validation and privacy filter as a write.
         match route_path {
@@ -387,13 +469,37 @@ pub fn route(uteke: &Mutex<Uteke>, ctx: &ReqCtx, req: &mut Request) -> Response<
                     warmer.warm_query(q);
                 }
             }
-            _ => {
+            "/remember" => {
                 if let Some(c) = body.get("content").and_then(|v| v.as_str()) {
                     warmer.warm_content(c);
                 }
             }
+            _ => {}
         }
     }
+
+    // The LAB routes that embed a client string take their slot BEFORE the
+    // store lock (see `ReqCtx::remote_embeds`): a third concurrent one is a
+    // 429 at once instead of queueing behind the lock. Whether a request
+    // embeds is the core's answer (`admit_remote_embed`); an oversized draft is
+    // a 400 first, busy or not. Held until the response is built. The CORE
+    // memory routes (`/recall`, `/context`, ...) take no slot: a new 429 there
+    // would change the CORE contract.
+    let _embed_slot = match peek
+        .as_ref()
+        .map(|body| admit_remote_embed(&ctx.remote_embeds, route_path, body))
+    {
+        Some(Err(e)) => {
+            let status = if e.class() == uteke_core::ErrorClass::Busy {
+                429
+            } else {
+                400
+            };
+            return ctx.error_response_for(req, status, e.to_string());
+        }
+        Some(Ok(slot)) => slot,
+        None => None,
+    };
 
     // Lock the Uteke instance for the duration of this request.
     // This serializes requests but prevents data races on the SQLite connection.
@@ -529,6 +635,7 @@ mod room_memories_namespace_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -678,6 +785,7 @@ mod room_recall_at_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -919,6 +1027,7 @@ mod room_recall_at_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1065,6 +1174,172 @@ mod room_recall_at_tests {
         );
     }
 
+    /// #1714: the id a room had before a rename keeps working over HTTP, and
+    /// the responses name the canonical room.
+    #[test]
+    fn a_renamed_rooms_old_id_still_works_and_answers_with_the_canonical_id() {
+        let app = NamespaceApp::new();
+        let body = serde_json::json!({ "room_id": "old-name", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        let body = serde_json::json!({ "from": "old-name", "to": "new-name" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+
+        // A write through the old id lands in the renamed room and says so.
+        let body = serde_json::json!({
+            "content": "written through the old id",
+            "tags": [],
+            "room_id": "old-name",
+            "author": "tester"
+        })
+        .to_string();
+        let (status, resp) = app.call(Method::Post, "/room/remember", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(resp["room_id"], serde_json::json!("new-name"), "{resp}");
+
+        // The room listing shows the renamed room once; stats work by either id.
+        for id in ["old-name", "new-name"] {
+            let body = serde_json::json!({ "room_id": id }).to_string();
+            let (status, resp) = app.call(Method::Post, "/room/stats", Some(body));
+            assert_eq!(status, 200, "{id}: {resp}");
+            assert_eq!(
+                resp["room_id"],
+                serde_json::json!("new-name"),
+                "{id}: {resp}"
+            );
+            assert_eq!(resp["memory_count"], serde_json::json!(1), "{id}: {resp}");
+        }
+
+        // A new room cannot take the old id.
+        let body = serde_json::json!({ "room_id": "old-name", "namespace": "default" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/create", Some(body));
+        assert_ne!(status, 200, "{resp}");
+    }
+
+    /// #1715 stage 1: an id outside `category:title` is accepted with a warning
+    /// on create and rename; a conventional id, any custom category included, is
+    /// not warned, and reads never warn.
+    #[test]
+    fn room_create_and_rename_warn_about_an_id_outside_category_title() {
+        let app = NamespaceApp::new();
+        let create = |id: &str| {
+            let body = serde_json::json!({ "room_id": id, "namespace": "default" }).to_string();
+            app.call(Method::Post, "/room/create", Some(body))
+        };
+        let (status, resp) = create("plain-room");
+        assert_eq!(status, 200, "{resp}");
+        let warnings = resp["warnings"].as_array().expect("warnings array");
+        assert_eq!(warnings.len(), 1, "{resp}");
+        assert!(
+            warnings[0].as_str().unwrap().contains("category:title"),
+            "{resp}"
+        );
+        assert_eq!(resp["created"], serde_json::json!("plain-room"));
+
+        for id in ["project:uteke", "lab:custom"] {
+            let (status, resp) = create(id);
+            assert_eq!(status, 200, "{resp}");
+            assert!(resp.get("warnings").is_none(), "{id}: {resp}");
+        }
+
+        // Renaming to a non-conventional id warns; to a conventional one does not.
+        let body = serde_json::json!({ "from": "project:uteke", "to": "uteke-main" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(resp["warnings"].as_array().map(Vec::len), Some(1), "{resp}");
+        let body =
+            serde_json::json!({ "from": "uteke-main", "to": "project:uteke-main" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/rename", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+
+        // Reads and existing rooms are never warned.
+        let body = serde_json::json!({ "room_id": "plain-room" }).to_string();
+        let (status, resp) = app.call(Method::Post, "/room/stats", Some(body));
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+    }
+
+    /// #1715 stage 1: a room auto-created by `POST /room/remember` outside
+    /// `category:title` carries the same `warnings` entry as `POST /room/create`;
+    /// an existing room and a conventional new id carry none.
+    #[test]
+    fn a_room_auto_created_by_a_write_warns_outside_category_title() {
+        let app = NamespaceApp::new();
+        let room_remember = |room: &str, content: &str| {
+            let body =
+                serde_json::json!({ "content": content, "tags": [], "room_id": room }).to_string();
+            app.call(Method::Post, "/room/remember", Some(body))
+        };
+        let (status, resp) = room_remember("auto-room", "first note in auto room");
+        assert_eq!(status, 200, "{resp}");
+        assert_eq!(
+            resp["warnings"],
+            serde_json::json!([uteke_core::room_naming::room_id_warning("auto-room").unwrap()]),
+            "{resp}"
+        );
+        let (status, resp) = room_remember("auto-room", "second note in auto room");
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "existing room: {resp}");
+        let (status, resp) = room_remember("project:auto", "note in conventional room");
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+    }
+
+    /// #1715 stage 3 (off by default): with `[rooms] require_category_title`
+    /// on, a new room id outside `category:title` is a 400 `invalid_room_id`
+    /// on create, rename and room remember; a legacy room still takes writes.
+    #[test]
+    fn required_room_id_shape_is_a_400_invalid_room_id() {
+        let app = NamespaceApp::new();
+        let call = |path: &str, body: serde_json::Value| {
+            app.call(Method::Post, path, Some(body.to_string()))
+        };
+        let (status, _) = call("/room/create", serde_json::json!({ "room_id": "legacy" }));
+        assert_eq!(status, 200);
+        app.uteke.lock().unwrap().set_room_naming_settings(
+            uteke_core::room_naming::RoomNamingSettings {
+                require_category_title: true,
+            },
+        );
+        let expect_invalid = |(status, resp): (u16, serde_json::Value), id: &str| {
+            assert_eq!(status, 400, "{resp}");
+            assert_eq!(resp["error"], "invalid_room_id", "{resp}");
+            assert_eq!(resp["room_id"], id, "{resp}");
+            assert!(
+                resp["message"].as_str().unwrap().contains("category:title"),
+                "{resp}"
+            );
+        };
+        expect_invalid(
+            call("/room/create", serde_json::json!({ "room_id": "plain" })),
+            "plain",
+        );
+        expect_invalid(
+            call(
+                "/room/rename",
+                serde_json::json!({ "from": "legacy", "to": "still-plain" }),
+            ),
+            "still-plain",
+        );
+        expect_invalid(
+            call(
+                "/room/remember",
+                serde_json::json!({ "room_id": "fresh-plain", "content": "refused note" }),
+            ),
+            "fresh-plain",
+        );
+        let (status, resp) = call(
+            "/room/remember",
+            serde_json::json!({ "room_id": "legacy", "content": "legacy note" }),
+        );
+        assert_eq!(status, 200, "{resp}");
+        let (status, resp) = call("/room/create", serde_json::json!({ "room_id": "ops:ok" }));
+        assert_eq!(status, 200, "{resp}");
+        assert!(resp.get("warnings").is_none(), "{resp}");
+    }
+
     #[test]
     fn room_update_missing_room_returns_404() {
         let app = NamespaceApp::new();
@@ -1205,6 +1480,7 @@ mod contradiction_api_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1345,6 +1621,7 @@ mod pack_recall_api_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1508,6 +1785,7 @@ mod explain_recall_api_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1635,6 +1913,7 @@ mod list_pagination_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -1739,6 +2018,7 @@ mod payload_conformance_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
 
         let remember_body: &'static str = Box::leak(r#"{"content":"Payload conformance probe memory #1233 with distinctive tokens zebraquartz","namespace":"conf"}"#.to_string().into_boxed_str());
@@ -1819,6 +2099,7 @@ mod payload_conformance_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let mut req = tiny_http::TestRequest::new()
             .with_method(tiny_http::Method::Post)
@@ -1878,6 +2159,7 @@ mod payload_conformance_tests {
                     host_guard: Default::default(),
                     store_id: String::new(),
                     embed_warmer: Default::default(),
+                    remote_embeds: Default::default(),
                 };
                 let resp = route(&self.uteke, &ctx, &mut req);
                 let status = resp.status_code().0;
@@ -1988,6 +2270,7 @@ mod routes_introspection_tests {
                 host_guard: Default::default(),
                 store_id: "0123456789abcdef".to_string(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2230,6 +2513,7 @@ mod plain_remember_type_tests {
                 host_guard: Default::default(),
                 store_id: String::new(),
                 embed_warmer: Default::default(),
+                remote_embeds: Default::default(),
             };
             let resp = route(&self.uteke, &ctx, &mut req);
             let status = resp.status_code().0;
@@ -2357,6 +2641,7 @@ mod host_guard_route_tests {
             host_guard: guard,
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let mut t = TestRequest::new().with_method(Method::Get).with_path(path);
         if let Some(h) = host {
@@ -2410,6 +2695,7 @@ mod mcp_http_hardening_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         }
     }
 
@@ -2467,6 +2753,7 @@ mod mcp_read_only_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         }
     }
 
@@ -2556,6 +2843,7 @@ mod namespace_deprecation_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -2740,6 +3028,7 @@ mod forget_route_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -2901,6 +3190,7 @@ mod rejected_value_tests {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(uteke, &ctx, &mut req);
         let status = resp.status_code().0;

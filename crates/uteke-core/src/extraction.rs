@@ -164,6 +164,43 @@ mod env_override_tests {
         assert_eq!(c.max_facts, 7, "an invalid number is ignored");
         assert_eq!(c.mode, "llm", "mode has no variable");
     }
+
+    /// #1684: `with_env_overrides` reads the real environment and keeps the
+    /// file values it has no variable for (it is not `Default::default()`).
+    #[test]
+    #[serial_test::serial]
+    #[allow(unsafe_code)] // env mutation, serialized with the other env tests
+    fn with_env_overrides_reads_the_process_environment() {
+        const KEYS: [&str; 5] = [
+            "UTEKE_EXTRACTION_MODEL",
+            "UTEKE_EXTRACTION_API_KEY",
+            "UTEKE_EXTRACTION_BASE_URL",
+            "UTEKE_EXTRACTION_ENDPOINT_PATH",
+            "UTEKE_EXTRACTION_MAX_FACTS",
+        ];
+        let previous: Vec<Option<String>> = KEYS.iter().map(|k| std::env::var(k).ok()).collect();
+        for k in KEYS {
+            unsafe { std::env::remove_var(k) };
+        }
+        unsafe { std::env::set_var("UTEKE_EXTRACTION_API_KEY", "env-key") };
+        unsafe { std::env::set_var("UTEKE_EXTRACTION_MAX_FACTS", "3") };
+        let file = ExtractionConfig {
+            mode: "llm".into(),
+            model: "file-model".into(),
+            ..Default::default()
+        };
+        let c = file.with_env_overrides();
+        for (k, v) in KEYS.iter().zip(previous) {
+            match v {
+                Some(v) => unsafe { std::env::set_var(k, v) },
+                None => unsafe { std::env::remove_var(k) },
+            }
+        }
+        assert_eq!(c.api_key, "env-key", "a variable overrides the file");
+        assert_eq!(c.max_facts, 3);
+        assert_eq!(c.model, "file-model", "no variable: the file value stays");
+        assert_eq!(c.mode, "llm", "mode has no variable and is kept");
+    }
 }
 
 /// An OpenAI-compatible chat-completions client used for fact extraction.
@@ -708,5 +745,25 @@ mod tests {
         let facts = parse_facts(raw);
         assert_eq!(facts.len(), 1);
         assert!(facts[0].priority.is_none()); // 1.5 is out of 0.0-1.0 range
+    }
+
+    /// #1684: a plain string in a flat array is trimmed, and a blank one is
+    /// dropped after the trim.
+    #[test]
+    fn plain_string_facts_are_trimmed_and_blank_ones_dropped() {
+        let facts = parse_facts(r#"["  padded fact  ", "   ", "second fact\n"]"#);
+        let contents: Vec<&str> = facts.iter().map(|f| f.content.as_str()).collect();
+        assert_eq!(contents, vec!["padded fact", "second fact"]);
+    }
+
+    #[test]
+    fn a_413_is_too_large_whatever_its_body_says() {
+        // The 4xx arm needs a size phrase in the body; 413 does not.
+        let err = |m: &str| Error::generic(format!("Extraction endpoint returned HTTP {m}"));
+        assert!(is_input_too_large(&err("413 Request Entity: refused")));
+        assert!(is_input_too_large(&err("413")));
+        // the neighbours without a size phrase are not
+        assert!(!is_input_too_large(&err("412 Precondition: refused")));
+        assert!(!is_input_too_large(&err("414 URI: refused")));
     }
 }

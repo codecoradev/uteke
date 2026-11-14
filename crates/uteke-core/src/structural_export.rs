@@ -1210,7 +1210,11 @@ mod document_vector_tests {
         assert_eq!(report.chunks_missing, 0);
 
         let found = dst
-            .doc_search_semantic("quokka marsupial cache", 5)
+            .doc_search_semantic(
+                "quokka marsupial cache",
+                5,
+                crate::memory::documents::DocKind::Plain,
+            )
             .unwrap();
         assert!(
             found.iter().any(|r| r.document.slug == "child"),
@@ -1440,5 +1444,38 @@ mod column_roundtrip_tests {
         assert_eq!(child.path, "/c1/c2/");
         assert_eq!(child.depth, 1);
         assert!(dst.doc_get("root").unwrap().unwrap().has_children);
+    }
+}
+
+/// What a structural import reports for tombstones (#1729).
+#[cfg(test)]
+mod tombstone_count_tests {
+    use crate::test_support::open_keyword;
+
+    #[test]
+    fn a_bundle_without_tombstones_reports_no_rejected_values() {
+        let src = open_keyword();
+        src.remember("a plain fact", &[], None, None).unwrap();
+        let bundle = src.export_full().unwrap();
+        let dst = open_keyword();
+        let imported = dst.import_full(&bundle).unwrap();
+        assert!(
+            imported["imported"].get("rejected_values").is_none(),
+            "nothing was restored: {imported}"
+        );
+    }
+
+    #[test]
+    fn a_bundle_with_a_tombstone_reports_it_restored() {
+        let src = open_keyword();
+        let id = src
+            .remember("The deploy target is staging-2", &[], None, None)
+            .unwrap();
+        src.forget_with_reason(&id, Some("wrong: it is staging-3"))
+            .unwrap();
+        let bundle = src.export_full().unwrap();
+        let dst = open_keyword();
+        let imported = dst.import_full(&bundle).unwrap();
+        assert_eq!(imported["imported"]["rejected_values"], 1, "{imported}");
     }
 }

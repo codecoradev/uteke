@@ -425,6 +425,7 @@ pub fn run(opts: Options) -> i32 {
         host_guard: HostGuard::new(&opts.host, &opts.allowed_hosts),
         store_id: uteke_core::store_identity(&home),
         embed_warmer: Default::default(),
+        remote_embeds: Default::default(),
     };
 
     // Printed on stdout so `uteke view` can relay it; never logged.
@@ -477,6 +478,7 @@ mod tests {
             host_guard: HostGuard::new("127.0.0.1", &[]),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         (uteke, ctx, Gate::new(TOKEN, PORT))
     }

@@ -268,7 +268,8 @@ jobs:
       # Publish in dependency order. Each crate waits until the versions it
       # depends on are in the sparse index that cargo resolves against: a
       # fixed sleep was too short for v0.22.1, so uteke-mcp, uteke-cli and
-      # uteke-server failed to find uteke-core ^0.22.1. A version that is
+      # uteke-server failed to find uteke-core ^0.22.1. uteke-privacy goes
+      # first: uteke-core depends on it (#1732). A version that is
       # already on crates.io is skipped, so a re-run finishes the job.
       - name: Publish crates in dependency order
         shell: bash
@@ -295,10 +296,11 @@ jobs:
             return 1
           }
 
-          for crate in uteke-core uteke-mcp uteke-cli uteke-server; do
+          for crate in uteke-privacy uteke-core uteke-mcp uteke-cli uteke-server; do
             case "$crate" in
-              uteke-mcp|uteke-cli) deps="uteke-core" ;;
-              uteke-server) deps="uteke-core uteke-mcp" ;;
+              uteke-core) deps="uteke-privacy" ;;
+              uteke-mcp|uteke-cli) deps="uteke-privacy uteke-core" ;;
+              uteke-server) deps="uteke-privacy uteke-core uteke-mcp" ;;
               *) deps="" ;;
             esac
             for dep in $deps; do wait_indexed "$dep"; done
@@ -316,7 +318,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           fail=0
-          for crate in uteke-core uteke-mcp uteke-cli uteke-server; do
+          for crate in uteke-privacy uteke-core uteke-mcp uteke-cli uteke-server; do
             for attempt in 1 2 3 4 5; do
               MAX=$(curl -sf -A "uteke-release-verify" "https://crates.io/api/v1/crates/$crate" | jq -r '.crate.max_version') || MAX=""
               [ "$MAX" = "$VERSION" ] && break

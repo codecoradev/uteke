@@ -32,18 +32,12 @@ pub(super) fn get_namespaces(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     .collect();
                 ctx.ok_response_for(req, &result)
             }
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         }
     } else {
         match uteke.list_namespaces() {
             Ok(namespaces) => ctx.ok_response_for(req, &namespaces),
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         }
     }
 }
@@ -56,8 +50,7 @@ pub(super) fn post_namespaces_rename(c: &mut Call) -> Response<Cursor<Vec<u8>>> 
         Ok(req_data) => match uteke.rename_namespace(&req_data.from, &req_data.to) {
             Ok(result) => ctx.ok_response_for(req, &result),
             // The other 400s of a rename keep their bare message.
-            Err(uteke_core::Error::Validation(msg)) => ctx.error_response_for(req, 400, msg),
-            Err(e) => ctx.core_error(req, &e),
+            Err(e) => ctx.core_error_bare(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -85,10 +78,7 @@ pub(super) fn post_namespaces_delete(c: &mut Call) -> Response<Cursor<Vec<u8>>> 
                     };
                     ctx.error_response_for(req, status, msg)
                 }
-                Err(e) => {
-                    error!("Namespace delete error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),

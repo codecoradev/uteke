@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "uteke-mcp",
+  "version": "1.0.0",
+  "description": "Uteke persistent memory for agents: the uteke skill plus the uteke-mcp MCP server (recall, remember, rooms, docs). Offline, no API key.",
+  "homepage": "https://github.com/codecoradev/uteke",
+  "repository": "https://github.com/codecoradev/uteke",
+  "license": "Apache-2.0",
+  "author": { "name": "CodeCoraDev" },
+  "keywords": ["memory", "mcp", "recall", "knowledge-base", "offline"]
+}

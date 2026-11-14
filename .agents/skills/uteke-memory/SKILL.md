@@ -5,7 +5,7 @@ description: "Persistent memory engine for AI agents via the uteke CLI — remem
 # Uteke Memory Skill
 
 Persistent memory engine for AI agents via the `uteke` CLI.
-Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
+Version: **0.24.0** — SQLite + HNSW vector index (usearch default, or vecq) + FTS5 hybrid search (RRF k=60); `fusion` (weighted RRF of the vector and hybrid rankings) is the default recall strategy since 0.16.0. `unsafe_code = "deny"` workspace-wide (only test modules that change env vars opt out).
 
 > This skill ships with each release — its version tracks the CLI version
 > (a CI gate fails when they drift, see `skill-version-parity` test).
@@ -59,11 +59,21 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doc delete <ID>` | Delete document (cascades to children) | |
 | `uteke doc list` | List documents | `--limit`, `--tree` (hierarchy) |
 | `uteke doc search <QUERY>` | Search documents (semantic + FTS5) | `--limit`, `--mode` (semantic/fts/hybrid) |
+| `uteke doc similar <SLUG>` | Documents close to this one, or to a draft (`--text`/`--file`) that is not stored; `possible_duplicate` >= 0.92, `similar_to` >= 0.80 | `--threshold`, `--limit`, `--text`, `--file` |
+| `uteke doc duplicates` | Near-duplicate document pairs and groups of the library or a subtree | `--subtree`, `--threshold`, `--limit` |
 | `uteke doc children <PARENT>` | List child documents | `--limit` |
 | `uteke doc move <ID_OR_SLUG>` | Move to new parent or root | `--parent` |
 | `uteke doc breadcrumbs <ID_OR_SLUG>` | Show path from root | |
 | `uteke doc descendants <ID_OR_SLUG>` | List all descendants | `--max-depth`, `--limit` |
 | `uteke doc export` | Export all documents as Markdown (JSON with `--json`) | `--output`, `--front-matter` |
+| `uteke skill index <DIR>` | Index the skills under a directory (read-only on disk): package hash, lint, searchable text; new bytes make a new draft | `--owner`, `--actor` |
+| `uteke skill search <QUERY>` | Find the few skills that fit a task (hybrid) | `--limit`, `--mode`, `--approved` |
+| `uteke skill list` | List the library | `--status`, `--limit` |
+| `uteke skill show <SLUG>` | Current version, hash, files, usage, history. Over HTTP/MCP: `POST /skill/search\|list\|show\|similar` and `uteke_skill_search\|list\|show\|similar` (read-only) | |
+| `uteke skill similar <SLUG>` | Skills close to this one, or to a draft (`--text`/`--file`) | `--threshold`, `--limit` |
+| `uteke skill lint [DIR]` | Check SKILL.md frontmatter (a directory, or the indexed library) | |
+| `uteke skill approve <SLUG>@<HASH>` | Record the approved package hash, the trust anchor clients check before loading | `--actor` |
+| `uteke skill record <SLUG> <EVENT>` | Count recalled / loaded / succeeded / failed on the current version | |
 
 ### Knowledge Graph
 
@@ -89,7 +99,7 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 |---------|-------------|-------------|
 | `uteke room create <ID>` | Create a room | `--title` |
 | `uteke room update <ID>` | Update title/description | `--title`, `--description` |
-| `uteke room rename <OLD> <NEW>` | Rename a room (members and document links move too) | |
+| `uteke room rename <OLD> <NEW>` | Rename a room (members and document links move too); the old id keeps working as an alias | |
 | `uteke room move-memory <MEMORY_ID>` | Move a memory between rooms, keeping link provenance | `--from`, `--to` |
 | `uteke room link <MEMORY_ID> <ROOM>` | Add an existing memory to a room without copying it (idempotent) | `--author` |
 | `uteke room add-document <ROOM> <SLUG>` | Link a document to a room | |
@@ -99,6 +109,7 @@ Version: **0.23.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke room consolidate <ID>` | Merge a room's memories into denser records (dry-run unless `--apply`; uses LLM calls) | `--apply`, `--max-calls` |
 | `uteke room list` | List all rooms | `--namespace` |
 | `uteke room stats <ID>` | Room statistics and participants | |
+| `uteke room search <QUERY>` | Find rooms for a topic: room id/title/description match fused with the rooms of the memories a recall finds (keep the query to 2-3 keywords) | `--limit` (default 10, max 100), `--namespace` |
 | `uteke room recall <ID>` | Recall room memories | `--query`, `--author`, `--limit`, `--min` |
 | `uteke room summary <ID>` | Topic clustering summary | |
 | `uteke room document <ID>` | Generate structured document from room | |
@@ -325,7 +336,7 @@ Keep the three axes distinct so recall stays filterable:
 | Axis | Means | Rule |
 |------|-------|------|
 | **Namespace** | Workspace / whose area | Few and coarse (e.g. one per agent family or tool). Not one per project: project identity lives in the room and tags. Avoid `repo-*` / `project:*` namespaces. Do not keep writing to `default` once you have chosen real ones |
-| **Room** | One project or discussion | One room per parent project named `<name>` (lowercase, hyphens; no `project:` / `repo-` prefix, no `-dev` suffix). Discussions `disc:<topic>`, research `riset:<topic>`. Always set `--title` |
+| **Room** | One project or discussion | Id of the form `category:title` (see "Room ids" below): one room per parent project `project:<name>` (no `repo-` prefix, no `-dev` suffix), research `research:<topic>`, discussions `disc:<topic>`. Always set `--title` |
 | **Tag** | Search aid | `project:<name>` (registry names only), `tool:<name>` for items about a specific tool or agent (`tool:claude-code`), `agent:<role>` only for the origin of a multi-profile agent |
 
 - **A room's namespace cannot be changed after creation** (#1352) and merging
@@ -335,6 +346,25 @@ Keep the three axes distinct so recall stays filterable:
   and write back the merged list; there is no bulk add-tag operation.
 - `uteke namespace rename` changes only the memories' namespace, not the `rooms` table.
 
+### Room ids
+
+A room id has the shape `category:title`: lowercase, exactly one colon, at most 64
+characters (`^[a-z][a-z0-9-]*:[a-z0-9][a-z0-9._-]*$`), for example `project:uteke`
+or `research:docker`. Only the shape is the rule. The category is a recommendation
+(`project`, `research`, `team`, `ops`, `ref`); a custom category of that shape such
+as `disc:` is accepted.
+
+- Creating a room with another id (`room create`, the target of `room rename`, or
+  the first `remember --room` into a new room) still works and prints a
+  `Warning:` line (HTTP: a `warnings` array). Do not ignore it: pick an id of the
+  right shape instead.
+- With `[rooms] require_category_title = true` in the global `uteke.toml`, such a
+  new id is refused (`invalid_room_id`, HTTP 400) and the write stores nothing.
+  It is off by default.
+- Existing rooms of another shape keep working and are never warned. Rename one
+  with `uteke room rename <old> <category:title>`; the old id stays valid as an
+  alias for every room command.
+
 ### Conventions first
 
 Before you write a memory in a workspace you have not used before, check whether
@@ -343,6 +373,44 @@ it already has a memory convention: a room or document named like `*conventions*
 `CLAUDE.md`. If one exists, follow it (namespace, room, tags). If none exists, use
 the defaults: one fact per memory, no secrets or credentials, tag it with the
 project name.
+
+### Finding the right room
+
+A store can hold hundreds of rooms and `uteke room list` has no filter or limit,
+so do not use it to look for a topic.
+
+1. **Ask for the room.** `uteke room search "<2-3 keywords>"` returns the best rooms
+   first: room id and name, description, memory count, last update and up to two
+   matching memories to check before opening it. It matches the room id, title and
+   description and the memories a recall of the query finds, so a room with no
+   title is still found.
+2. **Or find the content.** `uteke recall "<2-3 keywords>" --tags project:<name>`;
+   add `--strategy fts5` for exact terms. Long sentences can zero out the keyword arm.
+   Each hit lists the rooms its memory is in (`rooms`: `room_id` and `room_name`), so
+   the hit already tells you which room to open next.
+3. **Scope once the room is known.** `uteke room recall <id> --query "<keywords>"`, and
+   `uteke room summary <id>` for a no-LLM overview (topic clusters, top tags, decisions).
+4. **Fallback: find a room by purpose.** On a server without room search, or when the
+   workspace keeps a room index document (for example `room-index` or the project
+   registry), `uteke doc search "<topic>" --mode hybrid` finds it. Check the
+   conventions rooms the same way (see "Conventions first").
+5. **Read the name.** The category of a `category:title` id tells you the kind of
+   room before you open it: `project:<name>`, `research:<topic>`, `disc:<topic>`,
+   `team:`, `ops:`, `ref:`. Older rooms may still have a plain id (`<name>`,
+   `riset:<topic>`); an old id that was renamed still works as an alias.
+6. **Keep the room id.** When a step reveals a room id, carry it into the next step so
+   the follow-up is a `room recall`, not another discovery.
+
+Agents that use the MCP tools instead of the CLI follow the same steps:
+
+| CLI | MCP tool |
+|-----|----------|
+| `room search` | `uteke_room_search` |
+| `recall` | `uteke_recall` |
+| `search` | `uteke_search` (keyword; keep the query short) |
+| `room recall` | `uteke_room_recall` |
+| `room summary` | `uteke_room_summary` |
+| `doc search` | `uteke_doc_search` |
 
 ### What to store
 

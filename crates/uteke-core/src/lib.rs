@@ -19,11 +19,20 @@ pub mod consolidation_api;
 pub mod consolidation_exec;
 pub mod consolidation_plan;
 mod dimension_check;
+pub mod doc_similarity;
 pub mod dream;
 mod edges;
 mod embed;
 mod embedding;
+pub mod remote_guard;
 pub mod session_view;
+pub mod skill_library;
+#[cfg(test)]
+mod skill_library_tests;
+pub mod skill_package;
+pub mod skill_remote;
+#[cfg(test)]
+mod skill_remote_tests;
 pub use embedding::EmbeddingWarmer;
 pub mod embedding_config;
 #[cfg(test)]
@@ -82,10 +91,13 @@ pub use recall_request::{
 pub use remember_request::{
     RememberInput, RememberRequest, RememberRequestError, metadata_from_cli_flags,
 };
+pub use room_ops::RoomRememberOutcome;
+pub use update_exec::{UpdateInput, UpdateRequest, UpdateRun};
 pub mod engine_settings;
 #[cfg(test)]
 mod isolation_tests;
 pub mod list_exec;
+pub mod open_config;
 mod orphans;
 pub mod provenance;
 mod recall_cache;
@@ -96,7 +108,9 @@ mod recall_request;
 pub mod recall_settings;
 pub mod remember_exec;
 mod remember_request;
+pub mod room_naming;
 mod room_ops;
+pub mod room_search;
 pub mod rooms_segments;
 pub mod salience_recency;
 pub mod structural_export;
@@ -107,15 +121,23 @@ mod timeline;
 pub mod tombstone;
 mod types;
 pub mod update_check;
+pub mod update_exec;
 
 pub use chunker::{
     CodeChunk, TextChunk, chunk_code, chunk_markdown, chunk_markdown_embed_aware, detect_language,
     extract_imports,
 };
+pub use doc_similarity::{
+    DEFAULT_DUPLICATE_THRESHOLD, DEFAULT_REPORT_LIMIT, DEFAULT_SIMILAR_LIMIT,
+    DEFAULT_SIMILAR_THRESHOLD, DocDuplicatePair, DocDuplicateReport, DocSimilarHit,
+    DocSimilarReport, DocSimilaritySettings, MAX_REPORT_DOCUMENTS, MAX_REPORT_LIMIT,
+    MAX_SIMILAR_LIMIT,
+};
 pub use dream::{DreamPhase, DreamReport, PhaseResult, PhaseStatus};
 pub use edges::{
-    EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC, EDGE_REPLIES_TO, EDGE_SUPERSEDES,
-    EDGE_TAGGED_AS, EdgeList, MemoryEdge, backlink_type_for,
+    EDGE_POSSIBLE_DUPLICATE, EDGE_REFERENCED_BY, EDGE_REFERENCES, EDGE_REFERENCES_DOC,
+    EDGE_REPLIES_TO, EDGE_SIMILAR_TO, EDGE_SUPERSEDES, EDGE_TAGGED_AS, EdgeList, MemoryEdge,
+    backlink_type_for,
 };
 pub use graph::{GraphEdge, GraphNode, GraphPath, GraphStats, GraphStore, GraphTriple};
 pub use graph::{Relationship, VALID_REL_TYPES, build_meta_relationship, is_relationship_meta};
@@ -124,8 +146,9 @@ pub use memory::aging::DeprecatedMemoryInfo;
 pub use memory::types::{
     AgingStatus, BulkDeleteResult, CleanupResult, ConsolidationResult, ContradictionResult,
     DEFAULT_NAMESPACE, ExportEntry, ImportOptions, ImportResult, Memory, MemoryTier, MemoryType,
-    NamespaceDeleteResult, NamespaceRenameResult, PruneResult, RecallStrategy, SearchResult,
-    SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo, UnifiedSearchResult,
+    NamespaceDeleteResult, NamespaceRenameResult, PruneResult, RecallStrategy, RoomRef,
+    SearchResult, SearchResultType, SearchType, SimilarPair, StoreStats, TagInfo,
+    UnifiedSearchResult,
 };
 pub use memory::{
     DocumentEntry, DocumentSection, Room, RoomDocument, RoomMemory, RoomStats, RoomSummary,
@@ -134,6 +157,7 @@ pub use memory::{
 };
 pub use orphans::{DEFAULT_ORPHAN_THRESHOLD, OrphanMemory, compute_orphan_score};
 pub use provenance::{ProvenanceReport, TrustTier};
+pub use room_search::{ROOM_SEARCH_DEFAULT_LIMIT, ROOM_SEARCH_MAX_LIMIT, RoomMatch, RoomSearchHit};
 pub use salience_recency::{
     SalienceRecencyConfig, apply_boosts, recency_score, salience_score, type_half_life_days,
 };
@@ -145,6 +169,7 @@ pub use embed::Embedder;
 pub use embed::OnnxEmbedder;
 pub use engine_settings::EngineSettings;
 pub use error::{Error, ErrorClass, format_bytes};
+pub use open_config::OpenConfig;
 pub use recall_settings::RecallSettings;
 pub use types::{
     CompactionReport, DoctorCheck, DoctorReport, DoctorStatus, ReembedOptions, ReembedReport,
@@ -228,6 +253,7 @@ pub fn validate_input_with_limits(
 }
 
 use memory::VectorIndex;
+use memory::documents::DocKind;
 use memory::store::Store;
 
 use std::path::{Path, PathBuf};
@@ -688,6 +714,8 @@ pub struct Uteke {
     embedder_init_error: Mutex<Option<(String, std::time::Instant, bool)>>,
     /// Serializes building the embedder so a model load never runs twice.
     embedder_build: Mutex<()>,
+    /// Bounds the remote requests that embed a client-supplied string.
+    remote_embeds: remote_guard::EmbedGate,
     /// Embedding backend name ("onnx", "openai", "ollama", "custom"). Used by lazy init.
     embedder_backend: String,
     /// Caller-supplied embedding settings (from uteke.toml). Env vars still
@@ -722,6 +750,10 @@ pub struct Uteke {
     /// `[capture]` (#1466): read by the HTTP and MCP surfaces (opt-in gate)
     /// and the server's scheduled extraction.
     capture_settings: capture::CaptureSettings,
+    /// `[rooms]` (#1715): set by `apply_settings`.
+    room_naming_settings: room_naming::RoomNamingSettings,
+    /// `[doc_similarity]` (#1730): set by `apply_settings`.
+    doc_similarity_settings: doc_similarity::DocSimilaritySettings,
     /// Recall cache — avoids redundant embedding computation for repeated queries.
     recall_cache: recall_cache::RecallCache,
     /// While non-zero, recalls do not touch what they return (access count,
@@ -1167,6 +1199,7 @@ impl Uteke {
             embedder: Mutex::new(embedder.map(std::sync::Arc::from)),
             embedder_init_error: Mutex::new(None),
             embedder_build: Mutex::new(()),
+            remote_embeds: remote_guard::EmbedGate::default(),
             embedder_backend,
             embedding_settings,
             fallback_settings: FallbackSettings::default(),
@@ -1182,6 +1215,8 @@ impl Uteke {
             privacy_config: privacy::PrivacyConfig::default(),
             lifecycle_config: LifecycleConfig::default(),
             capture_settings: capture::CaptureSettings::default(),
+            room_naming_settings: room_naming::RoomNamingSettings::default(),
+            doc_similarity_settings: doc_similarity::DocSimilaritySettings::default(),
             embed_cache_path,
         }
     }
@@ -1215,25 +1250,32 @@ impl Uteke {
         ))
     }
 
-    /// Override the salience/recency dual-axis boost config (#352).
+    /// Override the salience/recency dual-axis boost config (#352) for the
+    /// engine as a whole.
     ///
-    /// Used by the CLI to forward the merged `[recall]` weights and the
-    /// per-query `--salience` / `--recency` flag overrides.
+    /// A per-request override does not belong here: put it on the request
+    /// ([`RecallRequest::with_salience_recency`]) and run it with
+    /// [`Uteke::run_recall`], which scopes it to that recall and leaves the
+    /// engine untouched.
     ///
-    /// **Important:** this mutates shared state. Callers that serve
-    /// multiple queries on the same `Uteke` instance (server, MCP) MUST
-    /// call [`reset_salience_recency_config`] after the query to avoid
-    /// leaking boost state into later queries (CodeCora #387).
+    /// **Important:** this mutates shared state. A caller that uses it for one
+    /// query must call [`reset_salience_recency_config`] afterwards (CodeCora
+    /// #387).
     pub fn set_salience_recency_config(&mut self, config: salience_recency::SalienceRecencyConfig) {
         self.salience_recency_config = config.sanitized();
     }
 
-    /// Reset salience/recency boost config to its no-op default (CodeCora #387).
-    ///
-    /// Call after a per-query boost override so later queries on the same
-    /// `Uteke` instance aren't affected.
+    /// Reset the engine's salience/recency boost config to its default
+    /// (CodeCora #387).
     pub fn reset_salience_recency_config(&mut self) {
         self.salience_recency_config = salience_recency::SalienceRecencyConfig::default();
+    }
+
+    /// The boost weights in force for the recall running on this thread: the
+    /// request's own when it set some (see [`Uteke::run_recall`]), else the
+    /// engine's.
+    pub(crate) fn salience_recency_in_force(&self) -> salience_recency::SalienceRecencyConfig {
+        salience_recency::BoostScope::current().unwrap_or(self.salience_recency_config)
     }
 
     /// Set Jaccard token reranking weight (#719).
@@ -1276,6 +1318,16 @@ impl Uteke {
     /// Get the current lifecycle configuration (#928).
     pub fn lifecycle_config(&self) -> LifecycleConfig {
         self.lifecycle_config
+    }
+
+    /// Set the `[rooms]` settings (#1715). Called from `apply_settings`.
+    pub fn set_room_naming_settings(&mut self, settings: room_naming::RoomNamingSettings) {
+        self.room_naming_settings = settings;
+    }
+
+    /// The `[rooms]` settings in force (#1715).
+    pub fn room_naming_settings(&self) -> room_naming::RoomNamingSettings {
+        self.room_naming_settings
     }
 
     /// Set the `[capture]` settings (#1466). Called from `apply_settings`.
@@ -1784,6 +1836,34 @@ impl Uteke {
         parent_slug: Option<&str>,
         defer_embedding: bool,
     ) -> Result<String, Error> {
+        self.doc_upsert_full(
+            slug,
+            title,
+            content,
+            tags,
+            author,
+            parent_slug,
+            defer_embedding,
+            "markdown",
+            serde_json::Value::Null,
+        )
+    }
+
+    /// [`Self::doc_upsert_inner`] with the content type and metadata of the
+    /// document: the skill library stores package files as `skill` (#1731).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn doc_upsert_full(
+        &self,
+        slug: &str,
+        title: &str,
+        content: &str,
+        tags: &[&str],
+        author: Option<&str>,
+        parent_slug: Option<&str>,
+        defer_embedding: bool,
+        content_type: &str,
+        metadata: serde_json::Value,
+    ) -> Result<String, Error> {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Resolve parent if specified.
@@ -1823,9 +1903,9 @@ impl Uteke {
             namespace: None,
             author: author.map(|s| s.to_string()),
             tags: tags.iter().map(|t| t.to_string()).collect(),
-            metadata: serde_json::Value::Null,
+            metadata,
             version,
-            content_type: "markdown".to_string(),
+            content_type: content_type.to_string(),
             created_at: now.clone(),
             updated_at: now,
             parent_id,
@@ -1964,13 +2044,16 @@ impl Uteke {
         Ok(())
     }
 
-    /// Get a document by ID or slug.
+    /// Get a document by ID or slug. The files of an indexed skill (#1731) are
+    /// not documents here: they are answered by the `skill` commands only, so
+    /// `doc get`, `POST /doc/get` and `uteke_doc_get` cannot read or edit them.
     pub fn doc_get(&self, id_or_slug: &str) -> Result<Option<Document>, Error> {
         // Try by slug first, then by ID.
-        if let Some(doc) = self.store.get_document_by_slug(id_or_slug)? {
-            return Ok(Some(doc));
-        }
-        self.store.get_document(id_or_slug)
+        let doc = match self.store.get_document_by_slug(id_or_slug)? {
+            Some(doc) => Some(doc),
+            None => self.store.get_document(id_or_slug)?,
+        };
+        Ok(doc.filter(|d| d.content_type != "skill"))
     }
 
     /// Partially update a document — only provided fields are changed.
@@ -2064,9 +2147,16 @@ impl Uteke {
     ) -> Result<Vec<DocumentSummary>, Error> {
         // Resolve slug to ID first.
         let parent_id = match self.store.get_document_by_slug(parent_id_or_slug)? {
+            // The files of a skill (#1731) are not listed as documents.
+            Some(doc) if doc.content_type == "skill" => return Ok(Vec::new()),
             Some(doc) => doc.id,
             None => parent_id_or_slug.to_string(),
         };
+        if let Some(doc) = self.store.get_document(&parent_id)? {
+            if doc.content_type == "skill" {
+                return Ok(Vec::new());
+            }
+        }
         self.store.list_document_children(&parent_id, limit)
     }
 
@@ -2204,6 +2294,19 @@ impl Uteke {
         mode: &str,
         namespace: Option<&str>,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
+        self.doc_search_kind(query, limit, mode, namespace, DocKind::Plain)
+    }
+
+    /// [`Self::doc_search_in`] over one kind of document: ordinary documents
+    /// stay apart from the files of indexed skills (#1731).
+    pub(crate) fn doc_search_kind(
+        &self,
+        query: &str,
+        limit: usize,
+        mode: &str,
+        namespace: Option<&str>,
+        kind: DocKind,
+    ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         let limit = limit.min(50);
 
         // Over-fetch when namespace-scoping post-filters: the mode search
@@ -2218,9 +2321,9 @@ impl Uteke {
         };
 
         let mut results = match mode {
-            "semantic" => self.doc_search_semantic(query, fetch),
-            "fts" => self.doc_search_fts(query, fetch),
-            _ => self.doc_search_hybrid(query, fetch),
+            "semantic" => self.doc_search_semantic(query, fetch, kind),
+            "fts" => self.doc_search_fts(query, fetch, kind),
+            _ => self.doc_search_hybrid(query, fetch, kind),
         }?;
 
         if let Some(ns) = namespace {
@@ -2234,6 +2337,7 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        kind: DocKind,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
@@ -2248,11 +2352,12 @@ impl Uteke {
         let k = (limit * 10).min(index.len()).max(1);
         let candidates = index.search(&query_embedding, k, k * 4);
 
-        // Filter for chunk: prefixed IDs only.
+        // Filter for chunk: prefixed IDs only. All of them are kept: the kind
+        // filter below runs on the documents, and a library of skills must not
+        // crowd the ordinary documents (or the reverse) out of the window.
         let chunk_hits: Vec<(String, f32)> = candidates
             .into_iter()
             .filter(|(id, _)| id.starts_with("chunk:"))
-            .take(limit * 3)
             .collect();
 
         if chunk_hits.is_empty() {
@@ -2274,13 +2379,23 @@ impl Uteke {
             (DocumentSummary, String, String, f32),
         > = std::collections::HashMap::new();
 
+        // Chunks of the wanted kind seen so far: the window the search always
+        // had (3 per result), counted after the kind filter.
+        let mut kept_chunks = 0usize;
         for (distance, (_chunk_id, doc_id, heading, content)) in
             pair_chunk_hits(&chunk_hits, &chunks)
         {
+            if kept_chunks >= limit * 3 {
+                break;
+            }
             let score = crate::memory::vector::cosine_distance_to_similarity(distance);
 
             // Get document summary from store.
             if let Ok(Some(doc)) = self.store.get_document(doc_id) {
+                if (doc.content_type == "skill") != (kind == DocKind::Skill) {
+                    continue;
+                }
+                kept_chunks += 1;
                 let summary = crate::memory::documents::DocumentSummary {
                     id: doc.id.clone(),
                     slug: doc.slug.clone(),
@@ -2340,12 +2455,13 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        kind: DocKind,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
         let docs = self
             .store
-            .search_documents_fts(query, limit)
+            .search_documents_fts_kind(query, limit, kind)
             .unwrap_or_default();
 
         Ok(docs
@@ -2365,13 +2481,16 @@ impl Uteke {
         &self,
         query: &str,
         limit: usize,
+        kind: DocKind,
     ) -> Result<Vec<crate::memory::documents::DocumentSearchResult>, Error> {
         use crate::memory::documents::DocumentSearchResult;
 
         let semantic_results = self
-            .doc_search_semantic(query, limit * 2)
+            .doc_search_semantic(query, limit * 2, kind)
             .unwrap_or_default();
-        let fts_results = self.doc_search_fts(query, limit * 2).unwrap_or_default();
+        let fts_results = self
+            .doc_search_fts(query, limit * 2, kind)
+            .unwrap_or_default();
 
         // Reciprocal Rank Fusion (RRF): score = sum(1 / (k + rank))
         let rrf_k: f32 = 60.0;
@@ -2636,6 +2755,7 @@ impl Uteke {
                 updated_at: None,
                 linked_doc_slugs: None,
                 linked_memory_ids: None,
+                rooms: Vec::new(),
             })
             .collect())
     }
@@ -2748,6 +2868,7 @@ impl Uteke {
                         updated_at: Some(m.updated_at),
                         linked_doc_slugs: None,
                         linked_memory_ids: None,
+                        rooms: Vec::new(),
                     }
                 } else if let Some(dr) = doc_map.remove(&key) {
                     UnifiedSearchResult {
@@ -2792,6 +2913,7 @@ impl Uteke {
                         updated_at: None,
                         linked_doc_slugs: None,
                         linked_memory_ids: None,
+                        rooms: Vec::new(),
                     }
                 } else {
                     unreachable!("RRF key must reference either mem_map or doc_map")

@@ -13,6 +13,9 @@ cargo mutants --file crates/uteke-core/src/salience_recency.rs -j 4 --timeout 60
 
 # Run on all non-excluded files
 cd crates/uteke-core && cargo mutants -j 4 --timeout 60
+
+# The secret detector (its own crate since #1732)
+cargo mutants -p uteke-privacy -j 4 --timeout 60
 ```
 
 ## What It Does

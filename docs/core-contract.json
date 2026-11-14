@@ -183,6 +183,10 @@
     },
     {
       "method": "POST",
+      "path": "/room/search"
+    },
+    {
+      "method": "POST",
       "path": "/room/memory"
     },
     {
@@ -228,6 +232,26 @@
     {
       "method": "POST",
       "path": "/doc/search"
+    },
+    {
+      "method": "POST",
+      "path": "/doc/similar"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/search"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/list"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/show"
+    },
+    {
+      "method": "POST",
+      "path": "/skill/similar"
     },
     {
       "method": "POST",
@@ -335,5 +359,5 @@
     }
   ],
   "source_of_truth": "uteke PROD store, document tree kontrak-core-cloud",
-  "version": "0.23.0"
+  "version": "0.24.0"
 }

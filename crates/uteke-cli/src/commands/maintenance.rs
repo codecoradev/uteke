@@ -302,6 +302,7 @@ pub(crate) fn run_import(
     extract_opts: ExtractOpts<'_>,
     timestamp: Option<&str>,
     defer_embed: bool,
+    skip_deprecated_copies: bool,
 ) -> Result<(), String> {
     tracing::info!("Importing memories from {input} (format: {format})");
 
@@ -426,6 +427,11 @@ pub(crate) fn run_import(
             "--defer-embed works with JSON/JSONL input (got: {detected_format})"
         ));
     }
+    if skip_deprecated_copies && !matches!(detected_format.as_str(), "jsonl" | "json") {
+        return Err(format!(
+            "--skip-deprecated-copies works with JSON/JSONL input (got: {detected_format})"
+        ));
+    }
     let result = match detected_format.as_str() {
         "jsonl" | "json" => uteke
             .import_with(
@@ -433,6 +439,7 @@ pub(crate) fn run_import(
                 ns,
                 uteke_core::ImportOptions {
                     defer_embedding: defer_embed,
+                    skip_deprecated_copies,
                 },
             )
             .map_err(|e| format!("Failed to import JSON: {e}"))?,

@@ -2,6 +2,272 @@
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-13
+
+A personal skill library, similar documents, room aliases and the `category:title` room convention, rooms on recall hits, room search, a read-only skill and document similarity surface for tole, the secret detector as its own crate, and a round of refactors that put the CLI, `uteke-serve` and `uteke-mcp` on one core path. Two schema steps (v26 `room_aliases`, v27 the skill tables), both forward-only: an older binary ignores the new tables.
+
+**Upgrade notes**
+
+- A failed MCP tool call is now a tool result with `isError: true` instead of a JSON-RPC `-32603` error, and the text of a client error no longer starts with `Failed: `. HTTP routes that answered every non-validation failure with 500 now answer by error class (404, 429, 409, 400), `POST /recall` included. See "Changed".
+- Renaming a room keeps the old id as an alias; a new room id outside `category:title` is accepted with a `warnings` entry. `[rooms] require_category_title` stays off by default.
+- Skill files are no longer readable or editable as documents (`doc get`, `doc update`).
+- Remote requests that embed a client string are capped at 32768 characters and at most 2 run at once; another is refused with HTTP 429 (`busy`). `POST /doc/search` in `hybrid` or `semantic` mode now takes a slot.
+- The release workflow publishes a new crate first: `uteke-privacy`.
+- Contract notes for uteke-cloud: #523 and #525 (`rooms` on hits, CORE), #526 (room alias), #527 (`category:title`), #528 (`skip_deprecated_copies`).
+
+### Added
+
+- **Catalog-grade Hermes plugin and a portable Agent Plugin (#1727)** - the native Hermes hook
+  plugin (key `uteke`, 2.1.0) reads the token only through the Hermes secret scope and per recall,
+  passes an allow-listed child environment, has no update check and marks recalled text as data.
+  `integrations/agent-plugin` is a portable Agent Plugin (`uteke-mcp`: a skill and a stdio server)
+  with a static validator test, plus a draft MCP catalog manifest for `https://uteke.app/mcp` and
+  draft catalog entries. The READMEs offer Uteke Cloud before the local options.
+- **Personal skill library, read-only remote surfaces (#1731, LAB, stage 2)** - `POST /skill/search`,
+  `/skill/list`, `/skill/show` and `/skill/similar` and the MCP tools `uteke_skill_search`,
+  `uteke_skill_list`, `uteke_skill_show` and `uteke_skill_similar` (in the read-only set, results
+  fenced as stored data) let an agent, tole for one, recall only the few skills a task needs over
+  the API that `uteke serve` already exposes. Both transports call one core entry point
+  (`Uteke::skill_remote`), so they validate identically: a field that does not belong to the
+  operation or is unknown is refused, and every client-supplied size is bounded (query 2000
+  characters, `limit` clamped to 1-50 for search, 1-200 for list and 1-100 for similar, a draft
+  `text` at most 32768 characters, a slug 64). `index`, `approve`, `record` and `lint` are not
+  remote and stay CLI-only. Skill files are no longer readable or editable as documents:
+  `doc get`, `POST /doc/get`, `uteke_doc_get`, `doc update` and the children of a skill file answer
+  "not found" (before, a document read by slug returned the file text). No schema change.
+- **Personal skill library (#1731, LAB, stage 1: core and CLI)** - `uteke skill index <dir>`
+  reads the skills of this machine (a directory with a `SKILL.md`; no file is ever modified, links
+  are not followed, every read is bounded), records each package's hash and lints it, and embeds its
+  text files as documents with `content_type = 'skill'`, hidden from `doc list`, `doc search`,
+  `recall` and the document similarity answers. `uteke skill search` (hybrid, one hit per skill),
+  `list`, `show`, `similar` (the `SKILL.md` document vectors of #1730, also for a draft text),
+  `lint` and `approve <slug>@<hash>` follow. The hash covers the whole package (SHA-256 over every
+  file's path length, path, content length and content, sorted by path), so a changed script or
+  reference file is detected, and it is byte-identical to the package hash tole computes for
+  `TOLE_SKILL_APPROVAL=required` (8-byte little-endian lengths, written `sha256:<hex>`; `.git` is
+  hashed; a package with a symbolic link or special file is rejected, not skipped; `approve` accepts
+  `<slug>@sha256:<hex>`, a bare hex or a prefix of 12 or more hex digits; hashes are only promised
+  equal within tole's limits, uteke's bounds are at least as strict); approval is only for the current, valid version, a new hash makes a new
+  draft and stales the old approval, and an append-only ledger (triggers refuse UPDATE and DELETE)
+  records every change with the hash before and after. Schema v27 adds `skills`, `skill_versions`,
+  `skill_usage` and `skill_ledger` under the Cloud registry's names. The shared registry stays in
+  Cloud. HTTP and MCP routes for the library follow in stage 2 (above).
+- **Similar documents and a duplicate report (#1730, LAB)** - which documents are close to this one,
+  and is there already a document like this draft? `uteke doc similar <slug>` (or `--text` /
+  `--file` for a draft that is not stored), `uteke doc duplicates [--subtree] [--namespace]`,
+  `POST /doc/similar` and the MCP tool `uteke_doc_similar` (read-only, fenced, open to read-only
+  tokens) answer with the documents at or above a cosine threshold, `possible_duplicate` from 0.92
+  and `similar_to` from 0.80 (the memory auto-link values), or with the duplicate pairs and groups
+  of a namespace or subtree. The document vector is the mean of the chunk vectors, L2-normalised,
+  read from SQLite: no extra embedding call, and it exists for restored and imported documents as
+  soon as their chunks are embedded. A document without vectors is skipped and counted
+  (`documents_without_vector`; `uteke repair --reembed` fills it). The relations are derived on
+  every call, not stored as edges, so nothing goes stale. New `[doc_similarity]` keys
+  `similar_threshold` and `duplicate_threshold` (defaults 0.80 and 0.92, validated). Nothing about
+  memories, CORE routes or the schema changes. Contradiction checks on documents are out of scope.
+- **Room ids of the form `category:title` (#1715, stage 1 of 3)** - the convention is
+  `category:title` (for example `project:uteke`, `research:docker`): lowercase, exactly one
+  colon, at most 64 characters. Only the shape is the rule; the category is a
+  recommendation (`project`, `research`, `team`, `ops`, `ref`), so a custom category of
+  the right shape is accepted. Stage 1: creating a room, or renaming one, to an id of
+  another shape still works and now returns a warning (`warnings` on `POST /room/create`
+  and `POST /room/rename`, a `Warning:` line in the MCP tools, a line on stderr and
+  `warnings` in `--json` for `uteke room create` and `uteke room rename`). A room created
+  by the first write into it (`POST /room/remember`, MCP `uteke_remember` with `room`,
+  `uteke remember --room`) gets the same warning, once, on the write that creates it.
+  Reads, recall, existing rooms and aliases are never warned or blocked. Stage 2 renames the old rooms through the aliases of
+  #1714; stage 3 rejects new ids of the wrong shape. Owner order 2026-11-10 (contract
+  amendment 4, uteke-cloud #527).
+- **`[rooms] require_category_title` (#1715, stage 3 prepared, off by default)** - with it
+  on, a new canonical room id that is not of the form `category:title` is refused instead
+  of warned: `room create`, the target of `room rename`, and a room a write would create
+  (`POST /room/remember`, MCP `uteke_remember` with `room`, `uteke remember --room`, refused
+  before the memory is stored). HTTP answers `400 invalid_room_id` (`error`, `message`,
+  `room_id`), MCP errors start with `invalid_room_id:`. Existing rooms, aliases, reads,
+  `import` and `namespace migrate` are not affected. Global `uteke.toml` only; the default
+  stays `false` until the owner flips it in a release, after the old rooms are migrated.
+  Uteke Cloud follows the same rule once it is validated in OSS.
+- **Renaming a room keeps its old id working (#1714)** - `room rename`, `POST /room/rename` and
+  `uteke_room_rename` now record the id a room leaves as an alias of the renamed room, in
+  the same transaction. Every room operation (remember, recall, room recall, stats,
+  summary, update, document links, memory links, move, delete) resolves an alias first
+  and works on the canonical room, so AGENTS.md files, notes, skills and agent configs
+  that still name the old id keep working. Responses name the canonical room. An alias is
+  never also a room id: creating a room under an alias, or renaming another room onto an
+  alias of a different room, is an error; a room may take back a name it used to have. A
+  chain of renames (A to B to C) resolves every earlier name to C, deleting a room drops
+  its aliases, and `room list` shows canonical rooms only. Schema v26 adds the
+  `room_aliases` table (forward-only: an older binary ignores it). Owner order
+  2026-11-10 (contract amendment 4, uteke-cloud #526); the `category:title` room naming
+  (#1715) depends on it.
+- **`skip_deprecated_copies` for `import` (#1716)** - OSS and Cloud now agree on a live row
+  whose content matches only a deprecated copy (forgotten, superseded, consolidated or
+  pruned): by default it is imported as a new live memory (the OSS behaviour since #1690),
+  and the opt-in `skip_deprecated_copies` skips it and counts it in `duplicates_skipped`.
+  It is a boolean in the body of `POST /import` and `uteke import --skip-deprecated-copies`
+  (JSON/JSONL only), for files that may carry text replaced on purpose. The skipped row
+  links no rooms, since the stored copy is not live. Unchanged either way: a row that
+  carries the id of a deprecated memory is skipped, a `deprecated` row over a deprecated
+  copy is skipped, an exact copy of a live row is a duplicate, and values rejected with
+  `forget --reason` are rejected. Contract: additive request field on a CORE endpoint
+  (uteke-cloud #528, owner decision 2026-11-10, "OSS = Cloud").
+- **Room search (#1704)** - `POST /room/search`, the MCP tool `uteke_room_search` and
+  `uteke room search <QUERY> [--limit N] [--namespace NS]` find rooms for a topic, so an
+  agent no longer has to read `room list` (hundreds of rooms, many untitled). Two signals
+  are fused with the reciprocal-rank fusion of hybrid recall: the query terms against the
+  room id, title and description (a term in the id or title counts double), and the
+  rooms of the memories a recall of the query finds (only confident ones: a vector
+  similarity at the `--strict` floor, or an exact keyword hit), so a room with no title is
+  still found by its content. Each hit has `room_id`, `room_name`, `description`, the
+  number of live memories, `updated_at`, a `score` (order only) and up to two matching
+  memories. A blank query is a 400, `limit` defaults to 10 and is capped at 100, a
+  `namespace` limits the rooms returned, and the result is deterministic (ties by room
+  id). No schema change. `/room/search` is LAB: no contract issue is needed, and
+  uteke-cloud has to implement it separately for its MCP.
+- **Recall, search and room recall hits carry the rooms of their memory (#1703)** - each
+  memory hit of `recall`, `search` and `room recall` (with a query) now has an optional
+  `rooms` list of `{room_id, room_name}` (the room title, or the id when it has none),
+  sorted by room id and omitted when the memory is in no room. A memory can be in several
+  rooms, so it is a list. It is on `POST /recall`, `POST /search`, `POST /room/recall`, the
+  MCP tools `uteke_recall`, `uteke_search` and `uteke_room_recall`, and the CLI (`--json`;
+  a `Rooms:` line in the human output), in the plain, unified, `--pack` and `--explain`
+  forms. The rooms are looked up for the returned ids only, after the ranking, the cut to
+  `limit` and the recall cache, so order and scores are unchanged and a cached hit never
+  reports an old membership. A room recall without a query (the chronological list) is
+  unchanged. Contract note for uteke-cloud: additive response field on CORE endpoints.
+  The field is CORE (#1713, contract amendment 4 point 1, uteke-cloud #525): its shape is
+  pinned by exact-value tests on `POST /recall` (plain, unified, `pack`, `explain`),
+  `POST /search`, `POST /room/recall` with a query, MCP `uteke_recall`, `uteke_search`,
+  `uteke_room_recall` and the CLI `--json`, which fail when the name, the sort by
+  `room_id`, the title-or-id `room_name`, the omission rule or the document exclusion
+  changes.
+
+### Changed
+
+- **The core answers "does this request embed?", one embedding gate (#1753)** - the router no longer
+  re-decides from the raw JSON which routes embed. `SkillRemoteArgs::embed_need`,
+  `DocSimilarQuery::embed_need` and `EmbedNeed::for_search_mode` give the answer from the rules that
+  decide the request; a transport asks once and takes its slot with `EmbedGate::admit` (an
+  oversized draft is a 400 before the slot, a full gate a 429, `busy: 2 embedding requests are already
+  running; retry in a moment`). There is one gate per `Uteke` (`Uteke::embed_gate`): `uteke-serve`
+  hands a clone to its router (slot taken before the store lock, as before) and MCP takes its slots
+  from the same type; `skill_remote` and `doc_similarity_query` take none. `POST /doc/search` (LAB)
+  now takes a slot in `hybrid` and `semantic` mode and answers 429 when two embedding requests run
+  (`fts` never does). The CORE recall routes get no new 429.
+
+- **One error-class-to-wire mapping per transport (#1752)** - `Error::class()` is now the only place
+  that classifies a core error (a new `ErrorClass::Embedding` joins the others), and each transport
+  has one function from class to wire shape: `http_wire` (HTTP status and body, with the existing
+  `secret_detected`, `rejected_value` and `invalid_room_id` bodies), `core_failure` (MCP) and
+  `cli_failure` (CLI, exit status 1 for every class as before). Every handler and tool uses it. The
+  mapping table is in `docs/architecture.md`. Observable changes: a failed MCP tool call is now a tool
+  result with `isError: true` instead of a JSON-RPC `-32603` error (bad arguments, a missing target,
+  an internal failure), its text for a client error no longer starts with `Failed: `; `POST /recall`
+  and the other routes that mapped every non-validation failure to 500 now answer by class (404, 429,
+  409, 400 for the rich classes); `POST /room/create` no longer answers a 400 `Failed to create
+  room: ...` for an internal failure (500). No CORE contract change.
+- **One open-and-configure sequence for the CLI, `uteke-serve` and `uteke-mcp` (#1754)** - the
+  three binaries each wrote "resolve the config, open the store, apply the settings" by hand and had
+  drifted. `uteke_core::OpenConfig` is now that sequence once (`load()` / `from_layers()`, then
+  `open()`): it reads the engine sections, `[embedding]`, `[vector]` and `[privacy]` from the layered
+  files, applies `UTEKE_RECALL_*`, `UTEKE_GRAPH_*`, `UTEKE_EMBED_FALLBACK_*`,
+  `UTEKE_EMBEDDING_*` and `UTEKE_PRIVACY_MODE`, opens the store and applies the settings, then the
+  privacy filter. No config key, precedence or trust rule changes. `uteke-serve` now hands the
+  engine-level similarity floor to the store like the CLI and MCP do (it was the built-in default; the
+  value was not used yet) and takes the recall defaults of `POST /recall` from the opened store, the
+  source MCP reads.
+
+- **`uteke recall` runs through the shared recall entry point (#1750)** - the CLI no longer has
+  its own copy of the recall decision tree: it builds a `RecallRequest` and calls
+  `Uteke::run_recall`, as `POST /recall` and the MCP tool do, so a fix to the explain guards, the
+  score floor, `strict`, `min_trust` or the path choice lands once. The per-request
+  `--salience` / `--recency` weights are part of the request and scoped to that recall (no more
+  `set_salience_recency_config` / `reset_salience_recency_config` on five exits); `--related`,
+  `--depth` and `--where` are request fields too (not on the HTTP wire, no CORE change). Through a
+  server, `--strategy`, `--explain`, `--context`, `--content-format`, `--pack` and `--type` are now
+  honoured (before, `--strategy`/`--explain`/`--context`/`--content-format` silently used the local
+  store, and `--pack` and `--type` failed to parse the answer); only `--salience`, `--recency`,
+  `--related`, `--depth` and `--where`, which have no field in `POST /recall`, still use the local
+  store. `--type memory|doc` now applies `--entity`/`--category` and `--at` instead of ignoring
+  them; the explain refusals use core's wording ("explain cannot be combined with at/before/after");
+  `--explain --type memory` is refused (memory recall is the explain default). `to_http_body` now
+  sends `strategy`, `explain`, `after` and `before`. See the pull request for every difference.
+
+- **One core execution for memory updates (#1751)** - `uteke update`, `PUT /memory` and
+  `uteke_update` now call `Uteke::run_update(&UpdateRequest)`, which checks the caller's validity,
+  runs the field update, and only then writes the validity and moves the namespace (#1686, #1598),
+  instead of three hand-written copies. Visible effects: a missing memory reads
+  `Memory not found: <id>` at every step in the CLI and MCP (the CLI no longer prefixes it with
+  `Failed to update memory:`, MCP returns it as a tool error instead of `Failed: ...`); an update
+  that sets nothing is refused with `No fields to update` in the CLI and MCP too (it already was
+  over HTTP, which now answers it as `Validation error: No fields to update...`); `uteke update`
+  prints the secrets-masked line that MCP and HTTP already reported; a namespace move of a
+  memory that vanished is a 404 over HTTP instead of a silent success.
+
+- **Skill library remote surfaces: no server path, bounded embedding cost (#1731)** - `POST
+  /skill/list`, `/skill/show` and the MCP tools `uteke_skill_list` and `uteke_skill_show` no longer
+  return `source_path`, the server directory a skill was indexed from (the CLI still shows it).
+  A draft `text` sent to `POST /skill/similar`, `POST /doc/similar`, `uteke_skill_similar` or
+  `uteke_doc_similar` is now at most 32768 characters (was 131072 for skills, 200000 for documents;
+  the CLI limits are unchanged), and at most 2 remote requests that embed a string (those four with
+  `text`, and `POST /skill/search` / `uteke_skill_search` in `hybrid` or `semantic` mode) run at
+  once per server: another is refused at once with HTTP 429 (an MCP tool error `busy: ...`) instead
+  of queueing; `fts` search, a stored slug and `list`/`show` are never refused. Core: new
+  `Error::Busy` (`ErrorClass::Busy`) and `uteke_core::remote_guard`.
+
+- **The secret detector is its own crate, `uteke-privacy` (#1732)** - the detector of
+  the write path (AWS, GitHub, npm, Slack, Google keys, bearer, JWT, URL passwords,
+  `NAME=value` with entropy checks, the allowlist) moved from `uteke-core` into
+  `crates/uteke-privacy`, so `tole` can share the same ruleset without taking
+  `uteke-core` (the crate depends on `regex` only). The API is `redact(&str, &Policy)
+  -> Redacted { text, counts }`. `uteke-core` depends on it and re-exports it from
+  `uteke_core::privacy`, which keeps its paths and its behaviour (same rules, same
+  masked shapes, same tests). The release workflow publishes `uteke-privacy` first.
+
+### Docs
+
+- **Skill: room ids of the form `category:title` (#1715)** - the `uteke-memory` skill (both
+  copies) now has a "Room ids" section: the shape, the recommended categories, the warning
+  on create, rename and the first write into a new room, the `[rooms] require_category_title`
+  setting (off by default) and how to rename an old room (the old id stays an alias). The
+  room naming row and the "Read the name" step use `project:`, `research:` and `disc:`.
+- **Skill: a "Finding the right room" procedure (#1702)** - the `uteke-memory` skill (both
+  copies) now says how to locate a room on a large store without `room list`: recall by
+  2-3 keywords first, then `room recall` and `room summary` once the room is known, a room
+  index document through `doc search`, the room naming prefixes, and the matching MCP tool
+  names. Once rooms in recall results (#1703) and room search (#1704) landed it was
+  updated to start from `room search` and the `rooms` of a recall hit.
+
+### Fixed
+
+- **The remote embedding guard works over HTTP (#1730, #1731)** - `uteke serve` runs a request under
+  the store lock, one at a time, so the "at most 2 concurrent embedding requests" slot of
+  `POST /doc/similar`, `/skill/similar` and `/skill/search` was taken inside the lock and could never
+  refuse anything: with the real model a burst of 30000-character drafts all answered 200 and queued
+  (20 parallel requests took up to 247 s). The slot is now taken before the lock, so the third
+  concurrent request is a 429 at once; an oversized draft is a 400 first. MCP is unchanged.
+
+- **`import` no longer skips content that was only forgotten (#1689)** - since #1633/#1636 a
+  row whose content matched a soft-deleted memory was counted as `soft_deleted_skipped`
+  and never stored, so re-importing after a plain `forget` (a restored backup, a benchmark
+  that forgets after every question) lost the rows. A plain forget is recoverable: an
+  anonymous row over a forgotten copy now imports as a new live row (new id) and the old
+  row stays deprecated. Still skipped: a row that carries the forgotten memory's own id,
+  a row marked `deprecated` in the file, and anything blocked by `forget --reason`
+  (`rejected_values`, #1627, unchanged).
+
+### Security
+
+- **Dependencies bumped past three open advisories (#1770)** - `quinn-udp` 0.5.16
+  (RUSTSEC-2026-0538, a receive loop could spin after a truncated datagram), `rustix` 1.1.6
+  (RUSTSEC-2026-0486) and `tokio` 1.54.1 (RUSTSEC-2026-0386). `Cargo.lock` only; the scheduled
+  `cargo audit` on develop failed on the first one. The yanked `chacha20 0.10.1` stays a warning.
+- **Secret detector fixes (#1772, #1773, #1774)** - the private-key scan reads a bounded total in
+  proportion to the text (a text made of many BEGIN markers no longer takes seconds; past the cap
+  the rest is masked), a single-token value assigned to a password name is redacted even when it
+  holds a non-ASCII character (non-ASCII prose is still left alone), and `sk-ant-<kind><nn>-` keys
+  are detected whatever their `-` and `_` separators. All three predate v0.23.0.
+
 ## [0.23.0] - 2026-11-05
 
 Capture, tombstones, honest time travel, a read-only viewer, agent hooks and a Cloud-export import path. Three schema steps (v23 `rejected_values`, v24 `observations`, v25 `idx_memories_source`), all forward-only: an older binary ignores the new tables and the index.

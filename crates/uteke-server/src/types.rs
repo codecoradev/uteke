@@ -50,6 +50,164 @@ pub struct DocSearchRequest {
     pub mode: String,
 }
 
+/// `POST /doc/similar` (#1730): documents close to a document or to a draft
+/// text, or (with `report`) the near-duplicates of a namespace or subtree.
+///
+/// Similar documents: give `slug` (or `id`) OR `text`, plus optional
+/// `threshold`, `limit`, `namespace`. Duplicate report: `report: true` plus
+/// optional `subtree`, `namespace`, `threshold`, `limit`; no `slug`/`text`.
+/// Nothing is written either way.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocSimilarRequest {
+    /// Slug of a stored document (alias of `id`).
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// Id (or slug) of a stored document.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Candidate text that is not stored: the near-duplicates "before it is
+    /// stored". Needs the embedding model.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// `true`: report the near-duplicate pairs and groups of the scope.
+    #[serde(default)]
+    pub report: bool,
+    /// Minimum cosine similarity, 0 to 1. Default: the configured
+    /// `similar_to` threshold (0.80), or `possible_duplicate` (0.92) for a report.
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// Maximum hits (default 10, at most 100), or pairs for a report
+    /// (default 50, at most 500).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Only compare with documents of this namespace (default: all).
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Report only: the slug or id of the document whose subtree to scan.
+    #[serde(default)]
+    pub subtree: Option<String>,
+}
+
+/// `POST /skill/search` (#1731): the skills whose files match a query. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSearchRequest {
+    /// What to look for (at most 2000 characters).
+    pub query: String,
+    /// `hybrid` (default), `semantic` or `fts`.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Maximum skills, 1 to 50 (default 5).
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// Only skills whose current version is approved.
+    #[serde(default)]
+    pub approved_only: Option<bool>,
+}
+
+/// `POST /skill/list` (#1731): the skills of the library, by slug. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillListRequest {
+    /// `draft` or `approved`: the status of the current version.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// Maximum skills, 1 to 200 (default 50).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// `POST /skill/show` (#1731): one skill with its current version, usage,
+/// version history and mutation ledger. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillShowRequest {
+    /// The skill (at most 64 characters).
+    pub slug: String,
+}
+
+/// `POST /skill/similar` (#1731): skills close to a skill or to a draft text
+/// that is not stored. Give `slug` OR `text`. Read-only.
+#[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillSimilarRequest {
+    /// A skill of the library.
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// A draft text that is not stored (at most 32768 characters; 429 when two
+    /// embeddings already run); needs the embedding model.
+    #[serde(default)]
+    pub text: Option<String>,
+    /// Minimum cosine similarity, 0 to 1 (default 0.80).
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// Maximum hits, 1 to 100 (default 10).
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+impl From<SkillSearchRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillSearchRequest) -> Self {
+        Self {
+            query: Some(r.query),
+            mode: r.mode,
+            limit: r.limit,
+            approved_only: r.approved_only,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<SkillListRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillListRequest) -> Self {
+        Self {
+            status: r.status,
+            limit: r.limit,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<SkillShowRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillShowRequest) -> Self {
+        Self {
+            slug: Some(r.slug),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<SkillSimilarRequest> for uteke_core::skill_remote::SkillRemoteArgs {
+    fn from(r: SkillSimilarRequest) -> Self {
+        Self {
+            slug: r.slug,
+            text: r.text,
+            threshold: r.threshold,
+            limit: r.limit,
+            ..Default::default()
+        }
+    }
+}
+
+/// The subject of a [`DocSimilarRequest`]; `id` wins over `slug` like on the
+/// other document routes.
+pub fn resolve_doc_similar(
+    req: &DocSimilarRequest,
+) -> Result<uteke_core::doc_similarity::DocSimilarQuery<'_>, &'static str> {
+    uteke_core::doc_similarity::DocSimilarQuery::resolve(
+        req.id.as_deref().or(req.slug.as_deref()),
+        req.text.as_deref(),
+        req.report,
+        req.subtree.as_deref(),
+    )
+}
+
 #[cfg_attr(feature = "docgen", derive(schemars::JsonSchema))]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -853,6 +1011,13 @@ pub struct ImportRequest {
     /// before the request returns.
     #[serde(default)]
     pub defer_embedding: bool,
+    /// Skip a live row whose content matches only a deprecated copy (forgotten,
+    /// superseded, consolidated or pruned) instead of importing it as a new live
+    /// memory (#1716, default false). A skipped row counts in
+    /// `duplicates_skipped`. Rows that carry the id of a deprecated memory are
+    /// skipped either way.
+    #[serde(default)]
+    pub skip_deprecated_copies: bool,
 }
 
 // ── Room Remember Types (#762) ────────────────────────────────────────
@@ -1200,6 +1365,74 @@ mod recall_request_cross_surface_tests {
     #[test]
     fn mcp_query_is_required() {
         assert_eq!(mcp(json!({})).unwrap_err(), "Missing 'query'");
+    }
+
+    /// The request `uteke recall` builds (#1750) decodes to the same typed
+    /// request through its own path, through the HTTP body it sends to a server
+    /// and through the MCP arguments, and all three give the same hits from the
+    /// same store.
+    #[test]
+    fn the_cli_http_and_mcp_run_one_request_to_one_result() {
+        use uteke_core::recall_exec::{RecallDefaults, RecallOutput};
+        let u = uteke_core::test_support::open_keyword();
+        u.remember(
+            "rust gives memory safety without a garbage collector",
+            &["lang"],
+            Some(json!({"entity": "rust"})),
+            None,
+        )
+        .unwrap();
+        u.remember("rust memory safety also helps concurrency", &[], None, None)
+            .unwrap();
+        u.remember("cooking pasta takes salt", &[], None, None)
+            .unwrap();
+
+        // What the CLI builds from `recall "memory safety" --strategy fts5 --limit 1`.
+        let cli_input = uteke_core::RecallInput {
+            query: "memory safety".into(),
+            limit: Some(1),
+            tags: Some(vec![]),
+            namespace: None,
+            search_type: Some("all".into()),
+            strategy: Some("fts5".into()),
+            ..uteke_core::RecallInput::default()
+        };
+        let local = Typed::decode(cli_input.clone()).unwrap();
+        let over_http = http(cli_input.to_http_body()).unwrap();
+        let over_mcp = mcp(json!({
+            "query": "memory safety", "limit": 1, "tags": [],
+            "type": "all", "strategy": "fts5",
+        }))
+        .unwrap();
+        assert_eq!(local, over_http);
+        assert_eq!(local, over_mcp);
+
+        let ids = |req: &Typed| match u.run_recall(req, RecallDefaults::default()).unwrap() {
+            RecallOutput::Unified(r) => r.iter().map(|h| h.memory_id.clone()).collect::<Vec<_>>(),
+            other => panic!("unified expected: {other:?}"),
+        };
+        let want = ids(&local);
+        assert_eq!(want.len(), 1);
+        assert_eq!(ids(&over_http), want);
+        assert_eq!(ids(&over_mcp), want);
+    }
+
+    /// Every field the CLI sends survives the body: `explain`, `strategy`,
+    /// `after` and `before` are no longer dropped on the way to the server.
+    #[test]
+    fn cli_via_server_body_carries_strategy_explain_and_the_time_range() {
+        let input = uteke_core::RecallInput {
+            query: "q".into(),
+            strategy: Some("graph".into()),
+            explain: true,
+            after: Some("2026-01-01T00:00:00Z".into()),
+            before: Some("2026-02-01T00:00:00Z".into()),
+            ..uteke_core::RecallInput::default()
+        };
+        let t = http(input.to_http_body()).unwrap();
+        assert!(t.explain);
+        assert!(t.after.is_some() && t.before.is_some());
+        assert_eq!(t.strategy(None).unwrap(), uteke_core::RecallStrategy::Graph);
     }
 
     #[test]

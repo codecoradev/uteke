@@ -165,6 +165,7 @@ impl crate::Uteke {
                     score: boosted_score,
                     // Raw cosine of the vector leg: `score` may carry the hot boost.
                     similarity: Some(score),
+                    rooms: Vec::new(),
                 });
             }
 
@@ -380,17 +381,13 @@ impl crate::Uteke {
     /// Shared by the cache-miss and cache-hit paths of `recall_hybrid` so
     /// both produce identical scores for the same query (#1037).
     fn apply_salience_recency_boosts(&self, results: &mut Vec<SearchResult>, limit: usize) {
-        if self.salience_recency_config.is_noop() {
+        let config = self.salience_recency_in_force();
+        if config.is_noop() {
             return;
         }
         let now = chrono::Utc::now();
         for sr in results.iter_mut() {
-            sr.score = crate::salience_recency::apply_boosts(
-                sr.score,
-                &sr.memory,
-                now,
-                self.salience_recency_config,
-            );
+            sr.score = crate::salience_recency::apply_boosts(sr.score, &sr.memory, now, config);
         }
         results.sort_by(|a, b| {
             b.score
@@ -675,6 +672,7 @@ impl crate::Uteke {
                     memory,
                     score: normalized as f32,
                     similarity,
+                    rooms: Vec::new(),
                 })
             })
             .collect();
@@ -713,7 +711,7 @@ impl crate::Uteke {
     ) -> Result<Vec<SearchResult>, Error> {
         let memories = self.store.search_content(query, namespace, limit)?;
 
-        let results: Vec<SearchResult> = memories
+        let mut results: Vec<SearchResult> = memories
             .into_iter()
             .filter(|memory| {
                 if let Some(filter_tags) = tags_filter {
@@ -731,6 +729,7 @@ impl crate::Uteke {
         let touch_ids: Vec<&str> = results.iter().map(|r| r.memory.id.as_str()).collect();
         self.store.touch_recall_batch(&touch_ids).ok();
 
+        self.attach_rooms(&mut results)?;
         Ok(results)
     }
 }
@@ -1386,5 +1385,31 @@ mod mutant_kill_tests_0_21 {
         assert_eq!(got[0].memory.id, target);
         assert_eq!(got[0].score, normalized(rrf_at(5) + rrf_at(0)));
         assert_eq!(got[1].score, 0.5);
+    }
+}
+
+/// The hot-memory score boost (#1729).
+#[cfg(test)]
+mod hot_boost_tests {
+    use crate::test_support::open_keyword;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn only_a_hot_memory_is_boosted_and_the_score_is_capped_at_one() {
+        let u = open_keyword();
+        let id = u.remember("a probe memory", &[], None, None).unwrap();
+        let mut m = u.store.get_by_id(&id).unwrap().unwrap();
+
+        // default tiers: hot within 7 days, warm within 30, boost 0.1
+        m.last_accessed = Some(Utc::now());
+        assert!((u.hot_boosted(&m, 0.5) - 0.6).abs() < 1e-6, "hot: added");
+        assert_eq!(u.hot_boosted(&m, 0.95), 1.0, "capped at 1");
+
+        m.last_accessed = Some(Utc::now() - Duration::days(15));
+        assert_eq!(u.hot_boosted(&m, 0.5), 0.5, "warm: unchanged");
+        m.last_accessed = Some(Utc::now() - Duration::days(90));
+        assert_eq!(u.hot_boosted(&m, 0.5), 0.5, "cold: unchanged");
+        m.last_accessed = None;
+        assert_eq!(u.hot_boosted(&m, 0.5), 0.5, "never accessed: cold");
     }
 }

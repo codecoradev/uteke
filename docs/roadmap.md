@@ -6,6 +6,17 @@ title: Roadmap
 
 Demand-gated — we build what people actually use. Track progress on [GitHub Issues](https://github.com/codecoradev/uteke/issues).
 
+## v0.24.0 — Skill Library, Room Aliases, Shared Detector `Release 2026-11-13`
+
+- **Personal skill library (#1731)** — `uteke skill index/search/list/show/similar/lint/approve`, package hashes equal to tole's, an append-only ledger, and read-only HTTP/MCP surfaces for an agent that recalls only the skills a task needs (schema v27)
+- **Similar documents and a duplicate report (#1730)** — `uteke doc similar`, `doc duplicates`, `POST /doc/similar`, `uteke_doc_similar`
+- **Room aliases (#1714, schema v26)** — renaming a room keeps the old id working
+- **Room ids `category:title` (#1715)** — warn on create, rename and first write; `[rooms] require_category_title` prepared and off by default; migration of the old rooms and enforcement follow; Uteke Cloud adopts the same rules after OSS
+- **Rooms on recall hits (#1703) and room search (#1704)** — `rooms` on `recall`, `search` and `room recall` hits; `POST /room/search`, `uteke_room_search`
+- **`skip_deprecated_copies` on `import` (#1716)** — OSS and Cloud agree on rows that match only a deprecated copy
+- **`uteke-privacy` (#1732)** — the secret detector as a small crate shared with tole
+- **One core path (#1750–#1754)** — the CLI, `uteke-serve` and `uteke-mcp` share recall, update, error mapping and open-and-configure; one embedding gate (#1753)
+
 ## v0.23.0 — Capture, Honest Time Travel, Viewer, Agent Hooks `Release 2026-11-05`
 
 - **Raw capture with deferred extraction (#1466, schema v24)** — `uteke capture` queues conversation turns with no LLM call; `extract-queue run`, or `uteke-serve` on a schedule with backoff, turns them into memories on a budget. LAB `POST /capture`, `GET /capture/status`, MCP `uteke_capture`. Opt-in via `[capture] enabled`

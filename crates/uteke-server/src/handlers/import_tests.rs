@@ -18,6 +18,7 @@ fn ctx() -> ReqCtx {
         host_guard: Default::default(),
         store_id: String::new(),
         embed_warmer: Default::default(),
+        remote_embeds: Default::default(),
     }
 }
 
@@ -156,4 +157,53 @@ fn a_cloud_export_reports_documents_and_rooms() {
     assert_eq!(json["rooms_imported"], 1, "{json}");
     assert_eq!(json["room_documents_linked"], 1, "{json}");
     assert_eq!(json["room_links"], 1, "{json}");
+}
+
+/// #1716: a live row over a deprecated copy is imported by default; the flag
+/// skips it and counts a duplicate.
+#[test]
+fn skip_deprecated_copies_is_opt_in_over_http() {
+    let u = store();
+    let file = "{\"content\":\"the numbat eats termites\"}";
+    let (st, json) = post(&u, "/import", serde_json::json!({ "content": file }));
+    assert_eq!(
+        (st, &json["imported"]),
+        (200, &serde_json::json!(1)),
+        "{json}"
+    );
+    let id = {
+        let guard = u.lock().unwrap();
+        guard.list(None, 10, 0, None).unwrap()[0].id.clone()
+    };
+    u.lock().unwrap().forget(&id).unwrap();
+
+    // Skipped on request, counted as a duplicate.
+    let (st, json) = post(
+        &u,
+        "/import",
+        serde_json::json!({ "content": file, "skip_deprecated_copies": true }),
+    );
+    assert_eq!(st, 200, "{json}");
+    assert_eq!(
+        (&json["imported"], &json["duplicates_skipped"]),
+        (&serde_json::json!(0), &serde_json::json!(1)),
+        "{json}"
+    );
+
+    // Imported as a new live row by default.
+    let (st, json) = post(&u, "/import", serde_json::json!({ "content": file }));
+    assert_eq!(st, 200, "{json}");
+    assert_eq!(
+        (&json["imported"], &json["duplicates_skipped"]),
+        (&serde_json::json!(1), &serde_json::json!(0)),
+        "{json}"
+    );
+
+    // The flag must be a boolean.
+    let (st, _) = post(
+        &u,
+        "/import",
+        serde_json::json!({ "content": file, "skip_deprecated_copies": "yes" }),
+    );
+    assert_eq!(st, 400);
 }

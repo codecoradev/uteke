@@ -20,6 +20,7 @@ mod release_verify;
 mod remember;
 mod room;
 mod server;
+mod skill;
 mod tags;
 mod timeline;
 mod update;
@@ -105,60 +106,11 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             valid_until.as_deref(),
         ),
 
-        Commands::Recall {
-            query,
-            limit,
-            tags,
-            entity,
-            category,
-            min,
-            strict,
-            min_trust,
-            strategy,
-            salience,
-            recency,
-            related,
-            depth,
-            context,
-            at,
-            history: _,
-            content_format,
-            r#where,
-            r#type,
-            enrich,
-            explain,
-            pack,
-            budget,
-            exclude_ids,
-        } => recall::run_recall(
-            cli,
-            uteke,
-            ns,
-            query,
-            *limit,
-            tags,
-            entity.as_deref(),
-            category.as_deref(),
-            *min,
-            *strict,
-            min_trust.as_deref(),
-            strategy.as_deref(),
-            config,
-            *related,
-            *depth,
-            *context,
-            at.as_deref(),
-            content_format.as_str(),
-            r#where.as_deref(),
-            *salience,
-            *recency,
-            r#type.as_deref(),
-            *enrich,
-            *explain,
-            *pack,
-            *budget,
-            exclude_ids,
-        ),
+        Commands::Recall { .. } => {
+            let args = recall::RecallArgs::from_command(&cli.command)
+                .expect("a recall command carries recall flags");
+            recall::run_recall(cli, uteke, ns, &args, config)
+        }
 
         Commands::Context { namespace } => {
             let effective_ns = namespace.as_deref().or(ns);
@@ -316,6 +268,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
             recursive,
             timestamp,
             defer_embed,
+            skip_deprecated_copies,
         } => {
             let opts = maintenance::ExtractOpts {
                 enabled: *extract,
@@ -366,6 +319,7 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
                 opts,
                 timestamp.as_deref(),
                 *defer_embed,
+                *skip_deprecated_copies,
             )
         }
 
@@ -578,6 +532,8 @@ pub(crate) fn run_command(cli: &Cli, uteke: &mut Uteke, config: &Config) -> Resu
         }
 
         Commands::Doc { command } => crate::commands::doc::run(cli, uteke, command, config),
+
+        Commands::Skill { command } => skill::run(cli, uteke, command),
 
         Commands::Upgrade { yes } => upgrade::run(*yes),
 

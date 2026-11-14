@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/uteke-privacy",
     "crates/uteke-core",
     "crates/uteke-cli",
     "crates/uteke-server",
@@ -9,16 +10,16 @@ members = [
 ]
 
 [workspace.package]
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/codecoradev/uteke"
-description = "The Brain for Your AI — persistent memory and smart context management"
+description = "Long-term memory for AI agents: one offline Rust binary with hybrid vector and full-text recall"
 rust-version = "1.85"
 keywords = ["memory", "ai", "embedding", "vector-search", "semantic"]
 categories = ["command-line-utilities", "science"]
 readme = "README.md"
-homepage = "https://uteke.dev"
+homepage = "https://uteke.app"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

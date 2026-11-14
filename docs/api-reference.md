@@ -114,6 +114,38 @@ Rebuild the vector index from stored embeddings to fix recall desync (#1266). SQ
 
 **Response**: [`RepairReport`](#repairreport)
 
+#### 🟡 `POST` `/skill/search`
+
+Search the personal skill library (#1731): the skills whose indexed files match `query` (at most 2000 characters), best first, one hit per skill with the file and snippet that matched. `mode` is `hybrid` (default), `semantic` or `fts`; `limit` is clamped to 1 to 50 (default 5); `approved_only` keeps only skills whose current version is approved. Hybrid falls back to keywords without the embedding model, `semantic` needs it (503 without); `hybrid` and `semantic` embed the query, so 429 when two embedding requests already run (`fts` never does). Skill files are not documents: they never appear in `/doc/*`. Nothing is written. Read-only.
+
+**Request body**: [`SkillSearchRequest`](#skillsearchrequest)
+
+*Related: `1731`*
+
+#### 🟡 `POST` `/skill/list`
+
+List the skills of the personal library, by slug, with their current version (status, hash, validity, owner; never the server path it was indexed from). `status` keeps `draft` or `approved` skills; `limit` is clamped to 1 to 200 (default 50) and `total` counts the skills that match before the limit. Nothing is written. Read-only.
+
+**Request body**: [`SkillListRequest`](#skilllistrequest)
+
+*Related: `1731`*
+
+#### 🟡 `POST` `/skill/show`
+
+One skill: its current version (hash, status, validity and lint issues, file manifest), the hash a client may load (`approved_hash`), usage counters, the last 50 versions and the last 20 ledger rows. `slug` is at most 64 characters; 404 for an unknown skill. Nothing is written. Read-only.
+
+**Request body**: [`SkillShowRequest`](#skillshowrequest)
+
+*Related: `1731`*
+
+#### 🟡 `POST` `/skill/similar`
+
+Skills close to a skill (`slug`) or to a draft `text` that is not stored (at most 32768 characters; needs the embedding model, 503 without; 429 when two embedding requests already run). Compares the `SKILL.md` document vectors: `possible_duplicate` from 0.92, `similar_to` from 0.80, `threshold` overrides the floor, `limit` is clamped to 1 to 100 (default 10). Nothing is written. Read-only.
+
+**Request body**: [`SkillSimilarRequest`](#skillsimilarrequest)
+
+*Related: `1731`*
+
 #### 🟢 `GET` `/graph`
 
 Memory graph for visualisation: live memories as nodes, `memory_edges` (auto-links, supersession) plus explicit graph edges as edges, keyed by memory id. Accepts `?namespace=...`, `?node_id=<memory id>` (that memory's neighbourhood) and `?limit=` (edges, default 500, max 5000); response carries `truncated`. Derived `referenced_by` backlinks are omitted.
@@ -181,7 +213,7 @@ List deprecated memories with TTL metadata.
 
 #### 🟡 `POST` `/import`
 
-Import memories from JSONL (or a JSON array) in `content`. Each row keeps its `id`, type, importance, pinned flag and slug; the response counts `imported`, `skipped`, `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped`. A Uteke Cloud export imports whole: `type: "document"` rows become documents (`parent` by slug), `type: "room"` rows become rooms with their `doc_slugs` linked, both before the memories' `rooms`, and the manifest line is skipped; the response then adds `documents_imported`, `documents_updated`, `documents_unchanged`, `parent_unresolved`, `rooms_imported`, `rooms_existing`, `room_documents_linked` and `room_documents_missing` (each only when non-zero). The body limit of this route is 64 MiB (`UTEKE_MAX_IMPORT_SIZE`, bytes; other routes keep 10 MB); a larger body gets a 413 that names the limit. Bulk runbook: send `defer_embedding: true` (rows are stored without a vector and the call returns in seconds; split a large file into several calls under the body limit), then run `uteke repair --reembed` (add `--limit N` to spread the work) so `/recall` finds them.
+Import memories from JSONL (or a JSON array) in `content`. Each row keeps its `id`, type, importance, pinned flag and slug; the response counts `imported`, `skipped`, `duplicates_skipped`, `id_conflicts_skipped` and `soft_deleted_skipped`. A Uteke Cloud export imports whole: `type: "document"` rows become documents (`parent` by slug), `type: "room"` rows become rooms with their `doc_slugs` linked, both before the memories' `rooms`, and the manifest line is skipped; the response then adds `documents_imported`, `documents_updated`, `documents_unchanged`, `parent_unresolved`, `rooms_imported`, `rooms_existing`, `room_documents_linked` and `room_documents_missing` (each only when non-zero). The body limit of this route is 64 MiB (`UTEKE_MAX_IMPORT_SIZE`, bytes; other routes keep 10 MB); a larger body gets a 413 that names the limit. A live row whose content matches only a deprecated copy (forgotten, superseded, consolidated or pruned) is imported as a new live memory; send `skip_deprecated_copies: true` to skip such rows (counted in `duplicates_skipped`; #1716). Bulk runbook: send `defer_embedding: true` (rows are stored without a vector and the call returns in seconds; split a large file into several calls under the body limit), then run `uteke repair --reembed` (add `--limit N` to spread the work) so `/recall` finds them.
 
 **Request body**: [`ImportRequest`](#importrequest)
 
@@ -278,9 +310,17 @@ List documents with optional namespace/limit/roots_only/parent filters.
 
 #### 🟡 `POST` `/doc/search`
 
-Search documents by query with optional mode/namespace/limit.
+Search documents by query with optional mode/namespace/limit. `hybrid` (default) and `semantic` embed the query, so 429 when two embedding requests already run (`fts` never does).
 
 **Request body**: [`DocSearchRequest`](#docsearchrequest)
+
+#### 🟡 `POST` `/doc/similar`
+
+Documents close to a stored document (`slug` or `id`) or to a draft `text` that is not stored, or, with `report: true`, the near-duplicate pairs and groups of a namespace or a `subtree`. Compares document vectors (the mean of the chunk vectors): `possible_duplicate` at 0.92 and above, `similar_to` at 0.80 and above (`[doc_similarity]` in uteke.toml), `threshold` overrides the floor, `limit` caps the hits (default 10, max 100; a report lists 50 pairs, max 500). Documents without vectors are skipped and counted in `documents_without_vector`. Nothing is written; `text` (at most 32768 characters) needs the embedding model (503 without; 429 when two embedding requests already run). Read-only.
+
+**Request body**: [`DocSimilarRequest`](#docsimilarrequest)
+
+*Related: `1730`*
 
 #### 🟡 `POST` `/doc/update`
 
@@ -379,13 +419,13 @@ Get recently added memories. Accepts `?limit=N&namespace=X` query params.
 
 #### 🟡 `POST` `/room/create`
 
-Create a new memory room. Accepts `{"name": "..."}`.
+Create a new memory room. Accepts `{"name": "..."}`. Room ids are meant to have the shape `category:title` (for example `project:uteke`, `research:docker`; lowercase, one colon, at most 64 characters; the category is a recommendation, any category of that shape is accepted). Another id is still created, and the response carries `warnings` with one message (#1715); with `[rooms] require_category_title` on it is refused with 400 `invalid_room_id`.
 
 **Request body**: JSON object (see handler source for fields)
 
 #### 🟡 `POST` `/room/remember`
 
-Store a memory linked to a room. Accepts room_id, content, tags, type, author.
+Store a memory linked to a room. Accepts room_id, content, tags, type, author. A room that does not exist is created; when its id is not of the shape `category:title` the response carries `warnings` with one message, as on `/room/create` (#1715), or the write is refused with 400 `invalid_room_id` (nothing stored) when `[rooms] require_category_title` is on.
 
 **Request body**: [`RoomRememberRequest`](#roomrememberrequest)
 
@@ -439,6 +479,16 @@ Get memory count for a room. Includes deprecated memories (known discrepancy vs 
 
 *Related: `#784`*
 
+#### 🟡 `POST` `/room/search`
+
+Search rooms by query (#1704). Fuses a metadata match (room id, title, description) with the rooms of the memories a recall of the query finds. Body: `{query, limit?, namespace?}`; `limit` defaults to 10, max 100; a blank query is a 400. Returns `[{room_id, room_name, description?, memory_count, updated_at, score, matches?}]`, best first; deprecated memories are not counted. With `namespace`, only that namespace's rooms are returned.
+
+*Excludes deprecated memories from results.*
+
+**Request body**: JSON object (see handler source for fields)
+
+*Related: `#1704`*
+
 #### 🟢 `GET` `/room/memories`
 
 List all memories in a room (chronological). Accepts `?room_id=...` query param; optional `?author=...` and `?namespace=...` filters (#1288). Without `namespace`, returns ALL namespaces that contributed to the room.
@@ -451,7 +501,7 @@ Delete a room (unlink-only): room links are removed, memories and documents are 
 
 #### 🟡 `POST` `/room/rename`
 
-Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). Accepts `{ from, to }`. Write op — blocked for read-only tokens.
+Rename a room: the registry row and every member/document link move in one transaction; title, description, and namespace are preserved (#1202). The old id stays valid as an alias of the renamed room (#1714): every room operation resolves it and answers with the canonical id, and a room cannot be created under an alias. Accepts `{ from, to }` (`from` may itself be an alias). A `to` outside the `category:title` shape is accepted with a `warnings` entry in the response (#1715), or refused with 400 `invalid_room_id` when `[rooms] require_category_title` is on. Write op — blocked for read-only tokens.
 
 **Request body**: JSON object (see handler source for fields)
 
@@ -626,6 +676,28 @@ One turn for the capture queue (`POST /capture`, LAB).
 | `slug` | any | No |  |
 
 
+### `DocSimilarRequest`
+
+`POST /doc/similar` (#1730): documents close to a document or to a draft
+text, or (with `report`) the near-duplicates of a namespace or subtree.
+
+Similar documents: give `slug` (or `id`) OR `text`, plus optional
+`threshold`, `limit`, `namespace`. Duplicate report: `report: true` plus
+optional `subtree`, `namespace`, `threshold`, `limit`; no `slug`/`text`.
+Nothing is written either way.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | any | No | Id (or slug) of a stored document. |
+| `limit` | any | No | Maximum hits (default 10, at most 100), or pairs for a report (default 50, at most 500). |
+| `namespace` | any | No | Only compare with documents of this namespace (default: all). |
+| `report` | `boolean` | No | `true`: report the near-duplicate pairs and groups of the scope. |
+| `slug` | any | No | Slug of a stored document (alias of `id`). |
+| `subtree` | any | No | Report only: the slug or id of the document whose subtree to scan. |
+| `text` | any | No | Candidate text that is not stored: the near-duplicates "before it is stored". Needs the embedding model. |
+| `threshold` | any | No | Minimum cosine similarity, 0 to 1. Default: the configured `similar_to` threshold (0.80), or `possible_duplicate` (0.92) for a report. |
+
+
 ### `ErrorResponse`
 
 | Field | Type | Required | Description |
@@ -675,6 +747,7 @@ One turn for the capture queue (`POST /capture`, LAB).
 | `content` | `string` | Yes | JSONL content to import. |
 | `defer_embedding` | `boolean` | No | Store the rows without a vector and return at once (#1634, default false). The rows are keyword-searchable (`/search`) immediately and found by `/recall` after `uteke repair --reembed` adds the vectors. Duplicates are caught by exact content only, not by the cosine check. The response then carries `deferred_embedding`: the rows waiting for a vector. Use it for bulk imports, which otherwise embed every row before the request returns. |
 | `namespace` | any | No |  |
+| `skip_deprecated_copies` | `boolean` | No | Skip a live row whose content matches only a deprecated copy (forgotten, superseded, consolidated or pruned) instead of importing it as a new live memory (#1716, default false). A skipped row counts in `duplicates_skipped`. Rows that carry the id of a deprecated memory are skipped either way. |
 | `tags` | ``string``[] | No |  |
 
 
@@ -842,6 +915,51 @@ Request for memory feedback / trust scoring (#718).
 | `namespace` | any | No |  |
 | `query` | `string` | Yes |  |
 | `tags` | ``string``[] | No |  |
+
+
+### `SkillListRequest`
+
+`POST /skill/list` (#1731): the skills of the library, by slug. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | any | No | Maximum skills, 1 to 200 (default 50). |
+| `status` | any | No | `draft` or `approved`: the status of the current version. |
+
+
+### `SkillSearchRequest`
+
+`POST /skill/search` (#1731): the skills whose files match a query. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `approved_only` | any | No | Only skills whose current version is approved. |
+| `limit` | any | No | Maximum skills, 1 to 50 (default 5). |
+| `mode` | any | No | `hybrid` (default), `semantic` or `fts`. |
+| `query` | `string` | Yes | What to look for (at most 2000 characters). |
+
+
+### `SkillShowRequest`
+
+`POST /skill/show` (#1731): one skill with its current version, usage,
+version history and mutation ledger. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `slug` | `string` | Yes | The skill (at most 64 characters). |
+
+
+### `SkillSimilarRequest`
+
+`POST /skill/similar` (#1731): skills close to a skill or to a draft text
+that is not stored. Give `slug` OR `text`. Read-only.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `limit` | any | No | Maximum hits, 1 to 100 (default 10). |
+| `slug` | any | No | A skill of the library. |
+| `text` | any | No | A draft text that is not stored (at most 32768 characters; 429 when two embeddings already run); needs the embedding model. |
+| `threshold` | any | No | Minimum cosine similarity, 0 to 1 (default 0.80). |
 
 
 ### `TagDeleteRequest`

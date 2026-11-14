@@ -50,16 +50,7 @@ pub(super) fn post_remember(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     }
                     ctx.ok_response_for(req, &body)
                 }
-                Err(uteke_core::Error::SecretDetected { kinds }) => {
-                    ctx.secret_detected_response(req, &kinds)
-                }
-                Err(uteke_core::Error::RejectedValue { reason }) => {
-                    ctx.rejected_value_response(req, &reason)
-                }
-                Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -92,14 +83,11 @@ pub(super) fn post_recall(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     .recall_config
                     .as_ref()
                     .map(|r| r.default_strategy.as_str()),
+                ..Default::default()
             };
             match uteke.run_recall(&typed, defaults) {
                 // A guard or an unknown strategy/search_type: 400 with the bare text.
-                Err(uteke_core::Error::Validation(msg)) => ctx.error_response_for(req, 400, msg),
-                Err(e) => {
-                    error!("Recall error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error_bare(req, &e),
                 Ok(uteke_core::recall_exec::RecallOutput::Explained(explained)) => {
                     ctx.ok_response_for(req, &explained)
                 }
@@ -156,10 +144,7 @@ pub(super) fn post_search(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                 ns(&req_data.namespace),
             ) {
                 Ok(results) => ctx.ok_response_for(req, &results),
-                Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -196,10 +181,7 @@ pub(super) fn post_list(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         "next_offset": meta.next_offset,
                     }),
                 ),
-                Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -242,19 +224,13 @@ pub(super) fn delete_forget(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             // `reason=wrong[: note]` also records a tombstone (#1597).
             match uteke.forget_with_reason(&resolved_id, reason.as_deref()) {
                 Ok(()) => ctx.ok_response_for(req, &serde_json::json!({"forgotten": resolved_id})),
-                Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         uteke_core::ForgetRequest::Tag { tag, namespace } => {
             match uteke.bulk_forget_by_tag(&tag, namespace.as_deref()) {
                 Ok(result) => ctx.ok_response_for(req, &result),
-                Err(e) => {
-                    error!("Internal error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
     }
@@ -276,10 +252,7 @@ pub(super) fn get_stats(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     let ns_param = params.get("namespace").map(|s| s.as_str());
     match uteke.stats(ns_param) {
         Ok(stats) => ctx.ok_response_for(req, &stats),
-        Err(e) => {
-            error!("Internal error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -294,10 +267,7 @@ pub(super) fn post_stats(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match read_body::<StatsReq>(req.as_reader()) {
         Ok(req_data) => match uteke.stats(ns(&req_data.namespace)) {
             Ok(stats) => ctx.ok_response_for(req, &stats),
-            Err(e) => {
-                error!("Internal error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -319,10 +289,7 @@ pub(super) fn get_recent(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
         .unwrap_or(0);
     match uteke.list(None, limit, offset, ns.as_deref()) {
         Ok(memories) => ctx.ok_response_for(req, &memories),
-        Err(e) => {
-            error!("Internal error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -340,10 +307,7 @@ pub(super) fn get_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
     match uteke.get_by_id(&id) {
         Ok(Some(memory)) => ctx.ok_response_for(req, &memory),
         Ok(None) => ctx.error_response_for(req, 404, format!("Memory not found: {id}")),
-        Err(e) => {
-            error!("Internal error: {e}");
-            ctx.error_response_for(req, 500, "Internal server error")
-        }
+        Err(e) => ctx.core_error(req, &e),
     }
 }
 
@@ -373,18 +337,12 @@ pub(super) fn post_memory_pin(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                         500,
                         "Memory updated but could not be retrieved",
                     ),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 },
                 Ok(false) => {
                     ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
                 }
-                Err(e) => {
-                    error!("Pin/unpin error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -412,23 +370,12 @@ pub(super) fn post_memory_importance(c: &mut Call) -> Response<Cursor<Vec<u8>>> 
                         500,
                         "Memory updated but could not be retrieved",
                     ),
-                    Err(e) => {
-                        error!("Internal error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
+                    Err(e) => ctx.core_error(req, &e),
                 },
                 Ok(false) => {
                     ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
                 }
-                Err(e) => match e {
-                    uteke_core::Error::Validation(_) => {
-                        ctx.error_response_for(req, 400, e.to_string())
-                    }
-                    _ => {
-                        error!("Set importance error: {e}");
-                        ctx.error_response_for(req, 500, "Internal server error")
-                    }
-                },
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -475,10 +422,7 @@ pub(super) fn post_memory_feedback(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             };
             match result {
                 Ok(data) => ctx.ok_response_for(req, &data),
-                Err(e) => {
-                    error!("Feedback error: {e}");
-                    ctx.error_response_for(req, 500, "Internal server error")
-                }
+                Err(e) => ctx.core_error(req, &e),
             }
         }
         Err(e) => ctx.error_response_for(req, 400, e),
@@ -499,121 +443,36 @@ pub(super) fn put_memory(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     format!("Invalid UUID format: {}", req_data.id),
                 );
             }
-            // Caller validity (#1598): parsed and checked before anything is
-            // written, and written only after the other fields went through,
-            // so neither a bad interval nor a refused field leaves a partial
-            // update behind.
-            let validity = match uteke_core::memory::types::Validity::parse(
-                req_data.valid_from.as_deref(),
-                req_data.valid_until.as_deref(),
-            ) {
-                Ok(v) => v,
-                Err(e) => return ctx.error_response_for(req, 400, e.to_string()),
+            // One core execution (#1751): the validity is parsed and checked
+            // before anything is written and written after the other fields
+            // (#1598), then the namespace moves (#1181).
+            let namespace = req_data.namespace.clone();
+            let id = req_data.id.clone();
+            let request = match uteke_core::UpdateRequest::decode(uteke_core::UpdateInput {
+                id: req_data.id,
+                content: req_data.content,
+                tags: req_data.tags,
+                metadata: req_data.metadata,
+                importance: req_data.importance,
+                pinned: req_data.pinned,
+                memory_type: req_data.memory_type,
+                namespace: req_data.namespace,
+                valid_from: req_data.valid_from,
+                valid_until: req_data.valid_until,
+            }) {
+                Ok(r) => r,
+                Err(e) => return ctx.core_error(req, &e),
             };
-            // Check that at least one field is provided
-            if req_data.content.is_none()
-                && req_data.tags.is_none()
-                && req_data.metadata.is_none()
-                && req_data.importance.is_none()
-                && req_data.pinned.is_none()
-                && req_data.memory_type.is_none()
-                && req_data.namespace.is_none()
-                && validity.is_none()
-            {
-                return ctx.error_response_for(
-                    req,
-                    400,
-                    "No fields to update. Provide at least one of: content, tags, metadata, importance, pinned, memory_type, namespace, valid_from, valid_until",
-                );
-            }
-            if let Some(v) = &validity {
-                match uteke.check_validity(&req_data.id, v) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        return ctx.error_response_for(
-                            req,
-                            404,
-                            format!("Memory not found: {}", req_data.id),
-                        );
-                    }
-                    Err(e) => return ctx.core_error(req, &e),
-                }
-            }
-            // Write the checked validity; `None` when it went through.
-            let write_validity = |req: &Request| -> Option<Response<Cursor<Vec<u8>>>> {
-                let v = validity.as_ref()?;
-                match uteke.set_validity(&req_data.id, v) {
-                    Ok(true) => None,
-                    Ok(false) => Some(ctx.error_response_for(
-                        req,
-                        404,
-                        format!("Memory not found: {}", req_data.id),
-                    )),
-                    Err(e) => Some(ctx.core_error(req, &e)),
-                }
-            };
-            let only_validity = validity.is_some()
-                && req_data.content.is_none()
-                && req_data.tags.is_none()
-                && req_data.metadata.is_none()
-                && req_data.importance.is_none()
-                && req_data.pinned.is_none()
-                && req_data.memory_type.is_none();
-            if only_validity {
-                if let Some(refused) = write_validity(&*req) {
-                    return refused;
-                }
-                if let Some(ns) = req_data.namespace.as_deref() {
-                    if let Err(e) = uteke.move_memory(&req_data.id, ns) {
-                        return ctx.core_error(req, &e);
-                    }
-                }
-                return ctx.ok_response_for(
+            match uteke.run_update(&request) {
+                Ok(run) => ctx.ok_response_for(
                     req,
                     &with_namespace_warning(
-                        serde_json::json!({"updated": req_data.id, "redacted": false}),
-                        req_data.namespace.as_deref(),
+                        // #1464: `redacted` is true when the filter masked a
+                        // secret in the new content, tags or metadata.
+                        serde_json::json!({"updated": id, "redacted": run.redacted()}),
+                        namespace.as_deref(),
                     ),
-                );
-            }
-            let tag_refs: Option<Vec<String>> = req_data.tags;
-            let tag_slice: Option<&[String]> = tag_refs.as_deref();
-            match uteke.update_memory_detailed(
-                &req_data.id,
-                req_data.content.as_deref(),
-                tag_slice,
-                req_data.metadata.as_ref(),
-                req_data.importance,
-                req_data.pinned,
-                req_data.memory_type.as_deref(),
-            ) {
-                Ok(outcome) if outcome.updated => {
-                    if let Some(refused) = write_validity(&*req) {
-                        return refused;
-                    }
-                    // Namespace move (#1181): separate op after the field
-                    // update — plain column change, no re-embed needed.
-                    if let Some(ns) = req_data.namespace.as_deref() {
-                        if let Err(e) = uteke.move_memory(&req_data.id, ns) {
-                            return ctx.core_error(req, &e);
-                        }
-                    }
-                    // #1464: true when the filter masked a secret in the new
-                    // content, tags or metadata.
-                    ctx.ok_response_for(
-                        req,
-                        &with_namespace_warning(
-                            serde_json::json!({
-                                "updated": req_data.id,
-                                "redacted": outcome.redacted(),
-                            }),
-                            req_data.namespace.as_deref(),
-                        ),
-                    )
-                }
-                Ok(_) => {
-                    ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
-                }
+                ),
                 Err(e) => ctx.core_error(req, &e),
             }
         }
@@ -639,10 +498,7 @@ pub(super) fn post_memory_doc_refs(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
                     "doc_slugs": slugs,
                 }),
             ),
-            Err(e) => {
-                error!("memory/doc-refs error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -658,10 +514,7 @@ pub(super) fn post_pin(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             Ok(false) => {
                 ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
             }
-            Err(e) => {
-                error!("Pin error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }
@@ -677,10 +530,7 @@ pub(super) fn post_unpin(c: &mut Call) -> Response<Cursor<Vec<u8>>> {
             Ok(false) => {
                 ctx.error_response_for(req, 404, format!("Memory not found: {}", req_data.id))
             }
-            Err(e) => {
-                error!("Unpin error: {e}");
-                ctx.error_response_for(req, 500, "Internal server error")
-            }
+            Err(e) => ctx.core_error(req, &e),
         },
         Err(e) => ctx.error_response_for(req, 400, e),
     }

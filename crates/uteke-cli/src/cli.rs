@@ -468,6 +468,12 @@ pub enum Commands {
         /// and only exact copies are skipped as duplicates.
         #[arg(long, conflicts_with_all = ["full", "extract", "batch_dir"])]
         defer_embed: bool,
+        /// JSON/JSONL only: skip a live row whose content matches only a
+        /// deprecated copy (forgotten, superseded, consolidated or pruned)
+        /// instead of importing it as a new live memory (#1716). A skipped row
+        /// counts as a duplicate.
+        #[arg(long, conflicts_with_all = ["full", "extract", "batch_dir"])]
+        skip_deprecated_copies: bool,
     },
     /// Generate shell completions
     Completions {
@@ -698,6 +704,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: DocCommands,
     },
+    /// Personal skill library — index, search and approve local skills (#1731)
+    ///
+    /// A skill is a directory with a SKILL.md. The library indexes the skills
+    /// of this machine (never modifying their files), finds the few that fit
+    /// a task by meaning, spots near-duplicates, and records which exact
+    /// version a human approved.
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
     /// Check for updates and upgrade to the latest version
     Upgrade {
         /// Skip confirmation prompt
@@ -715,6 +731,106 @@ pub enum Commands {
         /// Namespace to use (skip namespace prompt)
         #[arg(long)]
         namespace: Option<String>,
+    },
+}
+
+/// Skill library subcommands (#1731).
+#[derive(Subcommand)]
+pub enum SkillCommands {
+    /// Index the skills under a directory
+    ///
+    /// Reads every skill directory (one with a SKILL.md) under <dir>, up to
+    /// 3 levels deep, without modifying a file; records its package hash and
+    /// embeds its text files for search. New bytes make a new draft version
+    /// (an earlier approval becomes stale). Reports skills close to ones
+    /// already in the library. Needs the embedding model.
+    Index {
+        /// Directory with skills, or a single skill directory
+        dir: String,
+        /// Who owns the skills (recorded on new skills; at most 128 characters)
+        #[arg(long)]
+        owner: Option<String>,
+        /// Who is indexing (recorded in the ledger; at most 128 characters)
+        #[arg(long)]
+        actor: Option<String>,
+    },
+    /// Search the library by meaning and keywords
+    Search {
+        /// What the task needs (at most 2000 characters)
+        query: String,
+        /// Maximum skills (1 to 50)
+        #[arg(long, default_value = "5")]
+        limit: usize,
+        /// Search mode: semantic, fts, or hybrid (default)
+        #[arg(long, default_value = "hybrid")]
+        mode: String,
+        /// Only skills whose current version is approved
+        #[arg(long)]
+        approved: bool,
+    },
+    /// List the skills of the library
+    List {
+        /// Only skills whose current version is draft or approved
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum skills (1 to 200)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Show a skill: current version, hash, files, usage, history
+    Show {
+        /// Skill slug
+        slug: String,
+    },
+    /// Skills close to a skill, or to a draft text that is not stored
+    ///
+    /// Compares SKILL.md document vectors (the same as `doc similar`):
+    /// `possible_duplicate` at 0.92 and above, `similar_to` at 0.80 and above.
+    Similar {
+        /// Skill slug (omit with --text or --file)
+        slug: Option<String>,
+        /// Draft text instead of a stored skill
+        #[arg(long, conflicts_with_all = ["slug", "file"])]
+        text: Option<String>,
+        /// Read the draft text from a file (use - for stdin)
+        #[arg(long, conflicts_with_all = ["slug", "text"])]
+        file: Option<String>,
+        /// Minimum cosine similarity, 0 to 1 (default: the configured similar_to threshold, 0.80)
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: Option<f32>,
+        /// Maximum results (1 to 100)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Check SKILL.md frontmatter: a directory, or the indexed library
+    ///
+    /// With <dir>, reads the skills there (no store needed). Without, reports
+    /// what the last index found for each skill in the library. Exits with an
+    /// error when a skill is invalid.
+    Lint {
+        /// Directory with skills (omit to lint the indexed library)
+        dir: Option<String>,
+    },
+    /// Approve version <slug>@<hash> of a skill
+    ///
+    /// Records the hash a client checks before loading the skill. The hash is
+    /// the package hash shown by `skill show`, `sha256:<hex>` (the same hash
+    /// tole computes; see docs/cli-reference.md), with or without the
+    /// `sha256:` prefix, or a prefix of at least 12 hex digits. Only the
+    /// current, valid version can be approved.
+    Approve {
+        /// <slug>@<hash>
+        reference: String,
+        /// Who approves (recorded in the ledger; at most 128 characters)
+        #[arg(long)]
+        actor: Option<String>,
+    },
+    /// Count that a skill was recalled, loaded, succeeded or failed
+    Record {
+        /// Skill slug
+        slug: String,
+        /// recalled, loaded, succeeded or failed
+        event: String,
     },
 }
 
@@ -800,6 +916,50 @@ pub enum DocCommands {
         /// Search mode: semantic, fts, or hybrid (default)
         #[arg(long, default_value = "hybrid")]
         mode: String,
+    },
+    /// Documents close to a document, or to a draft text that is not stored (#1730)
+    ///
+    /// Compares the document vector (the mean of the chunk vectors) with every
+    /// other document: `possible_duplicate` at 0.92 and above, `similar_to` at
+    /// 0.80 and above (`[doc_similarity]` in uteke.toml). Give a slug, or
+    /// `--text` / `--file` for a draft: nothing is stored either way. Documents
+    /// without vectors (`uteke repair --reembed` fills them) are skipped.
+    Similar {
+        /// Document slug or ID (omit with --text or --file)
+        slug: Option<String>,
+        /// Candidate text instead of a stored document
+        #[arg(long, conflicts_with_all = ["slug", "file"])]
+        text: Option<String>,
+        /// Read the candidate text from a file (use - for stdin)
+        #[arg(long, conflicts_with_all = ["slug", "text"])]
+        file: Option<String>,
+        /// Minimum cosine similarity, 0 to 1 (default: the configured similar_to threshold, 0.80)
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: Option<f32>,
+        /// Maximum results (1 to 100)
+        #[arg(long, default_value = "10")]
+        limit: usize,
+        /// Only compare with documents in this namespace
+        #[arg(long)]
+        namespace: Option<String>,
+    },
+    /// Report near-duplicate documents of a namespace or a subtree (#1730)
+    ///
+    /// Lists the pairs at or above the duplicate threshold (default 0.92,
+    /// `[doc_similarity] duplicate_threshold`) and the groups they form.
+    Duplicates {
+        /// Only documents under this document (itself included)
+        #[arg(long)]
+        subtree: Option<String>,
+        /// Only documents in this namespace
+        #[arg(long)]
+        namespace: Option<String>,
+        /// Minimum cosine similarity, 0 to 1 (default: the configured possible_duplicate threshold, 0.92)
+        #[arg(long, allow_negative_numbers = true)]
+        threshold: Option<f32>,
+        /// Maximum pairs listed (1 to 500); the groups always cover every pair
+        #[arg(long, default_value = "50")]
+        limit: usize,
     },
     /// Partially update a document — only provided fields are changed (#589)
     Update {
@@ -1053,6 +1213,25 @@ pub enum RoomCommands {
     Stats {
         /// Room ID
         room_id: String,
+    },
+    /// Find rooms for a topic (#1704)
+    ///
+    /// Fuses a match on room id, title and description with the rooms of the
+    /// memories a recall of the query finds, so an untitled room is still
+    /// found by its content. Keep the query short (2-3 keywords).
+    ///
+    /// Examples:
+    ///   uteke room search "tole gateway"
+    ///   uteke room search budget --limit 5 --json
+    Search {
+        /// What the room is about
+        query: String,
+        /// Maximum rooms to return (default 10, max 100)
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        /// Only rooms of this namespace
+        #[arg(long)]
+        namespace: Option<String>,
     },
     /// Recall all memories in a room (cross-namespace)
     ///

@@ -167,6 +167,10 @@ pub(crate) fn run(
         if let Some(a) = author {
             obj["author"] = serde_json::json!(a);
         }
+        // #1715: the room this write created is outside `category:title`.
+        if let Some(w) = &run.room_warning {
+            obj["warnings"] = serde_json::json!([w]);
+        }
         println!("{obj}");
     } else {
         output::print_remember_human(&id);
@@ -190,6 +194,9 @@ pub(crate) fn run(
         }
         if let Some(cat) = category {
             println!("  category: {cat}");
+        }
+        if let Some(w) = &run.room_warning {
+            eprintln!("Warning: {w}");
         }
     }
     Ok(())

@@ -2,6 +2,7 @@
 #
 # Usage (from workspace root):
 #   cargo mutants --file crates/uteke-core/src/jaccard.rs        # single file
+#   cargo mutants -p uteke-privacy                              # the secret detector (moved from uteke-core, #1732)
 #   cargo mutants --output mutants-run.out                      # custom output dir
 #   cargo mutants -j 4 --timeout 60                              # parallel jobs + timeout
 #
@@ -35,8 +36,36 @@ exclude_globs = [
 #     always holds when reached (set together at ~line 435), so both
 #     operands always have the same truth value.
 #   chunker.rs:443:17 (&& → ||) — same invariant as above, at the final flush.
+#   maintenance.rs:435 (the arithmetic and the comparison of `(i + 1) % 100 == 0`)
+#     in reembed_missing_memories — the condition only decides whether a
+#     "Re-embed progress" info line is logged; no result, count or stored value
+#     depends on it, and the crate has no log-capturing test dependency.
+#   recall_exec.rs:239:38 (&& → ||) in run_recall_unrooted — the post-filter
+#     `needs_post_filter && point_in_time.is_none()` also running for a
+#     point-in-time recall is a no-op: recall_at_time already filters on the
+#     same entity and category metadata (time_travel.rs), and its result never
+#     holds more than `n` rows, so the second retain and truncate change nothing.
+#   time_travel.rs:47:39 (|| → &&) and 54:31 (< → >) in recall_at_time_index — both
+#     only change how many widening passes the over-fetch loop runs, never which
+#     rows come back: with `&&` a pass that already has enough rows widens (at
+#     most twice) and the first `limit` rows of the ranked list are the same; with
+#     `>` the exhausted-index exit never fires, and a later pass over an
+#     exhausted index returns the same candidate set.
+#   capture.rs:348:45 (+ → *) in chunk_session — `whole` is only a shortcut:
+#     when it is false, split_on_boundary(content, budget - label_len) returns
+#     the same single piece for any content that fits, and `c * l <= b < c + l`
+#     is impossible for c, l >= 2 (c = 1 gives one piece either way), so no
+#     test can tell the two apart.
+#   capture.rs:359:43 (> → >=) in chunk_session — `sep` is read only under
+#     `cur_len > 0`, where `cur_len >= 0` is true as well, so both give 1.
 exclude_re = [
     "chunker.rs:282:24: replace < with <=",
     "chunker.rs:425:25: replace && with \\|\\|",
     "chunker.rs:443:17: replace && with \\|\\|",
+    "capture.rs:348:45: replace \\+ with \\* in chunk_session",
+    "capture.rs:359:43: replace > with >= in chunk_session",
+    "maintenance.rs:435:.* in crate::Uteke::reembed_missing_memories",
+    "recall_exec.rs:239:38: replace && with \\|\\| in Uteke::run_recall_unrooted",
+    "time_travel.rs:47:39: replace \\|\\| with && in crate::Uteke::recall_at_time_index",
+    "time_travel.rs:54:31: replace < with > in crate::Uteke::recall_at_time_index",
 ]

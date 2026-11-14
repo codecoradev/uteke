@@ -134,8 +134,8 @@ uteke recall "database caching" --pack --exclude-ids abc123,def456
 | `--entity <name>` | Filter results to a specific entity |
 | `--category <cat>` | Filter results to a specific category |
 | `--content-format <fmt>` | Content display: `auto` (detect), `text`, `json` (pretty-print JSON memories) |
-| `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`) |
-| `--explain` | Show the ranking signals behind each result (#1160): final score, strategy, vector similarity + rank, FTS rank, RRF score with per-channel fusion contributions, and jaccard/salience/recency/graph boost deltas. Memory-only — not available with `--type doc` |
+| `--where <key=value>` | Filter by JSON field on structured memories (e.g. `--where role=CTO`). Memory-only: refused with `--type memory` or `--type doc` |
+| `--explain` | Show the ranking signals behind each result (#1160): final score, strategy, vector similarity + rank, FTS rank, RRF score with per-channel fusion contributions, and jaccard/salience/recency/graph boost deltas. Memory-only: refused with `--type memory` or `--type doc`, `--at`, `--entity`, `--category`, `--enrich`, `--related`, `--where` and `--context`. The same ranking signals come back from a server |
 | `--pack` | Return a budgeted context pack (#1281) instead of a bare ranked list: `{selected, skipped, budget_used, budget_chars}`. Rank-order preserving greedy fill of the character budget; deterministic and LLM-free |
 | `--budget <chars>` | Character budget for `--pack` (default: 4000) |
 | `--exclude-ids <ids>` | Memory IDs already injected this turn, comma-separated — excluded from the pack and reported as `skipped[reason=excluded]` |
@@ -674,6 +674,11 @@ uteke room list --namespace my-agent  # scoped
 
 # Show room stats and participants
 uteke room stats "project-kickoff"
+
+# Find rooms for a topic (#1704): id/title/description match fused with the
+# rooms of the memories a recall finds. Keep the query to 2-3 keywords.
+uteke room search "database decision"
+uteke room search budget --limit 5 --json
 
 # Recall within a room (semantic)
 uteke room recall "project-kickoff" --query "database decision"
@@ -1226,6 +1231,8 @@ RUST_LOG=info uteke-serve --port 8767
 
 When `[server] enabled = true` is set in config, the CLI auto-routes commands through the server. Falls back to local store if server is not running.
 
+`uteke recall` builds one request (`uteke_core::RecallRequest`) and runs it through the same entry point (`Uteke::run_recall`) as `POST /recall` and the MCP tool, so a local store and a server give the same answer to the same command. `--strategy`, `--explain`, `--pack`, `--type`, `--at`, `--entity`, `--category`, `--enrich`, `--min`, `--strict` and `--min-trust` travel in the request body; `--context` and `--content-format` only change how the answer is printed. Five flags have no field in `POST /recall` (adding one would change a CORE endpoint): `--salience`, `--recency`, `--related`, `--depth` and `--where`. A command that uses one of them runs against the local store instead of the server.
+
 ### HTTP Endpoints
 
 See the [HTTP API Reference](/api-reference) for the complete list of 50+ endpoints, request/response schemas, and examples.
@@ -1315,6 +1322,54 @@ uteke doc search "API reference" --mode fts --limit 5
 | `--mode <mode>` | `hybrid` (default), `semantic`, or `fts` |
 | `--limit <n>` | Max results (default: 5) |
 
+### `uteke doc similar`
+
+Find documents that are close to a document, or to a draft text that is not stored yet (#1730). Nothing is written.
+
+```bash
+uteke doc similar deploy-runbook
+uteke doc similar deploy-runbook --threshold 0.9 --limit 5 --json
+uteke doc similar --file draft-skill.md        # a draft: is there already one like it?
+cat draft.md | uteke doc similar --file -
+uteke doc similar --text "# Rotate keys\n\nSteps to rotate the signing keys"
+```
+
+The comparison uses the **document vector**: the mean of the document's chunk vectors, L2-normalised (no extra embedding call; a draft is chunked and embedded like a document body, so its score equals the one the stored document would get). A hit carries the edge type of the memory graph: `possible_duplicate` at cosine 0.92 and above, `similar_to` at 0.80 and above, `related` only when you pass a `--threshold` below 0.80. Both limits are configurable in [`[doc_similarity]`](configuration.md#document-similarity-1730). The relations are derived from the stored vectors on every call, not stored as edges.
+
+A document without a usable vector (no chunks, a chunk not embedded yet after a structural import, vectors of another size) is skipped and counted: `documents_without_vector` in `--json`, a note in text mode. Run `uteke repair --reembed` to embed it. Asking for the neighbours of such a document returns `source_embedded: false` and no hits. `--text` and `--file` need the embedding model; a slug does not.
+
+| Argument | Description |
+|----------|-------------|
+| `<slug>` | A stored document (slug or id); omit with `--text` / `--file` |
+| `--text <text>` | Draft text instead of a stored document |
+| `--file <path>` | Read the draft from a file (`-` for stdin) |
+| `--threshold <f>` | Minimum cosine, 0 to 1 (default: 0.80, the configured `similar_threshold`) |
+| `--limit <n>` | Max results, 1 to 100 (default: 10) |
+| `--namespace <ns>` | Only compare with documents of this namespace (documents created through the API have none, so this is rarely useful) |
+
+`--json` prints `{source, threshold, similar_threshold, duplicate_threshold, source_embedded, documents_without_vector, matches, hits: [{document, score, relation}]}`; `matches` counts the hits before `--limit`.
+
+### `uteke doc duplicates`
+
+Report the near-duplicate documents of the library, a namespace or a subtree (#1730).
+
+```bash
+uteke doc duplicates
+uteke doc duplicates --subtree skills --threshold 0.9
+uteke doc duplicates --json
+```
+
+Every pair of documents at or above the duplicate threshold (default 0.92) is listed, best first, and the pairs that share a document are merged into groups. With `--subtree <slug>` only that document and its descendants are compared; with `--namespace` only that namespace; both together use the intersection. A scope of more than 2000 documents with vectors is refused (all pairs are scored): narrow it with a subtree.
+
+| Flag | Description |
+|------|-------------|
+| `--subtree <slug>` | Only this document and its descendants |
+| `--namespace <ns>` | Only documents of this namespace |
+| `--threshold <f>` | Minimum cosine, 0 to 1 (default: 0.92, the configured `duplicate_threshold`) |
+| `--limit <n>` | Max pairs listed, 1 to 500 (default: 50); the groups always cover every pair |
+
+`--json` prints `{threshold, scanned, documents_without_vector, total_pairs, pairs: [{a, b, score}], groups: [[slug, ...]]}`.
+
 ### `uteke doc update`
 
 Partially update a document — only provided fields are changed (#589). Content changes trigger chunk rebuild; metadata-only or title-only updates skip it.
@@ -1402,6 +1457,87 @@ There is no `uteke doc import` that reads this front-matter back:
 front-matter included, under a slug taken from the file path. For a lossless
 round trip of documents (slug, title, hierarchy, content) use
 `uteke export --full` and `uteke import --full`.
+
+## Skill Library Commands (#1731, LAB)
+
+The personal skill library: index the skills of this machine, find the few that fit a task, spot near-duplicates and record which exact version a human approved. A skill is a directory with a `SKILL.md` (YAML frontmatter with `name` and `description`, then the instructions) and any reference files below it; the directory name is the slug (lower-case letters, digits and single hyphens, at most 64 characters). The shared registry (a pool across users, GitHub ingest, team sharing) stays in Cloud. The tables use the Cloud names (`skills`, `skill_versions`, `skill_usage`, `skill_ledger`), so moving a library there is a copy.
+
+Skill files are stored as documents with `content_type = 'skill'` (slug `skill/<slug>/<path>`, `SKILL.md` the root), so search is the document engine and the embedding pipeline, but they never appear in `doc list`, `doc search`, `recall` or `doc similar` / `doc duplicates`. `search`, `list`, `show` and `similar` are also read-only HTTP routes (`POST /skill/search`, `/skill/list`, `/skill/show`, `/skill/similar`) and MCP tools (`uteke_skill_search`, `uteke_skill_list`, `uteke_skill_show`, `uteke_skill_similar`), open to read-only tokens; see [api-reference.md](api-reference.md) and [mcp.md](mcp.md). The remote answers never carry `source_path` (the server directory a skill was indexed from; `skill list` and `skill show` here still print it), a remote draft `text` is at most 32768 characters (the CLI accepts a whole `SKILL.md`), and at most 2 remote requests that embed a string (`similar` with `text`, `search` in `hybrid` or `semantic` mode, and `POST /doc/similar` with `text`) run at once: another gets HTTP 429 (an MCP tool error) at once. `index`, `approve`, `record` and `lint` read the local disk or change the trust anchor and stay CLI-only. Skill files are not documents for `doc get` / `doc update` either: they answer "not found" there.
+
+### `uteke skill index`
+
+```bash
+uteke skill index ~/.claude/skills
+uteke skill index ./my-skill --owner team-a --json
+```
+
+Reads every skill directory under the given one (the directory itself when it holds a `SKILL.md`), to 3 levels deep, **without modifying any file**; a linked directory is not followed while looking for skills, and a package that contains a symbolic link or special file is rejected (listed under `rejected`) because tole refuses such a package too. For each skill it records the package hash, lints `SKILL.md`, and embeds the text files (`.md`, `.markdown`, `.txt`) for search; other files are hashed only. It needs the embedding model. It reports `created`, `updated`, `reverted` and `unchanged` skills, directories it could not read (`rejected`, with the reason, e.g. a directory name that is not a slug or a duplicate slug) and skills that are close to another skill (`near_duplicates`, `possible_duplicate` from 0.92 and `similar_to` from 0.80, the `[doc_similarity]` thresholds).
+
+A new hash makes a new `draft` version and the old one stops being current: an approved one becomes `stale` (the approval does not carry over), a draft becomes `archived`. Putting the exact bytes of an earlier version back makes it current again, with its approval. Only the current version is searchable.
+
+Bounds, so a hostile or accidental tree cannot exhaust memory or time: a package of at most 200 files, 1 MiB per file, 4 MiB in all, 1024 directory entries (files and directories) and 8 directory levels (over a bound the whole package is rejected, never truncated: a hash of part of a package is not the hash of the package); at most 32 indexed text files of 128 KiB each and 512 KiB in all per package (larger ones are hashed but not searchable; `SKILL.md` must fit); 500 skills and 5000 directories per run; 2000 skills per library. One package is held in memory at a time.
+
+| Flag | Description |
+|------|-------------|
+| `<dir>` | Directory with skills, or one skill directory |
+| `--owner <name>` | Owner recorded on new skills (at most 128 characters) |
+| `--actor <name>` | Who is indexing, recorded in the ledger |
+
+### `uteke skill search`
+
+```bash
+uteke skill search "rotate the signing keys"
+uteke skill search "deploy" --limit 3 --approved --json
+```
+
+Finds skills by meaning and keywords (hybrid by default, `--mode semantic|fts|hybrid`), one hit per skill with the file that matched best. `--limit` is 1 to 50 (default 5), the query at most 2000 characters. `--approved` keeps only skills whose current version is approved. Hybrid search falls back to keywords when the embedding model is unavailable; `--mode semantic` fails instead. Read-only.
+
+### `uteke skill list` / `uteke skill show`
+
+`list [--status draft|approved] [--limit 1..200]` lists the current version of each skill by slug. `show <slug>` prints the current version (hash, status, validity, pinned, locked, name, description, files with their sizes), the usage counters, the version history (up to 50) and the last 20 ledger rows. `approved_hash` in `--json` is the hash a client may load: the current hash when it is approved, else `null`.
+
+### `uteke skill similar`
+
+```bash
+uteke skill similar deploy
+uteke skill similar --file draft/SKILL.md      # a draft that is not stored
+```
+
+Skills close to a skill, or to a draft text: the cosine of the `SKILL.md` document vectors, the same computation as [`uteke doc similar`](#uteke-doc-similar) (the mean of the chunk vectors, L2-normalised), with the same relations and `--threshold`, `--limit` (1 to 100). The skill itself is never a hit. `--text` / `--file` need the embedding model.
+
+### `uteke skill lint`
+
+```bash
+uteke skill lint ~/.claude/skills
+uteke skill lint                     # what the last index found, for the library
+```
+
+Checks `SKILL.md`. Errors (the skill is invalid and cannot be approved): no or unclosed frontmatter, no `name`, a `name` that is not a slug or differs from the directory name, no `description` or one over 1024 characters. Warnings: an empty body, a `compatibility` over 500 characters. With a directory nothing is stored and no store is needed. The exit status is 1 when a skill is invalid or a directory unreadable.
+
+### `uteke skill approve`
+
+```bash
+uteke skill approve deploy@sha256:<hash> --actor alice
+```
+
+Records that a human approved exactly this version: the trust anchor a client checks before loading the skill (compare the hash of the files it holds with `approved_hash`). `<hash>` is the package hash as `skill show` prints it, `sha256:<64 hex digits>`, written with or without the `sha256:` prefix, or a prefix of at least 12 hex digits of the part after `sha256:` that names one version (`deploy@sha256:3fa9...` and `deploy@3fa9...` are the same). Only the **current** and **valid** version can be approved; approving an approved version is a no-op (no ledger row). Every approval, and every index change, is appended to `skill_ledger` with the hash before and after; database triggers refuse to update or delete a ledger row.
+
+### The package hash
+
+The hash covers the whole package, so it detects a changed reference file or script, not only `SKILL.md`. It is **byte-identical to the hash tole computes** (`tole-core`, `skill_approval::package_hash`, used by `TOLE_SKILL_APPROVAL=required`), so a hash approved here is the hash tole checks before it loads a skill. The definition: SHA-256 over every regular file of the directory, at any depth, sorted by relative path in byte order with `/` separators, each file contributing the path length in bytes (8 bytes **little-endian**), the path (UTF-8), the content length (8 bytes **little-endian**) and the content. The length prefixes make the encoding unambiguous. The result is written `sha256:<64 lower-case hex digits>`; that string is what is stored, listed (`skill list|show --json`), recorded in the ledger and approved. The hash does not include the directory name or any timestamp, so the same files anywhere hash the same.
+
+Both sides accept and reject the same packages:
+
+- **`.git` and hidden files are hashed** like any other file, at any depth (a skill that is a git checkout is hashed with its `.git`; most of those will exceed the bounds below). `.git` is skipped only while *looking for* skill directories under the directory given to `skill index`, never inside a package.
+- **A package with a symbolic link or a special file (FIFO, socket, device) is rejected whole** and cannot be approved: a link's target can change without the hash changing. It is reported under `rejected`, not skipped.
+- Empty directories are not hashed. A directory name or file name that is not valid UTF-8 rejects the package.
+- Bounds: tole reads at most 256 files, 4 MiB and 1024 directory entries per package. uteke's bounds are at least as strict (200 files, 4 MiB, 1024 entries, plus 1 MiB per file and 8 directory levels, `SKILL.md` at most 128 KiB and UTF-8, a directory name that is a slug), so every package uteke accepts is a package tole accepts, with the same hash. The converse is not promised: a package tole accepts can be rejected here, and equality of hashes is only promised for packages within both sides' limits.
+
+The encoding is pinned by test vectors computed with tole's own function (see `skill_package.rs`, `hash_matches_tole_test_vectors`).
+
+### `uteke skill record`
+
+`uteke skill record <slug> <recalled|loaded|succeeded|failed>` adds one to a counter of the skill's current version (`skill_usage`); counters start again for a new version.
 
 ## Graph API (#408, #542)
 

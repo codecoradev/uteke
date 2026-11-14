@@ -18,7 +18,7 @@ pub use rooms::{
 };
 pub use store::Store;
 pub use types::{
-    Memory, RecallStrategy, SearchResult, SearchResultType, SearchType, StoreStats,
+    Memory, RecallStrategy, RoomRef, SearchResult, SearchResultType, SearchType, StoreStats,
     UnifiedSearchResult,
 };
 pub use vector::VectorIndex;

@@ -33,6 +33,7 @@ title: Architecture
 
 | Crate | Purpose |
 |-------|---------|
+| `uteke-privacy` | Library — secret detector and redactor (regex only, no IO); published separately so `tole` shares the ruleset, re-exported as `uteke_core::privacy` |
 | `uteke-core` | Library — storage, embedding, vector search, FTS5, operations |
 | `uteke-cli` | CLI binary — clap commands, JSON output, server proxy |
 | `uteke-server` | HTTP server — persistent daemon for fast agent access |
@@ -216,7 +217,7 @@ Dual-axis recall boost applied after the RRF merge:
 - **Salience**: higher-scored by type weight (decision > insight > fact > note)
 - **Recency**: exponential decay `exp(-age/τ)` where τ is a per-type time constant
 
-Both are enabled by default (weight 0.1). Use `--salience false` / `--recency false` to disable. Previously opt-in (v0.7.3), now opt-out (#721). Config leaks are prevented by setting/resetting config around each query.
+Both are enabled by default (weight 0.1). Use `--salience false` / `--recency false` to disable. Previously opt-in (v0.7.3), now opt-out (#721). A per-request `--salience` / `--recency` is part of the recall request and is scoped to that one recall (`Uteke::run_recall`), so it cannot leak into a later query and nothing has to reset the engine afterwards.
 
 ### Dream Cycle (#353)
 
@@ -233,6 +234,32 @@ The `uteke-mcp` crate provides a shared JSON-RPC handler used by both:
 - **HTTP endpoint** (`POST /mcp` on `uteke-serve`) — for remote MCP clients
 
 Protocol version: `2025-06-18` (Streamable HTTP spec). 1 MiB body limit enforced on HTTP endpoint. JSON-RPC 2.0 strict compliance (v0.6.7, #573/#576): tagged union responses, no notification response, Claude Code compatible.
+
+## Error mapping (#1752)
+
+`uteke_core::Error::class()` classifies every core error once, into an `ErrorClass`. Each transport has ONE function that turns a class into its wire shape, and every handler or tool uses it:
+
+- HTTP: `uteke_server::context::http_wire` (through `ReqCtx::core_error`).
+- MCP: `core_failure` and `tool_error` in `uteke-mcp`.
+- CLI: `cli_failure` in `uteke-cli/src/exit.rs`.
+
+| Class (variants) | HTTP | MCP tool error text (`isError: true`) | CLI |
+|---|---|---|---|
+| `BadRequest` (`Validation`) | 400 `{"error": "Validation error: ..."}` | `Validation error: ...` | exit 1, `Error: ...` |
+| `NotFound` (`NotFound`) | 404 `{"error": "<message>"}` | `<message>` | exit 1, `Error: ...` |
+| `Busy` (`Busy`) | 429 `{"error": "<message>"}` | `<message>` | exit 1, `Error: ...` |
+| `SecretDetected` | 400 `{"error": "secret_detected", "message", "kinds"}` | `secret_detected: <message>` | exit 1, `Error: ...` |
+| `RejectedValue` | 409 `{"error": "rejected_value", "message", "reason"}` | `rejected_value: <message>` | exit 1, `Error: ...` |
+| `InvalidRoomId` | 400 `{"error": "invalid_room_id", "message", "room_id"}` | `invalid_room_id: <message>` | exit 1, `Error: ...` |
+| `Embedding` (`Embedding`) | 500 `{"error": "<sanitized message>"}`; 503 on `/doc/search`, `/doc/similar` and `/skill/*` | `Failed: <message>` | exit 1, `Error: ...` |
+| `Internal` (`Io`, `Database`, `Lock`, `Generic`) | 500 `{"error": "Internal server error"}` (the detail goes to the log) | `Failed: <message>` | exit 1, `Error: ...` |
+
+Notes:
+
+- `POST /recall`, `POST /room/search` and `POST /namespaces/rename` answer a `Validation` error with its bare message (no `Validation error: ` prefix), through `ReqCtx::core_error_bare`.
+- MCP reserves JSON-RPC errors (`-32700` parse error, `-32603` for an unknown method or tool, missing `params` or tool name) for protocol problems. A failure of a tool call that was understood, bad arguments, a missing target, a busy server or an internal failure, is a tool result with `isError: true`, as the MCP specification says, so the model can read it and retry. The read-only refusal already worked that way.
+- The CLI keeps exit status 1 for every class (0 success, 130 interrupted): `docs/cli-reference.md` and the tests define no other code, and scripts rely on 1. `cli_failure` is the place to add per-class codes.
+- A new `Error` variant fails the table tests (`Error::samples()` and the exhaustive matches) until it is classified.
 
 ## Performance
 
@@ -330,6 +357,12 @@ After every `remember()`, the vector index is searched for the top-20 most simil
 - Cosine ≥ 0.92 → `possible_duplicate` edge
 
 Edges are namespace-scoped (no cross-namespace links). Best-effort: errors logged, never fail `remember()`.
+
+Document chunks are not link targets here. Documents have their own similarity (#1730): the **document vector** is the mean of a document's chunk vectors, L2-normalised, read from SQLite. `uteke doc similar`, `uteke doc duplicates`, `POST /doc/similar` and `uteke_doc_similar` compare those vectors with the same default thresholds (0.80 `similar_to`, 0.92 `possible_duplicate`, configurable in `[doc_similarity]`) and can also score a draft text that is not stored. The relation is derived on every call; no document edge is stored (`memory_edges` points at memories, and a stored copy would go stale on every update, move, delete, re-embed and threshold change).
+
+## Personal skill library (#1731)
+
+A skill (a directory with a `SKILL.md`) is indexed into four tables, `skills`, `skill_versions`, `skill_usage` and an append-only `skill_ledger`, and its current version's text files are stored as documents with `content_type = 'skill'` (slug `skill/<slug>/<path>`). Search, similarity and embedding are the document engine's; the kind is a filter at the lowest level (SQL for lists and keyword search, the window of the vector search), so skill files never reach `doc list`, `doc search`, `recall` or the `doc similar` / `doc duplicates` answers, and ordinary documents never reach `skill search`. `skill similar` is `doc similar` over the `SKILL.md` roots. The package hash (SHA-256 over every file's path length, path, content length and content, written `sha256:<hex>` and identical to tole's) is the version identity and what `skill approve` records. The remote surface is read-only and has one entry point, `Uteke::skill_remote`, shared by `POST /skill/search|list|show|similar` and the `uteke_skill_*` MCP tools, so both validate and bound a request identically; `doc get` and `doc update` treat a skill file as not found. See the [skill commands](cli-reference.md#skill-library-commands-1731-lab).
 
 ## Graph API (#408)
 

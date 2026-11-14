@@ -196,16 +196,16 @@ resume-safe across several preempted containers). Raw artifact (committed):
 Strict-family headline on the full 500: recall_all@5 = **0.880** (binary),
 coverage@5 = **0.944** — @5 family unchanged across all four releases.
 
-### Four-release stability (full 500-question basis, scored from committed raw)
+### Release stability (full 500-question basis, scored from committed raw)
 
-| Metric | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
-|---|---|---|---|---|
-| recall_any@5 | 0.982 | **0.984** | 0.982 | 0.982 |
-| recall_any@10 | 0.988 | 0.988 | 0.988 | 0.988 |
-| strict recall_all@5 | 0.880 | 0.880 | 0.880 | 0.880 |
-| strict recall_all@10 | 0.954 | 0.954 | 0.954 | 0.952 |
-| coverage@5 | 0.943 | 0.944 | 0.943 | 0.944 |
-| total misses @50 | 0 | 0 | 0 | 0 |
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b (2026-11-08) |
+|---|---|---|---|---|---|
+| recall_any@5 | 0.982 | **0.984** | 0.982 | 0.982 | 0.982 |
+| recall_any@10 | 0.988 | 0.988 | 0.988 | 0.988 | — |
+| strict recall_all@5 | 0.880 | 0.880 | 0.880 | 0.880 | 0.880 |
+| strict recall_all@10 | 0.954 | 0.954 | 0.954 | 0.952 | 0.954 |
+| coverage@5 | 0.943 | 0.944 | 0.943 | 0.944 | — |
+| total misses @50 | 0 | 0 | 0 | 0 | 0 |
 
 Per-question comparison vs v0.19.0 (n=500): 253 identical full rankings, 241
 reorder-only within the top-50, 6 questions with a different top-50 set. At the
@@ -225,6 +225,20 @@ baseline (0 improved / 0 regressed via `compare_fast50.py`).
 # reproduce
 UTEKE_RELEASE=v0.20.0 modal run scripts/modal_fanout.py --strategy default --num-shards 10 --tag v0200-500q
 ```
+
+#### Post-regression validation (2026-11-08)
+
+Issue #1689 was a regression affecting trees after commit 71f955c4 (#1636,
+2026-11-02), including release v0.23.0. The import dedup skipped a live row that
+retrieval needed. The fix, #1690 (squash-merged into develop as `3bc72c1`; `32a5cf3b`, the commit that was
+measured, is its pre-squash branch commit), restores the v0.20.0 behaviour. The full 500-question run on Modal x86_64 (`UTEKE_GIT_REF=32a5cf3b`,
+2026-11-08) passes every gate: recall_any@5 = 98.2%, strict recall_all@5 =
+88.0%, strict recall_all@10 = 95.4%, zero misses @50. Per question against the
+v0.20.0 baseline, strict@5 is identical and strict@10 gains one question (0.9520 → 0.9540:
+`8e91e7d9` 0.5 → 1.0); four questions shifted partial gold ordering (`6d550036`,
+`gpt4_7abb270c`, `8e91e7d9` and one more @10), none lost all evidence.
+Receipts: `results/default-500q-fix32a5cf3b.jsonl` (500 rows, sha256 e64e6cbb…),
+committed to the repo.
 
 ## Strategy Comparison (historical runs)
 

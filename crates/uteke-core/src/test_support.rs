@@ -129,6 +129,34 @@ pub fn open_keyword_at(path: impl AsRef<std::path::Path>) -> crate::Uteke {
     open_with_embedder_at(path, Box::new(KeywordEmbedder))
 }
 
+/// Store a document and put it in `namespace` (the public API stores documents
+/// without one), for the namespace tests of the document read paths.
+pub fn doc_upsert_in_namespace(
+    u: &crate::Uteke,
+    slug: &str,
+    content: &str,
+    namespace: &str,
+) -> String {
+    let id = u
+        .doc_upsert(slug, slug, content, &[], None)
+        .expect("doc_upsert");
+    u.store
+        .conn
+        .execute(
+            "UPDATE documents SET namespace = ?1 WHERE id = ?2",
+            rusqlite::params![namespace, id],
+        )
+        .expect("set document namespace");
+    id
+}
+
+/// Store a document whose chunks have no vectors yet, like a structural import
+/// before `uteke repair --reembed`.
+pub fn doc_upsert_unembedded(u: &crate::Uteke, slug: &str, content: &str) -> String {
+    u.doc_upsert_inner(slug, slug, content, &[], None, None, true)
+        .expect("doc_upsert_inner")
+}
+
 /// Query that matches every record of [`seed_two_scopes`] in both namespaces.
 pub const ISOLATION_QUERY: &str = "quartz meridian orchid ledger";
 /// The two namespaces of [`seed_two_scopes`].
@@ -173,6 +201,53 @@ pub fn seed_two_scopes() -> crate::Uteke {
     )
     .expect("doc_upsert");
     u
+}
+
+/// Index three skills into `u` (the keyword embedder is enough): `deploy`
+/// (with a reference file, approved), `deploy-copy` (the same text, a draft)
+/// and `cooking` (unrelated, a draft). They share the vocabulary of
+/// [`ISOLATION_QUERY`] so a scoped query finds them; skills have no namespace.
+/// Returns the package hash of `deploy`.
+pub fn seed_skill_library(u: &crate::Uteke) -> String {
+    let dir = std::env::temp_dir().join(format!("uteke-skill-seed-{}", uuid::Uuid::new_v4()));
+    let write = |rel: &str, content: &str| {
+        let p = dir.join(rel);
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("mkdir");
+        std::fs::write(p, content).expect("write");
+    };
+    let deploy = format!("# Deploy\n\n{ISOLATION_QUERY} deploy rollout");
+    for (slug, desc, body) in [
+        ("deploy", "Ship a release safely", deploy.as_str()),
+        ("deploy-copy", "Ship a release safely", deploy.as_str()),
+        (
+            "cooking",
+            "Cook dinner",
+            "# Cooking\n\nzebra violin tractor glacier lantern recipe",
+        ),
+    ] {
+        write(
+            &format!("{slug}/SKILL.md"),
+            &format!("---\nname: {slug}\ndescription: {desc}\n---\n{body}\n"),
+        );
+    }
+    write(
+        "deploy/references/rollback.md",
+        "# Rollback\n\nlantern harbour rollback procedure emberglow",
+    );
+    let report = u
+        .skill_index(&dir, Some("alice"), None)
+        .expect("skill_index");
+    let _ = std::fs::remove_dir_all(&dir);
+    let hash = report
+        .skills
+        .iter()
+        .find(|s| s.slug == "deploy")
+        .expect("deploy indexed")
+        .hash
+        .clone();
+    u.skill_approve("deploy", &hash, Some("alice"))
+        .expect("approve");
+    hash
 }
 
 #[cfg(test)]

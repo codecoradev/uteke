@@ -160,7 +160,7 @@ A client that parses the tool text itself can turn the block off with
 
 ## Available Tools
 
-Both transports expose the same 51 tools (MCP protocol version `2025-06-18`):
+Both transports expose the same 57 tools (MCP protocol version `2025-06-18`):
 
 | Tool | Description |
 |------|-------------|
@@ -186,6 +186,11 @@ Both transports expose the same 51 tools (MCP protocol version `2025-06-18`):
 | `uteke_doc_get` | Retrieve a document by ID |
 | `uteke_doc_list` | List all documents |
 | `uteke_doc_search` | Search documents |
+| `uteke_doc_similar` | Documents close to a document or to a draft text that is not stored, or (`report: true`) the near-duplicate pairs and groups of a namespace or subtree (#1730). A draft `text` is at most 32768 characters and at most 2 embedding requests run at once (a tool error `busy: ...` otherwise). Read-only; returns JSON |
+| `uteke_skill_search` | Search the personal skill library (#1731): the few skills whose indexed files match a task, one hit per skill with status, package hash, file and snippet. `hybrid` and `semantic` embed the query and share the 2-request embedding bound (tool error `busy: ...`); `fts` never does. Read-only; returns JSON |
+| `uteke_skill_list` | List the skills of the library with their current version (`status` draft or approved, `limit` up to 200). The answer never carries the server directory a skill was indexed from (`source_path` stays in the CLI). Read-only; returns JSON |
+| `uteke_skill_show` | One skill: current version, `approved_hash`, file manifest, usage, versions and ledger, without `source_path`. Read-only; returns JSON |
+| `uteke_skill_similar` | Skills close to a skill or to a draft text that is not stored (`text` at most 32768 characters, at most 2 embedding requests at once, else a tool error `busy: ...`). Read-only; returns JSON |
 | `uteke_doc_delete` | Delete a document |
 | `uteke_doc_update` | Partial document update with chunk rebuild (#589) |
 | `uteke_doc_move` | Move document to new parent (#438) |
@@ -204,6 +209,7 @@ Both transports expose the same 51 tools (MCP protocol version `2025-06-18`):
 | `uteke_namespace_rename` | Rename a namespace (#1181); when the target exists this is a merge, returns `{from, to, moved, target_existed}` |
 | `uteke_namespace_delete` | Delete a namespace with an explicit strategy for its memories (#1181): `refuse` (default, 409 while referenced), `merge` into `target`, or `deprecate` (soft-delete, restorable) |
 | `uteke_room_stats` | Room statistics |
+| `uteke_room_search` | Find rooms for a topic (#1704): room id/title/description match fused with the rooms of the memories a recall finds; each hit has the memory count, last update and up to two matching memories (→ `POST /room/search`, LAB) |
 | `uteke_room_summary` | Room topic summary (tag clustering, no LLM) |
 | `uteke_room_summary_document` | Generate summary document from room (→ `POST /room/summary-document`) |
 | `uteke_room_add_document` | Link an existing document to a room (#859) |
@@ -308,9 +314,9 @@ OAuth-based sign-in for MCP clients is not part of the self-hosted server.
 A client authenticated with `UTEKE_READ_ONLY_TOKEN` can call these tools over
 `POST /mcp`: `uteke_recall`, `uteke_search`, `uteke_list`, `uteke_get`,
 `uteke_provenance`, `uteke_timeline`, `uteke_contradictions`, `uteke_stats`,
-`uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_list_rooms`,
+`uteke_doc_get`, `uteke_doc_list`, `uteke_doc_search`, `uteke_doc_similar`, `uteke_skill_search`, `uteke_skill_list`, `uteke_skill_show`, `uteke_skill_similar`, `uteke_doc_list_rooms`,
 `uteke_graph`, `uteke_room_list`, `uteke_room_recall`, `uteke_room_memories`,
-`uteke_room_stats`, `uteke_room_summary`, `uteke_room_summary_document` (alias
+`uteke_room_stats`, `uteke_room_search`, `uteke_room_summary`, `uteke_room_summary_document` (alias
 `uteke_room_document`), `uteke_room_list_documents` and `uteke_tags_list`.
 
 Every other tool is refused with a tool error (`isError: true`, text

@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::Error;
 use crate::Uteke;
@@ -21,7 +21,7 @@ use crate::memory::types::{Memory, RecallStrategy, SearchResult};
 use crate::operations::{FUSION_RRF_K, FUSION_W_HYBRID, FUSION_W_VECTOR};
 
 /// Per-result ranking signal breakdown (#1160).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecallExplanation {
     /// Strategy that produced this result.
     pub strategy: String,
@@ -57,7 +57,7 @@ pub struct RecallExplanation {
 ///
 /// Serialized with `result` flattened so JSON consumers see the familiar
 /// `{memory, score}` shape plus an additive `explanation` object.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExplainedRecall {
     #[serde(flatten)]
     pub result: SearchResult,
@@ -321,6 +321,7 @@ impl Uteke {
                         memory,
                         score: base,
                         similarity,
+                        rooms: Vec::new(),
                     });
                 }
                 results.sort_by(|a, b| {
@@ -408,7 +409,7 @@ impl Uteke {
 
         // Salience/recency boosts — identical math to
         // apply_salience_recency_boosts, with per-axis delta capture.
-        let cfg = self.salience_recency_config;
+        let cfg = self.salience_recency_in_force();
         if !cfg.is_noop() {
             let now = chrono::Utc::now();
             for sr in results.iter_mut() {

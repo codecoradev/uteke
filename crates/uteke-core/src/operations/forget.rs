@@ -504,3 +504,63 @@ mod forget_tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// What `forget_with_reason` does with a reason, per `soft_delete_only` (#1729).
+#[cfg(test)]
+mod reason_tests {
+    use crate::test_support::open_keyword;
+
+    fn reason_of(u: &crate::Uteke, id: &str) -> Option<String> {
+        u.graph_store()
+            .query_row(
+                "SELECT deprecate_reason FROM memories WHERE id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+
+    fn row_exists(u: &crate::Uteke, id: &str) -> bool {
+        let n: i64 = u
+            .graph_store()
+            .query_row("SELECT COUNT(*) FROM memories WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        n == 1
+    }
+
+    #[test]
+    fn a_reason_is_kept_on_the_soft_delete() {
+        let u = open_keyword();
+        let id = u.remember("an outdated fact", &[], None, None).unwrap();
+        u.forget_with_reason(&id, Some("outdated")).unwrap();
+        assert!(row_exists(&u, &id), "soft delete keeps the row");
+        assert_eq!(reason_of(&u, &id).as_deref(), Some("outdated"));
+    }
+
+    #[test]
+    fn no_reason_or_a_blank_one_uses_the_default_soft_delete_reason() {
+        let u = open_keyword();
+        for reason in [None, Some("   ")] {
+            let id = u
+                .remember(&format!("fact for {reason:?}"), &[], None, None)
+                .unwrap();
+            u.forget_with_reason(&id, reason).unwrap();
+            assert_eq!(
+                reason_of(&u, &id).as_deref(),
+                Some("user forget() — soft-delete via lifecycle config"),
+                "{reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn with_soft_delete_off_a_reason_still_hard_deletes() {
+        let mut u = open_keyword();
+        u.lifecycle_config.soft_delete_only = false;
+        let id = u.remember("a fact to delete", &[], None, None).unwrap();
+        u.forget_with_reason(&id, Some("outdated")).unwrap();
+        assert!(!row_exists(&u, &id), "the row is gone, not deprecated");
+    }
+}

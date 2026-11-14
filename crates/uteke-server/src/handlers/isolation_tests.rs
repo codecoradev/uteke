@@ -19,6 +19,7 @@ struct App {
 impl App {
     fn new() -> Self {
         let u = seed_two_scopes();
+        uteke_core::test_support::seed_skill_library(&u);
         // The shared vocabulary makes remember link the seeded memories, so
         // none is an orphan; one unrelated memory per scope gives `/orphans`
         // something to return.
@@ -60,6 +61,7 @@ impl App {
             host_guard: Default::default(),
             store_id: String::new(),
             embed_warmer: Default::default(),
+            remote_embeds: Default::default(),
         };
         let resp = route(&self.uteke, &ctx, &mut req);
         let status = resp.status_code().0;
@@ -126,6 +128,12 @@ fn surfaces(scope: &str) -> Vec<Surface> {
             json!({"room_id": format!("room-{scope}"), "query": Q}),
             true,
         ),
+        // #1704: the rooms of the scope, and only that scope's memories as matches.
+        post(
+            "/room/search",
+            json!({"query": Q, "namespace": scope, "limit": 20}),
+            true,
+        ),
         post(
             "/orphans",
             json!({"namespace": scope, "limit": 50, "threshold": 2.0}),
@@ -143,6 +151,25 @@ fn surfaces(scope: &str) -> Vec<Surface> {
             false,
         ),
         post("/doc/list", json!({"namespace": scope}), false),
+        // #1730: documents are global (no namespace), so a scope finds none of
+        // them, and the draft text is not echoed back.
+        post(
+            "/doc/similar",
+            json!({"text": Q, "namespace": scope}),
+            false,
+        ),
+        post(
+            "/doc/similar",
+            json!({"report": true, "namespace": scope}),
+            false,
+        ),
+        // #1731: skills are global too (no namespace field): the answers hold
+        // no memory of either scope.
+        post("/skill/search", json!({"query": Q}), false),
+        post("/skill/list", json!({}), false),
+        post("/skill/show", json!({"slug": "deploy"}), false),
+        post("/skill/similar", json!({"slug": "deploy-copy"}), false),
+        post("/skill/similar", json!({"text": Q}), false),
     ];
     for strategy in ["hybrid", "vector", "fts5", "graph", "fusion"] {
         for search_type in ["memory", "all"] {

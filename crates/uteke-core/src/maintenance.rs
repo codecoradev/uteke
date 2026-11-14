@@ -1041,3 +1041,171 @@ mod tests {
         );
     }
 }
+
+/// Exact-value tests for the re-embed loops (#1729): the pause between
+/// attempts, the start-up check and the failure count.
+#[cfg(test)]
+mod reembed_loop_tests {
+    use crate::test_support::{RecordingEmbedder, open_with_embedder};
+    use crate::{ReembedOptions, Uteke};
+    use std::time::{Duration, Instant};
+
+    /// Long enough to measure with coarse timers, short enough for a test.
+    const PAUSE: Duration = Duration::from_millis(200);
+
+    fn paced(limit: Option<usize>) -> ReembedOptions {
+        ReembedOptions {
+            limit,
+            pause: PAUSE,
+        }
+    }
+
+    /// A store whose embedder cannot be built: the `openai` backend without an
+    /// API key fails every start-up attempt (no network involved).
+    fn open_unstartable() -> Uteke {
+        let (_db, store) = Uteke::open_store(":memory:").expect("open_store");
+        Uteke::finish_open_full(
+            store,
+            None,
+            "openai".to_string(),
+            crate::TierConfig::default(),
+            crate::RecallConfig::default(),
+            crate::EmbeddingSettings::default(),
+            crate::graph_rerank::GraphRerankConfig::default(),
+            None,
+        )
+        .expect("finish_open_full")
+    }
+
+    fn null_out_memory_vectors(u: &Uteke) {
+        u.graph_store()
+            .execute("UPDATE memories SET embedding = NULL", [])
+            .unwrap();
+    }
+
+    fn store_with_missing_memories(n: usize) -> Uteke {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        for i in 0..n {
+            u.remember(&format!("pending fact number {i}"), &[], None, None)
+                .unwrap();
+        }
+        null_out_memory_vectors(&u);
+        u
+    }
+
+    fn store_with_missing_chunks(n: usize) -> Uteke {
+        let (emb, _) = RecordingEmbedder::new();
+        let u = open_with_embedder(Box::new(emb));
+        for i in 0..n {
+            u.doc_upsert(
+                &format!("doc-{i}"),
+                &format!("Doc {i}"),
+                &format!("one short chunk {i}"),
+                &[],
+                None,
+            )
+            .unwrap();
+        }
+        let chunks = u
+            .graph_store()
+            .execute("UPDATE document_chunks SET embedding = NULL", [])
+            .unwrap();
+        assert_eq!(chunks, n, "one chunk per document");
+        u
+    }
+
+    /// `n` attempts pause `n - 1` times: never before the first one, never
+    /// after the last. Three attempts is two pauses, so the elapsed time is
+    /// two pauses and short of three.
+    fn assert_two_pauses(elapsed: Duration) {
+        assert!(
+            elapsed >= PAUSE * 2,
+            "three attempts wait twice, got {elapsed:?}"
+        );
+        assert!(
+            elapsed < PAUSE * 3,
+            "no wait before the first attempt, got {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn nothing_missing_never_starts_the_embedder() {
+        let u = open_unstartable();
+        assert_eq!(u.reembed_missing_chunks().unwrap(), (0, 0, 0));
+        let report = u.reembed_missing_with(ReembedOptions::default()).unwrap();
+        assert_eq!(
+            (report.missing_count, report.reembedded, report.failed),
+            (0, 0, 0)
+        );
+        assert_eq!(report.chunks_missing, 0);
+    }
+
+    #[test]
+    fn memories_pause_between_attempts_and_not_before_the_first() {
+        let u = store_with_missing_memories(3);
+        let started = Instant::now();
+        let report = u.reembed_missing_with(paced(None)).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(
+            (report.reembedded, report.failed, report.remaining),
+            (3, 0, 0)
+        );
+        assert_two_pauses(elapsed);
+    }
+
+    #[test]
+    fn chunks_pause_between_attempts_and_not_before_the_first() {
+        let u = store_with_missing_chunks(3);
+        let started = Instant::now();
+        let report = u.reembed_missing_with(paced(None)).unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(
+            (
+                report.chunks_missing,
+                report.chunks_reembedded,
+                report.chunks_failed
+            ),
+            (3, 3, 0)
+        );
+        assert_two_pauses(elapsed);
+    }
+
+    #[test]
+    fn a_zero_pause_does_not_wait() {
+        let u = store_with_missing_memories(3);
+        let started = Instant::now();
+        u.reembed_missing_with(ReembedOptions {
+            limit: None,
+            pause: Duration::ZERO,
+        })
+        .unwrap();
+        assert!(started.elapsed() < PAUSE, "no pause configured");
+    }
+
+    #[test]
+    fn rows_that_cannot_be_stored_are_counted_as_failed() {
+        let u = store_with_missing_memories(2);
+        u.graph_store()
+            .execute_batch(
+                "CREATE TRIGGER refuse_updates BEFORE UPDATE ON memories \
+                 BEGIN SELECT RAISE(ABORT, 'read-only for this test'); END;",
+            )
+            .unwrap();
+        let report = u
+            .reembed_missing_with(ReembedOptions {
+                limit: None,
+                pause: Duration::ZERO,
+            })
+            .unwrap();
+        assert_eq!(
+            (
+                report.missing_count,
+                report.reembedded,
+                report.failed,
+                report.remaining
+            ),
+            (2, 0, 2, 0)
+        );
+    }
+}

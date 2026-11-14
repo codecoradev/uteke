@@ -3,7 +3,8 @@
 
 use crate::{DreamConfig, FallbackSettings, LifecycleConfig, RecallSettings, TierConfig, Uteke};
 
-/// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]` and `[embed_fallback]`. Every
+/// `[tier]`, `[recall]`, `[dream]`, `[lifecycle]`, `[embed_fallback]` and
+/// `[doc_similarity]` (and the other sections below). Every
 /// section and every key is optional: what a file omits keeps the core
 /// default. Embed it in a larger config with `#[serde(flatten)]`.
 #[derive(Clone, Default, serde::Deserialize)]
@@ -18,6 +19,12 @@ pub struct EngineSettings {
     /// `[capture]` (#1466). Global file only: listed in
     /// `UNTRUSTED_PROJECT_KEYS`, so a cloned repository cannot turn it on.
     pub capture: crate::capture::CaptureSettings,
+    /// `[rooms]` (#1715): whether a new room id must be `category:title`.
+    /// Global file only (`UNTRUSTED_PROJECT_KEYS`): a cloned repository cannot
+    /// loosen it.
+    pub rooms: crate::room_naming::RoomNamingSettings,
+    /// `[doc_similarity]` (#1730): thresholds of document similarity.
+    pub doc_similarity: crate::doc_similarity::DocSimilaritySettings,
 }
 
 impl EngineSettings {
@@ -27,10 +34,24 @@ impl EngineSettings {
     /// `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*` environment variables.
     /// An unreadable or invalid file is skipped with a warning (defaults).
     pub fn load() -> Self {
-        let mut engine = crate::config_layers::resolve_standard::<EngineSettings>().value;
-        engine.recall = engine.recall.with_env_overrides();
-        engine.embed_fallback = engine.embed_fallback.with_env_overrides();
-        engine
+        crate::config_layers::resolve_standard::<EngineSettings>()
+            .value
+            .with_env_overrides()
+    }
+
+    /// The `UTEKE_RECALL_*`, `UTEKE_GRAPH_*` and `UTEKE_EMBED_FALLBACK_*`
+    /// overrides from `lookup` on top of the file values: the one place they
+    /// are applied. Setting a value is idempotent, so applying it twice is safe.
+    pub fn with_env_overrides_from(mut self, lookup: impl Fn(&str) -> Option<String>) -> Self {
+        self.recall = self.recall.with_overrides_from(&lookup);
+        self.embed_fallback = self.embed_fallback.with_overrides_from(&lookup);
+        self
+    }
+
+    /// [`with_env_overrides_from`](Self::with_env_overrides_from) over the
+    /// process environment.
+    pub fn with_env_overrides(self) -> Self {
+        self.with_env_overrides_from(|k| std::env::var(k).ok())
     }
 }
 
@@ -54,6 +75,8 @@ impl Uteke {
         self.set_dream_config(settings.dream);
         self.set_lifecycle_config(settings.lifecycle);
         self.set_capture_settings(settings.capture);
+        self.set_room_naming_settings(settings.rooms);
+        self.set_doc_similarity_settings(settings.doc_similarity);
         if settings.embed_fallback.is_configured() {
             self.set_fallback_settings(settings.embed_fallback.clone());
         }

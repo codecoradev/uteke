@@ -258,11 +258,24 @@ fn default_content_type() -> String {
     "text".to_string()
 }
 
+/// A room a memory belongs to, as shown next to a recall or search hit (#1703).
+///
+/// A memory can be in several rooms (`room_memories` is keyed by room and
+/// memory), so hits carry a list of these, sorted by `room_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomRef {
+    /// The room id.
+    pub room_id: String,
+    /// The room title, or the id when the room has no title.
+    pub room_name: String,
+}
+
 /// A search result with relevance score.
 ///
-/// Serializes with two derived fields next to the stored ones: `similarity`
+/// Serializes with derived fields next to the stored ones: `similarity`
 /// (the vector-leg cosine, `null` when only full-text search found the hit,
-/// #1650) and `trust_tier` (the provenance tier of the memory, #1651).
+/// #1650), `trust_tier` (the provenance tier of the memory, #1651) and, only
+/// for a memory that is in at least one room, `rooms` (#1703).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchResult {
     /// The matched memory.
@@ -274,6 +287,12 @@ pub struct SearchResult {
     /// hit that only the full-text leg found. `strict` filters on this field.
     #[serde(default)]
     pub similarity: Option<f32>,
+    /// The rooms the memory belongs to (#1703). Empty until a surface attaches
+    /// them with `Uteke::attach_rooms` (after the recall cache, so a stale
+    /// cached entry never reports old membership); omitted from the JSON when
+    /// empty.
+    #[serde(default)]
+    pub rooms: Vec<RoomRef>,
 }
 
 impl SearchResult {
@@ -283,6 +302,7 @@ impl SearchResult {
             memory,
             score,
             similarity: None,
+            rooms: Vec::new(),
         }
     }
 }
@@ -290,7 +310,8 @@ impl SearchResult {
 impl Serialize for SearchResult {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut st = serializer.serialize_struct("SearchResult", 4)?;
+        let field_count = 4 + usize::from(!self.rooms.is_empty());
+        let mut st = serializer.serialize_struct("SearchResult", field_count)?;
         st.serialize_field("memory", &self.memory)?;
         st.serialize_field("score", &self.score)?;
         st.serialize_field("similarity", &self.similarity)?;
@@ -298,6 +319,9 @@ impl Serialize for SearchResult {
             "trust_tier",
             &crate::provenance::TrustTier::of(&self.memory),
         )?;
+        if !self.rooms.is_empty() {
+            st.serialize_field("rooms", &self.rooms)?;
+        }
         st.end()
     }
 }
@@ -393,6 +417,10 @@ pub struct UnifiedSearchResult {
     /// Populated for type=document when cross-references exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_memory_ids: Option<Vec<String>>,
+    /// The rooms the memory belongs to (#1703); empty (and omitted from the
+    /// JSON) for a document and for a memory in no room.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms: Vec<RoomRef>,
 }
 
 impl UnifiedSearchResult {
@@ -426,6 +454,7 @@ impl UnifiedSearchResult {
             updated_at: Some(m.updated_at),
             linked_doc_slugs: None,
             linked_memory_ids: None,
+            rooms: sr.rooms.clone(),
         }
     }
 }
@@ -699,6 +728,12 @@ pub struct ImportOptions {
     /// the embedding to `uteke repair --reembed` (#1608). Duplicates are then
     /// caught by exact content only, not by the cosine check.
     pub defer_embedding: bool,
+    /// Skip a live row whose content matches only a DEPRECATED copy (forgotten,
+    /// superseded, consolidated or pruned) instead of importing it as a new
+    /// live memory (#1716). Off by default: a restore must not lose rows, and a
+    /// plain forget is recoverable. Turn it on when the file may carry text that
+    /// was replaced on purpose. A skipped row counts in `duplicates_skipped`.
+    pub skip_deprecated_copies: bool,
 }
 
 fn is_zero(n: &usize) -> bool {
@@ -1480,6 +1515,7 @@ mod tests {
             updated_at: Some(now),
             linked_doc_slugs: None,
             linked_memory_ids: None,
+            rooms: Vec::new(),
         };
         let json = serde_json::to_string(&result).unwrap();
         // Verify result_type field is lowercase "memory"
@@ -1540,6 +1576,7 @@ mod tests {
             updated_at: None,
             linked_doc_slugs: None,
             linked_memory_ids: None,
+            rooms: Vec::new(),
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("\"result_type\":\"document\""), "got: {json}");
