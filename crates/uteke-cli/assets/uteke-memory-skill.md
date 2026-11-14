@@ -58,7 +58,7 @@ Version: **0.24.0** — SQLite + HNSW vector index (usearch default, or vecq) + 
 | `uteke doc update <ID_OR_SLUG>` | Partial update — only provided fields change | `--title`, `--content`, `--file`, `--tags`, `--metadata` |
 | `uteke doc delete <ID>` | Delete document (cascades to children) | |
 | `uteke doc list` | List documents | `--limit`, `--tree` (hierarchy) |
-| `uteke doc search <QUERY>` | Search documents (semantic + FTS5) | `--limit`, `--mode` (semantic/fts/hybrid) |
+| `uteke doc search <QUERY>` | Search documents (semantic + FTS5); over a server or MCP the query is at most 2000 characters | `--limit`, `--mode` (semantic/fts/hybrid) |
 | `uteke doc similar <SLUG>` | Documents close to this one, or to a draft (`--text`/`--file`) that is not stored; `possible_duplicate` >= 0.92, `similar_to` >= 0.80 | `--threshold`, `--limit`, `--text`, `--file` |
 | `uteke doc duplicates` | Near-duplicate document pairs and groups of the library or a subtree | `--subtree`, `--threshold`, `--limit` |
 | `uteke doc children <PARENT>` | List child documents | `--limit` |

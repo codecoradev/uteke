@@ -209,7 +209,7 @@ Docker automatically pulls the correct architecture.
 |-----|-------------|
 | `latest` | Latest stable release |
 | `0.24.0` | Specific version (no `v` prefix) |
-| `0.22` | Minor version (latest patch) |
+| `0.24` | Minor version (latest patch) |
 
 ## CLI in Docker
 

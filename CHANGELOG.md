@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Docs
+
+- The `uteke-memory` skill (both copies), `docs/mcp.md` and the generated API reference say that a
+  remote document search query is at most 2000 characters (#1777); the Docker tag table names the
+  `0.24` minor tag.
+
 ### Fixed
 
 - **`POST /doc/search` and `uteke_doc_search` bound the query (#1777)** - a remote document search took a
