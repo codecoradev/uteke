@@ -143,12 +143,23 @@ the same data.
 
 ### Head-to-head vs published systems
 
-The agentmemory numbers quoted in the [README](../README.md#-benchmarks-982-recall-on-longmemeval-s)
+The agentmemory numbers quoted in the [README](../README.md#benchmarks)
 are their published figures on the same benchmark and the same 500-question
 split, on their own recall_any@5 basis — verified apples-to-apples before
 quoting (their harness, their split, their metric definition). The BM25-only
 column is their published lexical baseline, not our system. Our own FTS5
 ablation on this dataset scores 91.4% any@5 ([RESULTS.md](../benchmarks/longmemeval/RESULTS.md)).
+
+> **Correction note (2026-11-16).** Re-reading both projects' READMEs showed two things
+> the comparison above did not say. (1) agentmemory's 95.2% / 98.6% is an earlier hybrid
+> run that its own `benchmark/LONGMEMEVAL.md` labels historical (older pipeline). Its
+> current README, measured 2026-10-28, publishes strict recall_all@5 of 84.7% and
+> any-hit@5 of 96.2% for the keyless BM25 component alone, over 470 answerable questions,
+> so "strict: not published" no longer holds. (2) MemPalace's 96.6% is its raw mode; it
+> also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 questions
+> used for tuning) and ≥99% with an LLM rerank. Neither uses our split or denominator, so
+> none of these are head-to-head with Uteke's 98.2% / 88.0%. Full detail with sources:
+> [Comparison](comparison.md#published-benchmark-figures-cross-source-not-uteke-measurements).
 
 ### Honesty notes
 

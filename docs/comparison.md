@@ -4,7 +4,7 @@ title: Comparison
 
 # Choosing an AI Memory Layer in 2026: A Practical Comparison Framework
 
-*Published: August 2026. Capabilities and benchmarks reflect the state of the AI memory landscape as of this date. Tools evolve fast: verify current specs before making decisions.*
+*First published August 2026. **Last reviewed 2026-11-16.** Uteke's own claims on this page were checked against the repository at that date; claims about other tools were read from their own repositories on the same date, and each one is marked with its source. Tools evolve fast: verify current specs before making decisions.*
 
 > **A capability-first guide to evaluating memory layers for AI agents, without the marketing fog.**
 
@@ -29,9 +29,9 @@ This guide gives you a **practical evaluation framework**, not a brand shoot-out
 | Capability | Uteke | What it means |
 |---|---|---|
 | **Architecture** | Single Rust binary | `curl \| sh && done`. No Docker, Python, or database server. |
-| **Data sovereignty** | Fully offline | Local ONNX embeddings (768d). Zero telemetry, zero network calls. |
+| **Data sovereignty** | Fully offline | Local ONNX embeddings (768d). No telemetry. The only network call is a daily release check, off with `UTEKE_NO_UPDATE_CHECK=1`. |
 | **Search** | Hybrid (Vector + FTS5 + RRF) | Finds by meaning AND exact keywords. Reciprocal Rank Fusion (k=60) merges both. |
-| **Recall speed** | ~45ms P50 at 10K memories | Local execution, no network round-trip. |
+| **Recall speed** | ~45ms warm recall (31ms average at 10K memories) | Local execution, no network round-trip. See [Benchmarks](/benchmarks) for the run and hardware. |
 | **Multi-agent** | Rooms | Shared memory spaces with author attribution and cross-agent recall. |
 | **Time-travel** | Native point-in-time | `uteke recall "deploy" --at 2025-01-15T00:00:00Z` — queries historical state. |
 | **Extraction** | Offline (default) + LLM (optional) | Rule-based extraction works zero-config. Upgrade to LLM if desired. |
@@ -128,15 +128,70 @@ Fill in this matrix for any memory tool you evaluate. Here's how Uteke scores:
 | Dimension | Uteke | What to look for in alternatives |
 |---|---|---|
 | **Architecture** | Single Rust binary (one `curl \| sh`) | Does it need Python? Docker? Postgres? Neo4j? Cloudflare Workers? |
-| **Data sovereignty** | Fully offline. Local ONNX embeddings. Zero telemetry. | Does it call external APIs for embeddings/extraction? Does data leave your machine? |
+| **Data sovereignty** | Fully offline. Local ONNX embeddings. No telemetry (one optional daily release check). | Does it call external APIs for embeddings/extraction? Does data leave your machine? |
 | **Search** | Hybrid (Vector HNSW + FTS5 + RRF fusion) | Is it vector-only? FTS-only? Or hybrid? |
-| **Recall speed** | ~45ms P50 at 10K memories | What's the latency? Is it network round-trip or local? |
+| **Recall speed** | ~45ms warm recall (31ms average at 10K memories) | What's the latency? Is it network round-trip or local? |
 | **Multi-agent** | Rooms: shared memory, author attribution, cross-agent recall | Can multiple agents share context? Is there author attribution? |
 | **Time-travel** | Native point-in-time queries (`--at 2025-01-15T00:00:00Z`) | Can you query past states? Is it native or bolted on? |
 | **Extraction** | Default: offline rule-based (zero API). Optional: LLM extraction. | Does it require an LLM API key to extract facts? Is there an offline option? |
 | **Integration** | MCP server (stdio + HTTP), CLI, HTTP API | Does it speak MCP? Is there a CLI for debugging? |
 | **Dependencies** | Zero runtime deps. No Docker, no Python, no database server. | Count the dependencies. Each one is operational overhead. |
 | **License** | Apache 2.0 | Is it truly open source or source-available? |
+
+---
+
+## Compared With Named Tools
+
+Four open-source memory layers that people most often put next to Uteke, checked against their own repositories on **2026-11-16** (see [Sources checked](#sources-checked) for exactly what was read). Every cell comes from the project's README at that date. If a cell says "not stated", the README did not say, which is not the same as "no". These projects ship weekly, so re-check before you decide.
+
+### Setup and architecture
+
+| | **Uteke** | **[MemPalace](https://github.com/MemPalace/mempalace)** | **[agentmemory](https://github.com/rohitg00/agentmemory)** | **[Mem0](https://github.com/mem0ai/mem0)** | **[Mnemosyne](https://github.com/AxDSan/mnemosyne)** |
+|---|---|---|---|---|---|
+| **Language / runtime** | Rust, single binary | Python 3.10+ | Node.js 20+ (`npx`) plus a pinned iii-engine runtime | Python (`pip`) and a JS SDK (`npm`) | Python 3.10+ |
+| **Install** | `curl \| sh`, `brew`, `cargo install uteke-cli` | `uv tool install mempalace` (also `pipx`, `pip`, Docker) | `npx -y @agentmemory/agentmemory@latest` | `pip install mem0ai` | `pip install mnemosyne-memory` |
+| **Default storage** | SQLite + usearch (or vecq) | ChromaDB (other backends opt-in) | File store (Redis optional) | Not stated | SQLite (sqlite-vec + FTS5) |
+| **API key for default mode** | None | None for the core path | None (keyless mode) | LLM required, `gpt-5-mini` from OpenAI is the default; default embedder is OpenAI `text-embedding-3-small` | None for storage and recall |
+| **Embeddings by default** | Local ONNX (EmbeddingGemma Q4) | Local, downloaded on first run | Off in keyless mode (BM25 only); local MiniLM optional | OpenAI by default | Core profile has none; `[embeddings]` extra adds local `fastembed` |
+| **Search** | Vector + FTS5, fused with RRF | Semantic; hybrid mode adds keyword, temporal and preference boosts | BM25 (+ vector and graph when enabled), fused with RRF | Not stated | Vector + FTS5 + importance, weighted 50/30/20 |
+| **MCP** | stdio + HTTP | Yes, 47 tools | Yes, 54 tools (7 when the shim cannot reach a server) | Not stated in the README | Yes, built in (stdio, SSE, streamable HTTP) |
+| **License** | Apache-2.0 | MIT | Apache-2.0 | Apache-2.0 | MIT |
+
+Where Uteke differs, going by this table: one native binary with local embeddings on by default, hybrid search on by default, and no runtime to install. Where the others are strong: Mem0 has the largest user base and a managed platform, MemPalace and agentmemory publish detailed retrieval numbers, and Mnemosyne is the closest design to Uteke (local SQLite, vector plus FTS5, zero cloud). Not compared because we have not verified them for the other tools: time-travel recall, rooms and multi-agent attribution, document engine.
+
+### Published benchmark figures (cross-source, not Uteke measurements)
+
+These are the vendors' own numbers. They come from different harnesses, splits, metrics and judges, so **do not rank them against each other or against Uteke's figures**. See [Benchmark Positioning](/benchmark-positioning) for the policy.
+
+| Tool | Figure | What it measures | Source | Self-reported |
+|---|---|---|---|---|
+| MemPalace | 96.6% R@5 | LongMemEval-S, 500 questions, raw semantic search, no LLM | [README](https://github.com/MemPalace/mempalace) | Yes |
+| MemPalace | 98.4% R@5 | LongMemEval-S, **held-out 450 questions** (50 used for tuning), hybrid v4, no LLM | same | Yes |
+| MemPalace | ≥99% R@5 | LongMemEval-S, 500 questions, **needs an LLM rerank** | same | Yes |
+| agentmemory | 95.2% R@5, 98.6% R@10, MRR 88.2% | LongMemEval-S, 500 questions, BM25 + vector, MiniLM-384. The page labels it a historical any-hit run on an older pipeline and not a strict-recall result | [benchmark/LONGMEMEVAL.md](https://github.com/rohitg00/agentmemory/blob/main/benchmark/LONGMEMEVAL.md) | Yes |
+| agentmemory | 96.2% any-hit@5, 84.7% strict recall-all@5 | LongMemEval-S, keyless BM25 component only, 470 answerable questions scored, measured 2026-10-28 | [README](https://github.com/rohitg00/agentmemory) | Yes |
+| Mem0 | 94.4 LongMemEval, 92.5 LoCoMo | "New Memory Algorithm (April 2026)". The README says these reflect the managed platform, with proprietary optimizations not in the open-source SDK. Metric and judge are not stated there | [README](https://github.com/mem0ai/mem0) | Yes |
+| Mnemosyne | 65.2% BEAM end-to-end QA at 100K | v3.0.0. The README says its judge differs from the other systems listed, so the scores are "not directly comparable". It lists its own LongMemEval run as pending | [README](https://github.com/AxDSan/mnemosyne) | Yes |
+
+Uteke's own figures, from our harness with committed raw outputs, are on the [Benchmarks](/benchmarks) page and in the [README](https://github.com/codecoradev/uteke#benchmarks): 98.2% recall_any@5 and 88.0% strict recall_all@5 on the full 500 questions, with zero LLM calls in retrieval. Strict and any-hit are different metrics, and the denominators above differ, so the strict figures in this section are not a head-to-head.
+
+**How to read the numbers.** Retrieval recall (does the right session land in the top 5?) is judge-free and reproducible. End-to-end QA numbers such as Mem0's and Mnemosyne's depend on the answering model and the judge, and the same answers have been scored tens of points apart under different judges. Treat any vendor number without a harness you can run as a claim.
+
+### Sources checked
+
+Each page was fetched and read on **2026-11-16**. We record the date, not a version, because READMEs change without a release. A figure here is only as current as that date.
+
+| Tool | Page read | Date checked | Version shown on the page |
+|---|---|---|---|
+| Uteke | This repository at `develop` commit `d76e7b7` (README, `docs/benchmarks.md`, `docs/configuration.md`) | 2026-11-16 | v0.20.0 benchmark run; latency from the v0.17.0 run (2026-09-09) |
+| MemPalace | [github.com/MemPalace/mempalace](https://github.com/MemPalace/mempalace) README | 2026-11-16 | 3.12.0 (badge) |
+| agentmemory | [github.com/rohitg00/agentmemory](https://github.com/rohitg00/agentmemory) README and [benchmark/LONGMEMEVAL.md](https://github.com/rohitg00/agentmemory/blob/main/benchmark/LONGMEMEVAL.md) | 2026-11-16 | 0.9.33 |
+| Mem0 | [github.com/mem0ai/mem0](https://github.com/mem0ai/mem0) README. The docs site could not be reached from our environment, so nothing here comes from `docs.mem0.ai` | 2026-11-16 | Not stated on the page |
+| Mnemosyne | [github.com/AxDSan/mnemosyne](https://github.com/AxDSan/mnemosyne) README | 2026-11-16 | Not stated (v3.0.0 appears only as the benchmark version) |
+
+Counts that differ between pages of the same project (for example agentmemory's MCP tool count) use the main README figure. We did not run or reproduce any other tool's benchmark.
+
+**Corrections welcome.** If a cell here is wrong or out of date, open an issue or a pull request with the source link and the date you checked.
 
 ---
 
@@ -267,16 +322,16 @@ Do you have data sovereignty requirements?
 
 ## Benchmark: What "Fast" Means
 
-When we say ~45ms recall, we mean it. Here's the breakdown:
+The ~45ms headline is a conservative upper bound. Measured numbers, from the v0.17.0 release binary on Oracle Cloud ARM (Ampere A1, 4 vCPU), run 2026-09-09 (full table and the older v0.12.0-era run on the [Benchmarks](/benchmarks) page):
 
 | Metric | Result | Context |
 |---|---|---|
-| **Recall latency (10K memories)** | 42ms P50, 50ms P95 | Flat from 100 to 10K memories (HNSW O(log N)) |
-| **Insert throughput** | 6–22 ops/s | CPU-bound (ONNX embedding inference) |
-| **Storage per memory** | ~10KB | SQLite + HNSW, scales linearly |
-| **LongMemEval Recall@5** | 0.958 | 12-question diverse sample, EmbeddingGemma Q4 |
+| **Recall latency (10K memories)** | 31ms average, 38ms P95 | 31ms at 100, 42ms at 1,000. The floor is ONNX embedding inference, not the vector search |
+| **Insert throughput** | 5.0–17.5 ops/s | CPU-bound (ONNX embedding inference); slower at 10K |
+| **Storage** | 80.7MB for 10,000 memories | SQLite + index, about 8KB per memory |
+| **LongMemEval-S recall_any@5** | 98.2% | Full 500 questions, zero LLM calls in retrieval; strict recall_all@5 is 88.0%. Receipts in [`benchmarks/longmemeval/`](https://github.com/codecoradev/uteke/tree/develop/benchmarks/longmemeval) |
 
-Compare this to any tool that routes through a network round-trip. Even the fastest cloud API adds 100-300ms of network latency on top of processing time.
+These are Uteke's own numbers on one machine. Latency for other tools is not measured here, so this page makes no claim about how they compare. A tool that calls a remote embedding or LLM service adds a network round-trip to each query, but how much depends on the service and your connection.
 
 **Run your own benchmarks:**
 

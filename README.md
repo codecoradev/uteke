@@ -85,10 +85,10 @@ Rather not run anything locally? **[Uteke Cloud](https://uteke.app/?utm_source=g
 
 | Metric | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
-| **recall_any@5** (evidence in top 5) | **98.2%** | 96.6% | 95.2% |
-| recall_any@10 | 98.8% | — | 98.6% |
-| **strict recall_all@5** (all evidence in top 5) | <b>88.0%</b>² | not published | not published³ |
-| LLM calls in retrieval | **0** | — | 0 |
+| **recall_any@5** (evidence in top 5) | **98.2%** | 96.6%⁴ | 95.2%³ |
+| recall_any@10 | 98.8% | — | 98.6%³ |
+| **strict recall_all@5** (all evidence in top 5) | <b>88.0%</b>² | not published | 84.7%³ |
+| LLM calls in retrieval | **0** | 0 (raw mode)⁴ | 0 |
 
 <p align="center">
   <picture>
@@ -98,7 +98,7 @@ Rather not run anything locally? **[Uteke Cloud](https://uteke.app/?utm_source=g
   </picture>
 </p>
 
-<sub>¹ Their published numbers on the same benchmark and 500-question split, on their own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory publishes MRR 88.2%, which is a different metric.</sub>
+<sub>¹ Their published numbers on LongMemEval-S, each on its own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. Read from their READMEs on 2026-11-16. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory: 95.2% / 98.6% is its earlier hybrid run, which its own page labels historical (older pipeline, 500 questions). Its current README, measured 2026-10-28, reports 84.7% strict recall_all@5 and 96.2% any-hit@5 for the keyless BM25 component alone, scoring 470 answerable questions. Different denominator and pipeline, so not a head-to-head with ours. ⁴ MemPalace: 96.6% is its raw mode (semantic search, no LLM, 500 questions). It also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 used for tuning) and ≥99% with an LLM rerank; neither is the same split or setup, so neither is in the table.</sub>
 
 <details>
 <summary>Stability across releases and results per question type</summary>
