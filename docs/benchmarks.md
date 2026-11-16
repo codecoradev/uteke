@@ -143,10 +143,13 @@ the same data.
 
 ### Head-to-head vs published systems
 
-The agentmemory numbers quoted in the [README](../README.md#benchmarks)
-are their published figures on the same benchmark and the same 500-question
-split, on their own recall_any@5 basis — verified apples-to-apples before
-quoting (their harness, their split, their metric definition). The BM25-only
+The agentmemory and MemPalace numbers quoted in the [README](../README.md#benchmarks)
+are each project's own published figures on LongMemEval-S. The headline
+recall_any@5 figures (agentmemory 95.2%, MemPalace 96.6% raw mode) are reported over
+the same 500 questions on their own recall_any@5 basis, but each ran in its own
+harness with its own pipeline, so they are indicative, not a controlled comparison.
+An earlier version of this paragraph called them "verified apples-to-apples", which
+overstated it; see the correction note below. The BM25-only
 column is their published lexical baseline, not our system. Our own FTS5
 ablation on this dataset scores 91.4% any@5 ([RESULTS.md](../benchmarks/longmemeval/RESULTS.md)).
 
@@ -157,8 +160,10 @@ ablation on this dataset scores 91.4% any@5 ([RESULTS.md](../benchmarks/longmeme
 > any-hit@5 of 96.2% for the keyless BM25 component alone, over 470 answerable questions,
 > so "strict: not published" no longer holds. (2) MemPalace's 96.6% is its raw mode; it
 > also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 questions
-> used for tuning) and ≥99% with an LLM rerank. Neither uses our split or denominator, so
-> none of these are head-to-head with Uteke's 98.2% / 88.0%. Full detail with sources:
+> used for tuning) and ≥99% with an LLM rerank. The 84.7%, 96.2%, 98.4% and ≥99% figures
+> do not share our split or denominator, so they are not head-to-head with Uteke's
+> 98.2% / 88.0%; even the 95.2% and 96.6% figures come from the other projects' own
+> harnesses. Full detail with sources:
 > [Comparison](comparison.md#published-benchmark-figures-cross-source-not-uteke-measurements).
 
 ### Honesty notes
