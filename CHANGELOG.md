@@ -15,6 +15,15 @@
   is now at most 2000 characters in every mode, the same bound as a remote skill search: a longer one is a
   400 (an MCP tool error) before a slot is taken. `POST /doc/search` is LAB; the CLI is unchanged.
 
+- **`uteke-serve` v0.24.0 no longer hangs at startup** - the server stopped after the log line
+  "Lifecycle config loaded" and never listened: it took the store `Mutex` twice inside one `let ctx = ...`
+  statement (the `[recall]` defaults from #1754 and the embedding gate from #1753), the first guard was a
+  temporary that lives to the end of the statement, and the second `lock()` waited on it forever. Every
+  start of v0.24.0 was affected: `/health` never answered (Docker showed the container unhealthy), the
+  process ignored SIGTERM as PID 1 and kept the index file lock, so `verify`, `repair` and `doctor` blocked.
+  Each value is now taken in its own statement. A new test starts the real `uteke-serve` and waits for
+  `GET /health`.
+
 ## [0.24.0] - 2026-11-13
 
 A personal skill library, similar documents, room aliases and the `category:title` room convention, rooms on recall hits, room search, a read-only skill and document similarity surface for tole, the secret detector as its own crate, and a round of refactors that put the CLI, `uteke-serve` and `uteke-mcp` on one core path. Two schema steps (v26 `room_aliases`, v27 the skill tables), both forward-only: an older binary ignores the new tables.
