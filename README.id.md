@@ -82,10 +82,10 @@ Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.ap
 
 | Metrik | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
-| **recall_any@5** (bukti di top 5) | **98,2%** | 96,6% | 95,2% |
-| recall_any@10 | 98,8% | — | 98,6% |
-| **strict recall_all@5** (semua bukti di top 5) | <b>88,0%</b>² | tidak dipublikasikan | tidak dipublikasikan³ |
-| Panggilan LLM di retrieval | **0** | — | 0 |
+| **recall_any@5** (bukti di top 5) | **98,2%** | 96,6%⁴ | 95,2%³ |
+| recall_any@10 | 98,8% | — | 98,6%³ |
+| **strict recall_all@5** (semua bukti di top 5) | <b>88,0%</b>² | tidak dipublikasikan | 84,7%³ |
+| Panggilan LLM di retrieval | **0** | 0 (mode raw)⁴ | 0 |
 
 <p align="center">
   <picture>
@@ -95,7 +95,7 @@ Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.ap
   </picture>
 </p>
 
-<sub>¹ Angka yang mereka publikasikan di benchmark dan split 500 pertanyaan yang sama, dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory mempublikasikan MRR 88,2%, metrik yang berbeda.</sub>
+<sub>¹ Angka yang mereka publikasikan di LongMemEval-S, masing-masing dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. Dibaca dari README mereka pada 2026-11-16. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory: 95,2% / 98,6% adalah run hybrid lamanya, yang di halamannya sendiri diberi label historis (pipeline lama, 500 pertanyaan). README mereka yang sekarang, diukur 2026-10-28, melaporkan strict recall_all@5 84,7% dan any-hit@5 96,2% untuk komponen BM25 keyless saja, dengan 470 pertanyaan yang bisa dijawab. Denominator dan pipeline berbeda, jadi bukan head-to-head dengan angka kami. ⁴ MemPalace: 96,6% adalah mode raw-nya (semantic search, tanpa LLM, 500 pertanyaan). Mereka juga melaporkan 98,4% untuk mode hybrid pada subset held-out 450 pertanyaan (50 dipakai untuk tuning) dan ≥99% dengan rerank LLM; keduanya bukan split atau setup yang sama, jadi tidak masuk tabel.</sub>
 
 <details>
 <summary>Stabilitas antar rilis dan hasil per jenis pertanyaan</summary>
