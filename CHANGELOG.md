@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-17
+
+Patch release. Theme: **`uteke-serve` 0.24.0 never started listening.** Every start of 0.24.0 stopped
+after the log line "Lifecycle config loaded": `/health` never answered, so the Docker image showed
+unhealthy, and the stuck process kept the index file lock. If you run `uteke-serve` or the Docker image,
+upgrade from 0.24.0 to 0.24.1. The `uteke` CLI and `uteke-mcp` have their own start-up and were not
+affected: every CLI command and an MCP stdio session were run against this code.
+
+**Upgrade notes**
+
+- No schema change: the store stays at schema v27, so a 0.24.0 data directory opens as is.
+- Correction to the 0.24.0 notes, which said an older binary ignores the new tables: a 0.23.0 binary
+  refuses a store at schema v26 or v27 ("database schema version N is newer than supported version 25").
+  Back up the data directory before moving to 0.24.x if you may roll back.
+- A remote document search query is at most 2000 characters (#1777); a longer one is a 400. `POST
+  /doc/search` is LAB, the CLI is unchanged.
+
 ### Docs
 
 - The `uteke-memory` skill (both copies), `docs/mcp.md` and the generated API reference say that a
