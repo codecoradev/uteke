@@ -352,29 +352,32 @@ fn main() {
         .clone()
         .unwrap_or_default()
         .with_env_overrides();
+    // Take each value from the store in its own statement: two `uteke.lock()`
+    // calls inside one `let ctx = ...` keep the first guard alive (a temporary
+    // lives to the end of the statement), so the second lock() self-deadlocks.
+    let recall_config = uteke
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .recall_settings()
+        .clone();
+    let remote_embeds = uteke
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .embed_gate()
+        .clone();
     let ctx = context::ReqCtx {
         auth_token_hash,
         read_only_token_hash,
         cors_origins: cors_origins.clone(),
         // The store's own `[recall]` defaults, the source MCP reads too (#1754).
-        recall_config: Some(
-            uteke
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .recall_settings()
-                .clone(),
-        ),
+        recall_config: Some(recall_config),
         extraction_config: Some(extraction.clone()),
         host_guard: context::HostGuard::new(&host, &allowed_hosts),
         store_id: uteke_core::store_identity(&home),
         embed_warmer: Default::default(),
         // The gate of the served `Uteke`, cloned: the router takes its slots
         // before the store lock, the core and MCP count in the same ones.
-        remote_embeds: uteke
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .embed_gate()
-            .clone(),
+        remote_embeds,
     };
 
     // Start server
