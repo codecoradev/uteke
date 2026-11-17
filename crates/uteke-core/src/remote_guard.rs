@@ -39,7 +39,8 @@ pub const MAX_REMOTE_EMBEDS: usize = 2;
 /// embed a client string?".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmbedNeed<'a> {
-    /// A search query (bounded elsewhere, by the query limit of its route).
+    /// A search query (bounded by the query limit of its route:
+    /// [`EmbedNeed::for_doc_search`], or the skill search validation).
     Query,
     /// A draft text, at most [`MAX_REMOTE_DRAFT_CHARS`] characters.
     Draft(&'a str),
@@ -50,6 +51,24 @@ impl EmbedNeed<'_> {
     /// query (an unknown mode falls back to `hybrid`, which does).
     pub fn for_search_mode(mode: &str) -> Option<Self> {
         (mode != "fts").then_some(Self::Query)
+    }
+
+    /// A remote document search: the query is at most
+    /// [`crate::skill_library::MAX_QUERY_CHARS`] characters in every mode (the
+    /// same bound as a remote skill search), then [`Self::for_search_mode`].
+    /// Without the bound a 10 MB `query` was embedded (or matched) under a slot.
+    ///
+    /// # Errors
+    ///
+    /// `Validation` when the query is longer than the limit.
+    pub fn for_doc_search(query: &str, mode: &str) -> Result<Option<Self>, Error> {
+        let max = crate::skill_library::MAX_QUERY_CHARS;
+        if query.chars().take(max + 1).count() > max {
+            return Err(Error::validation(format!(
+                "query is longer than {max} characters"
+            )));
+        }
+        Ok(Self::for_search_mode(mode))
     }
 }
 
@@ -234,6 +253,29 @@ mod tests {
         assert_eq!(
             clone.admit(Some(EmbedNeed::Query)).unwrap_err().class(),
             crate::ErrorClass::Busy
+        );
+    }
+
+    #[test]
+    fn a_remote_doc_search_query_is_bounded_in_every_mode() {
+        let max = crate::skill_library::MAX_QUERY_CHARS;
+        let at = "a".repeat(max);
+        let over = "a".repeat(max + 1);
+        let multi = "\u{e9}".repeat(max);
+        for mode in ["fts", "hybrid", "semantic"] {
+            assert!(EmbedNeed::for_doc_search(&at, mode).is_ok(), "{mode}");
+            assert!(EmbedNeed::for_doc_search(&multi, mode).is_ok(), "{mode}");
+            let err = EmbedNeed::for_doc_search(&over, mode).unwrap_err();
+            assert_eq!(err.class(), crate::ErrorClass::BadRequest, "{mode}");
+            assert_eq!(
+                err.to_string(),
+                format!("Validation error: query is longer than {max} characters")
+            );
+        }
+        assert_eq!(EmbedNeed::for_doc_search("q", "fts").unwrap(), None);
+        assert_eq!(
+            EmbedNeed::for_doc_search("q", "hybrid").unwrap(),
+            Some(EmbedNeed::Query)
         );
     }
 

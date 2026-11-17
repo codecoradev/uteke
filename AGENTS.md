@@ -158,8 +158,9 @@ wins, and this file gets updated in the same commit that changes the rule.
 
 **Standard**: read Uteke room `uteke-conventions` (namespace `important`; full
 docs: slugs `uteke-conventions` and `uteke-project-registry`) BEFORE reading or
-writing any memory. Claude Code sessions write to namespace `macmini`; never
-write to `default`. Tag project memories `project:<nama>` per the registry
+writing any memory. Claude Code sessions write to namespace `default` (owner
+amendment 2026-10-21); older notes stay in `macmini`, which recall may still
+read, but never write there. Tag project memories `project:<nama>` per the registry
 (component + parent tags when both apply, e.g. `project:samson-mobile` +
 `project:samson`), plus `tool:<nama>` when the memory is specific to a tool.
 The uteke project room is `uteke` (namespace `hermes`). No tokens or
@@ -171,7 +172,7 @@ The room `uteke` on the shared store holds the decisions, release state and
 gotchas that are not in the repo. Reach it through the shared store (MCP server
 `uteke-remote` in Claude Code), not a local `uteke` CLI store, which is a
 different database. Room recall is cross-namespace, so a note written to
-`macmini` with `room: "uteke"` is found by every agent.
+`default` with `room: "uteke"` is found by every agent.
 
 - **Before non-trivial work** (feature, bug, refactor, release step, contract
   question): run `uteke_room_recall` on room `uteke` with a one-line summary of

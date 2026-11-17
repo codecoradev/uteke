@@ -28,37 +28,6 @@
   <a href="README.id.md">Bahasa Indonesia</a>
 </p>
 
-<p align="center">
-  <a href="benchmarks/longmemeval/RESULTS.md">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-breakdown-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-breakdown-light.png" />
-      <img src="docs/assets/longmemeval-breakdown-light.png" width="880" alt="LongMemEval-S, 500 questions, Uteke v0.20.0: recall_any@5 98.2%, strict recall_all@10 95.2%, coverage@5 94.4%, strict recall_all@5 88.0% (max possible 99.4%). Keyword search alone 91.4% vs Uteke's fused default 98.2%." />
-    </picture>
-  </a>
-</p>
-
-<p align="center">
-  <i>All 500 LongMemEval-S questions, no LLM call in retrieval. Raw outputs are committed: <a href="benchmarks/longmemeval/REPRODUCING.md">check them in a minute, or re-run everything for about $10</a>.</i>
-</p>
-
----
-
-## Why Uteke
-
-On Monday you tell your agent how you deploy. By Thursday it has no idea. Every session starts from zero, and every agent keeps its own half-memory.
-
-Uteke gives all of them one long-term memory that runs on your own machine:
-
-- **Verifiable recall.** [98.2% recall@5 on LongMemEval-S](#benchmarks), with the stricter numbers shown next to it and the raw outputs in this repo.
-- **Fast and cheap to query.** ~45 ms warm recall, 0 LLM tokens per query, CPU only.
-- **One binary.** No Python, no Docker, no vector database, no API key. The embedding model (~200 MB) downloads once.
-- **One memory, every agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes and any MCP client share the same store. [Rooms](docs/rooms.md) record which agent or person wrote what.
-- **Finds by meaning and by keyword.** Local vectors and SQLite full-text search, fused into one ranking ([how it works](#how-it-works)).
-- **Remembers over time.** Point-in-time recall (`--at`), a relationship graph, a document engine, and decay for stale memories.
-- **Private by default.** No telemetry. Secrets such as API keys are masked before a memory is stored.
-- **Open source.** Apache-2.0, cosign-signed releases.
-
 ---
 
 ## Quick start
@@ -110,33 +79,16 @@ Rather not run anything locally? **[Uteke Cloud](https://uteke.app/?utm_source=g
 
 ---
 
-## Self-host or Cloud
-
-Same engine, two ways to run it.
-
-| | **Self-host** (this repo) | **[Uteke Cloud](https://uteke.app/?utm_source=github&utm_medium=readme&utm_campaign=prove-the-recall)** |
-|---|---|---|
-| Engine and recall | Full, nothing paywalled | Same engine |
-| Runs on | Your laptop or your server | Hosted for you |
-| Connect an agent | `uteke-mcp` in `.mcp.json` | Add `https://uteke.app/mcp` to Claude, sign in |
-| Your data | Never leaves your machine | Stored by us; export any time |
-| Price | Free, Apache-2.0 | Free during the open beta ([limits](https://uteke.app/pricing?utm_source=github&utm_medium=readme&utm_campaign=prove-the-recall)) |
-
-**Choose self-host** if your data must stay on your machine, or you want to run Uteke inside your own infrastructure.
-**Choose Cloud** if you want one memory across several devices and agents without running a server.
-
----
-
 ## Benchmarks
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) hides the facts an agent needs across ~115 chat sessions per question and checks whether retrieval finds them. 500 hand-curated questions, five memory abilities. Uteke runs the full suite with **zero LLM calls in the retrieval path**: local embeddings, one CPU, deterministic.
 
 | Metric | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
-| **recall_any@5** (evidence in top 5) | **98.2%** | 96.6% | 95.2% |
-| recall_any@10 | 98.8% | — | 98.6% |
-| **strict recall_all@5** (all evidence in top 5) | <b>88.0%</b>² | not published | not published³ |
-| LLM calls in retrieval | **0** | — | 0 |
+| **recall_any@5** (evidence in top 5) | **98.2%** | 96.6%⁴ | 95.2%³ |
+| recall_any@10 | 98.8% | — | 98.6%³ |
+| **strict recall_all@5** (all evidence in top 5) | <b>88.0%</b>² | not published | 84.7%³ |
+| LLM calls in retrieval | **0** | 0 (raw mode)⁴ | 0 |
 
 <p align="center">
   <picture>
@@ -146,7 +98,7 @@ Same engine, two ways to run it.
   </picture>
 </p>
 
-<sub>¹ Their published numbers on the same benchmark and 500-question split, on their own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory publishes MRR 88.2%, which is a different metric.</sub>
+<sub>¹ Their published numbers on LongMemEval-S, each on its own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. Read from their READMEs on 2026-11-16. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory: 95.2% / 98.6% is its earlier hybrid run, which its own page labels historical (older pipeline, 500 questions). Its current README, measured 2026-10-28, reports 84.7% strict recall_all@5 and 96.2% any-hit@5 for the keyless BM25 component alone, scoring 470 answerable questions. Different denominator and pipeline, so not a head-to-head with ours. ⁴ MemPalace: 96.6% is its raw mode (semantic search, no LLM, 500 questions). It also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 used for tuning) and ≥99% with an LLM rerank; neither is the same split or setup, so neither is in the table.</sub>
 
 <details>
 <summary>Stability across releases and results per question type</summary>
@@ -176,6 +128,56 @@ Every question's evidence lands in the top 50 (zero misses). What's left is orde
 **LoCoMo.** LoCoMo end-to-end QA measures answer accuracy, and the result depends on the LLM answerer and the LLM judge used. In an internal comparison, identical answers were scored up to 8 points apart when only the judge model was swapped. For that reason we do not publish a single LoCoMo number in this README. The full table, the per-judge figures and the receipts are in [benchmarks/locomo/RESULTS.md](benchmarks/locomo/RESULTS.md). Retrieval recall, which needs no judge, remains the metric we rely on.
 
 `uteke bench --counts 100,1000,10000` measures latency and throughput on your own machine. 📖 [Benchmark docs](docs/benchmarks.md)
+
+---
+
+<p align="center">
+  <a href="benchmarks/longmemeval/RESULTS.md">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-breakdown-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-breakdown-light.png" />
+      <img src="docs/assets/longmemeval-breakdown-light.png" width="880" alt="LongMemEval-S, 500 questions, Uteke v0.20.0: recall_any@5 98.2%, strict recall_all@10 95.2%, coverage@5 94.4%, strict recall_all@5 88.0% (max possible 99.4%). Keyword search alone 91.4% vs Uteke's fused default 98.2%." />
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <i>All 500 LongMemEval-S questions, no LLM call in retrieval. Raw outputs are committed: <a href="benchmarks/longmemeval/REPRODUCING.md">check them in a minute, or re-run everything for about $10</a>.</i>
+</p>
+
+---
+
+## Why Uteke
+
+On Monday you tell your agent how you deploy. By Thursday it has no idea. Every session starts from zero, and every agent keeps its own half-memory.
+
+Uteke gives all of them one long-term memory that runs on your own machine:
+
+- **Verifiable recall.** [98.2% recall@5 on LongMemEval-S](#benchmarks), with the stricter numbers shown next to it and the raw outputs in this repo.
+- **Fast and cheap to query.** ~45 ms warm recall, 0 LLM tokens per query, CPU only.
+- **One binary.** No Python, no Docker, no vector database, no API key. The embedding model (~200 MB) downloads once.
+- **One memory, every agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes and any MCP client share the same store. [Rooms](docs/rooms.md) record which agent or person wrote what.
+- **Finds by meaning and by keyword.** Local vectors and SQLite full-text search, fused into one ranking ([how it works](#how-it-works)).
+- **Remembers over time.** Point-in-time recall (`--at`), a relationship graph, a document engine, and decay for stale memories.
+- **Private by default.** No telemetry. Secrets such as API keys are masked before a memory is stored.
+- **Open source.** Apache-2.0, cosign-signed releases.
+
+---
+
+## Self-host or Cloud
+
+Same engine, two ways to run it.
+
+| | **Self-host** (this repo) | **[Uteke Cloud](https://uteke.app/?utm_source=github&utm_medium=readme&utm_campaign=prove-the-recall)** |
+|---|---|---|
+| Engine and recall | Full, nothing paywalled | Same engine |
+| Runs on | Your laptop or your server | Hosted for you |
+| Connect an agent | `uteke-mcp` in `.mcp.json` | Add `https://uteke.app/mcp` to Claude, sign in |
+| Your data | Never leaves your machine | Stored by us; export any time |
+| Price | Free, Apache-2.0 | Free during the open beta ([limits](https://uteke.app/pricing?utm_source=github&utm_medium=readme&utm_campaign=prove-the-recall)) |
+
+**Choose self-host** if your data must stay on your machine, or you want to run Uteke inside your own infrastructure.
+**Choose Cloud** if you want one memory across several devices and agents without running a server.
 
 ---
 
@@ -331,30 +333,6 @@ docker run -d -p 127.0.0.1:8767:8767 -v uteke-data:/data codecoradev/uteke:lates
 
 ---
 
-## Compared with other memory tools
-
-<details>
-<summary>How Uteke differs from Python, TypeScript and Go memory layers (table)</summary>
-
-| | **Uteke** | **Tool A** | **Tool B** | **Tool C** | **Tool D** | **Tool E** | **Tool F** | **Tool G** |
-|---|---|---|---|---|---|---|---|---|
-| **Language** | Rust (single binary) | Python (pip) | Python | TypeScript | TypeScript | Python | TypeScript | Go (single binary) |
-| **Setup** | One binary (`curl \| sh`) | pip install + venv | pip + Docker + Qdrant | npm + iii-engine | npm (Node.js) | pip + Docker + Neo4j | Cloud or local binary | One binary |
-| **API keys** | ❌ None | ⚠️ For remote embeddings | ✅ OpenAI/LLM | ✅ LLM key | ✅ LLM key | ✅ LLM key | ⚠️ Cloud only | ❌ None |
-| **Works offline** | ✅ Fully | ⚠️ Optional | ❌ Cloud embedding | ❌ Needs LLM | ❌ Needs LLM | ❌ Needs LLM + vector DB | ✅ Local binary + Ollama | ✅ Fully |
-| **Search** | **Fusion** (vector + hybrid) | sqlite-vec + FTS5 | Vector + Graph | Vector + Graph | Vector | Hybrid (semantic + keyword + graph) | Vector + rerank | **FTS5 only** |
-| **Recall speed** | ~45ms | ~50ms+ | Network round-trip | Network round-trip | Network round-trip | Network round-trip | Network round-trip | ~Fast (local) |
-| **Multi-agent** | ✅ **Rooms** | ✅ Multi-agent surface | ❌ | ✅ Shared server | ✅ Multi-agent groups | ❌ | ❌ | ⚠️ Shared via MCP |
-| **Time-travel** | ✅ Native point-in-time | ⚠️ Temporal triples | ❌ | ❌ | ❌ | ✅ Temporal graphs | ❌ | ❌ |
-| **MCP server** | ✅ stdio + HTTP | ✅ stdio + SSE | ❌ | ✅ 54 MCP tools | ❌ | ✅ Graphiti MCP | ✅ Open-source MCP | ✅ stdio MCP |
-| **Your data** | ✅ Never leaves machine | ✅ Local-first | ⚠️ Sent to LLM cloud | ✅ Local (iii-engine) | ⚠️ Sent to LLM cloud | ⚠️ Sent to LLM cloud | ⚠️ Cloudflare-hosted | ✅ Local |
-| **License** | Apache 2.0 | MIT | Apache 2.0 | Apache 2.0 | Apache 2.0 | Apache 2.0 | MIT | MIT |
-
-Tool labels (A–G) stand for common categories of AI memory layers as of August 2026, assessed from public documentation. Use this as a starting point for your own evaluation, not a ranking.
-</details>
-
----
-
 ## Documentation
 
 | | |
@@ -385,7 +363,7 @@ A file works until you need to find something by meaning: "ship the release" won
 <details>
 <summary><strong>How is Uteke different from cloud-dependent memory tools?</strong></summary>
 
-Many memory layers need cloud API keys (OpenAI or another LLM) and extra infrastructure (Docker, Postgres, Qdrant), and your data is sent to an LLM provider. Uteke is a single binary with no API keys; embeddings run locally via ONNX. [See the comparison](#compared-with-other-memory-tools).
+Many memory layers need cloud API keys (OpenAI or another LLM) and extra infrastructure (Docker, Postgres, Qdrant), and your data is sent to an LLM provider. Uteke is a single binary with no API keys; embeddings run locally via ONNX. [See the benchmarks](#benchmarks).
 </details>
 
 <details>

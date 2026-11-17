@@ -334,7 +334,7 @@ fn admit_remote_embed(
             }
         }
         "/doc/search" => match DocSearchRequest::deserialize(body) {
-            Ok(req) => gate.admit(EmbedNeed::for_search_mode(&req.mode)),
+            Ok(req) => gate.admit(EmbedNeed::for_doc_search(&req.query, &req.mode)?),
             Err(_) => Ok(None),
         },
         "/skill/search" => match skill::<SkillSearchRequest>(body) {

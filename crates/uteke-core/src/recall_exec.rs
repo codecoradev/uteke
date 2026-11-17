@@ -369,6 +369,52 @@ mod tests {
     use crate::TrustTier;
     use crate::test_support::open_keyword;
 
+    fn json_memory(content_type: &str, content: &str) -> crate::Memory {
+        let now = chrono::Utc::now();
+        serde_json::from_value(serde_json::json!({
+            "id": "m1",
+            "content": content,
+            "tags": [],
+            "metadata": null,
+            "created_at": now,
+            "updated_at": now,
+            "content_type": content_type,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn where_matches_a_top_level_scalar_by_its_printed_value() {
+        let m = json_memory(
+            "json",
+            r#"{"s":"abc","n":42,"f":1.5,"t":true,"z":null,"a":[1],"o":{"k":1}}"#,
+        );
+        let hit = |k: &str, v: &str| json_field_equals(&m, k, v);
+        assert!(hit("s", "abc") && !hit("s", "abd") && !hit("s", "ab"));
+        assert!(hit("n", "42") && !hit("n", "43"));
+        assert!(hit("f", "1.5") && !hit("f", "1.50"));
+        assert!(hit("t", "true") && !hit("t", "false"));
+        assert!(hit("z", "null") && !hit("z", "nul"));
+        // Arrays, objects and a missing key never match.
+        assert!(!hit("a", "[1]") && !hit("o", "{\"k\":1}") && !hit("nope", "abc"));
+    }
+
+    #[test]
+    fn where_ignores_content_that_is_not_a_json_object() {
+        for (content_type, content) in [
+            ("text", r#"{"s":"abc"}"#),
+            ("json", r#"["s","abc"]"#),
+            ("json", r#""abc""#),
+            ("json", "not json"),
+        ] {
+            let m = json_memory(content_type, content);
+            assert!(
+                !json_field_equals(&m, "s", "abc"),
+                "{content_type} {content}"
+            );
+        }
+    }
+
     fn req(f: impl FnOnce(&mut RecallInput)) -> RecallRequest {
         let mut i = RecallInput {
             query: "rust memory safety".into(),

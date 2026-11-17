@@ -28,37 +28,6 @@
   <a href="README.md">English</a>
 </p>
 
-<p align="center">
-  <a href="benchmarks/longmemeval/RESULTS.md">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-breakdown-dark.png" />
-      <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-breakdown-light.png" />
-      <img src="docs/assets/longmemeval-breakdown-light.png" width="880" alt="LongMemEval-S, 500 pertanyaan, Uteke v0.20.0: recall_any@5 98,2%, strict recall_all@10 95,2%, coverage@5 94,4%, strict recall_all@5 88,0% (maksimum 99,4%). Pencarian kata kunci saja 91,4% vs default Uteke 98,2%." />
-    </picture>
-  </a>
-</p>
-
-<p align="center">
-  <i>Semua 500 pertanyaan LongMemEval-S, tanpa panggilan LLM di retrieval. Raw output-nya ada di repo: <a href="benchmarks/longmemeval/REPRODUCING.md">cek dalam semenit, atau jalankan ulang semuanya dengan sekitar $10</a>.</i>
-</p>
-
----
-
-## Kenapa Uteke
-
-Hari Senin kamu kasih tahu agent cara kamu deploy. Hari Kamis dia sudah lupa. Tiap sesi mulai dari nol, dan tiap agent cuma punya setengah ingatan masing-masing.
-
-Uteke kasih mereka semua satu memori jangka panjang yang jalan di mesin kamu sendiri:
-
-- **Recall yang bisa dicek.** [98,2% recall@5 di LongMemEval-S](#benchmark), angka yang lebih ketat ditampilkan di sebelahnya, dan raw output-nya ada di repo ini.
-- **Cepat dan murah.** Recall hangat ~45 ms, 0 token LLM per query, cukup CPU.
-- **Satu binary.** Tanpa Python, tanpa Docker, tanpa vector database, tanpa API key. Model embedding (~200 MB) diunduh sekali.
-- **Satu memori, semua agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes, dan klien MCP lain berbagi store yang sama. [Rooms](docs/rooms.md) mencatat agent atau orang mana yang menulis apa.
-- **Cari berdasarkan makna dan kata kunci.** Vector lokal dan full-text search SQLite, digabung jadi satu ranking ([cara kerjanya](#cara-kerja)).
-- **Ingat lintas waktu.** Recall per titik waktu (`--at`), relationship graph, document engine, dan decay untuk memori basi.
-- **Privat dari awal.** Tanpa telemetry. Secret seperti API key disamarkan sebelum memori disimpan.
-- **Open source.** Apache-2.0, rilis ditandatangani cosign.
-
 ---
 
 ## Mulai cepat
@@ -107,33 +76,16 @@ Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.ap
 
 ---
 
-## Self-host atau Cloud
-
-Mesinnya sama, dua cara menjalankannya.
-
-| | **Self-host** (repo ini) | **[Uteke Cloud](https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)** |
-|---|---|---|
-| Mesin dan recall | Lengkap, tanpa paywall | Mesin yang sama |
-| Jalan di | Laptop atau server kamu | Kami yang host |
-| Sambungkan agent | `uteke-mcp` di `.mcp.json` | Tambahkan `https://uteke.app/mcp` di Claude, login |
-| Data kamu | Nggak pernah keluar dari mesin kamu | Disimpan oleh kami; bisa diekspor kapan saja |
-| Harga | Gratis, Apache-2.0 | Gratis selama open beta ([batas](https://uteke.app/pricing?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)) |
-
-**Pilih self-host** kalau data kamu harus tetap di mesin sendiri, atau kamu mau menjalankan Uteke di infrastruktur sendiri.
-**Pilih Cloud** kalau kamu mau satu memori di beberapa perangkat dan agent tanpa mengurus server.
-
----
-
 ## Benchmark
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) menyembunyikan fakta yang dibutuhkan agent di antara ~115 sesi chat per pertanyaan, lalu mengecek apakah retrieval bisa menemukannya. 500 pertanyaan yang dikurasi manual, lima kemampuan memori. Uteke menjalankan semuanya dengan **nol panggilan LLM di jalur retrieval**: embedding lokal, satu CPU, deterministik.
 
 | Metrik | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
-| **recall_any@5** (bukti di top 5) | **98,2%** | 96,6% | 95,2% |
-| recall_any@10 | 98,8% | — | 98,6% |
-| **strict recall_all@5** (semua bukti di top 5) | <b>88,0%</b>² | tidak dipublikasikan | tidak dipublikasikan³ |
-| Panggilan LLM di retrieval | **0** | — | 0 |
+| **recall_any@5** (bukti di top 5) | **98,2%** | 96,6%⁴ | 95,2%³ |
+| recall_any@10 | 98,8% | — | 98,6%³ |
+| **strict recall_all@5** (semua bukti di top 5) | <b>88,0%</b>² | tidak dipublikasikan | 84,7%³ |
+| Panggilan LLM di retrieval | **0** | 0 (mode raw)⁴ | 0 |
 
 <p align="center">
   <picture>
@@ -143,7 +95,7 @@ Mesinnya sama, dua cara menjalankannya.
   </picture>
 </p>
 
-<sub>¹ Angka yang mereka publikasikan di benchmark dan split 500 pertanyaan yang sama, dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory mempublikasikan MRR 88,2%, metrik yang berbeda.</sub>
+<sub>¹ Angka yang mereka publikasikan di LongMemEval-S, masing-masing dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. Dibaca dari README mereka pada 2026-11-16. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory: 95,2% / 98,6% adalah run hybrid lamanya, yang di halamannya sendiri diberi label historis (pipeline lama, 500 pertanyaan). README mereka yang sekarang, diukur 2026-10-28, melaporkan strict recall_all@5 84,7% dan any-hit@5 96,2% untuk komponen BM25 keyless saja, dengan 470 pertanyaan yang bisa dijawab. Denominator dan pipeline berbeda, jadi bukan head-to-head dengan angka kami. ⁴ MemPalace: 96,6% adalah mode raw-nya (semantic search, tanpa LLM, 500 pertanyaan). Mereka juga melaporkan 98,4% untuk mode hybrid pada subset held-out 450 pertanyaan (50 dipakai untuk tuning) dan ≥99% dengan rerank LLM; keduanya bukan split atau setup yang sama, jadi tidak masuk tabel.</sub>
 
 <details>
 <summary>Stabilitas antar rilis dan hasil per jenis pertanyaan</summary>
@@ -169,6 +121,56 @@ Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang ter
 > **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipt untuk angka utama (run v0.19.0)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
 
 `uteke bench --counts 100,1000,10000` mengukur latency dan throughput di mesin kamu sendiri. 📖 [Docs benchmark](docs/benchmarks.md)
+
+---
+
+<p align="center">
+  <a href="benchmarks/longmemeval/RESULTS.md">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-breakdown-dark.png" />
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-breakdown-light.png" />
+      <img src="docs/assets/longmemeval-breakdown-light.png" width="880" alt="LongMemEval-S, 500 pertanyaan, Uteke v0.20.0: recall_any@5 98,2%, strict recall_all@10 95,2%, coverage@5 94,4%, strict recall_all@5 88,0% (maksimum 99,4%). Pencarian kata kunci saja 91,4% vs default Uteke 98,2%." />
+    </picture>
+  </a>
+</p>
+
+<p align="center">
+  <i>Semua 500 pertanyaan LongMemEval-S, tanpa panggilan LLM di retrieval. Raw output-nya ada di repo: <a href="benchmarks/longmemeval/REPRODUCING.md">cek dalam semenit, atau jalankan ulang semuanya dengan sekitar $10</a>.</i>
+</p>
+
+---
+
+## Kenapa Uteke
+
+Hari Senin kamu kasih tahu agent cara kamu deploy. Hari Kamis dia sudah lupa. Tiap sesi mulai dari nol, dan tiap agent cuma punya setengah ingatan masing-masing.
+
+Uteke kasih mereka semua satu memori jangka panjang yang jalan di mesin kamu sendiri:
+
+- **Recall yang bisa dicek.** [98,2% recall@5 di LongMemEval-S](#benchmark), angka yang lebih ketat ditampilkan di sebelahnya, dan raw output-nya ada di repo ini.
+- **Cepat dan murah.** Recall hangat ~45 ms, 0 token LLM per query, cukup CPU.
+- **Satu binary.** Tanpa Python, tanpa Docker, tanpa vector database, tanpa API key. Model embedding (~200 MB) diunduh sekali.
+- **Satu memori, semua agent.** Claude Code, Claude Desktop, Cursor, Codex, Hermes, dan klien MCP lain berbagi store yang sama. [Rooms](docs/rooms.md) mencatat agent atau orang mana yang menulis apa.
+- **Cari berdasarkan makna dan kata kunci.** Vector lokal dan full-text search SQLite, digabung jadi satu ranking ([cara kerjanya](#cara-kerja)).
+- **Ingat lintas waktu.** Recall per titik waktu (`--at`), relationship graph, document engine, dan decay untuk memori basi.
+- **Privat dari awal.** Tanpa telemetry. Secret seperti API key disamarkan sebelum memori disimpan.
+- **Open source.** Apache-2.0, rilis ditandatangani cosign.
+
+---
+
+## Self-host atau Cloud
+
+Mesinnya sama, dua cara menjalankannya.
+
+| | **Self-host** (repo ini) | **[Uteke Cloud](https://uteke.app/?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)** |
+|---|---|---|
+| Mesin dan recall | Lengkap, tanpa paywall | Mesin yang sama |
+| Jalan di | Laptop atau server kamu | Kami yang host |
+| Sambungkan agent | `uteke-mcp` di `.mcp.json` | Tambahkan `https://uteke.app/mcp` di Claude, login |
+| Data kamu | Nggak pernah keluar dari mesin kamu | Disimpan oleh kami; bisa diekspor kapan saja |
+| Harga | Gratis, Apache-2.0 | Gratis selama open beta ([batas](https://uteke.app/pricing?utm_source=github-id&utm_medium=readme&utm_campaign=prove-the-recall)) |
+
+**Pilih self-host** kalau data kamu harus tetap di mesin sendiri, atau kamu mau menjalankan Uteke di infrastruktur sendiri.
+**Pilih Cloud** kalau kamu mau satu memori di beberapa perangkat dan agent tanpa mengurus server.
 
 ---
 

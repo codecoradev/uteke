@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-11-17
+
+Patch release. Theme: **`uteke-serve` 0.24.0 never started listening.** Every start of 0.24.0 stopped
+after the log line "Lifecycle config loaded": `/health` never answered, so the Docker image showed
+unhealthy, and the stuck process kept the index file lock. If you run `uteke-serve` or the Docker image,
+upgrade from 0.24.0 to 0.24.1. The `uteke` CLI and `uteke-mcp` have their own start-up and were not
+affected: every CLI command and an MCP stdio session were run against this code.
+
+**Upgrade notes**
+
+- No schema change: the store stays at schema v27, so a 0.24.0 data directory opens as is.
+- Correction to the 0.24.0 notes, which said an older binary ignores the new tables: a 0.23.0 binary
+  refuses a store at schema v26 or v27 ("database schema version N is newer than supported version 25").
+  Back up the data directory before moving to 0.24.x if you may roll back.
+- A remote document search query is at most 2000 characters (#1777); a longer one is a 400. `POST
+  /doc/search` is LAB, the CLI is unchanged.
+
+### Docs
+
+- The `uteke-memory` skill (both copies), `docs/mcp.md` and the generated API reference say that a
+  remote document search query is at most 2000 characters (#1777); the Docker tag table names the
+  `0.24` minor tag.
+
+### Fixed
+
+- **`POST /doc/search` and `uteke_doc_search` bound the query (#1777)** - a remote document search took a
+  query of any length (up to the 10 MB request limit) and embedded it under an embedding slot. The query
+  is now at most 2000 characters in every mode, the same bound as a remote skill search: a longer one is a
+  400 (an MCP tool error) before a slot is taken. `POST /doc/search` is LAB; the CLI is unchanged.
+
+- **`uteke-serve` v0.24.0 no longer hangs at startup** - the server stopped after the log line
+  "Lifecycle config loaded" and never listened: it took the store `Mutex` twice inside one `let ctx = ...`
+  statement (the `[recall]` defaults from #1754 and the embedding gate from #1753), the first guard was a
+  temporary that lives to the end of the statement, and the second `lock()` waited on it forever. Every
+  start of v0.24.0 was affected: `/health` never answered (Docker showed the container unhealthy), the
+  process ignored SIGTERM as PID 1 and kept the index file lock, so `verify`, `repair` and `doctor` blocked.
+  Each value is now taken in its own statement. A new test starts the real `uteke-serve` and waits for
+  `GET /health`.
+
 ## [0.24.0] - 2026-11-13
 
 A personal skill library, similar documents, room aliases and the `category:title` room convention, rooms on recall hits, room search, a read-only skill and document similarity surface for tole, the secret detector as its own crate, and a round of refactors that put the CLI, `uteke-serve` and `uteke-mcp` on one core path. Two schema steps (v26 `room_aliases`, v27 the skill tables), both forward-only: an older binary ignores the new tables.

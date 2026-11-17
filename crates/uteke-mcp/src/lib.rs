@@ -2301,7 +2301,7 @@ fn exec_doc_search(uteke: &Uteke, args: &Value) -> Result<ToolResult, String> {
     // A semantic or hybrid search embeds the query: take a slot of the gate.
     let _permit = uteke
         .embed_gate()
-        .admit(EmbedNeed::for_search_mode(mode))
+        .admit(EmbedNeed::for_doc_search(query, mode).map_err(core_failure)?)
         .map_err(core_failure)?;
     let results = uteke.doc_search(query, limit, mode).map_err(core_failure)?;
 
@@ -6190,6 +6190,21 @@ mod skill_tool_tests {
             json!({"text": "zebra violin tractor glacier lantern recipe", "threshold": 0.0, "limit": 1}),
         );
         assert_eq!(slugs(&v, "hits"), ["cooking"]);
+    }
+
+    #[test]
+    fn a_doc_search_query_is_bounded_in_every_mode() {
+        let (u, _) = library();
+        for mode in ["fts", "hybrid", "semantic"] {
+            let args = json!({"query": "a".repeat(2001), "mode": mode});
+            assert_eq!(
+                exec_doc_search(&u, &args).err().as_deref(),
+                Some("Validation error: query is longer than 2000 characters"),
+                "{mode}"
+            );
+        }
+        let at = json!({"query": "a".repeat(2000), "mode": "fts"});
+        assert!(exec_doc_search(&u, &at).is_ok());
     }
 
     #[test]
