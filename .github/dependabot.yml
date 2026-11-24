@@ -1,14 +1,46 @@
 version: 2
 updates:
+  # Cargo: bundle minor+patch into one PR; storage-critical deps stay isolated.
+  # Cooldown gives new releases time to surface bug reports before PRs open
+  # (version updates only — security updates are never delayed).
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      rust-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+        exclude-patterns:
+          # 0.x minor bumps on the storage backbone are breaking by Cargo
+          # convention — evaluated individually (see #1797).
+          - "rusqlite"
+          - "libsqlite3-sys"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 7
+
+  # GitHub Actions: bundle minor+patch; actions tags are cheap to revert.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    cooldown:
+      default-days: 7
+
+  # Docker: base image bumps go out individually (major image swaps need
+  # manual validation of the runtime); cooldown applies via default-days.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
