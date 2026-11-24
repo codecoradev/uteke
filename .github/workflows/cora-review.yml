@@ -124,5 +124,5 @@ jobs:
           # Diff against the PR's real base branch.
           base-branch: origin/${{ github.base_ref }}
 
-          review-timeout-seconds: ${{ secrets.CORA_REVIEW_TIMEOUT_SECONDS }}
-          max-attempts: ${{ secrets.CORA_MAX_ATTEMPTS }}
+          review-timeout-seconds: ${{ vars.CORA_REVIEW_TIMEOUT_SECONDS || secrets.CORA_REVIEW_TIMEOUT_SECONDS }}
+          max-attempts: ${{ vars.CORA_MAX_ATTEMPTS || secrets.CORA_MAX_ATTEMPTS }}
