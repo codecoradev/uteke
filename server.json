@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.codecoradev/uteke",
-  "title": "Uteke",
+  "name": "app.uteke/uteke-memory",
+  "title": "Uteke - Long Term Memory for AI Agents",
   "description": "Long-term memory for AI agents: hybrid vector and full-text recall, rooms, time-travel.",
   "websiteUrl": "https://uteke.app",
   "repository": {
@@ -9,6 +9,18 @@
     "source": "github"
   },
   "version": "0.24.1",
+  "icons": [
+    {
+      "src": "https://uteke.app/favicon.png",
+      "mimeType": "image/png",
+      "sizes": ["48x48"]
+    },
+    {
+      "src": "https://uteke.app/apple-touch-icon.png",
+      "mimeType": "image/png",
+      "sizes": ["180x180"]
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",

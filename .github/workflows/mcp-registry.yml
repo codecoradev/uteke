@@ -1,12 +1,16 @@
 name: MCP Registry
 
-# Publishes server.json to the MCP Registry as io.github.codecoradev/uteke.
-# The registry only grants an organization namespace to GitHub OIDC (or a PAT
-# with read:org); the interactive `mcp-publisher login github` flow cannot read
-# organization roles, so publishing runs here.
+# Publishes server.json to the official MCP Registry.
 #
-# Runs on a release tag, or by hand (workflow_dispatch) for the first listing
-# or a re-publish. server.json's version must match the tag.
+# Primary identity: app.uteke/uteke-memory — domain-verified via a TXT record
+# on _mcp.uteke.app (v=MCPv1; k=ed25519; p=<hex>), published with
+# `mcp-publisher login dns` using MCP_DNS_PRIVATE_KEY_HEX (repo secret).
+#
+# Legacy identity: io.github.codecoradev/uteke — namespace tied to GitHub OIDC.
+# Kept for the deprecation flow: flip its status to deleted AFTER the new
+# domain-namespace listing is live (mcp-registry-deprecate.yml, workflow_dispatch).
+#
+# server.json's version must match the release tag (workflow_dispatch exempt).
 
 on:
   push:
@@ -48,7 +52,15 @@ jobs:
       - name: Validate
         run: ./mcp-publisher validate
 
-      - name: Publish
+      - name: Login via DNS (domain namespace)
+        env:
+          MCP_DNS_PRIVATE_KEY_HEX: ${{ secrets.MCP_DNS_PRIVATE_KEY_HEX }}
         run: |
-          ./mcp-publisher login github-oidc
-          ./mcp-publisher publish
+          if [ -z "$MCP_DNS_PRIVATE_KEY_HEX" ]; then
+            echo "::error::MCP_DNS_PRIVATE_KEY_HEX secret is empty — set it to the hex ed25519 private key for _mcp.uteke.app" >&2
+            exit 1
+          fi
+          ./mcp-publisher login dns -domain uteke.app -private-key "$MCP_DNS_PRIVATE_KEY_HEX"
+
+      - name: Publish
+        run: ./mcp-publisher publish
