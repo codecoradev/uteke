@@ -36,6 +36,9 @@ jobs:
 
       - name: Mark legacy entry deleted
         run: |
-          ./mcp-publisher status --status deleted --all-versions \
+          # --all-versions prompts "Continue? [y/N]" on a TTY; in CI stdin is
+          # empty and the prompt fails with "failed to read response: EOF".
+          # Non-interactive: pipe the confirmation.
+          printf 'y\n' | ./mcp-publisher status --status deleted --all-versions \
             --message "Moved to app.uteke/uteke-memory (domain namespace). Remote endpoint unchanged: https://uteke.app/mcp" \
             io.github.codecoradev/uteke
