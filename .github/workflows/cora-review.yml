@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     # Review time grows with the diff (about a second per changed line, more
     # when the gateway is slow); 10 min cancelled reviews with no verdict.
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       # Anthropic workload identity federation (organization or repository
       # secrets or variables). When all four are set, the job exchanges its
@@ -123,3 +123,6 @@ jobs:
           # tree), so Cora reported "empty result" and never reviewed the diff.
           # Diff against the PR's real base branch.
           base-branch: origin/${{ github.base_ref }}
+
+          review-timeout-seconds: ${{ secrets.CORA_REVIEW_TIMEOUT_SECONDS }}
+          max-attempts: ${{ secrets.CORA_MAX_ATTEMPTS }}
