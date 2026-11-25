@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`Uteke::list_pinned` fetches pinned memories in one query (#1804)** - a client lists the pinned
+  (never-decay) memories, newest first and optionally per namespace, instead of paging through the
+  whole store and filtering. A soft-deleted (deprecated) pinned memory is left out, so the result
+  matches `count_pinned`. Schema v28 adds a partial index (`idx_memories_pinned`) so the query does
+  not scan the table; a store at v27 upgrades in place and keeps its rows.
+
 ## [0.24.1] - 2026-11-17
 
 Patch release. Theme: **`uteke-serve` 0.24.0 never started listening.** Every start of 0.24.0 stopped
