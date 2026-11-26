@@ -34,6 +34,19 @@
   `INSERT OR IGNORE` it skipped such documents without an error; it is fixed the same way.
   Documents stay global (#614): `--namespace` on `doc create` is still not a document scope.
 
+### Docs
+
+- **LongMemEval-S numbers refreshed to the v0.24.0 release binary (#1789)** - the README (English
+  and Indonesian), `docs/benchmarks.md`, `docs/comparison.md`, `docs/benchmark-positioning.md` and
+  `benchmarks/longmemeval/REPRODUCING.md` quote the v0.24.0 run: recall_any@5 98.2% and
+  recall_any@10 98.8% (unchanged), strict recall_all@5 87.6% (88.0% in v0.16.0 to v0.20.0; two
+  questions moved a gold session across the rank-5 boundary with identical top-50 sets), strict@10
+  95.2%, zero misses@50. New receipt `benchmarks/longmemeval/receipts/v0.24.0-default-500q/` (its
+  `summary.json` is the output of `score_longmemeval.py` on the committed raw file) and a
+  v0.24.0 section in `RESULTS.md`; the facts the run did not record (the Modal run id, the exact
+  command) are marked "not recorded" in the manifest. The breakdown chart still shows the
+  v0.20.0 run and says so.
+
 ## [0.24.1] - 2026-11-17
 
 Patch release. Theme: **`uteke-serve` 0.24.0 never started listening.** Every start of 0.24.0 stopped

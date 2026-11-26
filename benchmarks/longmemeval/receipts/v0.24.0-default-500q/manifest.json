@@ -1,0 +1,73 @@
+{
+ "schema": "uteke-benchmark-receipt/1",
+ "benchmark": "LongMemEval-S",
+ "release": "v0.24.0",
+ "run": {
+  "strategy": "default",
+  "questions": 500,
+  "date": "2026-11-17",
+  "where": "Modal x86_64; the official v0.24.0 release tarball binary (installed with UTEKE_RELEASE), provenance in the image build log",
+  "modal_run": "not recorded in the repository",
+  "command": "not recorded in the repository; the receipt commit (#1795) names UTEKE_RELEASE=v0.24.0, 500 of 500 questions, Modal x86_64"
+ },
+ "commit": {
+  "measured_sha": "adb72297648c34e46554d76dc2608e3a5d6e8c56",
+  "dirty": false,
+  "dirty_note": "the measured binary is the published v0.24.0 release asset, not a build of a working tree",
+  "workspace_version_at_sha": "0.24.0",
+  "release_tag_commit": "adb72297648c34e46554d76dc2608e3a5d6e8c56",
+  "release_tag_difference": "none: the measured binary is the release tarball of this tag"
+ },
+ "dependencies": {
+  "cargo_lock_sha256_at_measured_sha": "638dc499c9133390ed2d7a0ab76feb657eb2af4a9355496ea68aa12d7ca9ee6c",
+  "ort": "2.0.0-rc.15",
+  "other": "not recorded at run time; the lock file above pins them"
+ },
+ "dataset": {
+  "file": "longmemeval_s_cleaned.json",
+  "sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+  "source": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned (longmemeval_s_cleaned.json)",
+  "revision": "not pinned at run time, and the run's own copy was not hashed. summary.json was recomputed (2026-11-26) from the file with this sha256, the one the v0.19.0 receipt records; its 500 question ids are those of the raw file"
+ },
+ "raw_scores": {
+  "file": "../../results/default-500q-v0.24.0.jsonl",
+  "format": "ndjson, one question per line: question_id, question_type, retrieved_session_ids (best first), per-question metrics",
+  "sha256": "c0cbeb27489672fac6ba2f0a7230c1cdecd61a0940a9b443dfa07726d8c598f8",
+  "questions": 500
+ },
+ "summary": "summary.json",
+ "recompute": "python3 benchmarks/scripts/score_longmemeval.py --data <longmemeval_s_cleaned.json> --results benchmarks/longmemeval/results/default-500q-v0.24.0.jsonl",
+ "scope": "SCOPE.md",
+ "headline_claims": [
+  {
+   "id": "recall_any@5_full500",
+   "value": 0.982,
+   "path": "summary.json#/full500/recall_any@5"
+  },
+  {
+   "id": "recall_any@10_full500",
+   "value": 0.988,
+   "path": "summary.json#/full500/recall_any@10"
+  },
+  {
+   "id": "recall_all@5_full500",
+   "value": 0.876,
+   "path": "summary.json#/full500/recall_all@5"
+  },
+  {
+   "id": "recall_all@10_full500",
+   "value": 0.952,
+   "path": "summary.json#/full500/recall_all@10"
+  },
+  {
+   "id": "coverage@5_full500",
+   "value": 0.9422,
+   "path": "summary.json#/full500/coverage@5"
+  },
+  {
+   "id": "miss@50_full500",
+   "value": 0,
+   "path": "summary.json#/full500/miss@50"
+  }
+ ]
+}

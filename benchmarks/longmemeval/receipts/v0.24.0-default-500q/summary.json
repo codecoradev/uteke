@@ -1,0 +1,32 @@
+{
+  "abstention": {
+    "coverage@10": 0.95,
+    "coverage@5": 0.9056,
+    "miss@50": 0,
+    "n": 30,
+    "recall_all@10": 0.9333,
+    "recall_all@5": 0.8333,
+    "recall_any@10": 0.9667,
+    "recall_any@5": 0.9667
+  },
+  "answerable": {
+    "coverage@10": 0.9755,
+    "coverage@5": 0.9445,
+    "miss@50": 0,
+    "n": 470,
+    "recall_all@10": 0.9532,
+    "recall_all@5": 0.8787,
+    "recall_any@10": 0.9894,
+    "recall_any@5": 0.983
+  },
+  "full500": {
+    "coverage@10": 0.974,
+    "coverage@5": 0.9422,
+    "miss@50": 0,
+    "n": 500,
+    "recall_all@10": 0.952,
+    "recall_all@5": 0.876,
+    "recall_any@10": 0.988,
+    "recall_any@5": 0.982
+  }
+}
