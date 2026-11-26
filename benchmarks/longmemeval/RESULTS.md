@@ -198,14 +198,14 @@ coverage@5 = **0.944** — @5 family unchanged across all four releases.
 
 ### Release stability (full 500-question basis, scored from committed raw)
 
-| Metric | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b (2026-11-08) |
-|---|---|---|---|---|---|
-| recall_any@5 | 0.982 | **0.984** | 0.982 | 0.982 | 0.982 |
-| recall_any@10 | 0.988 | 0.988 | 0.988 | 0.988 | — |
-| strict recall_all@5 | 0.880 | 0.880 | 0.880 | 0.880 | 0.880 |
-| strict recall_all@10 | 0.954 | 0.954 | 0.954 | 0.952 | 0.954 |
-| coverage@5 | 0.943 | 0.944 | 0.943 | 0.944 | — |
-| total misses @50 | 0 | 0 | 0 | 0 | 0 |
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b (2026-11-08) | v0.24.0 (2026-11-17) |
+|---|---|---|---|---|---|---|
+| recall_any@5 | 0.982 | **0.984** | 0.982 | 0.982 | 0.982 | 0.982 |
+| recall_any@10 | 0.988 | 0.988 | 0.988 | 0.988 | — | 0.988 |
+| strict recall_all@5 | 0.880 | 0.880 | 0.880 | 0.880 | 0.880 | 0.876 |
+| strict recall_all@10 | 0.954 | 0.954 | 0.954 | 0.952 | 0.954 | 0.952 |
+| coverage@5 | 0.943 | 0.944 | 0.943 | 0.944 | — | 0.942 |
+| total misses @50 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 Per-question comparison vs v0.19.0 (n=500): 253 identical full rankings, 241
 reorder-only within the top-50, 6 questions with a different top-50 set. At the
@@ -239,6 +239,60 @@ v0.20.0 baseline, strict@5 is identical and strict@10 gains one question (0.9520
 `gpt4_7abb270c`, `8e91e7d9` and one more @10), none lost all evidence.
 Receipts: `results/default-500q-fix32a5cf3b.jsonl` (500 rows, sha256 e64e6cbb…),
 committed to the repo.
+
+## v0.24.0 validation — ✅ DONE (2026-11-17)
+
+Full 500-question run on the official v0.24.0 release tarball binary
+(`UTEKE_RELEASE`, Modal x86_64, 2026-11-17; added by #1795). Raw artifact
+(committed): [`results/default-500q-v0.24.0.jsonl`](results/default-500q-v0.24.0.jsonl),
+with a receipt at [`receipts/v0.24.0-default-500q/`](receipts/v0.24.0-default-500q/).
+What the run did not record (the Modal run id, the exact command, a hash of the
+run's own copy of the dataset) is marked "not recorded" in the manifest; the
+summary was recomputed on 2026-11-26 by `benchmarks/scripts/score_longmemeval.py`
+against the dataset file with sha256 `d6f21ea9…` (the one the v0.19.0 receipt
+records).
+
+| Question type | n | R@5 (strict) | R@10 (strict) | any@5 | any@10 | NDCG@5 |
+|---|---|---|---|---|---|---|
+| knowledge-update | 72 | 0.993 | 1.000 | 1.000 | 1.000 | 0.969 |
+| single-session-assistant | 56 | 0.982 | 1.000 | 0.982 | 1.000 | 0.959 |
+| single-session-user | 64 | 0.969 | 0.969 | 0.969 | 0.969 | 0.919 |
+| single-session-preference | 30 | 0.967 | 0.967 | 0.967 | 0.967 | 0.839 |
+| temporal-reasoning | 127 | 0.922 | 0.962 | 0.984 | 0.992 | 0.851 |
+| multi-session | 121 | 0.904 | 0.969 | 0.983 | 0.992 | 0.876 |
+| **Overall (470 non-abstention)** | 470 | **0.945** | 0.975 | 0.983 | 0.989 | 0.897 |
+| **Abstention (30)** | 30 | **0.906** | 0.950 | 0.967 | 0.967 | 0.842 |
+| **Overall (full 500)** | 500 | **0.942** | 0.974 | **0.982** | 0.988 | 0.893 |
+
+Strict-family headline on the full 500: recall_all@5 (every gold session in the
+top 5) = **0.876** (438 of 500), coverage@5 = **0.942**, recall_all@10 = 0.952,
+zero misses @50.
+
+Per-question comparison vs v0.20.0 (n=500): 258 identical full rankings, 3
+questions with a different top-50 set (`6a27ffc2`, `60bf93ed_abs`, `07b6f563`),
+and at the metric level **zero flips** of recall_any@5, recall_any@10,
+recall_all@10 and misses @50. Exactly **two flips of recall_all@5**:
+`0977f2af` (knowledge-update) and `dd2973ad` (multi-session) each have two gold
+sessions, and one of them moved from inside the top 5 to rank 6 (their score
+went from 1.0 to 0.5) while the top-50 set stayed identical: the gold ranks are
+5, 4 → 6, 4 for `0977f2af` and 1, 4 → 3, 6 for `dd2973ad`. That is the
+adjacent-rank jitter at the strict@5 boundary documented for v0.17.0 → v0.19.0
+(`gpt4_1916e0ea`) and v0.19.0 → v0.20.0 (`8e91e7d9`). `0977f2af` is also the
+question the independent reproduction of 2026-09-01 found at this boundary (gold
+at rank 5 against rank 6 on another architecture, an RRF near-tie). A single run cannot
+separate a move of 2 questions (0.4 points) at that boundary from it. A boundary
+move in the other direction was recorded on 2026-11-08 (strict@10 +1 question,
+above).
+
+The README refresh that this receipt enabled (#1789, option a): the table and
+the stability table quote this run, with the strict@5 difference footnoted as
+boundary jitter. recall_any@5 (the headline, 98.2%) is unchanged.
+
+```bash
+# verify from the committed files (no embedder needed)
+python3 benchmarks/scripts/score_longmemeval.py --data <longmemeval_s_cleaned.json> \
+    --results benchmarks/longmemeval/results/default-500q-v0.24.0.jsonl
+```
 
 ## Strategy Comparison (historical runs)
 

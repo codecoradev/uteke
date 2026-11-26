@@ -125,9 +125,9 @@ Only these figures are verified. Do not quote others without a committed receipt
 
 | Figure | Value | Notes |
 |---|---|---|
-| LongMemEval full-500, any@5 | **98.2%** | Re-validated 2026-11-08, receipts committed |
-| LongMemEval full-500, strict@5 | **88.0%** | Same run |
-| LongMemEval full-500, misses@50 | **0** | Same run; strict@10 +1 vs v0.20.0 (95.4%) |
+| LongMemEval full-500, any@5 | **98.2%** | v0.24.0 release binary, run 2026-11-17, receipt committed (also re-validated 2026-11-08) |
+| LongMemEval full-500, strict@5 | **87.6%** | Same run (88.0% in v0.16.0 to v0.20.0: two questions crossed the rank-5 boundary, #1789) |
+| LongMemEval full-500, misses@50 | **0** | Same run; strict@10 95.2% (95.4% in the 2026-11-08 re-validation) |
 | LoCoMo retrieval, any@5 | **0.840** | v0.17.0, judge-free |
 | LoCoMo retrieval, strict@5 | **0.716** | v0.17.0, judge-free |
 | LoCoMo e2e QA (canonical) | **72.2%** (1,112 / 1,540 answerable) | Answerer and judge `claude-sonnet-5-5`, temp 1; 0 reclassified, 27 hedged rows audited and kept. Not for the README. |

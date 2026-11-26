@@ -173,7 +173,7 @@ These are the vendors' own numbers. They come from different harnesses, splits, 
 | Mem0 | 94.4 LongMemEval, 92.5 LoCoMo | "New Memory Algorithm (April 2026)". The README says these reflect the managed platform, with proprietary optimizations not in the open-source SDK. Metric and judge are not stated there | [README](https://github.com/mem0ai/mem0) | Yes |
 | Mnemosyne | 65.2% BEAM end-to-end QA at 100K | v3.0.0. The README says its judge differs from the other systems listed, so the scores are "not directly comparable". It lists its own LongMemEval run as pending | [README](https://github.com/AxDSan/mnemosyne) | Yes |
 
-Uteke's own figures, from our harness with committed raw outputs, are on the [Benchmarks](/benchmarks) page and in the [README](https://github.com/codecoradev/uteke#benchmarks): 98.2% recall_any@5 and 88.0% strict recall_all@5 on the full 500 questions, with zero LLM calls in retrieval. Strict and any-hit are different metrics, and the denominators above differ, so the strict figures in this section are not a head-to-head.
+Uteke's own figures, from our harness with committed raw outputs, are on the [Benchmarks](/benchmarks) page and in the [README](https://github.com/codecoradev/uteke#benchmarks): 98.2% recall_any@5 and 87.6% strict recall_all@5 on the full 500 questions, with zero LLM calls in retrieval. Strict and any-hit are different metrics, and the denominators above differ, so the strict figures in this section are not a head-to-head.
 
 **How to read the numbers.** Retrieval recall (does the right session land in the top 5?) is judge-free and reproducible. End-to-end QA numbers such as Mem0's and Mnemosyne's depend on the answering model and the judge, and the same answers have been scored tens of points apart under different judges. Treat any vendor number without a harness you can run as a claim.
 
@@ -183,7 +183,7 @@ Each page was fetched and read on **2026-11-16**. We record the date, not a vers
 
 | Tool | Page read | Date checked | Version shown on the page |
 |---|---|---|---|
-| Uteke | This repository at `develop` commit `d76e7b7` (README, `docs/benchmarks.md`, `docs/configuration.md`) | 2026-11-16 | v0.20.0 benchmark run; latency from the v0.17.0 run (2026-09-09) |
+| Uteke | This repository at `develop` after the #1789 refresh (README, `docs/benchmarks.md`, `docs/configuration.md`) | 2026-11-26 | v0.24.0 benchmark run (2026-11-17); latency from the v0.17.0 run (2026-09-09) |
 | MemPalace | [github.com/MemPalace/mempalace](https://github.com/MemPalace/mempalace) README | 2026-11-16 | 3.12.0 (badge) |
 | agentmemory | [github.com/rohitg00/agentmemory](https://github.com/rohitg00/agentmemory) README and [benchmark/LONGMEMEVAL.md](https://github.com/rohitg00/agentmemory/blob/main/benchmark/LONGMEMEVAL.md) | 2026-11-16 | 0.9.33 |
 | Mem0 | [github.com/mem0ai/mem0](https://github.com/mem0ai/mem0) README. The docs site could not be reached from our environment, so nothing here comes from `docs.mem0.ai` | 2026-11-16 | Not stated on the page |
@@ -329,7 +329,7 @@ The ~45ms headline is a conservative upper bound. Measured numbers, from the v0.
 | **Recall latency (10K memories)** | 31ms average, 38ms P95 | 31ms at 100, 42ms at 1,000. The floor is ONNX embedding inference, not the vector search |
 | **Insert throughput** | 5.0–17.5 ops/s | CPU-bound (ONNX embedding inference); slower at 10K |
 | **Storage** | 80.7MB for 10,000 memories | SQLite + index, about 8KB per memory |
-| **LongMemEval-S recall_any@5** | 98.2% | Full 500 questions, zero LLM calls in retrieval; strict recall_all@5 is 88.0%. Receipts in [`benchmarks/longmemeval/`](https://github.com/codecoradev/uteke/tree/develop/benchmarks/longmemeval) |
+| **LongMemEval-S recall_any@5** | 98.2% | Full 500 questions, zero LLM calls in retrieval; strict recall_all@5 is 87.6%. Receipts in [`benchmarks/longmemeval/`](https://github.com/codecoradev/uteke/tree/develop/benchmarks/longmemeval) |
 
 These are Uteke's own numbers on one machine. Latency for other tools is not measured here, so this page makes no claim about how they compare. A tool that calls a remote embedding or LLM service adds a network round-trip to each query, but how much depends on the service and your connection.
 
