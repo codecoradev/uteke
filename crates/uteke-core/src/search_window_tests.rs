@@ -21,6 +21,13 @@ fn close(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-6
 }
 
+/// A cosine similarity as the active vector engine reports it: the quantized
+/// engine (`vecq`) returns it approximately. The ranks and windows the tests
+/// pin do not depend on the exact value.
+fn near(a: f32, b: f32) -> bool {
+    (a - b).abs() < 0.05
+}
+
 fn slugs(results: &[crate::memory::documents::DocumentSearchResult]) -> Vec<String> {
     results.iter().map(|r| r.document.slug.clone()).collect()
 }
@@ -125,7 +132,7 @@ fn semantic_search_reads_ten_chunks_per_result_past_the_other_kind() {
 
     let found = u.doc_search_semantic("alpha", 2, DocKind::Plain).unwrap();
     assert_eq!(slugs(&found), ["plain"]);
-    assert!(close(found[0].score, 1.0 / 3.0_f32.sqrt()), "{found:?}");
+    assert!(near(found[0].score, 1.0 / 3.0_f32.sqrt()), "{found:?}");
     // The same window from the other side: 14 skill files, 2 asked for.
     let skills = u.doc_search_semantic("alpha", 2, DocKind::Skill).unwrap();
     assert_eq!(skills.len(), 2);
@@ -165,9 +172,9 @@ fn semantic_search_reaches_the_documents_behind_a_long_one_within_the_window() {
     let u = six_chunks_then_two_more_documents();
     let found = u.doc_search_semantic("alpha", 3, DocKind::Plain).unwrap();
     assert_eq!(slugs(&found), ["a-doc", "b-doc", "c-doc"]);
-    assert!(close(found[0].score, 1.0 / 2.0_f32.sqrt()));
-    assert!(close(found[1].score, 1.0 / 3.0_f32.sqrt()));
-    assert!(close(found[2].score, 1.0 / 5.0_f32.sqrt()));
+    assert!(near(found[0].score, 1.0 / 2.0_f32.sqrt()));
+    assert!(near(found[1].score, 1.0 / 3.0_f32.sqrt()));
+    assert!(near(found[2].score, 1.0 / 5.0_f32.sqrt()));
 }
 
 /// A snippet longer than 200 bytes is cut at 200 and gets `...`; one of 200 or
@@ -326,9 +333,9 @@ fn skill_search_asks_for_five_files_per_skill_wanted() {
         ]
     );
     assert!(ranked[0].1.starts_with("references/r"), "{ranked:?}");
-    assert!(close(hits[0].score, 1.0));
-    assert!(close(hits[1].score, 1.0 / 2.0_f32.sqrt()));
-    assert!(close(hits[2].score, 1.0 / 3.0_f32.sqrt()));
+    assert!(near(hits[0].score, 1.0));
+    assert!(near(hits[1].score, 1.0 / 2.0_f32.sqrt()));
+    assert!(near(hits[2].score, 1.0 / 3.0_f32.sqrt()));
 }
 
 /// An embedder that works until `down` is set.
