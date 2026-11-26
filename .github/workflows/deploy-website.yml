@@ -28,9 +28,22 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
+      # @codecora/theme is a github: dependency on a private repo, and the
+      # job's own GITHUB_TOKEN cannot read another repository. THEME_READ_TOKEN
+      # is a fine-grained token with read access to contents of
+      # codecoradev/codecora-theme. Fail loudly when it is missing instead of
+      # letting bun answer with a bare 404 (#1776).
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: |
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "::error::Secret THEME_READ_TOKEN is empty or missing. bun cannot fetch the private @codecora/theme dependency (codecoradev/codecora-theme) without it."
+            exit 1
+          fi
+          bun install --frozen-lockfile
         working-directory: docs
+        env:
+          # bun sends GITHUB_TOKEN to api.github.com for github: dependencies.
+          GITHUB_TOKEN: ${{ secrets.THEME_READ_TOKEN }}
 
       - name: Build
         run: bun run build
