@@ -1218,7 +1218,6 @@ impl crate::Uteke {
             score: f32,
             file: String,
             snippet: String,
-            best_semantic: f32,
         }
         let mut by_skill: HashMap<String, Acc> = HashMap::new();
         let mut absorb = |list: &[crate::DocumentSearchResult], semantic: bool| {
@@ -1252,18 +1251,15 @@ impl crate::Uteke {
                 } else {
                     0.0
                 };
+                // The file and snippet shown are those of the skill's first
+                // file: the semantic list is read first and is ordered best
+                // first, so that is its best file.
                 let acc = by_skill.entry(skill.to_string()).or_insert(Acc {
                     score: 0.0,
-                    file: file.clone(),
+                    file,
                     snippet: r.chunk_snippet.clone(),
-                    best_semantic: f32::MIN,
                 });
                 acc.score += contribution;
-                if semantic && r.score > acc.best_semantic {
-                    acc.best_semantic = r.score;
-                    acc.file = file;
-                    acc.snippet = r.chunk_snippet.clone();
-                }
             }
         };
         absorb(&semantic, true);
