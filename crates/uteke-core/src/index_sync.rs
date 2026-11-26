@@ -163,6 +163,25 @@ pub(crate) fn persist<I: IndexWriter>(index: &mut I, policy: &SyncPolicy) -> Res
     retry(policy, "index save", || index.save())
 }
 
+/// Save an index that was just rebuilt from SQLite (the open-time migration of
+/// a store whose index file is missing or empty), with the standard retry.
+///
+/// A failure is logged and not returned: nothing is lost, SQLite holds every
+/// vector and the next open rebuilds the index again. Returns whether the file
+/// was written.
+pub(crate) fn persist_rebuilt<I: IndexWriter>(index: &mut I, policy: &SyncPolicy) -> bool {
+    match persist(index, policy) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!(
+                "index rebuilt from SQLite but not saved: {e}. It is rebuilt again on the next \
+                 open; `uteke repair` resyncs it."
+            );
+            false
+        }
+    }
+}
+
 /// Like [`persist`] but lets the index batch: used by per-operation paths
 /// (`remember`, `forget`) so a burst of writes does not rewrite the whole
 /// index each time (#1322). Pending changes are flushed by `shutdown()`,
@@ -332,6 +351,34 @@ mod tests {
         fn dims(&self) -> usize {
             self.dims
         }
+    }
+
+    // #1758: the open-time rebuild saves once when the file can be written.
+    #[test]
+    fn persist_rebuilt_saves_once_when_the_save_works() {
+        let mut idx = FakeIndex::new(2);
+        assert!(persist_rebuilt(&mut idx, &FAST));
+        assert_eq!(idx.save_calls, 1);
+    }
+
+    // #1758: a save that fails twice and then works is retried, not swallowed
+    // after the first error (the old `index.save().ok()`).
+    #[test]
+    fn persist_rebuilt_retries_a_transient_save_failure() {
+        let mut idx = FakeIndex::new(2);
+        idx.save_failures_left = 2;
+        assert!(persist_rebuilt(&mut idx, &FAST));
+        assert_eq!(idx.save_calls, 3);
+    }
+
+    // #1758: a save that never works stops after the policy's attempts and
+    // reports it instead of failing the open: SQLite still holds the vectors.
+    #[test]
+    fn persist_rebuilt_gives_up_after_the_policy_attempts_without_failing() {
+        let mut idx = FakeIndex::new(2);
+        idx.save_failures_left = 99;
+        assert!(!persist_rebuilt(&mut idx, &FAST));
+        assert_eq!(idx.save_calls, FAST.attempts);
     }
 
     // #1322: a deterministic (validation) error is never retried, so the
