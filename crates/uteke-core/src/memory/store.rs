@@ -222,10 +222,12 @@ pub(super) const SCHEMA_INDEXES: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS idx_memories_source ON memories(source);",
     // After the observations column check: an early build lacked batch_id.
     "CREATE INDEX IF NOT EXISTS idx_observations_batch ON observations(batch_id);",
+    // `list_pinned` reads pinned rows newest first, per namespace (#1804).
+    "CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(namespace, created_at) WHERE pinned = 1 AND deprecated = 0;",
 ];
 
 /// Current schema version. Increment when adding migrations.
-pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 27;
+pub(crate) const CURRENT_SCHEMA_VERSION: i32 = 28;
 
 /// Persistent SQLite store for memories.
 pub struct Store {
@@ -2081,6 +2083,164 @@ mod tests {
         assert_eq!(store.count(None).unwrap(), 10);
     }
 
+    fn ts(month: u32) -> chrono::DateTime<Utc> {
+        chrono::DateTime::parse_from_rfc3339(&format!("2026-{month:02}-01T00:00:00Z"))
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    /// #1804: `list_pinned` returns only pinned, non-deprecated rows, newest
+    /// first, honours `limit`, and agrees with `count_pinned`.
+    #[test]
+    fn test_list_pinned_only_pinned_newest_first_and_limit() {
+        let store = Store::open(":memory:").unwrap();
+        for (id, month, pinned) in [
+            ("p-old", 1, true),
+            ("p-new", 3, true),
+            ("p-mid", 2, true),
+            ("plain", 4, false),
+        ] {
+            let mut m = make_test_memory(id, id, &[]);
+            m.created_at = ts(month);
+            m.pinned = pinned;
+            store.insert(&m).unwrap();
+        }
+
+        let all = store.list_pinned(None, 10).unwrap();
+        let ids: Vec<&str> = all.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["p-new", "p-mid", "p-old"]);
+        assert!(all.iter().all(|m| m.pinned));
+
+        assert_eq!(store.list_pinned(None, 2).unwrap().len(), 2);
+        assert_eq!(store.list_pinned(None, 0).unwrap().len(), 0);
+        assert_eq!(
+            store.list_pinned(None, usize::MAX).unwrap().len(),
+            store.count_pinned(None).unwrap()
+        );
+    }
+
+    /// #1804: `namespace = Some(..)` restricts to that namespace; `None`
+    /// spans all namespaces; a soft-deleted (deprecated) pinned row is left
+    /// out, exactly like `count_pinned`.
+    #[test]
+    fn test_list_pinned_namespace_filter_and_excludes_deprecated() {
+        let store = Store::open(":memory:").unwrap();
+        for (id, ns, month, pinned) in [
+            ("a1", "ns-a", 1, true),
+            ("a2", "ns-a", 4, true),
+            ("b1", "ns-b", 2, true),
+            ("a-plain", "ns-a", 3, false),
+            ("b-dep", "ns-b", 5, true),
+        ] {
+            let mut m = make_test_memory_ns(id, id, &[], ns);
+            m.created_at = ts(month);
+            m.pinned = pinned;
+            m.deprecated = id == "b-dep";
+            store.insert(&m).unwrap();
+        }
+
+        let a = store.list_pinned(Some("ns-a"), 10).unwrap();
+        assert_eq!(
+            a.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["a2", "a1"]
+        );
+        assert!(a.iter().all(|m| m.namespace == "ns-a"));
+
+        let b = store.list_pinned(Some("ns-b"), 10).unwrap();
+        assert_eq!(
+            b.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["b1"],
+            "deprecated pinned row must be excluded"
+        );
+
+        let all = store.list_pinned(None, 10).unwrap();
+        assert_eq!(
+            all.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            vec!["a2", "b1", "a1"]
+        );
+        assert!(store.list_pinned(Some("nope"), 10).unwrap().is_empty());
+
+        for ns in [None, Some("ns-a"), Some("ns-b")] {
+            assert_eq!(
+                store.list_pinned(ns, usize::MAX).unwrap().len(),
+                store.count_pinned(ns).unwrap()
+            );
+        }
+    }
+
+    /// #1804: a v27 store (no `idx_memories_pinned`) reopens at the current
+    /// version, keeps its rows and ends with the partial index.
+    #[test]
+    fn test_migration_v28_adds_list_pinned_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v27.db");
+        let path = path.to_str().unwrap();
+        {
+            let store = Store::open(path).unwrap();
+            let mut m = make_test_memory("old", "legacy memory", &[]);
+            m.pinned = true;
+            store.insert(&m).unwrap();
+            store
+                .conn
+                .execute_batch(
+                    "DROP INDEX idx_memories_pinned;
+                     UPDATE schema_version SET version = 27;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            store.list_pinned(None, 10).unwrap().len(),
+            1,
+            "rows survive the migration"
+        );
+        let n: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_memories_pinned'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        // Reopening at the current version is a no-op.
+        drop(store);
+        assert!(Store::open(path).is_ok());
+    }
+
+    /// #1804: on a store with enough rows, the per-namespace query is served
+    /// by the partial index `idx_memories_pinned` instead of a table scan.
+    #[test]
+    fn test_list_pinned_uses_partial_index() {
+        let store = Store::open(":memory:").unwrap();
+        for i in 0..500 {
+            let ns = if i % 2 == 0 { "ns-a" } else { "ns-b" };
+            let mut m = make_test_memory_ns(&format!("m{i}"), "x", &[], ns);
+            m.embedding = vec![];
+            m.pinned = i % 50 == 0;
+            store.insert(&m).unwrap();
+        }
+        // `EXPLAIN QUERY PLAN` takes no bound parameters: the plan depends on
+        // the schema, not on the namespace value, so inline a literal.
+        let plan: String = store
+            .conn
+            .query_row(
+                "EXPLAIN QUERY PLAN SELECT id FROM memories
+                 WHERE pinned = 1 AND deprecated = 0 AND namespace = 'ns-a'
+                 ORDER BY created_at DESC LIMIT 10",
+                [],
+                |r| r.get(3),
+            )
+            .unwrap();
+        assert!(
+            plan.contains("idx_memories_pinned") && !plan.contains("SCAN memories"),
+            "expected the partial index, got: {plan}"
+        );
+        assert_eq!(store.list_pinned(Some("ns-a"), 10).unwrap().len(), 10);
+    }
+
     #[test]
     fn test_delete_nonexistent() {
         let store = Store::open(":memory:").unwrap();
@@ -2585,6 +2745,123 @@ mod tests {
             .unwrap();
         assert_eq!(source.as_deref(), Some("https://rust-lang.org"));
         assert_eq!(source_type, "url");
+    }
+
+    /// A store created before documents became global keeps the `documents`
+    /// table of schema v11: `namespace TEXT NOT NULL DEFAULT 'default'`.
+    /// Migration v13 only drops the unique index, so the column stays NOT NULL.
+    /// `Document::namespace` is `None` for every document the engine writes, so
+    /// the insert must leave the column to its default instead of binding NULL
+    /// (`NOT NULL constraint failed: documents.namespace`, CLI, HTTP and MCP).
+    #[test]
+    fn a_store_with_the_old_not_null_namespace_column_takes_a_new_document() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                embedding BLOB,
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                access_count INTEGER NOT NULL DEFAULT 0,
+                last_accessed TEXT,
+                deprecated INTEGER NOT NULL DEFAULT 0,
+                valid_from TEXT,
+                valid_until TEXT,
+                memory_type TEXT NOT NULL DEFAULT 'fact',
+                importance REAL NOT NULL DEFAULT 0.5,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT NOT NULL DEFAULT 'text',
+                slug TEXT,
+                source TEXT,
+                source_type TEXT NOT NULL DEFAULT 'user'
+            );
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL COLLATE NOCASE,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 1,
+                content_type TEXT NOT NULL DEFAULT 'markdown',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(namespace, slug)
+            );
+            CREATE TABLE schema_version (
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_version (version, applied_at) VALUES (11, '2026-06-27T00:00:00Z');",
+        )
+        .unwrap();
+        let store = Store::from_conn(conn).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let doc = crate::memory::documents::Document {
+            id: "doc-1".into(),
+            slug: "test-slug".into(),
+            title: "t".into(),
+            content: "# t".into(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".into(),
+            created_at: now.clone(),
+            updated_at: now,
+            parent_id: None,
+            path: "/doc-1/".into(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+
+        let stored = store.get_document_by_slug("test-slug").unwrap().unwrap();
+        assert_eq!(stored.id, "doc-1");
+        assert_eq!(
+            stored.namespace.as_deref(),
+            Some("default"),
+            "the column default applies when the engine names no namespace"
+        );
+    }
+
+    /// A store created by this version has a nullable `namespace` column and
+    /// documents carry no namespace by design (#614, #1271): the fix for the
+    /// old NOT NULL column must not stamp 'default' onto them.
+    #[test]
+    fn a_new_store_keeps_the_namespace_of_a_new_document_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let doc = crate::memory::documents::Document {
+            id: "doc-1".into(),
+            slug: "test-slug".into(),
+            title: "t".into(),
+            content: "# t".into(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".into(),
+            created_at: now.clone(),
+            updated_at: now,
+            parent_id: None,
+            path: "/doc-1/".into(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+        let stored = store.get_document_by_slug("test-slug").unwrap().unwrap();
+        assert_eq!(stored.namespace, None);
     }
 
     // ────────────────────────────────────────────────────────────

@@ -14,15 +14,18 @@ the computer tell you the truth yourself. Three budgets, pick one:
 disk. The embedding model (~200 MB) downloads once on first run. Everything else is
 in this repo.
 
-> **Published numbers (v0.20.0, 500 questions, LongMemEval-S):**
-> recall_any@5 **98.2%** · recall_any@10 98.8% · strict recall_all@5 88.0% ·
-> coverage@5 94.4% — all on the full 500-question basis. On the 470
+> **Published numbers (v0.24.0, 500 questions, LongMemEval-S):**
+> recall_any@5 **98.2%** · recall_any@10 98.8% · strict recall_all@5 87.6% ·
+> coverage@5 94.2% — all on the full 500-question basis. On the 470
 > non-abstention questions (the 30 `_abs` questions are reported separately:
-> they measure answering, not retrieval), strict recall_all@5 is 88.3% and
-> coverage@5 is 94.7%. Per-release any@5: v0.16.0 98.2% · v0.17.0 98.4% ·
-> v0.19.0 98.2% · v0.20.0 98.2% — strict@5 (88.0) is unchanged across all four;
-> strict@10 moved 95.4% → 95.2% on a single top-10 boundary flip (gold remains
-> inside the top-50).
+> they measure answering, not retrieval), strict recall_all@5 is 87.9% and
+> coverage@5 is 94.5%. Per-release any@5: v0.16.0 98.2% · v0.17.0 98.4% ·
+> v0.19.0 98.2% · v0.20.0 98.2% · v0.24.0 98.2%. Strict@5 was 88.0% in v0.16.0
+> to v0.20.0 and is 87.6% in v0.24.0: two questions (`0977f2af`, `dd2973ad`)
+> moved a gold session across the rank-5 boundary with identical top-50 sets
+> ([RESULTS.md](RESULTS.md#v0240-validation--done-2026-11-17)). Strict@10 is
+> 95.2% in v0.20.0 and v0.24.0 (95.4% before v0.20.0, one top-10 boundary flip;
+> gold remains inside the top-50).
 > What these metric names mean: [docs/benchmarks.md](../../docs/benchmarks.md) and
 > [`RESULTS.md`](RESULTS.md#reading-the-metrics).
 
@@ -30,7 +33,8 @@ in this repo.
 
 | File | Run | Headline |
 |---|---|---|
-| [`results/default-500q-v0.20.0.jsonl`](results/default-500q-v0.20.0.jsonl) | v0.20.0 (current release binary) | any@5 **98.2%** |
+| [`results/default-500q-v0.24.0.jsonl`](results/default-500q-v0.24.0.jsonl) | v0.24.0 (current release binary) · [receipt](receipts/v0.24.0-default-500q/) | any@5 **98.2%** |
+| [`results/default-500q-v0.20.0.jsonl`](results/default-500q-v0.20.0.jsonl) | v0.20.0 | any@5 98.2% |
 | [`results/default-500q-v0.19.0.jsonl`](results/default-500q-v0.19.0.jsonl) | v0.19.0 | any@5 98.2% |
 | [`results/default-500q-v017.jsonl`](results/default-500q-v017.jsonl) | v0.17.0 | any@5 98.4% |
 | [`results/default-500q.jsonl`](results/default-500q.jsonl) | v0.16.0 (canonical validation) | any@5 98.2% |
@@ -75,7 +79,7 @@ print(f"total-miss@50  = {sum(1 for q in non_abs if not (gold[q] & set(rows[q][:
 EOF
 ```
 
-Expected output — `recall_any@5` = **0.9820** (v0.20.0 / v0.19.0 files), **0.9840** (v0.17.0)
+Expected output — `recall_any@5` = **0.9820** (v0.24.0 / v0.20.0 / v0.19.0 files), **0.9840** (v0.17.0)
 or **0.9820** (v0.16.0 file), `total-miss@50 = 0`: every question has all its gold
 sessions somewhere in the top-50; everything below perfect is ranking order, not missing
 data.
@@ -164,17 +168,17 @@ different questions:
 
 - **recall_any@K** — "did the retriever surface *the* evidence?" (at least one
   gold session in top-K). This is the metric competitor benchmarks publish;
-  ours: **98.2% @ 5** (full 500-question set, v0.19.0).
+  ours: **98.2% @ 5** (full 500-question set, v0.24.0).
 - **recall_all@K (strict)** — "did it get *all* of them?" (every gold session in
   top-K; 65% of the 500 questions have multiple gold sessions). The honest
-  ceiling-capable number: **88.0% @ 5** on the full 500 (88.3% on the 470
-  non-abstention) — mathematical ceiling is 99.4% (3 questions have 6 gold
+  ceiling-capable number: **87.6% @ 5** on the full 500 (87.9% on the 470
+  non-abstention; 88.0% in v0.16.0 to v0.20.0, see the note above) — mathematical ceiling is 99.4% (3 questions have 6 gold
   sessions; top-5 physically can't hold all).
-- **coverage R@K** — partial credit (fraction of gold sessions found). 94.3%
-  full-500 (94.6% on the 470 non-abstention).
+- **coverage R@K** — partial credit (fraction of gold sessions found). 94.2%
+  full-500 (94.5% on the 470 non-abstention).
 
 Per-category breakdown, the 30 abstention questions, contradiction segment, and
-the v0.16.0 → v0.17.0 → v0.19.0 comparisons: [`RESULTS.md`](RESULTS.md),
+the v0.16.0 → v0.17.0 → v0.19.0 → v0.20.0 → v0.24.0 comparisons: [`RESULTS.md`](RESULTS.md),
 [`docs/benchmarks.md`](../../docs/benchmarks.md).
 
 ## Reproducibility guarantees

@@ -685,10 +685,23 @@ impl crate::Uteke {
         for (v, parent_id) in ordered {
             let tags = serde_json::to_string(&v["tags"]).unwrap_or_else(|_| "[]".into());
             let metadata = serde_json::to_string(&v["metadata"]).unwrap_or_else(|_| "{}".into());
+            // A document without a namespace leaves the column to its default.
+            // A store that went through schema v11 has `namespace NOT NULL
+            // DEFAULT 'default'`, where an explicit NULL is a constraint
+            // violation that INSERT OR IGNORE would turn into a silently
+            // skipped document. Slot ?5 stays bound but unused in that case.
+            let (namespace_column, namespace_value) = if v["namespace"].as_str().is_some() {
+                ("namespace, ", "?5,")
+            } else {
+                ("", "")
+            };
+            let insert_document = format!(
+                "INSERT OR IGNORE INTO documents (id, slug, title, content, {namespace_column}author, tags, metadata, version, content_type, created_at, updated_at, parent_id, depth, sort_order, has_children, path) \
+                 VALUES (?1,?2,?3,?4,{namespace_value}?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)"
+            );
             let n = conn
                 .execute(
-                    "INSERT OR IGNORE INTO documents (id, slug, title, content, namespace, author, tags, metadata, version, content_type, created_at, updated_at, parent_id, depth, sort_order, has_children, path) \
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+                    &insert_document,
                     rusqlite::params![
                         v["id"].as_str().unwrap_or(""),
                         v["slug"].as_str().unwrap_or(""),
@@ -1172,6 +1185,52 @@ mod document_vector_tests {
     use crate::test_support::open_keyword;
 
     const BODY: &str = "# Caching\n\nThe quokka cache stores marsupial lookups.\n\n## Eviction\n\nEntries leave when the wombat timer fires.\n";
+
+    /// A store that went through schema v11 keeps `namespace TEXT NOT NULL
+    /// DEFAULT 'default'` on `documents`. The engine writes documents without
+    /// a namespace, so importing one must leave the column to its default:
+    /// binding NULL there is a constraint violation that INSERT OR IGNORE
+    /// would hide by dropping the document.
+    #[test]
+    fn a_document_without_a_namespace_imports_into_the_old_not_null_column() {
+        let src = open_keyword();
+        src.doc_upsert("legacy-doc", "Legacy", BODY, &[], None)
+            .unwrap();
+        let bundle = src.export_full().unwrap();
+
+        let dst = open_keyword();
+        dst.graph_store()
+            .execute_batch(
+                "DROP TABLE documents;
+                 CREATE TABLE documents (
+                    id TEXT PRIMARY KEY,
+                    slug TEXT NOT NULL COLLATE NOCASE,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    namespace TEXT NOT NULL DEFAULT 'default',
+                    tags TEXT DEFAULT '[]',
+                    metadata TEXT DEFAULT '{}',
+                    version INTEGER NOT NULL DEFAULT 1,
+                    content_type TEXT NOT NULL DEFAULT 'markdown',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    parent_id TEXT REFERENCES documents(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL DEFAULT '',
+                    depth INTEGER NOT NULL DEFAULT 0,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    has_children INTEGER NOT NULL DEFAULT 0,
+                    author TEXT DEFAULT NULL,
+                    UNIQUE(slug)
+                 );",
+            )
+            .unwrap();
+
+        let imported = dst.import_full(&bundle).unwrap();
+        assert_eq!(imported["imported"]["documents"], 1, "{imported}");
+        let doc = dst.doc_get("legacy-doc").unwrap().unwrap();
+        assert_eq!(doc.title, "Legacy");
+        assert_eq!(doc.namespace.as_deref(), Some("default"));
+    }
 
     /// #1587: a structural bundle carries chunk text but no vectors, so the
     /// restored documents are invisible to semantic search until the chunks

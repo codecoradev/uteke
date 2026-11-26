@@ -2,6 +2,82 @@
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-11-26
+
+Patch release. Theme: **`doc create` works again on stores that went through schema v11, and the
+website builds again.** Every way to create a document (`uteke doc create`, `POST /doc/create`,
+`uteke_doc_create`) failed with `NOT NULL constraint failed: documents.namespace` on such a store, and
+the `Deploy Website` workflow failed on every push to `main` and every tag since v0.23.0, so
+uteke.app was not updated. Plus a gap in the secret detector (`uteke-privacy`) and a faster
+`list_pinned`.
+
+**Upgrade notes**
+
+- Schema v28 (a partial index on pinned memories, #1804): a store opened by 0.24.2 is at v28, and a
+  0.24.1 or older binary refuses it ("database schema version 28 is newer than supported version 27").
+  Back up the data directory before moving to 0.24.2 if you may roll back. The migration only creates
+  an index; no row changes.
+- No CORE contract change: `list_pinned` is a core library method (no HTTP, MCP or CLI surface), and
+  the `doc create` fix restores the documented behaviour.
+- Dependency updates: rusqlite 0.43 (bundled SQLite), clap 4.6.8, uuid, flate2, toml.
+- MCP Registry: `server.json` is now `app.uteke/uteke-memory` (domain-verified through
+  `_mcp.uteke.app`) with the title "Uteke - Long Term Memory for AI Agents" and icons; the release
+  workflow publishes it with the `MCP_DNS_PRIVATE_KEY_HEX` repository secret, and the old
+  `io.github.codecoradev/uteke` listing is deprecated by a separate manual workflow once the new one is
+  live (#1802, #1803).
+
+### Added
+
+- **`Uteke::list_pinned` fetches pinned memories in one query (#1804)** - a client lists the pinned
+  (never-decay) memories, newest first and optionally per namespace, instead of paging through the
+  whole store and filtering. A soft-deleted (deprecated) pinned memory is left out, so the result
+  matches `count_pinned`. Schema v28 adds a partial index (`idx_memories_pinned`) so the query does
+  not scan the table; a store at v27 upgrades in place and keeps its rows.
+
+### Fixed
+
+- **The website build failed on `docs/viewer.md`, so uteke.app was not updated since v0.23.0** -
+  a code span (`Authorization: Bearer <token>`) was wrapped across two lines, and VitePress read the
+  `<token>` as an HTML element without an end tag (`viewer.md: Element is missing end tag`). The
+  `Deploy Website` workflow failed at its Build step on every push to `main` and every tag from
+  v0.23.0 on. The span is on one line again; all pages build.
+- **`uteke-privacy`: an `API_KEY=value` secret next to a non-ASCII character, a guillemet or a bare
+  `[REDACTED` was not masked (#1794)** - a character such as `é` or `«` stuck to either end of the
+  value made the whole value "prose", and `[REDACTED` anywhere in a value (or at its start, where
+  `[` ended the value at once) made it a "placeholder", so `API_KEY=«<24-char token>»` and
+  `API_KEY=[REDACTED<token>` stayed in clear text. Now the ASCII run is the value: it is masked and
+  the character stays (`API_KEY=«[REDACTED:env-secret]»`). `[REDACTED` is a placeholder only as a
+  complete mask (`[REDACTED]`, `[REDACTED:kind]`), so a bare marker glued to a secret does not hide
+  it, and a value that is only masks stays untouched (`redact` is still idempotent). A run of bare
+  markers of any length (456 or more used to fill the 4096-byte window of one value) is skipped in a
+  loop over the whole text, so it neither hides the secret behind it nor nests calls. A value with
+  whitespace, or with non-ASCII inside it, is still prose, and a password name keeps taking a whole
+  non-ASCII token. The behaviour is documented in the crate docs; tole, which shares the crate,
+  can drop the `«NAME»` stand-in workaround.
+- **`doc create` failed with `NOT NULL constraint failed: documents.namespace` on older stores** -
+  a store that went through schema v11 keeps `namespace TEXT NOT NULL DEFAULT 'default'` on
+  `documents` (migration v13 only dropped the unique index), and the insert bound NULL to that
+  column explicitly, so the column default never applied. Every way to create a document failed:
+  `uteke doc create`, `POST /doc/create` (500) and `uteke_doc_create` (`insert document: missing
+  required field`). A document without a namespace now leaves the column out of the insert, so an
+  old store stores `'default'` and a store created by this version keeps the column empty. The
+  structural import (`uteke import` of a full bundle) had the same bind, and because it uses
+  `INSERT OR IGNORE` it skipped such documents without an error; it is fixed the same way.
+  Documents stay global (#614): `--namespace` on `doc create` is still not a document scope.
+
+### Docs
+
+- **LongMemEval-S numbers refreshed to the v0.24.0 release binary (#1789)** - the README (English
+  and Indonesian), `docs/benchmarks.md`, `docs/comparison.md`, `docs/benchmark-positioning.md` and
+  `benchmarks/longmemeval/REPRODUCING.md` quote the v0.24.0 run: recall_any@5 98.2% and
+  recall_any@10 98.8% (unchanged), strict recall_all@5 87.6% (88.0% in v0.16.0 to v0.20.0; two
+  questions moved a gold session across the rank-5 boundary with identical top-50 sets), strict@10
+  95.2%, zero misses@50. New receipt `benchmarks/longmemeval/receipts/v0.24.0-default-500q/` (its
+  `summary.json` is the output of `score_longmemeval.py` on the committed raw file) and a
+  v0.24.0 section in `RESULTS.md`; the facts the run did not record (the Modal run id, the exact
+  command) are marked "not recorded" in the manifest. The breakdown chart still shows the
+  v0.20.0 run and says so.
+
 ## [0.24.1] - 2026-11-17
 
 Patch release. Theme: **`uteke-serve` 0.24.0 never started listening.** Every start of 0.24.0 stopped

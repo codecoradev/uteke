@@ -1,0 +1,44 @@
+name: MCP Registry Deprecate Legacy Entry
+
+# Flips the legacy io.github.codecoradev/uteke registry entry to status=deleted
+# once the domain-namespace listing (app.uteke/uteke-memory) is live.
+#
+# Run BY HAND (workflow_dispatch) only after verifying the new listing:
+#   curl -s "https://registry.modelcontextprotocol.io/v0/servers?search=app.uteke"
+#
+# Existing installs keep working — both entries point at the same remote
+# (https://uteke.app/mcp); this only removes the old row from registry search.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  MCP_PUBLISHER_VERSION: "1.8.8"
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install mcp-publisher
+        run: |
+          base="https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}"
+          curl -fsSLO "$base/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSLO "$base/registry_${MCP_PUBLISHER_VERSION}_checksums.txt"
+          grep ' mcp-publisher_linux_amd64.tar.gz$' "registry_${MCP_PUBLISHER_VERSION}_checksums.txt" | sha256sum -c -
+          tar xzf mcp-publisher_linux_amd64.tar.gz mcp-publisher
+
+      - name: Login via GitHub OIDC (legacy namespace owner)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Mark legacy entry deleted
+        run: |
+          # --all-versions prompts "Continue? [y/N]" on a TTY; in CI stdin is
+          # empty and the prompt fails with "failed to read response: EOF".
+          # Non-interactive: pipe the confirmation.
+          printf 'y\n' | ./mcp-publisher status --status deleted --all-versions \
+            --message "Moved to app.uteke/uteke-memory (domain namespace). Remote endpoint unchanged: https://uteke.app/mcp" \
+            io.github.codecoradev/uteke

@@ -80,11 +80,11 @@ Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.ap
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) menyembunyikan fakta yang dibutuhkan agent di antara ~115 sesi chat per pertanyaan, lalu mengecek apakah retrieval bisa menemukannya. 500 pertanyaan yang dikurasi manual, lima kemampuan memori. Uteke menjalankan semuanya dengan **nol panggilan LLM di jalur retrieval**: embedding lokal, satu CPU, deterministik.
 
-| Metrik | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
+| Metrik | Uteke **v0.24.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
 | **recall_any@5** (bukti di top 5) | **98,2%** | 96,6%⁴ | 95,2%³ |
 | recall_any@10 | 98,8% | — | 98,6%³ |
-| **strict recall_all@5** (semua bukti di top 5) | <b>88,0%</b>² | tidak dipublikasikan | 84,7%³ |
+| **strict recall_all@5** (semua bukti di top 5) | <b>87,6%</b>² | tidak dipublikasikan | 84,7%³ |
 | Panggilan LLM di retrieval | **0** | 0 (mode raw)⁴ | 0 |
 
 <p align="center">
@@ -95,30 +95,32 @@ Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.ap
   </picture>
 </p>
 
-<sub>¹ Angka yang mereka publikasikan di LongMemEval-S, masing-masing dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. Dibaca dari README mereka pada 2026-11-16. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. ³ agentmemory: 95,2% / 98,6% adalah run hybrid lamanya, yang di halamannya sendiri diberi label historis (pipeline lama, 500 pertanyaan). README mereka yang sekarang, diukur 2026-10-28, melaporkan strict recall_all@5 84,7% dan any-hit@5 96,2% untuk komponen BM25 keyless saja, dengan 470 pertanyaan yang bisa dijawab. Denominator dan pipeline berbeda, jadi bukan head-to-head dengan angka kami. ⁴ MemPalace: 96,6% adalah mode raw-nya (semantic search, tanpa LLM, 500 pertanyaan). Mereka juga melaporkan 98,4% untuk mode hybrid pada subset held-out 450 pertanyaan (50 dipakai untuk tuning) dan ≥99% dengan rerank LLM; keduanya bukan split atau setup yang sama, jadi tidak masuk tabel.</sub>
+<sub>¹ Angka yang mereka publikasikan di LongMemEval-S, masing-masing dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. Dibaca dari README mereka pada 2026-11-16. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. v0.24.0 mendapat 87,6% (438 dari 500) di mana v0.16.0 sampai v0.20.0 mendapat 88,0% (440): dua pertanyaan menggeser satu dari dua sesi gold-nya melewati batas peringkat 5 dengan himpunan top-50 yang tetap sama dan recall_any@5 tidak berubah, yaitu jitter peringkat bersebelahan yang didokumentasikan [RESULTS.md](benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17). ³ agentmemory: 95,2% / 98,6% adalah run hybrid lamanya, yang di halamannya sendiri diberi label historis (pipeline lama, 500 pertanyaan). README mereka yang sekarang, diukur 2026-10-28, melaporkan strict recall_all@5 84,7% dan any-hit@5 96,2% untuk komponen BM25 keyless saja, dengan 470 pertanyaan yang bisa dijawab. Denominator dan pipeline berbeda, jadi bukan head-to-head dengan angka kami. ⁴ MemPalace: 96,6% adalah mode raw-nya (semantic search, tanpa LLM, 500 pertanyaan). Mereka juga melaporkan 98,4% untuk mode hybrid pada subset held-out 450 pertanyaan (50 dipakai untuk tuning) dan ≥99% dengan rerank LLM; keduanya bukan split atau setup yang sama, jadi tidak masuk tabel.</sub>
 
 <details>
 <summary>Stabilitas antar rilis dan hasil per jenis pertanyaan</summary>
 
 **Stabil antar rilis** (500 pertanyaan penuh, dihitung dari raw yang di-commit, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)):
 
-| Rilis | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 |
-|---|---|---|---|---|
-| recall_any@5 | 98,2% | 98,4% | 98,2% | 98,2% |
-| strict recall_all@5 | 88,0% | 88,0% | 88,0% | 88,0% |
+| Rilis | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | v0.24.0 |
+|---|---|---|---|---|---|
+| recall_any@5 | 98,2% | 98,4% | 98,2% | 98,2% | 98,2% |
+| strict recall_all@5 | 88,0% | 88,0% | 88,0% | 88,0% | 87,6% |
 
-**Per jenis pertanyaan** (recall_any@5, v0.20.0):
+<sub>Kolom v0.24.0 adalah binary rilis resmi (2026-11-17): recall_any@5 dan recall_any@10 tidak berubah (98,2%, 98,8%), strict@10 95,2%, nol yang terlewat di @50, dan strict@5 berbeda karena dua pertanyaan batas pada catatan ².</sub>
+
+**Per jenis pertanyaan** (recall_any@5, v0.24.0, 470 pertanyaan non-abstain; sama dengan v0.20.0):
 
 | knowledge-update | single-session | temporal | multi-session |
 |:---:|:---:|:---:|:---:|
 | **100%** | 96,7–98,2% | 98,4% | 98,3% |
 
-Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang tersisa adalah urutan, saat satu pertanyaan butuh beberapa sesi sekaligus: strict recall_all@5 88,0% dari batas 99,4%, dan sebagian besar kegagalan hanya kehilangan satu sesi.
+Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang tersisa adalah urutan, saat satu pertanyaan butuh beberapa sesi sekaligus: strict recall_all@5 87,6% dari batas 99,4%, dan sebagian besar kegagalan hanya kehilangan satu sesi.
 
 </details>
 
 > **🎯 Jangan percaya benchmark kami. Jalankan sendiri.** Dataset publik, raw output untuk setiap rilis yang divalidasi, dan skor yang bisa kamu hitung ulang dengan ~20 baris Python. Mengecek hasil yang di-commit cuma butuh semenit tanpa embedder; menjalankan ulang 500 pertanyaan sekitar $10.
-> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipt untuk angka utama (run v0.19.0)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
+> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 Receipt: [run v0.24.0](benchmarks/longmemeval/receipts/v0.24.0-default-500q/) · [run v0.19.0](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
 
 `uteke bench --counts 100,1000,10000` mengukur latency dan throughput di mesin kamu sendiri. 📖 [Docs benchmark](docs/benchmarks.md)
 
@@ -135,7 +137,7 @@ Bukti untuk setiap pertanyaan selalu ada di top 50 (nol yang terlewat). Yang ter
 </p>
 
 <p align="center">
-  <i>Semua 500 pertanyaan LongMemEval-S, tanpa panggilan LLM di retrieval. Raw output-nya ada di repo: <a href="benchmarks/longmemeval/REPRODUCING.md">cek dalam semenit, atau jalankan ulang semuanya dengan sekitar $10</a>.</i>
+  <i>Run v0.20.0, semua 500 pertanyaan LongMemEval-S, tanpa panggilan LLM di retrieval (v0.24.0 ada di tabel di atas: strict recall_all@5 87,6%, coverage@5 94,2%). Raw output-nya ada di repo: <a href="benchmarks/longmemeval/REPRODUCING.md">cek dalam semenit, atau jalankan ulang semuanya dengan sekitar $10</a>.</i>
 </p>
 
 ---

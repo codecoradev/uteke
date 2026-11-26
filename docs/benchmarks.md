@@ -103,18 +103,18 @@ re-validated again on the v0.19.0 release tree (2026-09-29).
 
 ### Headline numbers
 
-Full 500-question basis, all three validated releases (scored from the committed
+Full 500-question basis, the validated releases (scored from the committed
 raw artifacts):
 
-| Metric | v0.16.0 | v0.17.0 | v0.19.0 | fix 32a5cf3b | What it means |
-|---|---|---|---|---|---|
-| **recall_any@5** | 98.2% | 98.4% | **98.2%** | 98.2% | At least one gold session in top-5 — the metric competitor benchmarks publish |
-| recall_any@10 | 98.8% | 98.8% | 98.8% | — | |
-| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | **Strict:** every gold session in top-5 (mathematical ceiling 99.4% — 3 questions have 6 gold sessions) |
-| strict recall_all@10 | 95.4% | 95.4% | 95.4% | 95.4% | Every gold session in top-10 |
-| coverage@5 | 94.3% | 94.4% | 94.3% | — | Partial credit per question |
+| Metric | v0.16.0 | v0.17.0 | v0.19.0 | fix 32a5cf3b | v0.24.0 | What it means |
+|---|---|---|---|---|---|---|
+| **recall_any@5** | 98.2% | 98.4% | **98.2%** | 98.2% | 98.2% | At least one gold session in top-5 — the metric competitor benchmarks publish |
+| recall_any@10 | 98.8% | 98.8% | 98.8% | — | 98.8% | |
+| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | 87.6% | **Strict:** every gold session in top-5 (mathematical ceiling 99.4% — 3 questions have 6 gold sessions) |
+| strict recall_all@10 | 95.4% | 95.4% | 95.4% | 95.4% | 95.2% | Every gold session in top-10 |
+| coverage@5 | 94.3% | 94.4% | 94.3% | — | 94.2% | Partial credit per question |
 
-The strict family (88.0 / 95.4) is bit-stable across all three releases;
+The strict family (88.0 / 95.4) is bit-stable across the first three releases;
 recall_any@5 sits in a ±0.2pp band (98.2–98.4) with zero flips @10/@50 and one
 rank-boundary flip @5 between v0.17.0 and v0.19.0
 ([details](../benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)).
@@ -122,8 +122,17 @@ rank-boundary flip @5 between v0.17.0 and v0.19.0
 Re-validated 2026-11-08 after the #1690 import fix (measured on the pre-squash commit `32a5cf3b`, merged as `3bc72c1`): strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence
 ([post-regression validation](../benchmarks/longmemeval/RESULTS.md#post-regression-validation-2026-11-08)).
 
+v0.24.0 (the official release binary, run on 2026-11-17, receipt in
+[`receipts/v0.24.0-default-500q/`](../benchmarks/longmemeval/receipts/v0.24.0-default-500q/)):
+recall_any@5 and recall_any@10 are unchanged, zero misses@50, strict@5 is 87.6%
+(438 of 500) and strict@10 is 95.2%. The strict@5 difference is two questions,
+`0977f2af` and `dd2973ad`, whose gold sessions moved across the rank-5 boundary
+with identical top-50 sets, the adjacent-rank jitter described in
+[RESULTS.md](../benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17).
+
 On the 470 non-abstention questions (the 30 `_abs` abstention questions are
-reported separately), strict recall_all@5 is 88.3% and coverage@5 is 94.6%.
+reported separately), v0.24.0 has strict recall_all@5 of 87.9% (413 of 470) and
+coverage@5 of 94.5%.
 Per-type breakdown, ablations, and the contradiction segment:
 [benchmarks/longmemeval/RESULTS.md](../benchmarks/longmemeval/RESULTS.md).
 
@@ -162,7 +171,7 @@ ablation on this dataset scores 91.4% any@5 ([RESULTS.md](../benchmarks/longmeme
 > also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 questions
 > used for tuning) and ≥99% with an LLM rerank. The 84.7%, 96.2%, 98.4% and ≥99% figures
 > do not share our split or denominator, so they are not head-to-head with Uteke's
-> 98.2% / 88.0%; even the 95.2% and 96.6% figures come from the other projects' own
+> 98.2% / 87.6%; even the 95.2% and 96.6% figures come from the other projects' own
 > harnesses. Full detail with sources:
 > [Comparison](comparison.md#published-benchmark-figures-cross-source-not-uteke-measurements).
 

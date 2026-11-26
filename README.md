@@ -83,11 +83,11 @@ Rather not run anything locally? **[Uteke Cloud](https://uteke.app/?utm_source=g
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) hides the facts an agent needs across ~115 chat sessions per question and checks whether retrieval finds them. 500 hand-curated questions, five memory abilities. Uteke runs the full suite with **zero LLM calls in the retrieval path**: local embeddings, one CPU, deterministic.
 
-| Metric | Uteke **v0.20.0** | MemPalace¹ | agentmemory¹ |
+| Metric | Uteke **v0.24.0** | MemPalace¹ | agentmemory¹ |
 |---|---|---|---|
 | **recall_any@5** (evidence in top 5) | **98.2%** | 96.6%⁴ | 95.2%³ |
 | recall_any@10 | 98.8% | — | 98.6%³ |
-| **strict recall_all@5** (all evidence in top 5) | <b>88.0%</b>² | not published | 84.7%³ |
+| **strict recall_all@5** (all evidence in top 5) | <b>87.6%</b>² | not published | 84.7%³ |
 | LLM calls in retrieval | **0** | 0 (raw mode)⁴ | 0 |
 
 <p align="center">
@@ -98,32 +98,32 @@ Rather not run anything locally? **[Uteke Cloud](https://uteke.app/?utm_source=g
   </picture>
 </p>
 
-<sub>¹ Their published numbers on LongMemEval-S, each on its own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. Read from their READMEs on 2026-11-16. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. ³ agentmemory: 95.2% / 98.6% is its earlier hybrid run, which its own page labels historical (older pipeline, 500 questions). Its current README, measured 2026-10-28, reports 84.7% strict recall_all@5 and 96.2% any-hit@5 for the keyless BM25 component alone, scoring 470 answerable questions. Different denominator and pipeline, so not a head-to-head with ours. ⁴ MemPalace: 96.6% is its raw mode (semantic search, no LLM, 500 questions). It also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 used for tuning) and ≥99% with an LLM rerank; neither is the same split or setup, so neither is in the table.</sub>
+<sub>¹ Their published numbers on LongMemEval-S, each on its own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. Read from their READMEs on 2026-11-16. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. v0.24.0 scores 87.6% (438 of 500) where v0.16.0 to v0.20.0 scored 88.0% (440): two questions moved one of their two gold sessions across the rank-5 boundary while their top-50 sets stayed identical and recall_any@5 did not change, the adjacent-rank jitter that [RESULTS.md](benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17) documents. ³ agentmemory: 95.2% / 98.6% is its earlier hybrid run, which its own page labels historical (older pipeline, 500 questions). Its current README, measured 2026-10-28, reports 84.7% strict recall_all@5 and 96.2% any-hit@5 for the keyless BM25 component alone, scoring 470 answerable questions. Different denominator and pipeline, so not a head-to-head with ours. ⁴ MemPalace: 96.6% is its raw mode (semantic search, no LLM, 500 questions). It also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 used for tuning) and ≥99% with an LLM rerank; neither is the same split or setup, so neither is in the table.</sub>
 
 <details>
 <summary>Stability across releases and results per question type</summary>
 
 **Stable across releases** (full 500 questions, scored from committed raw, [RESULTS.md](benchmarks/longmemeval/RESULTS.md#release-stability-full-500-question-basis-scored-from-committed-raw)):
 
-| Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b |
-|---|---|---|---|---|---|
-| recall_any@5 | 98.2% | 98.4% | 98.2% | 98.2% | 98.2% |
-| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | 88.0% |
+| Release | v0.16.0 | v0.17.0 | v0.19.0 | v0.20.0 | fix 32a5cf3b | v0.24.0 |
+|---|---|---|---|---|---|---|
+| recall_any@5 | 98.2% | 98.4% | 98.2% | 98.2% | 98.2% | 98.2% |
+| strict recall_all@5 | 88.0% | 88.0% | 88.0% | 88.0% | 88.0% | 87.6% |
 
-<sub>Re-validated 2026-11-08 after the #1690 import fix: strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence.</sub>
+<sub>Re-validated 2026-11-08 after the #1690 import fix: strict@5 identical (88.0%), strict@10 +1 question (95.4%), zero misses@50 — four questions shifted partial gold ordering, none lost all evidence. The v0.24.0 column is the official release binary (2026-11-17): recall_any@5 and recall_any@10 are unchanged (98.2%, 98.8%), strict@10 is 95.2%, zero misses@50, and strict@5 differs by the two boundary questions in note ².</sub>
 
-**By question type** (recall_any@5, v0.20.0):
+**By question type** (recall_any@5, v0.24.0, the 470 non-abstention questions; identical to v0.20.0):
 
 | knowledge-update | single-session | temporal | multi-session |
 |:---:|:---:|:---:|:---:|
 | **100%** | 96.7–98.2% | 98.4% | 98.3% |
 
-Every question's evidence lands in the top 50 (zero misses). What's left is ordering when a question needs several sessions at once: strict recall_all@5 is 88.0% against a 99.4% ceiling, and most misses lose exactly one session.
+Every question's evidence lands in the top 50 (zero misses). What's left is ordering when a question needs several sessions at once: strict recall_all@5 is 87.6% against a 99.4% ceiling, and most misses lose exactly one session.
 
 </details>
 
 > **🎯 Don't trust our benchmark. Run it yourself.** Public dataset, committed raw outputs for every validated release, scoring you can recompute in ~20 lines of Python. Verifying the committed results takes a minute and needs no embedder; re-running all 500 questions costs about $10.
-> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 [Receipts for the headline number (v0.19.0 run)](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
+> **👉 [benchmarks/longmemeval/REPRODUCING.md](benchmarks/longmemeval/REPRODUCING.md)** · 🧾 Receipts: [v0.24.0 run](benchmarks/longmemeval/receipts/v0.24.0-default-500q/) · [v0.19.0 run](benchmarks/longmemeval/receipts/v0.19.0-default-500q/)
 
 **LoCoMo.** LoCoMo end-to-end QA measures answer accuracy, and the result depends on the LLM answerer and the LLM judge used. In an internal comparison, identical answers were scored up to 8 points apart when only the judge model was swapped. For that reason we do not publish a single LoCoMo number in this README. The full table, the per-judge figures and the receipts are in [benchmarks/locomo/RESULTS.md](benchmarks/locomo/RESULTS.md). Retrieval recall, which needs no judge, remains the metric we rely on.
 
@@ -142,7 +142,7 @@ Every question's evidence lands in the top 50 (zero misses). What's left is orde
 </p>
 
 <p align="center">
-  <i>All 500 LongMemEval-S questions, no LLM call in retrieval. Raw outputs are committed: <a href="benchmarks/longmemeval/REPRODUCING.md">check them in a minute, or re-run everything for about $10</a>.</i>
+  <i>The v0.20.0 run, all 500 LongMemEval-S questions, no LLM call in retrieval (v0.24.0 is in the table above: strict recall_all@5 87.6%, coverage@5 94.2%). Raw outputs are committed: <a href="benchmarks/longmemeval/REPRODUCING.md">check them in a minute, or re-run everything for about $10</a>.</i>
 </p>
 
 ---

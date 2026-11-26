@@ -71,6 +71,8 @@ mod privacy_write_tests;
 pub mod private_file;
 mod redaction_flags;
 #[cfg(test)]
+mod search_window_tests;
+#[cfg(test)]
 mod timeline_write_tests;
 #[cfg(test)]
 mod write_path_tests;
@@ -1148,7 +1150,9 @@ impl Uteke {
                     .collect();
                 if !items.is_empty() {
                     index.build(&items)?;
-                    index.save().ok(); // Persist after migration build
+                    // Persist after the migration build: the same retry as every
+                    // other index write, a failure is logged (#1758).
+                    index_sync::persist_rebuilt(&mut index, &index_sync::SyncPolicy::STANDARD);
                 }
             }
         }
@@ -2147,11 +2151,11 @@ impl Uteke {
     ) -> Result<Vec<DocumentSummary>, Error> {
         // Resolve slug to ID first.
         let parent_id = match self.store.get_document_by_slug(parent_id_or_slug)? {
-            // The files of a skill (#1731) are not listed as documents.
-            Some(doc) if doc.content_type == "skill" => return Ok(Vec::new()),
             Some(doc) => doc.id,
             None => parent_id_or_slug.to_string(),
         };
+        // The files of a skill (#1731) are not listed as documents, whether
+        // the skill was named by slug or by id.
         if let Some(doc) = self.store.get_document(&parent_id)? {
             if doc.content_type == "skill" {
                 return Ok(Vec::new());
@@ -2497,25 +2501,20 @@ impl Uteke {
         let mut fused: std::collections::HashMap<String, DocumentSearchResult> =
             std::collections::HashMap::new();
 
+        // The semantic list holds each document once (it keeps the best chunk
+        // per document), so its entries are all new: there is nothing to add to.
         for (rank, result) in semantic_results.iter().enumerate() {
             let rrf_score = 1.0 / (rrf_k + (rank as f32 + 1.0));
-            let entry = fused.entry(result.document.id.clone());
-            entry
-                .and_modify(|e| {
-                    e.score += rrf_score;
-                    // Prefer semantic chunk info when available.
-                    if !result.chunk_heading.is_empty() && e.chunk_heading.is_empty() {
-                        e.chunk_heading = result.chunk_heading.clone();
-                        e.chunk_snippet = result.chunk_snippet.clone();
-                    }
-                })
-                .or_insert_with(|| DocumentSearchResult {
+            fused.insert(
+                result.document.id.clone(),
+                DocumentSearchResult {
                     document: result.document.clone(),
                     chunk_heading: result.chunk_heading.clone(),
                     chunk_snippet: result.chunk_snippet.clone(),
                     score: rrf_score,
                     mode: "hybrid".to_string(),
-                });
+                },
+            );
         }
 
         for (rank, result) in fts_results.iter().enumerate() {
@@ -3287,6 +3286,50 @@ mod tests {
             expected.exists(),
             "expected index file {expected:?} to exist after shutdown"
         );
+    }
+
+    /// #1758: an index file that is gone is rebuilt from SQLite at open and
+    /// written back right away (through `index_sync`), not only when the store
+    /// is closed: a second process opening the store, or a crash, must find
+    /// the file. Checked while the store is still open.
+    #[test]
+    #[serial_test::serial]
+    fn a_missing_index_file_is_rebuilt_and_saved_at_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("uteke.db");
+        let index_file = dir
+            .path()
+            .join(format!("uteke_index.{}", crate::memory::vector::INDEX_EXT));
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+
+        let u = Uteke::open(&db).unwrap();
+        u.remember_precomputed(
+            "rebuilt at open probe",
+            &[],
+            None,
+            None,
+            "fact",
+            "text",
+            &vec![0.5f32; 768],
+        )
+        .unwrap();
+        u.shutdown().unwrap();
+        drop(u);
+        assert!(index_file.exists(), "the first open writes the index");
+        let full_len = std::fs::metadata(&index_file).unwrap().len();
+        assert!(full_len > 0, "an index with one entry is not an empty file");
+        std::fs::remove_file(&index_file).unwrap();
+        let _ = std::fs::remove_file(index_file.with_extension("keys"));
+
+        let reopened = Uteke::open(&db).unwrap();
+        // The file is created empty when the index is built; only the save
+        // fills it with the rebuilt entry.
+        assert_eq!(
+            std::fs::metadata(&index_file).unwrap().len(),
+            full_len,
+            "the rebuilt index is saved at open, before any shutdown"
+        );
+        drop(reopened);
     }
 
     /// #1168 (dual-engine builds): switching the engine via preference

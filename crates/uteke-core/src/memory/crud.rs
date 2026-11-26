@@ -1106,6 +1106,42 @@ impl super::Store {
         };
         Ok(count)
     }
+
+    /// List PINNED (never-decay) memories, newest first, optionally per namespace (#1804).
+    pub fn list_pinned(&self, namespace: Option<&str>, limit: usize) -> Result<Vec<Memory>, Error> {
+        // The namespace branch binds `?1` = namespace, `?2` = limit.
+        let per_namespace = namespace.is_some();
+        let mut stmt = self
+            .conn
+            .prepare(if per_namespace {
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " \
+                     FROM memories \
+                     WHERE pinned = 1 AND deprecated = 0 AND namespace = ?1 \
+                     ORDER BY created_at DESC LIMIT ?2"
+                )
+            } else {
+                concat!(
+                    "SELECT ",
+                    memory_columns!(),
+                    " \
+                     FROM memories \
+                     WHERE pinned = 1 AND deprecated = 0 \
+                     ORDER BY created_at DESC LIMIT ?1"
+                )
+            })
+            .map_err(|e| Error::db("list_pinned", e))?;
+        let rows = if per_namespace {
+            stmt.query_map(params![namespace, limit as i64], row_to_memory)
+        } else {
+            stmt.query_map(params![limit as i64], row_to_memory)
+        }
+        .map_err(|e| Error::db("list_pinned", e))?;
+        rows.collect::<Result<_, _>>()
+            .map_err(|e| Error::db("list_pinned", e))
+    }
 }
 
 #[cfg(test)]

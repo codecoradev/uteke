@@ -435,31 +435,66 @@ impl super::Store {
             }
             id
         } else {
-            // Insert new document.
-            tx.execute(
-                "INSERT INTO documents (id, slug, title, content, namespace, author, tags, metadata, \
-                 version, content_type, created_at, updated_at, parent_id, path, depth, sort_order) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-                params![
-                    doc.id,
-                    doc.slug,
-                    doc.title,
-                    doc.content,
-                    doc.namespace,
-                    doc.author,
-                    serde_json::to_string(&doc.tags).unwrap_or_else(|_| "[]".into()),
-                    doc.metadata.to_string(),
-                    doc.version,
-                    doc.content_type,
-                    doc.created_at,
-                    doc.updated_at,
-                    doc.parent_id,
-                    doc.path,
-                    doc.depth,
-                    doc.sort_order,
-                ],
-            )
-            .map_err(|e| Error::db("insert document", e))?;
+            // Insert new document. Documents are global (#614): the engine names
+            // no namespace, and the column default decides what is stored. A
+            // store created by this version has `namespace TEXT DEFAULT NULL`;
+            // a store that went through schema v11 keeps `NOT NULL DEFAULT
+            // 'default'` (migration v13 only drops the unique index). Binding
+            // NULL explicitly fails on the latter ("NOT NULL constraint failed:
+            // documents.namespace"), so the column is left out when there is no
+            // namespace and both kinds of store apply their own default.
+            let tags = serde_json::to_string(&doc.tags).unwrap_or_else(|_| "[]".into());
+            let metadata = doc.metadata.to_string();
+            let result = match &doc.namespace {
+                Some(namespace) => tx.execute(
+                    "INSERT INTO documents (id, slug, title, content, namespace, author, tags, \
+                     metadata, version, content_type, created_at, updated_at, parent_id, path, \
+                     depth, sort_order) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                    params![
+                        doc.id,
+                        doc.slug,
+                        doc.title,
+                        doc.content,
+                        namespace,
+                        doc.author,
+                        tags,
+                        metadata,
+                        doc.version,
+                        doc.content_type,
+                        doc.created_at,
+                        doc.updated_at,
+                        doc.parent_id,
+                        doc.path,
+                        doc.depth,
+                        doc.sort_order,
+                    ],
+                ),
+                None => tx.execute(
+                    "INSERT INTO documents (id, slug, title, content, author, tags, metadata, \
+                     version, content_type, created_at, updated_at, parent_id, path, depth, \
+                     sort_order) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    params![
+                        doc.id,
+                        doc.slug,
+                        doc.title,
+                        doc.content,
+                        doc.author,
+                        tags,
+                        metadata,
+                        doc.version,
+                        doc.content_type,
+                        doc.created_at,
+                        doc.updated_at,
+                        doc.parent_id,
+                        doc.path,
+                        doc.depth,
+                        doc.sort_order,
+                    ],
+                ),
+            };
+            result.map_err(|e| Error::db("insert document", e))?;
             // Update parent's has_children flag.
             if let Some(ref pid) = doc.parent_id {
                 tx.execute(

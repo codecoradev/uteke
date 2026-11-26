@@ -14,6 +14,11 @@ impl crate::Uteke {
         self.store.list(tag, namespace, limit, offset)
     }
 
+    /// List PINNED (never-decay) memories, newest first, optionally per namespace (#1804).
+    pub fn list_pinned(&self, namespace: Option<&str>, limit: usize) -> Result<Vec<Memory>, Error> {
+        self.store.list_pinned(namespace, limit)
+    }
+
     /// Get a single memory by ID.
     pub fn get(&self, id: &str) -> Result<Memory, Error> {
         let memory = self

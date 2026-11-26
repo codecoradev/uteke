@@ -65,8 +65,7 @@ order, to every request:
   `uteke stats`) to bring it up to date, then start it again.
 - **Binding.** The default is `127.0.0.1`. `--host` with a non-loopback address is
   refused unless the server auth token (`UTEKE_AUTH_TOKEN` or `--auth-token`) is
-  set, and then **every** request must carry that token as `Authorization: Bearer
-  <token>` in addition to the launch token (which, on such a bind, travels only in
+  set, and then **every** request must carry that token as `Authorization: Bearer <token>` in addition to the launch token (which, on such a bind, travels only in
   the cookie, `X-Uteke-Viewer-Token` or the launch URL). A browser cannot add that
   header by itself, so put a reverse proxy in front that does. The viewer speaks
   **plain HTTP**: the launch URL and the cookie are not encrypted, so terminate TLS

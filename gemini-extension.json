@@ -1,6 +1,6 @@
 {
   "name": "uteke",
-  "version": "0.24.1",
+  "version": "0.24.2",
   "description": "Long-term memory for AI agents: hybrid vector and full-text recall, rooms, time-travel. Needs the uteke-mcp binary on PATH.",
   "mcpServers": {
     "uteke": {

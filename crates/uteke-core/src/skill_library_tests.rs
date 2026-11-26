@@ -762,7 +762,10 @@ fn lint_directory_reports_without_a_store() {
 #[test]
 fn fresh_store_has_the_skill_tables_at_the_current_schema() {
     let u = open_keyword();
-    assert_eq!(u.store.schema_version().unwrap(), 27);
+    assert_eq!(
+        u.store.schema_version().unwrap(),
+        crate::memory::store::CURRENT_SCHEMA_VERSION
+    );
     for table in ["skills", "skill_versions", "skill_usage", "skill_ledger"] {
         let n: i64 = u
             .store

@@ -503,6 +503,8 @@ impl super::Store {
                 26 => self.migrate_v25_to_v26()?,
                 // v27: the personal skill library tables (#1731)
                 27 => self.migrate_v26_to_v27()?,
+                // v28: partial index for `list_pinned` (#1804)
+                28 => self.migrate_v27_to_v28()?,
                 _ => {
                     // No-op for future versions.
                 }
@@ -1279,6 +1281,19 @@ CREATE INDEX IF NOT EXISTS idx_room_aliases_room ON room_aliases(room_id);",
         self.conn
             .execute_batch(crate::skill_library::SKILL_SCHEMA)
             .map_err(|e| Error::db("schema migration v26 to v27", e))?;
+        Ok(())
+    }
+
+    /// v28: partial index serving `list_pinned` (#1804). `init_schema`
+    /// also creates it from SCHEMA_INDEXES on every open; the statement is
+    /// idempotent.
+    fn migrate_v27_to_v28(&self) -> Result<(), Error> {
+        tracing::info!("Applying schema migration v27 to v28: pinned memories index");
+        self.conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(namespace, created_at) WHERE pinned = 1 AND deprecated = 0;",
+            )
+            .map_err(|e| Error::db("schema migration v27 to v28", e))?;
         Ok(())
     }
 
