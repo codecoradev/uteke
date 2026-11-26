@@ -543,23 +543,20 @@ fn mask_len_at(s: &str) -> Option<usize> {
 /// (`ghp_[REDACTED:github-token]`). A value that carries a real secret next to
 /// a mask, or next to a bare `[REDACTED`, is not (#1794).
 fn is_masked_only(v: &str) -> bool {
-    let mut rest = v;
-    let mut left_over = 0;
-    let mut found = false;
-    while let Some(at) = rest.find("[REDACTED") {
-        left_over += rest[..at].bytes().filter(u8::is_ascii_alphanumeric).count();
-        match mask_len_at(&rest[at..]) {
+    let alnum = |s: &str| s.bytes().filter(u8::is_ascii_alphanumeric).count();
+    let (mut left_over, mut found, mut cursor) = (0, false, 0);
+    for (at, _) in v.match_indices("[REDACTED") {
+        match mask_len_at(&v[at..]) {
             Some(len) => {
+                left_over += alnum(&v[cursor..at]);
                 found = true;
-                rest = &rest[at + len..];
+                cursor = at + len;
             }
-            None => {
-                left_over += rest[at..].bytes().filter(u8::is_ascii_alphanumeric).count();
-                rest = "";
-            }
+            // A bare marker is no mask: it and everything after it count.
+            None => break,
         }
     }
-    left_over += rest.bytes().filter(u8::is_ascii_alphanumeric).count();
+    left_over += alnum(&v[cursor..]);
     found && left_over < 8
 }
 
@@ -1061,12 +1058,12 @@ fn assignment_value_in(
 
 /// `text[vs..ve]` without the non-ASCII characters at its two ends (letters,
 /// quotes such as `«»`, ellipses), as offsets into `text`. A value that holds
-/// whitespace is a sentence and is left as it is, and so is one that is
-/// nothing but non-ASCII.
+/// whitespace is a sentence and is left as it is. A value that is nothing but
+/// non-ASCII gives an empty range, which no rule reads.
 fn trim_non_ascii_edges(text: &str, vs: usize, ve: usize) -> (usize, usize) {
     let value = &text[vs..ve];
     let inner = value.trim_matches(|c: char| !c.is_ascii());
-    if inner.is_empty() || inner.len() == value.len() || inner.contains(char::is_whitespace) {
+    if inner.len() == value.len() || inner.contains(char::is_whitespace) {
         return (vs, ve);
     }
     let left = value.len() - value.trim_start_matches(|c: char| !c.is_ascii()).len();
@@ -1673,6 +1670,10 @@ mod tests {
                 format!("API_KEY=\"{masked}{EDGE_TOKEN}\""),
                 format!("API_KEY=\"{masked}\""),
             ),
+            (
+                format!("API_KEY=\"{EDGE_TOKEN}{masked}\""),
+                format!("API_KEY=\"{masked}\""),
+            ),
         ] {
             let r = redact(&line, &[]);
             assert_eq!(r.text, expected, "{line}");
@@ -1688,6 +1689,58 @@ mod tests {
         }
     }
 
+    /// #1794: the exact length of a complete mask, and what is no mask.
+    #[test]
+    fn a_complete_mask_is_found_with_its_exact_length() {
+        assert_eq!(mask_len_at("[REDACTED]"), Some(10));
+        assert_eq!(mask_len_at("[REDACTED]rest"), Some(10));
+        assert_eq!(mask_len_at("[REDACTED:a]"), Some(12));
+        assert_eq!(mask_len_at("[REDACTED:env-secret]rest"), Some(21));
+        assert_eq!(mask_len_at("[REDACTED:aws.key_1]"), Some(20));
+        for not_a_mask in [
+            "[REDACTED",
+            "[REDACTEDZq8vN2xL5",
+            "[REDACTED:]",
+            "[REDACTED:kind",
+            "[REDACTED:ki nd]",
+            "[REDACTED:kind!]",
+            "x[REDACTED]",
+            "",
+        ] {
+            assert_eq!(mask_len_at(not_a_mask), None, "{not_a_mask}");
+        }
+    }
+
+    /// #1794: a value is "only masks" when it has a complete mask and fewer
+    /// than 8 letters or digits besides it.
+    #[test]
+    fn a_value_is_only_masks_when_less_than_eight_characters_are_left() {
+        for only_masks in [
+            "[REDACTED:env-secret]",
+            "[REDACTED]",
+            "ghp_[REDACTED:github-token]",
+            "[REDACTED:a][REDACTED:b]",
+            "abcdefg[REDACTED:k]",
+            "[REDACTED:k]abcdefg",
+            "abc[REDACTED:k]defg",
+        ] {
+            assert!(is_masked_only(only_masks), "{only_masks}");
+        }
+        for not_only_masks in [
+            "",
+            "[REDACTED",
+            "Zq8vN2xL5mP9aR4tW7yB3cD6",
+            "abcdefgh[REDACTED:k]",
+            "[REDACTED:k]abcdefgh",
+            "abcd[REDACTED:k]efgh",
+            "[REDACTED:env-secret][REDACTED",
+            "[REDACTED:k]abc[REDACTED:k]defgh",
+            "Zq8vN2xL5mP9aR4tW7yB3cD6[REDACTED:env-secret]",
+        ] {
+            assert!(!is_masked_only(not_only_masks), "{not_only_masks}");
+        }
+    }
+
     /// #1794 must stay precise: prose with a non-ASCII word is not a secret,
     /// even when the non-ASCII character sits at the edge.
     #[test]
@@ -1699,6 +1752,8 @@ mod tests {
             // A sentence: whitespace keeps it prose whatever is at its ends.
             format!("API_KEY=\"Cl\u{e9} invalide {EDGE_TOKEN}\""),
             format!("API_KEY=\"\u{ab} cl\u{e9} {EDGE_TOKEN} \u{bb}\""),
+            // Whitespace inside the guillemets: still a sentence, not a value.
+            format!("API_KEY=\"\u{ab} {EDGE_TOKEN} \u{bb}\""),
             "API_KEY=\u{43a}\u{43b}\u{44e}\u{447}".to_string(),
         ] {
             let r = redact(&line, &[]);
