@@ -983,6 +983,18 @@ fn mask_private_keys(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usi
 /// it may hold spaces); an unquoted one ends at whitespace, a quote, `,` or a
 /// bracket, and is cut where `&name=` or `;name=` starts the next pair.
 fn assignment_value(text: &str, start: usize, sep: &str, password: bool) -> (usize, usize, usize) {
+    // A bare `[REDACTED` glued to the value (not a complete mask) is
+    // decoration, not the value: `[` would end the value at once and the secret
+    // behind it would never be read (#1794). A complete mask is a value that
+    // is already masked and is left alone. The markers are skipped in a loop
+    // over the whole text, not inside the window: a run of them longer than
+    // the window would otherwise hide the secret behind it, and the text is
+    // untrusted, so the skip must not recurse once per marker either.
+    const DECORATION: &str = "[REDACTED";
+    let mut start = start;
+    while text[start..].starts_with(DECORATION) && mask_len_at(&text[start..]).is_none() {
+        start += DECORATION.len();
+    }
     // The window only bounds the work: a value that runs to its end is read
     // again over the whole text, so a long secret is never cut short.
     let window = bounded(&text[start..], MAX_VALUE_BYTES);
@@ -999,19 +1011,6 @@ fn assignment_value_in(
     sep: &str,
     password: bool,
 ) -> (usize, usize, usize) {
-    // A bare `[REDACTED` glued to the value (not a complete mask) is
-    // decoration, not the value: `[` would end the value at once and the secret
-    // behind it would never be read (#1794). A complete mask is a value that
-    // is already masked and is left alone.
-    const DECORATION: &str = "[REDACTED";
-    if rest.starts_with(DECORATION) && mask_len_at(rest).is_none() {
-        return assignment_value_in(
-            &rest[DECORATION.len()..],
-            start + DECORATION.len(),
-            sep,
-            password,
-        );
-    }
     let quote = sep
         .trim_end()
         .chars()
@@ -1641,6 +1640,22 @@ mod tests {
             assert!(!r.text.contains(EDGE_TOKEN), "{line}");
             // Masking what is already masked changes nothing.
             assert_eq!(redact(&r.text, &[]).text, r.text, "{line}");
+        }
+    }
+
+    /// #1794: a run of bare markers in front of a value does not hide the
+    /// secret behind it, however long. The window that bounds the work of one
+    /// value is 4096 bytes, 455 markers; 456 and more used to push the secret
+    /// out of it, and the skip is a loop over the whole text, so 200 000
+    /// markers (1.8 MB) neither hide it nor nest calls.
+    #[test]
+    fn a_long_run_of_bare_redacted_markers_does_not_hide_the_secret() {
+        for n in [1, 455, 456, 457, 200_000] {
+            let run = "[REDACTED".repeat(n);
+            let line = format!("API_KEY={run}{EDGE_TOKEN}");
+            let r = redact(&line, &[]);
+            assert_eq!(r.text, format!("API_KEY={run}[REDACTED:env-secret]"), "{n}");
+            assert!(!r.text.contains(EDGE_TOKEN), "{n}");
         }
     }
 

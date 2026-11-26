@@ -48,7 +48,9 @@ uteke.app was not updated. Plus a gap in the secret detector (`uteke-privacy`) a
   `API_KEY=[REDACTED<token>` stayed in clear text. Now the ASCII run is the value: it is masked and
   the character stays (`API_KEY=«[REDACTED:env-secret]»`). `[REDACTED` is a placeholder only as a
   complete mask (`[REDACTED]`, `[REDACTED:kind]`), so a bare marker glued to a secret does not hide
-  it, and a value that is only masks stays untouched (`redact` is still idempotent). A value with
+  it, and a value that is only masks stays untouched (`redact` is still idempotent). A run of bare
+  markers of any length (456 or more used to fill the 4096-byte window of one value) is skipped in a
+  loop over the whole text, so it neither hides the secret behind it nor nests calls. A value with
   whitespace, or with non-ASCII inside it, is still prose, and a password name keeps taking a whole
   non-ASCII token. The behaviour is documented in the crate docs; tole, which shares the crate,
   can drop the `«NAME»` stand-in workaround.
