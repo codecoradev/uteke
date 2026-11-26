@@ -12,6 +12,17 @@
 
 ### Fixed
 
+- **`uteke-privacy`: an `API_KEY=value` secret next to a non-ASCII character, a guillemet or a bare
+  `[REDACTED` was not masked (#1794)** - a character such as `é` or `«` stuck to either end of the
+  value made the whole value "prose", and `[REDACTED` anywhere in a value (or at its start, where
+  `[` ended the value at once) made it a "placeholder", so `API_KEY=«<24-char token>»` and
+  `API_KEY=[REDACTED<token>` stayed in clear text. Now the ASCII run is the value: it is masked and
+  the character stays (`API_KEY=«[REDACTED:env-secret]»`). `[REDACTED` is a placeholder only as a
+  complete mask (`[REDACTED]`, `[REDACTED:kind]`), so a bare marker glued to a secret does not hide
+  it, and a value that is only masks stays untouched (`redact` is still idempotent). A value with
+  whitespace, or with non-ASCII inside it, is still prose, and a password name keeps taking a whole
+  non-ASCII token. The behaviour is documented in the crate docs; tole, which shares the crate,
+  can drop the `«NAME»` stand-in workaround.
 - **`doc create` failed with `NOT NULL constraint failed: documents.namespace` on older stores** -
   a store that went through schema v11 keeps `namespace TEXT NOT NULL DEFAULT 'default'` on
   `documents` (migration v13 only dropped the unique index), and the insert bound NULL to that
