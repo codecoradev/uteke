@@ -1148,7 +1148,9 @@ impl Uteke {
                     .collect();
                 if !items.is_empty() {
                     index.build(&items)?;
-                    index.save().ok(); // Persist after migration build
+                    // Persist after the migration build: the same retry as every
+                    // other index write, a failure is logged (#1758).
+                    index_sync::persist_rebuilt(&mut index, &index_sync::SyncPolicy::STANDARD);
                 }
             }
         }
@@ -3287,6 +3289,50 @@ mod tests {
             expected.exists(),
             "expected index file {expected:?} to exist after shutdown"
         );
+    }
+
+    /// #1758: an index file that is gone is rebuilt from SQLite at open and
+    /// written back right away (through `index_sync`), not only when the store
+    /// is closed: a second process opening the store, or a crash, must find
+    /// the file. Checked while the store is still open.
+    #[test]
+    #[serial_test::serial]
+    fn a_missing_index_file_is_rebuilt_and_saved_at_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("uteke.db");
+        let index_file = dir
+            .path()
+            .join(format!("uteke_index.{}", crate::memory::vector::INDEX_EXT));
+        unsafe { std::env::remove_var("UTEKE_VECTOR_BACKEND") };
+
+        let u = Uteke::open(&db).unwrap();
+        u.remember_precomputed(
+            "rebuilt at open probe",
+            &[],
+            None,
+            None,
+            "fact",
+            "text",
+            &vec![0.5f32; 768],
+        )
+        .unwrap();
+        u.shutdown().unwrap();
+        drop(u);
+        assert!(index_file.exists(), "the first open writes the index");
+        let full_len = std::fs::metadata(&index_file).unwrap().len();
+        assert!(full_len > 0, "an index with one entry is not an empty file");
+        std::fs::remove_file(&index_file).unwrap();
+        let _ = std::fs::remove_file(index_file.with_extension("keys"));
+
+        let reopened = Uteke::open(&db).unwrap();
+        // The file is created empty when the index is built; only the save
+        // fills it with the rebuilt entry.
+        assert_eq!(
+            std::fs::metadata(&index_file).unwrap().len(),
+            full_len,
+            "the rebuilt index is saved at open, before any shutdown"
+        );
+        drop(reopened);
     }
 
     /// #1168 (dual-engine builds): switching the engine via preference
