@@ -13,6 +13,15 @@
 //! placeholders. A caller-supplied allowlist (regexes) keeps a value that
 //! matches any entry. [`redact`] is idempotent.
 //!
+//! Where a value of an assignment starts and ends (#1794): a non-ASCII
+//! character stuck to either end of a key or token (`API_KEY=«…»`,
+//! `API_KEY=é…`) does not turn it into prose. The ASCII run is the value, it is
+//! masked and the character stays. A value with whitespace, or with non-ASCII
+//! inside it, is still prose, and a password name keeps taking a whole
+//! non-ASCII token. `[REDACTED` is a placeholder only as a complete mask
+//! (`[REDACTED]`, `[REDACTED:kind]`); a bare `[REDACTED` stuck to a secret is
+//! decoration and does not hide it.
+//!
 //! The crate does no IO and has no storage: it depends on `regex` only. It is
 //! the one ruleset shared by `uteke` (its write path) and `tole` (its egress
 //! paths), so the rules cannot drift between the two projects.
@@ -511,29 +520,72 @@ fn is_uuid(s: &str) -> bool {
 
 /// Words that mark a value as an example, not a credential.
 fn is_placeholder(v: &str) -> bool {
+    v.contains("[REDACTED") || has_placeholder_word(v)
+}
+
+/// Length of the complete mask (`[REDACTED]` or `[REDACTED:kind]`, the shapes
+/// [`redact`] writes) at the start of `s`. `[REDACTED` alone, or glued to other
+/// text, is not a mask.
+fn mask_len_at(s: &str) -> Option<usize> {
+    let rest = s.strip_prefix("[REDACTED")?;
+    if rest.starts_with(']') {
+        return Some("[REDACTED]".len());
+    }
+    let kind = rest.strip_prefix(':')?;
+    let name_len = kind
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')))
+        .unwrap_or(kind.len());
+    (name_len > 0 && kind[name_len..].starts_with(']')).then(|| "[REDACTED:".len() + name_len + 1)
+}
+
+/// Whether `v` is only what a mask left behind: it holds at least one complete
+/// mask, and what is left of it without the masks is too short to be a secret
+/// (`ghp_[REDACTED:github-token]`). A value that carries a real secret next to
+/// a mask, or next to a bare `[REDACTED`, is not (#1794).
+fn is_masked_only(v: &str) -> bool {
+    let mut rest = v;
+    let mut left_over = 0;
+    let mut found = false;
+    while let Some(at) = rest.find("[REDACTED") {
+        left_over += rest[..at].bytes().filter(u8::is_ascii_alphanumeric).count();
+        match mask_len_at(&rest[at..]) {
+            Some(len) => {
+                found = true;
+                rest = &rest[at + len..];
+            }
+            None => {
+                left_over += rest[at..].bytes().filter(u8::is_ascii_alphanumeric).count();
+                rest = "";
+            }
+        }
+    }
+    left_over += rest.bytes().filter(u8::is_ascii_alphanumeric).count();
+    found && left_over < 8
+}
+
+fn has_placeholder_word(v: &str) -> bool {
     let lower = v.to_ascii_lowercase();
-    v.contains("[REDACTED")
-        || [
-            "example",
-            "your",
-            "placeholder",
-            "changeme",
-            "change-me",
-            "xxxx",
-            "****",
-            "dummy",
-            "sample",
-            "replace",
-            "generate",
-            "insert",
-            "todo",
-            "_here",
-            "-here",
-            "abcdef",
-            "123456",
-        ]
-        .iter()
-        .any(|w| lower.contains(w))
+    [
+        "example",
+        "your",
+        "placeholder",
+        "changeme",
+        "change-me",
+        "xxxx",
+        "****",
+        "dummy",
+        "sample",
+        "replace",
+        "generate",
+        "insert",
+        "todo",
+        "_here",
+        "-here",
+        "abcdef",
+        "123456",
+    ]
+    .iter()
+    .any(|w| lower.contains(w))
 }
 
 /// Words joined by `.` or `_` (or by `-` for a non-password), all lowercase or
@@ -688,7 +740,8 @@ fn is_benign_value(v: &str, segs: &[String], password: bool) -> bool {
     v.contains("::")
         || prose
         || is_variable_reference(v)
-        || is_placeholder(v)
+        || is_masked_only(v)
+        || has_placeholder_word(v)
         || is_uuid(v)
         || is_date(v)
         || is_semver(v)
@@ -949,6 +1002,19 @@ fn assignment_value_in(
     sep: &str,
     password: bool,
 ) -> (usize, usize, usize) {
+    // A bare `[REDACTED` glued to the value (not a complete mask) is
+    // decoration, not the value: `[` would end the value at once and the secret
+    // behind it would never be read (#1794). A complete mask is a value that
+    // is already masked and is left alone.
+    const DECORATION: &str = "[REDACTED";
+    if rest.starts_with(DECORATION) && mask_len_at(rest).is_none() {
+        return assignment_value_in(
+            &rest[DECORATION.len()..],
+            start + DECORATION.len(),
+            sep,
+            password,
+        );
+    }
     let quote = sep
         .trim_end()
         .chars()
@@ -993,6 +1059,20 @@ fn assignment_value_in(
     (start + left, start + left + core.len(), start + end)
 }
 
+/// `text[vs..ve]` without the non-ASCII characters at its two ends (letters,
+/// quotes such as `«»`, ellipses), as offsets into `text`. A value that holds
+/// whitespace is a sentence and is left as it is, and so is one that is
+/// nothing but non-ASCII.
+fn trim_non_ascii_edges(text: &str, vs: usize, ve: usize) -> (usize, usize) {
+    let value = &text[vs..ve];
+    let inner = value.trim_matches(|c: char| !c.is_ascii());
+    if inner.is_empty() || inner.len() == value.len() || inner.contains(char::is_whitespace) {
+        return (vs, ve);
+    }
+    let left = value.len() - value.trim_start_matches(|c: char| !c.is_ascii()).len();
+    (vs + left, vs + left + inner.len())
+}
+
 /// Mask the value of every `NAME=value` style assignment whose name is
 /// secret-like and whose value looks like a secret. Pairs that are not secret
 /// are skipped one separator at a time, so a secret next to them (`MODE=prod;
@@ -1017,6 +1097,14 @@ fn mask_assignments(text: &str, allowed: &dyn Fn(&str) -> bool, count: &mut usiz
             continue;
         };
         let (vs, ve, resume) = assignment_value(text, whole.end(), &caps[2], password);
+        // A non-ASCII character stuck to either end of a key or token does not
+        // make it prose: the ASCII run is the value and the character stays
+        // (#1794). A password name already takes a whole non-ASCII token.
+        let (vs, ve) = if password {
+            (vs, ve)
+        } else {
+            trim_non_ascii_edges(text, vs, ve)
+        };
         let value = &text[vs..ve];
         if vs < copied
             || value.len() < 8
@@ -1510,6 +1598,112 @@ mod tests {
             &[],
         );
         assert!(r.is_clean(), "{r:?}");
+    }
+
+    /// A random 24-character token, for the #1794 tests.
+    const EDGE_TOKEN: &str = "Zq8vN2xL5mP9aR4tW7yB3cD6";
+
+    /// #1794: a key or token stuck to a non-ASCII character or a guillemet is
+    /// still masked. The ASCII run is the value; the character stays.
+    #[test]
+    fn a_key_next_to_a_non_ascii_character_is_masked_and_the_character_stays() {
+        let masked = "[REDACTED:env-secret]";
+        for (line, expected) in [
+            (format!("API_KEY={EDGE_TOKEN}"), format!("API_KEY={masked}")),
+            (
+                format!("API_KEY=\u{e9}{EDGE_TOKEN}"),
+                format!("API_KEY=\u{e9}{masked}"),
+            ),
+            (
+                format!("API_KEY={EDGE_TOKEN}\u{e9}"),
+                format!("API_KEY={masked}\u{e9}"),
+            ),
+            (
+                format!("API_KEY=\u{ab}{EDGE_TOKEN}"),
+                format!("API_KEY=\u{ab}{masked}"),
+            ),
+            (
+                format!("API_KEY={EDGE_TOKEN}\u{bb}"),
+                format!("API_KEY={masked}\u{bb}"),
+            ),
+            (
+                format!("API_KEY=\u{ab}{EDGE_TOKEN}\u{bb}"),
+                format!("API_KEY=\u{ab}{masked}\u{bb}"),
+            ),
+            (
+                format!("API_KEY=\u{2026}{EDGE_TOKEN}\u{2026}"),
+                format!("API_KEY=\u{2026}{masked}\u{2026}"),
+            ),
+            (
+                format!("API_KEY=\"\u{ab}{EDGE_TOKEN}\u{bb}\""),
+                format!("API_KEY=\"\u{ab}{masked}\u{bb}\""),
+            ),
+        ] {
+            let r = redact(&line, &[]);
+            assert_eq!(r.text, expected, "{line}");
+            assert!(!r.text.contains(EDGE_TOKEN), "{line}");
+            // Masking what is already masked changes nothing.
+            assert_eq!(redact(&r.text, &[]).text, r.text, "{line}");
+        }
+    }
+
+    /// #1794: a bare `[REDACTED` stuck to a secret is not a placeholder. A
+    /// complete mask (`[REDACTED:kind]`) is, and what a mask left stays clean.
+    #[test]
+    fn a_bare_redacted_marker_does_not_hide_the_secret_next_to_it() {
+        let masked = "[REDACTED:env-secret]";
+        for (line, expected) in [
+            (
+                format!("API_KEY=[REDACTED{EDGE_TOKEN}"),
+                format!("API_KEY=[REDACTED{masked}"),
+            ),
+            (
+                format!("API_KEY={EDGE_TOKEN}[REDACTED"),
+                format!("API_KEY={masked}[REDACTED"),
+            ),
+            (
+                format!("API_KEY=\"[REDACTED{EDGE_TOKEN}\""),
+                format!("API_KEY=\"[REDACTED{masked}\""),
+            ),
+            (
+                format!("API_KEY=\"{EDGE_TOKEN}[REDACTED\""),
+                format!("API_KEY=\"{masked}\""),
+            ),
+            (
+                format!("API_KEY=\"{masked}{EDGE_TOKEN}\""),
+                format!("API_KEY=\"{masked}\""),
+            ),
+        ] {
+            let r = redact(&line, &[]);
+            assert_eq!(r.text, expected, "{line}");
+            assert!(!r.text.contains(EDGE_TOKEN), "{line}");
+        }
+        for line in [
+            format!("API_KEY={}", "[REDACTED:env-secret]"),
+            format!("API_KEY=\"{}\"", "[REDACTED:env-secret]"),
+            format!("API_KEY=\"{}\"", "ghp_[REDACTED:github-token]"),
+            format!("API_KEY={}", "[REDACTED]"),
+        ] {
+            assert!(redact(&line, &[]).is_clean(), "{line}");
+        }
+    }
+
+    /// #1794 must stay precise: prose with a non-ASCII word is not a secret,
+    /// even when the non-ASCII character sits at the edge.
+    #[test]
+    fn non_ascii_words_next_to_a_key_name_stay_prose() {
+        for line in [
+            "API_KEY=\u{ab}cl\u{e9}\u{bb}".to_string(),
+            // A localized word followed by digits: the digits alone are no key.
+            "API_KEY=\u{43a}\u{43b}\u{44e}\u{447}12345678901234567890".to_string(),
+            // A sentence: whitespace keeps it prose whatever is at its ends.
+            format!("API_KEY=\"Cl\u{e9} invalide {EDGE_TOKEN}\""),
+            format!("API_KEY=\"\u{ab} cl\u{e9} {EDGE_TOKEN} \u{bb}\""),
+            "API_KEY=\u{43a}\u{43b}\u{44e}\u{447}".to_string(),
+        ] {
+            let r = redact(&line, &[]);
+            assert!(r.is_clean(), "{line} -> {}", r.text);
+        }
     }
 
     #[test]
