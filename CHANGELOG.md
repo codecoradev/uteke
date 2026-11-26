@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-11-26
+
+Patch release. Theme: **`doc create` works again on stores that went through schema v11, and the
+website builds again.** Every way to create a document (`uteke doc create`, `POST /doc/create`,
+`uteke_doc_create`) failed with `NOT NULL constraint failed: documents.namespace` on such a store, and
+the `Deploy Website` workflow failed on every push to `main` and every tag since v0.23.0, so
+uteke.app was not updated. Plus a gap in the secret detector (`uteke-privacy`) and a faster
+`list_pinned`.
+
+**Upgrade notes**
+
+- Schema v28 (a partial index on pinned memories, #1804): a store opened by 0.24.2 is at v28, and a
+  0.24.1 or older binary refuses it ("database schema version 28 is newer than supported version 27").
+  Back up the data directory before moving to 0.24.2 if you may roll back. The migration only creates
+  an index; no row changes.
+- No CORE contract change: `list_pinned` is a core library method (no HTTP, MCP or CLI surface), and
+  the `doc create` fix restores the documented behaviour.
+- Dependency updates: rusqlite 0.43 (bundled SQLite), clap 4.6.8, uuid, flate2, toml.
+- MCP Registry: `server.json` is now `app.uteke/uteke-memory` (domain-verified through
+  `_mcp.uteke.app`) with the title "Uteke - Long Term Memory for AI Agents" and icons; the release
+  workflow publishes it with the `MCP_DNS_PRIVATE_KEY_HEX` repository secret, and the old
+  `io.github.codecoradev/uteke` listing is deprecated by a separate manual workflow once the new one is
+  live (#1802, #1803).
+
 ### Added
 
 - **`Uteke::list_pinned` fetches pinned memories in one query (#1804)** - a client lists the pinned
