@@ -12,6 +12,11 @@
 
 ### Fixed
 
+- **The website build failed on `docs/viewer.md`, so uteke.app was not updated since v0.23.0** -
+  a code span (`Authorization: Bearer <token>`) was wrapped across two lines, and VitePress read the
+  `<token>` as an HTML element without an end tag (`viewer.md: Element is missing end tag`). The
+  `Deploy Website` workflow failed at its Build step on every push to `main` and every tag from
+  v0.23.0 on. The span is on one line again; all pages build.
 - **`uteke-privacy`: an `API_KEY=value` secret next to a non-ASCII character, a guillemet or a bare
   `[REDACTED` was not masked (#1794)** - a character such as `é` or `«` stuck to either end of the
   value made the whole value "prose", and `[REDACTED` anywhere in a value (or at its start, where
