@@ -2747,6 +2747,123 @@ mod tests {
         assert_eq!(source_type, "url");
     }
 
+    /// A store created before documents became global keeps the `documents`
+    /// table of schema v11: `namespace TEXT NOT NULL DEFAULT 'default'`.
+    /// Migration v13 only drops the unique index, so the column stays NOT NULL.
+    /// `Document::namespace` is `None` for every document the engine writes, so
+    /// the insert must leave the column to its default instead of binding NULL
+    /// (`NOT NULL constraint failed: documents.namespace`, CLI, HTTP and MCP).
+    #[test]
+    fn a_store_with_the_old_not_null_namespace_column_takes_a_new_document() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                embedding BLOB,
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                access_count INTEGER NOT NULL DEFAULT 0,
+                last_accessed TEXT,
+                deprecated INTEGER NOT NULL DEFAULT 0,
+                valid_from TEXT,
+                valid_until TEXT,
+                memory_type TEXT NOT NULL DEFAULT 'fact',
+                importance REAL NOT NULL DEFAULT 0.5,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                content_type TEXT NOT NULL DEFAULT 'text',
+                slug TEXT,
+                source TEXT,
+                source_type TEXT NOT NULL DEFAULT 'user'
+            );
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                slug TEXT NOT NULL COLLATE NOCASE,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                namespace TEXT NOT NULL DEFAULT 'default',
+                tags TEXT DEFAULT '[]',
+                metadata TEXT DEFAULT '{}',
+                version INTEGER NOT NULL DEFAULT 1,
+                content_type TEXT NOT NULL DEFAULT 'markdown',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(namespace, slug)
+            );
+            CREATE TABLE schema_version (
+                version INTEGER NOT NULL,
+                applied_at TEXT NOT NULL
+            );
+            INSERT INTO schema_version (version, applied_at) VALUES (11, '2026-06-27T00:00:00Z');",
+        )
+        .unwrap();
+        let store = Store::from_conn(conn).unwrap();
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let doc = crate::memory::documents::Document {
+            id: "doc-1".into(),
+            slug: "test-slug".into(),
+            title: "t".into(),
+            content: "# t".into(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".into(),
+            created_at: now.clone(),
+            updated_at: now,
+            parent_id: None,
+            path: "/doc-1/".into(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+
+        let stored = store.get_document_by_slug("test-slug").unwrap().unwrap();
+        assert_eq!(stored.id, "doc-1");
+        assert_eq!(
+            stored.namespace.as_deref(),
+            Some("default"),
+            "the column default applies when the engine names no namespace"
+        );
+    }
+
+    /// A store created by this version has a nullable `namespace` column and
+    /// documents carry no namespace by design (#614, #1271): the fix for the
+    /// old NOT NULL column must not stamp 'default' onto them.
+    #[test]
+    fn a_new_store_keeps_the_namespace_of_a_new_document_empty() {
+        let store = Store::open(":memory:").unwrap();
+        let now = chrono::Utc::now().to_rfc3339();
+        let doc = crate::memory::documents::Document {
+            id: "doc-1".into(),
+            slug: "test-slug".into(),
+            title: "t".into(),
+            content: "# t".into(),
+            namespace: None,
+            author: None,
+            tags: vec![],
+            metadata: serde_json::json!({}),
+            version: 1,
+            content_type: "markdown".into(),
+            created_at: now.clone(),
+            updated_at: now,
+            parent_id: None,
+            path: "/doc-1/".into(),
+            depth: 0,
+            sort_order: 0,
+            has_children: false,
+        };
+        store.upsert_document(&doc).unwrap();
+        let stored = store.get_document_by_slug("test-slug").unwrap().unwrap();
+        assert_eq!(stored.namespace, None);
+    }
+
     // ────────────────────────────────────────────────────────────
     // Migration upgrade-path tests (regression guard for #492)
     // ────────────────────────────────────────────────────────────

@@ -10,6 +10,19 @@
   matches `count_pinned`. Schema v28 adds a partial index (`idx_memories_pinned`) so the query does
   not scan the table; a store at v27 upgrades in place and keeps its rows.
 
+### Fixed
+
+- **`doc create` failed with `NOT NULL constraint failed: documents.namespace` on older stores** -
+  a store that went through schema v11 keeps `namespace TEXT NOT NULL DEFAULT 'default'` on
+  `documents` (migration v13 only dropped the unique index), and the insert bound NULL to that
+  column explicitly, so the column default never applied. Every way to create a document failed:
+  `uteke doc create`, `POST /doc/create` (500) and `uteke_doc_create` (`insert document: missing
+  required field`). A document without a namespace now leaves the column out of the insert, so an
+  old store stores `'default'` and a store created by this version keeps the column empty. The
+  structural import (`uteke import` of a full bundle) had the same bind, and because it uses
+  `INSERT OR IGNORE` it skipped such documents without an error; it is fixed the same way.
+  Documents stay global (#614): `--namespace` on `doc create` is still not a document scope.
+
 ## [0.24.1] - 2026-11-17
 
 Patch release. Theme: **`uteke-serve` 0.24.0 never started listening.** Every start of 0.24.0 stopped
