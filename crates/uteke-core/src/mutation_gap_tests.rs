@@ -212,3 +212,46 @@ fn engine_settings_with_env_overrides_keeps_the_rest_and_applies_the_environment
     assert_eq!(got.recall.min_score, 0.3, "unset variables keep the value");
     assert_eq!(got.embed_fallback.model, "env-model");
 }
+
+/// `Uteke::list_pinned` (#1804) hands back the pinned memories of the store it
+/// wraps: the pinned ones only, filtered by namespace, within the limit. The
+/// store method has its own tests; this one fails when the wrapper answers
+/// without asking the store.
+#[test]
+fn uteke_list_pinned_returns_the_pinned_memories_of_the_store() {
+    let u = open_keyword();
+    let a = u
+        .remember("pinned in alpha", &[], None, Some("alpha"))
+        .unwrap();
+    let b = u
+        .remember("pinned in beta", &[], None, Some("beta"))
+        .unwrap();
+    let plain = u
+        .remember("never pinned", &[], None, Some("alpha"))
+        .unwrap();
+    assert!(u.pin(&a).unwrap());
+    assert!(u.pin(&b).unwrap());
+
+    let mut all: Vec<String> = u
+        .list_pinned(None, 10)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect();
+    all.sort();
+    let mut expected = vec![a.clone(), b.clone()];
+    expected.sort();
+    assert_eq!(all, expected, "every pinned memory, and no plain one");
+    assert!(!all.contains(&plain));
+
+    let in_alpha = u.list_pinned(Some("alpha"), 10).unwrap();
+    assert_eq!(in_alpha.len(), 1);
+    assert_eq!(in_alpha[0].id, a);
+    assert!(in_alpha[0].pinned);
+
+    assert_eq!(
+        u.list_pinned(None, 1).unwrap().len(),
+        1,
+        "the limit applies"
+    );
+}
