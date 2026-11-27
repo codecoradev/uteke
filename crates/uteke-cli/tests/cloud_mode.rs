@@ -87,42 +87,60 @@ impl Drop for Remote {
 }
 
 /// The `uteke-serve` binary: `CARGO_BIN_EXE_uteke-serve` inside the
-/// uteke-server workspace member, else the sibling of this test binary (the
-/// workspace target dir keeps every built binary in the same folder), else
-/// `uteke-serve` on `PATH`. This test lives in the uteke-cli member, which does
-/// not build uteke-serve itself.
+/// uteke-server member, else the sibling of this test binary, else built into
+/// the workspace target dir on demand. `cargo test --workspace` (the CI gate)
+/// does not build uteke-serve before running the uteke-cli tests, and this
+/// crate does not depend on uteke-server, so the E2E suite builds it here —
+/// once per test binary, before any test spawns the server. Skipped when the
+/// binary is already there (sibling or PATH), so a plain `cargo test -p
+/// uteke-cli` after a workspace build does no extra work.
 fn server_binary() -> PathBuf {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_uteke-serve") {
-        return PathBuf::from(path);
-    }
-    let exe = std::env::current_exe().expect("the test binary path");
-    let sibling = exe.with_file_name(if cfg!(windows) {
-        "uteke-serve.exe"
-    } else {
-        "uteke-serve"
-    });
-    if sibling.exists() {
-        return sibling;
-    }
-    which_fallback()
-}
-
-fn which_fallback() -> PathBuf {
-    let name = if cfg!(windows) {
+    const NAME: &str = if cfg!(windows) {
         "uteke-serve.exe"
     } else {
         "uteke-serve"
     };
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_uteke-serve") {
+        return PathBuf::from(path);
+    }
+    let exe = std::env::current_exe().expect("the test binary path");
+    let sibling = exe.with_file_name(NAME);
+    if sibling.exists() {
+        return sibling;
+    }
     let path_var = std::env::var("PATH").unwrap_or_default();
     for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(name);
+        let candidate = dir.join(NAME);
         if candidate.is_file() {
             return candidate;
         }
     }
-    panic!(
-        "uteke-serve not found: build it first (`cargo build -p uteke-server`) or put it on PATH"
-    );
+    // Build it into the workspace target dir; the sibling lookup above finds
+    // it on the next call.
+    let target = exe
+        .ancestors()
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n == "debug" || n == "release")
+        })
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| panic!("uteke-serve not found and no target dir to build it into"));
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("the workspace root")
+        .to_path_buf();
+    let status = std::process::Command::new("cargo")
+        .args(["build", "-p", "uteke-server"])
+        .current_dir(&workspace)
+        // The server tests' embedder-stub env keeps this build light; the
+        // feature set stays the workspace default.
+        .env("UTEKE_NO_UPDATE_CHECK", "1")
+        .status()
+        .expect("spawn cargo build -p uteke-server");
+    assert!(status.success(), "building uteke-serve failed");
+    target.join(NAME)
 }
 
 impl Remote {

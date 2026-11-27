@@ -111,13 +111,27 @@ fn command_name(command: &Commands) -> &'static str {
 
 /// The HTTP client for the remote endpoint: bearer token on every request,
 /// a bounded wait so an unreachable remote fails instead of hanging.
-fn build_client() -> reqwest::blocking::Client {
+///
+/// A token that cannot be a header value (a trailing newline from a secrets
+/// file, for example) is an error, not a silent unauthenticated run: an
+/// unauthenticated request would fail remotely with a confusing 401 (or, on a
+/// misconfigured server, write into someone else's workspace). The timeouts
+/// are part of the contract with the caller — a build that loses them would
+/// hang on an unreachable remote — so a client build failure errors too.
+fn build_client() -> Result<reqwest::blocking::Client, String> {
     let mut builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .connect_timeout(Duration::from_secs(10));
-    if let Some(token) = env(TOKEN_ENV)
-        && let Ok(mut value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))
-    {
+    if let Some(token) = env(TOKEN_ENV) {
+        let value =
+            reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| {
+                format!(
+                    "{TOKEN_ENV} cannot be used as an Authorization header value (control \
+                    characters or whitespace outside the header alphabet?). Trim it or \
+                    re-export it."
+                )
+            })?;
+        let mut value = value;
         value.set_sensitive(true);
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::AUTHORIZATION, value);
@@ -125,7 +139,7 @@ fn build_client() -> reqwest::blocking::Client {
     }
     builder
         .build()
-        .unwrap_or_else(|_| reqwest::blocking::Client::new())
+        .map_err(|e| format!("Failed to build the HTTP client for the remote: {e}"))
 }
 
 fn parse_json_value(resp: reqwest::blocking::Response) -> Result<serde_json::Value, String> {
@@ -171,7 +185,7 @@ pub(crate) fn run(cli: &Cli, target: &CloudTarget) -> Result<(), String> {
         ));
     }
     let base_url = &target.base_url;
-    let client = build_client();
+    let client = build_client()?;
     let ns = cli.namespace.as_deref().unwrap_or("default");
 
     match command {
