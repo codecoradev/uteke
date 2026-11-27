@@ -4,6 +4,7 @@ mod aging;
 mod anchor;
 pub(crate) mod bench;
 mod capture;
+pub(crate) mod cloud;
 mod contradictions;
 mod doc;
 mod dream;

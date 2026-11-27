@@ -54,6 +54,34 @@ port = 8767
 backend = "usearch"
 ```
 
+## Cloud Mode (#1791)
+
+With `UTEKE_BASE_URL` set, the CLI routes memory, room and document commands to a remote
+endpoint (for example `https://uteke.app`) instead of the local store, authenticated with
+`UTEKE_CLOUD_TOKEN`. The remote speaks the same wire as `uteke-serve` — the CORE subset the
+[contract](https://github.com/codecoradev/uteke) pins with uteke-cloud — so the same commands
+work against your own server or against Uteke Cloud:
+
+```bash
+# Route memory/room/doc commands to Uteke Cloud
+UTEKE_BASE_URL=https://uteke.app UTEKE_CLOUD_TOKEN=<token> uteke room recall project:uteke --limit 3
+UTEKE_BASE_URL=https://uteke.app UTEKE_CLOUD_TOKEN=<token> uteke remember --room project:uteke "deployment note"
+```
+
+- **Routed commands**: `remember` (also with `--room`), `recall`, `search`, `list`, `get`,
+  `stats`, `forget`, every `room` subcommand except `room consolidate`, and `doc`
+  `create`/`get`/`list`/`children`/`search`/`delete`.
+- **Not routed**: everything else (`dream`, `graph`, `doctor`, `import`, …) refuses with a
+  clear message instead of silently hitting the local store — running them against the wrong
+  database would split the data (#1439 lesson applied to the cloud target).
+- **`--store` stays local-only**: passing it keeps the run local even when the env is set.
+- **No silent fallback**: if `UTEKE_CLOUD_TOKEN` is missing, the command warns and uses the
+  local store; set `UTEKE_STRICT=1` to make that a hard error instead. A refused request
+  (401 and friends) always fails the command — nothing lands in the local store.
+- **Recall flags**: flags with no wire field on the remote (`--salience`, `--recency`,
+  `--related`, `--depth`, `--where`) are refused with a message, not dropped silently (#1332).
+- Env unset → behavior unchanged (local store).
+
 ## Server Mode
 
 When `[server] enabled = true`, the CLI automatically routes commands through the running HTTP server:
@@ -378,6 +406,9 @@ Resolution order (highest priority first):
 | `UTEKE_PRIVACY_MODE` | `[privacy] mode` | `redact` | Secret filter mode: `redact`, `strict`, `off` |
 | `UTEKE_NAMESPACE` | `[store] namespace` | `default` | Default namespace (applied in CLI) |
 | `UTEKE_AUTH_TOKEN` | — | — | Server auth token (applied in server) |
+| `UTEKE_BASE_URL` | — | — | Cloud mode (#1791): route memory/room/doc commands to this remote endpoint instead of the local store |
+| `UTEKE_CLOUD_TOKEN` | — | — | Bearer token for the cloud-mode endpoint |
+| `UTEKE_STRICT` | — | unset | `1` makes an incomplete cloud setup fail instead of falling back to the local store |
 | `UTEKE_LOG_LEVEL` | `[logging] level` | `warn` | Log level (trace/debug/info/warn/error) |
 | `UTEKE_VECTOR_BACKEND` | `[vector] backend` | compiled-in default | Vector engine when both are compiled in: `usearch`, `vecq`. Ignored (with a warning) on single-engine builds or unknown values. Switching engines on an existing store auto-rebuilds the index from SQLite |
 | `UTEKE_SERVER_HOST` | `[server] host` | `127.0.0.1` | Server bind address |

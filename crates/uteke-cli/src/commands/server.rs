@@ -137,7 +137,13 @@ fn is_loopback_url(url: &str) -> bool {
 /// typed [`uteke_core::RecallRequest`], not on the wire: adding them to
 /// `POST /recall` would change a CORE endpoint. Defaults (`--depth 1`) do not
 /// count as set.
-fn recall_flags_unsupported_by_server(args: &super::recall::RecallArgs<'_>) -> Vec<&'static str> {
+///
+/// The cloud client (`super::cloud`) shares this: the remote endpoint serves
+/// the same wire (the CORE contract pins it), so the same flags have no field
+/// there either (#1791).
+pub(crate) fn recall_flags_unsupported_by_server(
+    args: &super::recall::RecallArgs<'_>,
+) -> Vec<&'static str> {
     let mut out = Vec::new();
     if args.salience.is_some() {
         out.push("--salience");
@@ -158,7 +164,7 @@ fn recall_flags_unsupported_by_server(args: &super::recall::RecallArgs<'_>) -> V
 }
 
 /// Decode the server's answer to `POST /recall` into the shape core returns.
-fn recall_output_from_server(
+pub(crate) fn recall_output_from_server(
     data: serde_json::Value,
     req: &uteke_core::RecallInput,
 ) -> Result<uteke_core::recall_exec::RecallOutput, String> {

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **Cloud mode (#1791)**: with `UTEKE_BASE_URL` (and `UTEKE_CLOUD_TOKEN`) set, the CLI routes
+  memory, room and document commands to a remote endpoint (`https://uteke.app` or any server
+  speaking the same CORE wire) instead of the local store. Routed: `remember` (also `--room`),
+  `recall`, `search`, `list`, `get`, `stats`, `forget`, `room` (all subcommands except
+  `consolidate`), and `doc` `create`/`get`/`list`/`children`/`search`/`delete`. Not routed
+  commands refuse with a message instead of silently hitting the local store (#1439 lesson);
+  `--store` keeps a run local; a missing token warns and falls back (or fails under
+  `UTEKE_STRICT=1`); refused requests always fail the command. Verified end-to-end against a
+  live API server.
+
 ## [0.24.2] - 2026-11-26
 
 Patch release. Theme: **`doc create` works again on stores that went through schema v11, and the
