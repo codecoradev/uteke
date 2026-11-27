@@ -83,22 +83,25 @@ Rather not run anything locally? **[Uteke Cloud](https://uteke.app/?utm_source=g
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) hides the facts an agent needs across ~115 chat sessions per question and checks whether retrieval finds them. 500 hand-curated questions, five memory abilities. Uteke runs the full suite with **zero LLM calls in the retrieval path**: local embeddings, one CPU, deterministic.
 
-| Metric | Uteke **v0.24.0** | MemPalace¹ | agentmemory¹ |
+Scored the way the benchmark's own retrieval scorer does it: the 470 answerable questions (the 30 abstention questions are left out), top 5 sessions.
+
+| LongMemEval-S, 470 questions | Uteke **v0.24.0** | MemPalace (raw)¹ | agentmemory (BM25 component)² |
 |---|---|---|---|
-| **recall_any@5** (evidence in top 5) | **98.2%** | 96.6%⁴ | 95.2%³ |
-| recall_any@10 | 98.8% | — | 98.6%³ |
-| **strict recall_all@5** (all evidence in top 5) | <b>87.6%</b>² | not published | 84.7%³ |
-| LLM calls in retrieval | **0** | 0 (raw mode)⁴ | 0 |
+| **recall_any@5** (at least one evidence session in the top 5) | **98.3%** | 96.6% | 96.2% |
+| **strict recall_all@5** (every evidence session in the top 5) | **87.9%** | 85.7% | 84.7% |
+| LLM or paid API in retrieval | **none** | none | none |
+
+The 98.2% in the badge is the same Uteke run over all 500 questions, abstention included (strict: 87.6%).
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-comparison-dark.png" />
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-comparison-light.png" />
-    <img src="docs/assets/longmemeval-comparison-light.png" width="760" alt="LongMemEval-S recall_any@5, 500 questions: Uteke 98.2%, MemPalace 96.6%, agentmemory 95.2%. Axis starts at 0." />
+    <img src="docs/assets/longmemeval-comparison-light.png" width="760" alt="LongMemEval-S, 470 answerable questions, top 5 sessions. Local, no LLM: Uteke 98.3% any and 87.9% strict, MemPalace raw 96.6% and 85.7%, agentmemory BM25 96.2% and 84.7%. With an LLM or paid API: MemPalace hybrid plus LLM rerank 99.4% and 90.0%, gbrain 100.0% and 96.0%. Axis starts at 0." />
   </picture>
 </p>
 
-<sub>¹ Their published numbers on LongMemEval-S, each on its own recall_any@5 basis ([head-to-head notes](docs/benchmarks.md#head-to-head-vs-published-systems)); evaluation setups differ. Read from their READMEs on 2026-11-16. ² Strict = *every* gold session in the top 5; 65% of questions have more than one. Max possible 99.4%. v0.24.0 scores 87.6% (438 of 500) where v0.16.0 to v0.20.0 scored 88.0% (440): two questions moved one of their two gold sessions across the rank-5 boundary while their top-50 sets stayed identical and recall_any@5 did not change, the adjacent-rank jitter that [RESULTS.md](benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17) documents. ³ agentmemory: 95.2% / 98.6% is its earlier hybrid run, which its own page labels historical (older pipeline, 500 questions). Its current README, measured 2026-10-28, reports 84.7% strict recall_all@5 and 96.2% any-hit@5 for the keyless BM25 component alone, scoring 470 answerable questions. Different denominator and pipeline, so not a head-to-head with ours. ⁴ MemPalace: 96.6% is its raw mode (semantic search, no LLM, 500 questions). It also reports 98.4% for a hybrid mode on a held-out 450-question subset (50 used for tuning) and ≥99% with an LLM rerank; neither is the same split or setup, so neither is in the table.</sub>
+<sub>Self-reported by each project; we did not run any other tool's software. ¹ MemPalace publishes 96.6% over all 500 questions and no strict figure; the 470-question counts here (454 any, 403 strict) are our recount of the ranking file it committed, against the official gold labels, and match the recount gbrain-evals published for the same file. ² agentmemory's 2026-10-28 receipt, BM25 component only; its full hybrid scored 95.2% over all 500 in an older run its own page labels historical. The chart adds the rows that need an LLM or a paid API, and they are higher: MemPalace with an LLM rerank (99.4% / 90.0%, same recount) and gbrain with OpenAI embeddings and a Voyage reranker (100.0% / 96.0%, its own report; it returns 5 chunks, not 5 sessions). Strict is the harder metric and the one the official scorer prints; 65% of questions have more than one evidence session. None of these is held out: gbrain was tuned on these questions, and Uteke's fusion weights on a 50-question subset. Counts, sources and how to recount: [benchmarks/longmemeval/COMPARISON.md](benchmarks/longmemeval/COMPARISON.md). On all 500 questions strict was 88.0% for v0.16.0 to v0.20.0 and 87.6% for v0.24.0: two questions moved a gold session across rank 5 with identical top-50 sets ([RESULTS.md](benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17)).</sub>
 
 <details>
 <summary>Stability across releases and results per question type</summary>

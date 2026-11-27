@@ -80,22 +80,25 @@ Nggak mau menjalankan apa pun di mesin sendiri? **[Uteke Cloud](https://uteke.ap
 
 [LongMemEval-S](https://arxiv.org/abs/2410.10813) (ICLR 2025) menyembunyikan fakta yang dibutuhkan agent di antara ~115 sesi chat per pertanyaan, lalu mengecek apakah retrieval bisa menemukannya. 500 pertanyaan yang dikurasi manual, lima kemampuan memori. Uteke menjalankan semuanya dengan **nol panggilan LLM di jalur retrieval**: embedding lokal, satu CPU, deterministik.
 
-| Metrik | Uteke **v0.24.0** | MemPalace¹ | agentmemory¹ |
+Dinilai seperti penilai retrieval resmi benchmark ini: 470 pertanyaan yang bisa dijawab (30 pertanyaan abstain tidak dihitung), top 5 sesi.
+
+| LongMemEval-S, 470 pertanyaan | Uteke **v0.24.0** | MemPalace (raw)¹ | agentmemory (komponen BM25)² |
 |---|---|---|---|
-| **recall_any@5** (bukti di top 5) | **98,2%** | 96,6%⁴ | 95,2%³ |
-| recall_any@10 | 98,8% | — | 98,6%³ |
-| **strict recall_all@5** (semua bukti di top 5) | <b>87,6%</b>² | tidak dipublikasikan | 84,7%³ |
-| Panggilan LLM di retrieval | **0** | 0 (mode raw)⁴ | 0 |
+| **recall_any@5** (minimal satu sesi bukti di top 5) | **98,3%** | 96,6% | 96,2% |
+| **strict recall_all@5** (semua sesi bukti di top 5) | **87,9%** | 85,7% | 84,7% |
+| LLM atau API berbayar di retrieval | **tidak ada** | tidak ada | tidak ada |
+
+Angka 98,2% di badge adalah run Uteke yang sama pada ke-500 pertanyaan, termasuk abstain (strict: 87,6%).
 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/longmemeval-comparison-dark.png" />
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/longmemeval-comparison-light.png" />
-    <img src="docs/assets/longmemeval-comparison-light.png" width="760" alt="LongMemEval-S recall_any@5, 500 pertanyaan: Uteke 98,2%, MemPalace 96,6%, agentmemory 95,2%. Sumbu mulai dari 0." />
+    <img src="docs/assets/longmemeval-comparison-light.png" width="760" alt="LongMemEval-S, 470 pertanyaan yang bisa dijawab, top 5 sesi. Lokal, tanpa LLM: Uteke 98,3% any dan 87,9% strict, MemPalace raw 96,6% dan 85,7%, agentmemory BM25 96,2% dan 84,7%. Dengan LLM atau API berbayar: MemPalace hybrid plus rerank LLM 99,4% dan 90,0%, gbrain 100,0% dan 96,0%. Sumbu mulai dari 0." />
   </picture>
 </p>
 
-<sub>¹ Angka yang mereka publikasikan di LongMemEval-S, masing-masing dengan basis recall_any@5 mereka sendiri ([catatan head-to-head](docs/benchmarks.md#head-to-head-vs-published-systems)); setup evaluasinya berbeda. Dibaca dari README mereka pada 2026-11-16. ² Strict = *semua* sesi gold ada di top 5; 65% pertanyaan punya lebih dari satu. Maksimum yang mungkin 99,4%. v0.24.0 mendapat 87,6% (438 dari 500) di mana v0.16.0 sampai v0.20.0 mendapat 88,0% (440): dua pertanyaan menggeser satu dari dua sesi gold-nya melewati batas peringkat 5 dengan himpunan top-50 yang tetap sama dan recall_any@5 tidak berubah, yaitu jitter peringkat bersebelahan yang didokumentasikan [RESULTS.md](benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17). ³ agentmemory: 95,2% / 98,6% adalah run hybrid lamanya, yang di halamannya sendiri diberi label historis (pipeline lama, 500 pertanyaan). README mereka yang sekarang, diukur 2026-10-28, melaporkan strict recall_all@5 84,7% dan any-hit@5 96,2% untuk komponen BM25 keyless saja, dengan 470 pertanyaan yang bisa dijawab. Denominator dan pipeline berbeda, jadi bukan head-to-head dengan angka kami. ⁴ MemPalace: 96,6% adalah mode raw-nya (semantic search, tanpa LLM, 500 pertanyaan). Mereka juga melaporkan 98,4% untuk mode hybrid pada subset held-out 450 pertanyaan (50 dipakai untuk tuning) dan ≥99% dengan rerank LLM; keduanya bukan split atau setup yang sama, jadi tidak masuk tabel.</sub>
+<sub>Dilaporkan sendiri oleh tiap proyek; kami tidak menjalankan software tool lain. ¹ MemPalace mempublikasikan 96,6% pada ke-500 pertanyaan dan tidak ada angka strict; hitungan 470 pertanyaan di sini (454 any, 403 strict) adalah hitung ulang kami dari berkas ranking yang mereka commit, terhadap label gold resmi, dan sama dengan hitung ulang yang dipublikasikan gbrain-evals untuk berkas yang sama. ² Receipt agentmemory 2026-10-28, hanya komponen BM25; hybrid penuhnya mendapat 95,2% pada ke-500 pertanyaan di run lama yang di halamannya sendiri diberi label historis. Chart menambahkan baris yang butuh LLM atau API berbayar, dan angkanya lebih tinggi: MemPalace dengan rerank LLM (99,4% / 90,0%, hitung ulang yang sama) dan gbrain dengan embedding OpenAI dan reranker Voyage (100,0% / 96,0%, laporan mereka sendiri; ia mengembalikan 5 chunk, bukan 5 sesi). Strict adalah metrik yang lebih berat dan yang dicetak penilai resmi; 65% pertanyaan punya lebih dari satu sesi bukti. Tidak satu pun held-out: gbrain di-tune pada pertanyaan ini, dan bobot fusion Uteke pada subset 50 pertanyaan. Hitungan, sumber, dan cara menghitung ulang: [benchmarks/longmemeval/COMPARISON.md](benchmarks/longmemeval/COMPARISON.md). Pada ke-500 pertanyaan strict adalah 88,0% untuk v0.16.0 sampai v0.20.0 dan 87,6% untuk v0.24.0: dua pertanyaan menggeser sesi gold melewati peringkat 5 dengan himpunan top-50 yang sama ([RESULTS.md](benchmarks/longmemeval/RESULTS.md#v0240-validation--done-2026-11-17)).</sub>
 
 <details>
 <summary>Stabilitas antar rilis dan hasil per jenis pertanyaan</summary>

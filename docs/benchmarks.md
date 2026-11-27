@@ -152,6 +152,14 @@ the same data.
 
 ### Head-to-head vs published systems
 
+*Updated 2026-11-27:* a like-for-like comparison on the 470 answerable questions, with
+both metrics, the counts and the recount script, is in
+[benchmarks/longmemeval/COMPARISON.md](../benchmarks/longmemeval/COMPARISON.md). On that
+basis Uteke scores 98.3% any@5 and 87.9% strict@5 (413 of 470), MemPalace raw 96.6% and 85.7%,
+agentmemory's BM25 component 96.2% and 84.7%; MemPalace with an LLM rerank (99.4% / 90.0%) and
+gbrain with paid APIs (100.0% / 96.0%) are higher and are shown apart. The README chart
+shows these rows. The paragraphs below describe the earlier 500-question comparison.
+
 The agentmemory and MemPalace numbers quoted in the [README](../README.md#benchmarks)
 are each project's own published figures on LongMemEval-S. The headline
 recall_any@5 figures (agentmemory 95.2%, MemPalace 96.6% raw mode) are reported over
