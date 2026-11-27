@@ -208,21 +208,18 @@ build_from_source() {
     cd "$TEMP_DIR"
     info "Building release binary (this may take a few minutes)..."
 
-    # Download ORT library for linking
-    ORT_VER="1.24.4"
-    ORT_PKG=""
-    case "$(uname -m)" in
-        x86_64|amd64)  ORT_PKG="onnxruntime-linux-x64-${ORT_VER}.tgz" ;;
-        arm64|aarch64) ORT_PKG="onnxruntime-linux-aarch64-${ORT_VER}.tgz" ;;
-        *)             error "Unsupported architecture for source build: $(uname -m)" ;;
+    # The ORT shared library is loaded at run time (`ort` load-dynamic), not
+    # linked: fetch it so it can be installed next to the binaries. The source
+    # is the onnxruntime wheel on PyPI, pinned by SHA-256 (scripts/fetch-ort.sh).
+    detect_os
+    case "${OS}-$(uname -m)" in
+        linux-x86_64|linux-amd64)   ORT_PLATFORM="linux-x64" ;;
+        linux-arm64|linux-aarch64)  ORT_PLATFORM="linux-arm64" ;;
+        darwin-arm64|darwin-aarch64) ORT_PLATFORM="macos-arm64" ;;
+        *) error "Unsupported platform for source build: ${OS}-$(uname -m)" ;;
     esac
-    info "Downloading ONNX Runtime ${ORT_VER}..."
-    curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PKG}" -o /tmp/ort-pkg.tgz || error "Failed to download ORT"
-    tar xzf /tmp/ort-pkg.tgz -C "$TEMP_DIR" || error "Failed to extract ORT"
-    rm -f /tmp/ort-pkg.tgz
-    mkdir -p ort-lib
-    find onnxruntime-*/lib -name 'libonnxruntime.so*' \( -type f -o -type l \) -exec cp -a {} ort-lib/ \;
-    export ORT_LIB_DIR=ort-lib
+    info "Fetching ONNX Runtime..."
+    bash scripts/fetch-ort.sh "$ORT_PLATFORM" ort-lib || error "Failed to fetch ORT"
 
     cargo build --release -p uteke-cli -p uteke-server -p uteke-mcp || {
         cd /; rm -rf "$TEMP_DIR"; error "Build failed."
@@ -235,7 +232,7 @@ build_from_source() {
     chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
 
     # Copy ORT .so next to binary and set up loader path
-    cp ort-lib/libonnxruntime.so* "${INSTALL_DIR}/" 2>/dev/null || true
+    cp ort-lib/* "${INSTALL_DIR}/" 2>/dev/null || true
 
     # Cleanup
     cd /

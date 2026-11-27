@@ -61,12 +61,6 @@ curl -sL $BASE/uteke-x86_64-unknown-linux-gnu-$V.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime.so* libonnxruntime_providers_shared.so* ~/.local/bin/
 
-# Linux (x86_64, legacy — no AVX2/SSE4.2)
-curl -sL $BASE/uteke-x86_64-unknown-linux-gnu-legacy-$V.tar.gz | tar xz
-mv uteke uteke-serve uteke-mcp ~/.local/bin/
-mv libonnxruntime.so* ~/.local/bin/
-mkdir -p ~/.local/bin/ort-legacy && mv ort-legacy/libonnxruntime.so* ~/.local/bin/ort-legacy/
-
 # Linux (aarch64 / ARM)
 curl -sL $BASE/uteke-aarch64-unknown-linux-gnu-$V.tar.gz | tar xz
 mv uteke uteke-serve uteke-mcp ~/.local/bin/
@@ -78,12 +72,13 @@ mv uteke uteke-serve uteke-mcp ~/.local/bin/
 mv libonnxruntime*.dylib ~/.local/bin/
 ```
 
+The Linux x86_64 legacy bundle (for CPUs without AVX2) was last published with v0.24.1; later releases do not carry it (the ONNX Runtime source it was built from is no longer on GitHub). On such a CPU, use the v0.24.1 legacy bundle or a remote embedding provider.
+
 Supported platforms:
 
 | Platform | Architecture | Format |
 |----------|-------------|--------|
 | Linux | x86_64 | tar.gz |
-| Linux | x86_64 (legacy, no AVX2) | tar.gz |
 | Linux | aarch64 (ARM) | tar.gz |
 | macOS | aarch64 (Apple Silicon) | tar.gz |
 | Windows | x86_64 | zip |
