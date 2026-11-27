@@ -16,7 +16,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  ORT_VERSION: "1.24.4"
 
 jobs:
   verify-main:
@@ -43,64 +42,6 @@ jobs:
             exit 1
           fi
 
-  build-ort-legacy:
-    name: Build legacy ORT (SSE4.2, no AVX2)
-    needs: [verify-main]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout onnxruntime source
-        uses: actions/checkout@v7
-        with:
-          repository: microsoft/onnxruntime
-          ref: v${{ env.ORT_VERSION }}
-          path: onnxruntime-src
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential python3
-
-      - name: Cache legacy ORT build
-        id: cache-ort
-        uses: actions/cache@v6
-        with:
-          path: onnxruntime-build/lib/libonnxruntime.so*
-          key: ort-legacy-sse42-${{ env.ORT_VERSION }}-v1
-
-      - name: Build ONNX Runtime (SSE4.2 only)
-        if: steps.cache-ort.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p onnxruntime-build
-          cmake -S onnxruntime-src/cmake -B onnxruntime-build \
-            -Donnxruntime_BUILD_SHARED_LIB=ON \
-            -Donnxruntime_BUILD_UNIT_TESTS=OFF \
-            -Donnxruntime_ENABLE_PYTHON=OFF \
-            -Donnxruntime_ENABLE_CPUINFO=OFF \
-            -Donnxruntime_USE_AVX=OFF \
-            -Donnxruntime_USE_AVX2=OFF \
-            -Donnxruntime_USE_AVX512=OFF \
-            -Donnxruntime_BUILD_BENCHMARKS=OFF \
-            -Donnxruntime_BUILD_OBJC=OFF \
-            -Donnxruntime_BUILD_CSHARP=OFF \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=onnxruntime-install
-
-          cmake --build onnxruntime-build --config Release --parallel $(nproc)
-
-      - name: Package legacy ORT
-        run: |
-          mkdir -p ort-legacy
-          cp onnxruntime-build/lib/libonnxruntime.so* ort-legacy/ || true
-          # Also look for the sonamed lib
-          find onnxruntime-build -name 'libonnxruntime.so*' -type f -exec cp {} ort-legacy/ \;
-          ls -lh ort-legacy/
-
-      - name: Upload legacy ORT artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ort-legacy-linux-x64
-          path: ort-legacy/
-
   build-release:
     name: Build ${{ matrix.target }}
     needs: [verify-main]
@@ -115,21 +56,25 @@ jobs:
           # For older distros, use the Docker image (based on Debian 12).
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            ort: linux-x64
             artifact: uteke-x86_64-unknown-linux-gnu
             ext: tar.gz
           # Linux ARM64 — same ubuntu-24.04 baseline
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            ort: linux-arm64
             artifact: uteke-aarch64-unknown-linux-gnu
             ext: tar.gz
           # macOS Apple Silicon
           - os: macos-latest
             target: aarch64-apple-darwin
+            ort: macos-arm64
             artifact: uteke-aarch64-apple-darwin
             ext: tar.gz
           # Windows x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            ort: win-x64
             artifact: uteke-x86_64-pc-windows-msvc
             ext: zip
 
@@ -140,42 +85,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Download prebuilt ORT shared library
+      # The ORT shared library is not linked at build time (`ort` is built with
+      # `load-dynamic`); it ships next to the binaries. It comes from the
+      # onnxruntime wheel on PyPI, pinned by SHA-256 (scripts/fetch-ort.sh):
+      # github.com/microsoft/onnxruntime answered 404 from 2026-11-17.
+      - name: Fetch ONNX Runtime shared library
         shell: bash
         run: |
-          ORT_VER="${ORT_VERSION}"
-          case "${{ runner.os }}" in
-            Linux)
-              if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-                ORT_PKG="onnxruntime-linux-x64-${ORT_VER}.tgz"
-              else
-                ORT_PKG="onnxruntime-linux-aarch64-${ORT_VER}.tgz"
-              fi
-              curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PKG}" | tar xz
-              mkdir -p ort-lib
-              # Copy actual .so files AND symlinks (needed for dlopen)
-              find onnxruntime-*/lib -name 'libonnxruntime.so*' \( -type f -o -type l \) -exec cp -a {} ort-lib/ \;
-              find onnxruntime-*/lib -name 'libonnxruntime_providers_shared.so*' \( -type f -o -type l \) -exec cp -a {} ort-lib/ \;
-              echo "ORT_LIB_DIR=ort-lib" >> $GITHUB_ENV
-              ;;
-            macOS)
-              ORT_PKG="onnxruntime-osx-arm64-${ORT_VER}.tgz"
-              curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PKG}" | tar xz
-              mkdir -p ort-lib
-              find onnxruntime-*/lib -name 'libonnxruntime*.dylib' \( -type f -o -type l \) -exec cp -a {} ort-lib/ \;
-              echo "ORT_LIB_DIR=ort-lib" >> $GITHUB_ENV
-              ;;
-            Windows)
-              ORT_PKG="onnxruntime-win-x64-${ORT_VER}.zip"
-              curl -sL "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VER}/${ORT_PKG}" -o ort.zip
-              mkdir -p ort-lib
-              unzip -j ort.zip 'onnxruntime-win-x64-*/lib/*.dll' -d ort-lib/ 2>/dev/null || true
-              unzip -j ort.zip 'onnxruntime-win-x64-*/lib/*.lib' -d ort-lib/ 2>/dev/null || true
-              echo "ORT_LIB_DIR=ort-lib" >> $GITHUB_ENV
-              ;;
-          esac
-          echo "Downloaded ORT libraries:"
-          ls -lh "${ORT_LIB_DIR:-ort-lib}/" || true
+          bash scripts/fetch-ort.sh "${{ matrix.ort }}" ort-lib
+          echo "ORT_LIB_DIR=ort-lib" >> $GITHUB_ENV
 
       - name: Build release binaries
         run: cargo build --release --target ${{ matrix.target }} -p uteke-cli -p uteke-server -p uteke-mcp
@@ -258,7 +176,10 @@ jobs:
 
   publish-crates:
     name: Publish to crates.io
-    needs: [verify-main]
+    # A crates.io version can never be withdrawn: publish only when every
+    # platform build succeeded, so a failed build cannot leave crates out
+    # without binaries (v0.24.2: uteke-privacy went out, the builds failed).
+    needs: [verify-main, build-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -334,56 +255,9 @@ jobs:
           done
           exit $fail
 
-  package-legacy:
-    name: Package Linux x64 legacy bundle
-    needs: [build-release, build-ort-legacy]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Extract version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-      - name: Download standard Linux x64 artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: uteke-x86_64-unknown-linux-gnu-${{ steps.version.outputs.VERSION }}
-          path: standard-artifact
-
-      - name: Download legacy ORT artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: ort-legacy-linux-x64
-          path: ort-legacy
-
-      - name: Create legacy bundle
-        run: |
-          mkdir -p legacy-release
-          tar xzf standard-artifact/uteke-x86_64-unknown-linux-gnu-${{ steps.version.outputs.VERSION }}.tar.gz -C legacy-release/
-          # Replace standard ORT with legacy ORT in ort-legacy/ subdirectory
-          mkdir -p legacy-release/ort-legacy
-          cp ort-legacy/libonnxruntime.so* legacy-release/ort-legacy/
-          # Verify
-          echo "Standard ORT libs:"
-          ls -lh legacy-release/libonnxruntime.so* 2>/dev/null || echo "  (none at root)"
-          echo "Legacy ORT libs:"
-          ls -lh legacy-release/ort-legacy/
-          echo ""
-          echo "Full bundle contents:"
-          ls -lh legacy-release/
-          cd legacy-release
-          tar czf "uteke-x86_64-unknown-linux-gnu-legacy-${{ steps.version.outputs.VERSION }}.tar.gz" *
-
-      - name: Upload legacy artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: uteke-x86_64-unknown-linux-gnu-legacy-${{ steps.version.outputs.VERSION }}
-          path: legacy-release/uteke-x86_64-unknown-linux-gnu-legacy-${{ steps.version.outputs.VERSION }}.tar.gz
-
   release:
     name: Create GitHub Release
-    needs: [build-release, package-legacy]
+    needs: [build-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write

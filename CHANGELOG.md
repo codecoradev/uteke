@@ -17,6 +17,16 @@ uteke.app was not updated. Plus a gap in the secret detector (`uteke-privacy`) a
   0.24.1 or older binary refuses it ("database schema version 28 is newer than supported version 27").
   Back up the data directory before moving to 0.24.2 if you may roll back. The migration only creates
   an index; no row changes.
+- The Linux x86_64 legacy bundle (`uteke-x86_64-unknown-linux-gnu-legacy-*`, the SSE4.2 ONNX Runtime
+  for CPUs without AVX2) is not part of this release. It was built from the ONNX Runtime source on
+  github.com/microsoft/onnxruntime, which has answered 404 since 2026-11-17. On a CPU without AVX2,
+  stay on the v0.24.1 legacy bundle or use a remote embedding provider (OpenAI, Ollama); restoring the
+  bundle needs another source of that code.
+- The ONNX Runtime library that ships next to the binaries now comes from the `onnxruntime` wheel on
+  PyPI (same 1.24.4, pinned by SHA-256 in `scripts/fetch-ort.sh`) for the same reason; the release
+  workflow, `install.sh --from-source` and a new pull request check use that one script.
+- The release workflow publishes to crates.io only after every platform build succeeded, so a failed
+  build can no longer leave crates on crates.io without binaries.
 - No CORE contract change: `list_pinned` is a core library method (no HTTP, MCP or CLI surface), and
   the `doc create` fix restores the documented behaviour.
 - Dependency updates: rusqlite 0.43 (bundled SQLite), clap 4.6.8, uuid, flate2, toml.
