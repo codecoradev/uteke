@@ -215,6 +215,34 @@ fn main() {
         eprintln!("{notice}");
     }
 
+    // Cloud mode (#1791): UTEKE_BASE_URL routes memory/room/doc commands to a
+    // remote endpoint. Checked before the local-server probe so an explicit
+    // remote target is never redirected to a local daemon, and --store (which
+    // names a local store) keeps the run local.
+    let cloud_target = match commands::cloud::resolve(cli.store.as_deref()) {
+        commands::cloud::CloudDecision::Cloud(target) => Some(target),
+        commands::cloud::CloudDecision::Local => None,
+        commands::cloud::CloudDecision::LocalWithWarning(warning) => {
+            eprintln!("{warning}");
+            None
+        }
+        commands::cloud::CloudDecision::StrictError(message) => {
+            exit::exit_with(exit::message_failure(&message));
+        }
+    };
+    if let Some(target) = &cloud_target {
+        tracing::info!("Cloud mode: routing via {}", target.base_url);
+        match commands::cloud::run(&cli, target) {
+            Ok(()) => {
+                if let Some(handle) = update_handle {
+                    let _ = handle.join();
+                }
+                return;
+            }
+            Err(e) => exit::exit_with(exit::message_failure(&e)),
+        }
+    }
+
     // Check if uteke server is running — if so, route via HTTP for <50ms latency
     let server_url = format!("http://{}:{}", config.server.host, config.server.port);
     // Cheap check first: no network probe when --store names another store.
