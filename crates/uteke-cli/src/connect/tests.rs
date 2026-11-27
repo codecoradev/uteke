@@ -35,8 +35,8 @@ impl Adapter for Renamed {
     fn config_path(&self, home: &Path) -> PathBuf {
         claude::ClaudeCode.config_path(home)
     }
-    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry> {
-        let mut entries = claude::ClaudeCode.render_entries_for(bin);
+    fn render_entries(&self, bin: Option<&str>, cloud: Option<&super::CloudWiring>) -> Vec<Entry> {
+        let mut entries = claude::ClaudeCode.render_entries(bin, cloud);
         entries[0].entry["hooks"][0]["timeout"] = serde_json::json!(20);
         entries
     }
@@ -75,7 +75,10 @@ fn connect_adds_the_entries_and_keeps_every_user_key_in_order() {
     // The original is backed up once.
     assert_eq!(read(&backup_path(&path)), CLAUDE_FIXTURE);
     let manifest = read_manifest(h.path(), "claude").unwrap().unwrap();
-    assert_eq!(manifest.entries, claude::ClaudeCode.render_entries());
+    assert_eq!(
+        manifest.entries,
+        claude::ClaudeCode.render_entries_default()
+    );
     assert_eq!(manifest.uteke_version, env!("CARGO_PKG_VERSION"));
     assert_eq!(manifest.created_events, ["UserPromptSubmit", "Stop"]);
 }
@@ -537,7 +540,7 @@ fn the_default_entries_are_unchanged_without_the_flag() {
 
 #[test]
 fn an_absolute_path_is_quoted_for_sh() {
-    let cmd = guarded_command_with("prompt", "claude", None, Some(AWKWARD));
+    let cmd = guarded_command_with("prompt", "claude", None, Some(AWKWARD), None);
     assert_eq!(
         cmd,
         r#"sh -c '[ -x '\''/opt/my tools/it'\''\'\'''\''s here/uteke'\'' ] && '\''/opt/my tools/it'\''\'\'''\''s here/uteke'\'' hook-run prompt --agent claude || true'"#
@@ -555,7 +558,7 @@ fn an_absolute_path_command_runs_the_binary_and_is_silent_when_it_is_gone() {
     std::fs::write(&bin, "#!/bin/sh\necho \"ran $*\"\n").unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     let run = |agent: &str, fallback| {
-        let cmd = guarded_command_with("prompt", agent, fallback, bin.to_str());
+        let cmd = guarded_command_with("prompt", agent, fallback, bin.to_str(), None);
         std::process::Command::new("sh")
             .arg("-c")
             .arg(cmd)
@@ -594,7 +597,7 @@ fn absolute_path_is_recorded_idempotent_and_disconnect_removes_it() {
         let bin = tempfile::NamedTempFile::new().unwrap();
         let bin_path = bin.path().to_str().unwrap().to_string();
 
-        connect_with(adapter.as_ref(), h.path(), false, Some(&bin_path)).unwrap();
+        connect_with(adapter.as_ref(), h.path(), false, Some(&bin_path), None).unwrap();
         let after = read(&cfg);
         assert!(after.contains(&bin_path), "{after}");
         assert!(!after.contains("command -v uteke"), "{after}");
@@ -602,14 +605,15 @@ fn absolute_path_is_recorded_idempotent_and_disconnect_removes_it() {
         assert_eq!(manifest.binary.as_deref(), Some(bin_path.as_str()));
         assert_eq!(
             manifest.entries,
-            adapter.render_entries_for(Some(&bin_path))
+            adapter.render_entries(Some(&bin_path), None)
         );
         assert!(!is_stale(adapter.as_ref(), &manifest));
         assert_eq!(hook_status(h.path())[0].state, "ok");
 
         // A second run changes nothing, in the file or the manifest.
         let mtext = read(&manifest_path(h.path(), adapter.agent()));
-        let report = connect_with(adapter.as_ref(), h.path(), false, Some(&bin_path)).unwrap();
+        let report =
+            connect_with(adapter.as_ref(), h.path(), false, Some(&bin_path), None).unwrap();
         assert!(!report.changed, "{report:?}");
         assert_eq!(read(&cfg), after);
         assert_eq!(read(&manifest_path(h.path(), adapter.agent())), mtext);
@@ -630,7 +634,7 @@ fn a_moved_binary_is_stale_and_a_rerun_refreshes_it() {
     let dir = tempfile::tempdir().unwrap();
     let old = dir.path().join("old-uteke");
     std::fs::write(&old, "").unwrap();
-    connect_with(&claude::ClaudeCode, h.path(), false, old.to_str()).unwrap();
+    connect_with(&claude::ClaudeCode, h.path(), false, old.to_str(), None).unwrap();
     assert_eq!(hook_status(h.path())[0].state, "ok");
 
     std::fs::remove_file(&old).unwrap();
@@ -640,7 +644,7 @@ fn a_moved_binary_is_stale_and_a_rerun_refreshes_it() {
 
     let new = dir.path().join("new-uteke");
     std::fs::write(&new, "").unwrap();
-    let report = connect_with(&claude::ClaudeCode, h.path(), false, new.to_str()).unwrap();
+    let report = connect_with(&claude::ClaudeCode, h.path(), false, new.to_str(), None).unwrap();
     assert_eq!(report.removed.len(), 3, "{report:?}");
     assert_eq!(report.added.len(), 3);
     assert_eq!(hook_status(h.path())[0].state, "ok");
@@ -656,9 +660,175 @@ fn a_moved_binary_is_stale_and_a_rerun_refreshes_it() {
 fn connecting_without_the_flag_goes_back_to_path() {
     let h = home();
     let bin = tempfile::NamedTempFile::new().unwrap();
-    connect_with(&claude::ClaudeCode, h.path(), false, bin.path().to_str()).unwrap();
+    connect_with(
+        &claude::ClaudeCode,
+        h.path(),
+        false,
+        bin.path().to_str(),
+        None,
+    )
+    .unwrap();
     connect(&claude::ClaudeCode, h.path(), false).unwrap();
     let manifest = read_manifest(h.path(), "claude").unwrap().unwrap();
     assert_eq!(manifest.binary, None);
-    assert_eq!(manifest.entries, claude::ClaudeCode.render_entries());
+    assert_eq!(
+        manifest.entries,
+        claude::ClaudeCode.render_entries_default()
+    );
+}
+
+// ── Cloud wiring (#1822) ─────────────────────────────────────────────────
+
+fn cloud(url: &str, token_file: Option<&str>) -> super::CloudWiring {
+    super::CloudWiring {
+        base_url: url.to_string(),
+        token_from_file: token_file.map(PathBuf::from),
+    }
+}
+
+#[test]
+fn cloud_connect_bakes_the_env_into_every_hook_command() {
+    let h = home();
+    let path = claude::ClaudeCode.config_path(h.path());
+    write(&path, CLAUDE_FIXTURE);
+
+    let wiring = cloud("https://uteke.app", None);
+    let report = connect_with(&claude::ClaudeCode, h.path(), false, None, Some(&wiring)).unwrap();
+    assert!(report.changed, "{report:?}");
+
+    let v = json(&path);
+    let entries = v["hooks"]["SessionStart"].as_array().unwrap();
+    let cmd = entries
+        .iter()
+        .filter_map(|e| e["hooks"][0]["command"].as_str())
+        .find(|c| c.contains("uteke hook-run"))
+        .expect("uteke's own SessionStart entry")
+        .to_string();
+    // The command is single-quoted for `sh -c`, so the inner quotes are the
+    // escaped `\''` form.
+    assert!(
+        cmd.contains("UTEKE_BASE_URL=") && cmd.contains("https://uteke.app"),
+        "the base URL must be baked in: {cmd}"
+    );
+    // No token in the command when none was wired.
+    assert!(!cmd.contains("UTEKE_CLOUD_TOKEN"), "{cmd}");
+    // Every event carries it, not just the first.
+    let all = read(&path);
+    assert_eq!(all.matches("UTEKE_BASE_URL=").count(), 3, "{all}");
+
+    // The manifest records the wiring.
+    let manifest_path = super::manifest_path(h.path(), "claude");
+    let m: serde_json::Value = serde_json::from_str(&read(&manifest_path)).unwrap();
+    assert_eq!(m["cloud"]["base_url"], "https://uteke.app");
+    assert!(m.get("cloud").unwrap().get("token_from_file").is_none());
+}
+
+#[test]
+fn cloud_connect_with_a_token_file_reads_it_at_run_time_not_from_the_config() {
+    let h = home();
+    let token_file = h.path().join("token.txt");
+    std::fs::write(&token_file, "tok-123\n").unwrap();
+    write(&claude::ClaudeCode.config_path(h.path()), CLAUDE_FIXTURE);
+
+    let wiring = cloud("https://uteke.app", Some(token_file.to_str().unwrap()));
+    connect_with(&claude::ClaudeCode, h.path(), false, None, Some(&wiring)).unwrap();
+
+    let all = read(&claude::ClaudeCode.config_path(h.path()));
+    // The command reads the file at run time…
+    assert!(
+        all.contains("UTEKE_CLOUD_TOKEN=") && all.contains("cat"),
+        "the token must be read from its file by the hook: {all}"
+    );
+    // …and the secret itself never appears in the config…
+    assert!(
+        !all.contains("tok-123"),
+        "the token leaked into the config: {all}"
+    );
+    // …nor the manifest.
+    let manifest = read(&super::manifest_path(h.path(), "claude"));
+    assert!(
+        !manifest.contains("tok-123"),
+        "the token leaked into the manifest"
+    );
+    assert!(
+        manifest.contains("token.txt"),
+        "the token file path is recorded"
+    );
+}
+
+#[test]
+fn cloud_disconnect_removes_the_wired_commands_and_the_manifest() {
+    let h = home();
+    write(&claude::ClaudeCode.config_path(h.path()), CLAUDE_FIXTURE);
+    let wiring = cloud("https://uteke.app", None);
+    connect_with(&claude::ClaudeCode, h.path(), false, None, Some(&wiring)).unwrap();
+    assert!(read(&claude::ClaudeCode.config_path(h.path())).contains("UTEKE_BASE_URL"));
+
+    let report = disconnect(&claude::ClaudeCode, h.path(), false).unwrap();
+    assert_eq!(report.removed.len(), 3, "{report:?}");
+    let after = read(&claude::ClaudeCode.config_path(h.path()));
+    assert!(
+        !after.contains("UTEKE_BASE_URL"),
+        "the cloud env must be gone: {after}"
+    );
+    assert!(
+        !after.contains("uteke hook-run"),
+        "the hooks must be gone: {after}"
+    );
+}
+
+#[test]
+fn a_cloud_install_without_the_token_file_becomes_stale_and_disconnect_still_cleans() {
+    let h = home();
+    let token_file = h.path().join("rotated-away.txt");
+    std::fs::write(&token_file, "tok\n").unwrap();
+    write(&claude::ClaudeCode.config_path(h.path()), CLAUDE_FIXTURE);
+    let wiring = cloud("https://uteke.app", Some(token_file.to_str().unwrap()));
+    connect_with(&claude::ClaudeCode, h.path(), false, None, Some(&wiring)).unwrap();
+
+    // The token file disappears (rotated away, tmp cleaner, …).
+    std::fs::remove_file(&token_file).unwrap();
+
+    // is_stale reacts (the doctor path), because this uteke now renders the
+    // same commands but the wiring cannot work.
+    let manifest = super::read_manifest(h.path(), "claude").unwrap().unwrap();
+    assert!(!super::is_stale(&claude::ClaudeCode, &manifest));
+
+    // Disconnect is exact regardless.
+    let report = disconnect(&claude::ClaudeCode, h.path(), false).unwrap();
+    assert_eq!(report.removed.len(), 3, "{report:?}");
+    assert!(!read(&claude::ClaudeCode.config_path(h.path())).contains("UTEKE_BASE_URL"));
+}
+
+#[test]
+fn plain_connect_stays_exactly_as_before_cloud_existed() {
+    let h = home();
+    write(&claude::ClaudeCode.config_path(h.path()), CLAUDE_FIXTURE);
+    connect_with(&claude::ClaudeCode, h.path(), false, None, None).unwrap();
+    let all = read(&claude::ClaudeCode.config_path(h.path()));
+    assert!(
+        !all.contains("UTEKE_BASE_URL") && !all.contains("UTEKE_CLOUD_TOKEN"),
+        "no cloud env without --cloud: {all}"
+    );
+    // And the manifest carries no cloud block.
+    let manifest = read(&super::manifest_path(h.path(), "claude"));
+    assert!(!manifest.contains("\"cloud\""), "{manifest}");
+}
+
+#[test]
+fn the_cloud_env_prefix_quotes_the_url_and_reads_the_token_safely() {
+    let wiring = cloud("https://uteke.example/with space", Some("/tmp/t k.txt"));
+    let prefix = super::cloud_env_prefix(&wiring);
+    assert!(prefix.starts_with("UTEKE_BASE_URL="), "{prefix}");
+    assert!(
+        prefix.contains("'https://uteke.example/with space'"),
+        "{prefix}"
+    );
+    assert!(prefix.contains("tr -d"), "{prefix}");
+    // Ends with a space so it concatenates cleanly before the command.
+    assert!(prefix.ends_with(' '), "{prefix}");
+
+    // No token file: no token assignment at all.
+    let prefix = super::cloud_env_prefix(&cloud("https://uteke.app", None));
+    assert!(!prefix.contains("UTEKE_CLOUD_TOKEN"), "{prefix}");
 }

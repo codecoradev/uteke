@@ -39,6 +39,12 @@ pub(crate) struct Manifest {
     /// absent for the default `PATH` form, so those manifests are unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary: Option<String>,
+    /// The cloud wiring baked into the hook commands by `--cloud` (#1822):
+    /// the base URL the hooks target. The token is never recorded here —
+    /// only whether one was wired, so `disconnect` knows the commands it
+    /// removes carry credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<CloudWiring>,
     /// `connect` created the file, so `disconnect` may delete it once empty.
     #[serde(default)]
     pub created_file: bool,
@@ -48,6 +54,17 @@ pub(crate) struct Manifest {
     /// Event arrays `connect` created under `hooks`.
     #[serde(default)]
     pub created_events: Vec<String>,
+}
+
+/// The cloud part of a manifest (#1822). `token_from_file` is the path the
+/// token was read from at connect time: the hook commands re-read the file at
+/// run time, so rotating the token needs no re-connect, and the secret itself
+/// lives only in that file — never in the agent config or this manifest.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CloudWiring {
+    pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_from_file: Option<PathBuf>,
 }
 
 /// One agent app. The default `merge`/`unmerge` handle the shape the wave-1
@@ -60,12 +77,13 @@ pub(crate) trait Adapter {
     fn config_path(&self, home: &Path) -> PathBuf;
     /// The entries this version of uteke installs. `bin` is the absolute path of
     /// the binary to run (`--absolute-path`); `None` resolves `uteke` through
-    /// `PATH` at run time.
-    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry>;
-    /// The default (`PATH`) entries.
+    /// `PATH` at run time. `cloud` (#1822) wraps the command in the env that
+    /// routes `hook-run` to Uteke Cloud.
+    fn render_entries(&self, bin: Option<&str>, cloud: Option<&CloudWiring>) -> Vec<Entry>;
+    /// The default (`PATH`) entries, for tests.
     #[cfg(test)]
-    fn render_entries(&self) -> Vec<Entry> {
-        self.render_entries_for(None)
+    fn render_entries_default(&self) -> Vec<Entry> {
+        Adapter::render_entries(self, None, None)
     }
     /// Top-level keys the file needs next to `hooks` (Cursor's `version`).
     fn required_keys(&self) -> Vec<(&'static str, OJson)> {
@@ -195,7 +213,7 @@ pub(crate) const SUPPORTED: &[&str] = &["claude", "codex", "cursor"];
 /// failing hook. The string is the same on every machine.
 #[cfg(test)]
 pub(crate) fn guarded_command(event: &str, agent: &str) -> String {
-    guarded_command_with(event, agent, None, None)
+    guarded_command_with(event, agent, None, None, None)
 }
 
 /// [`guarded_command`] that prints `fallback` when `uteke` is missing, for an
@@ -204,12 +222,33 @@ pub(crate) fn guarded_command(event: &str, agent: &str) -> String {
 /// backslashes; it is double-quoted inside the single-quoted `sh -c` script.
 #[cfg(test)]
 pub(crate) fn guarded_command_or(event: &str, agent: &str, fallback: Option<&str>) -> String {
-    guarded_command_with(event, agent, fallback, None)
+    guarded_command_with(event, agent, fallback, None, None)
 }
 
 /// Single-quote `s` for a POSIX shell: `'` becomes `'\''`.
-fn sh_quote(s: &str) -> String {
+pub(crate) fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+/// The `VAR='value' ` prefix that routes a hook's `uteke` call through Uteke
+/// Cloud (#1822): `hook-run` is just a `uteke` invocation, so the cloud-mode
+/// environment of the CLI applies to it unchanged. The URL is shell-quoted;
+/// the token comes from the token file (`cloud_token_file`) and is never
+/// placed in the command itself.
+fn cloud_env_prefix(cloud: &CloudWiring) -> String {
+    let mut prefix = format!(
+        "{}={}",
+        crate::commands::cloud::BASE_URL_ENV,
+        sh_quote(&cloud.base_url)
+    );
+    if let Some(file) = &cloud.token_from_file {
+        let file = sh_quote(&file.to_string_lossy());
+        prefix.push_str(&format!(
+            " {}=\"$(cat {file} 2>/dev/null | tr -d '\\r\n')\"",
+            crate::commands::cloud::TOKEN_ENV
+        ));
+    }
+    prefix.push(' ');
+    prefix
 }
 
 /// The guarded command. With `bin` (`--absolute-path`, #1672) the script runs
@@ -221,18 +260,22 @@ pub(crate) fn guarded_command_with(
     agent: &str,
     fallback: Option<&str>,
     bin: Option<&str>,
+    cloud: Option<&CloudWiring>,
 ) -> String {
     let otherwise = match fallback {
         Some(f) => format!("echo \"{}\"", f.replace('"', "\\\"")),
         None => "true".to_string(),
     };
+    let env_prefix = cloud.map(cloud_env_prefix).unwrap_or_default();
     let script = match bin {
         None => format!(
-            "command -v uteke >/dev/null 2>&1 && uteke hook-run {event} --agent {agent} || {otherwise}"
+            "command -v uteke >/dev/null 2>&1 && {env_prefix}uteke hook-run {event} --agent {agent} || {otherwise}"
         ),
         Some(bin) => {
             let bin = sh_quote(bin);
-            format!("[ -x {bin} ] && {bin} hook-run {event} --agent {agent} || {otherwise}")
+            format!(
+                "[ -x {bin} ] && {env_prefix}{bin} hook-run {event} --agent {agent} || {otherwise}"
+            )
         }
     };
     format!("sh -c {}", sh_quote(&script))
@@ -507,15 +550,17 @@ pub(crate) struct Report {
 /// through `PATH`.
 #[cfg(test)]
 pub(crate) fn connect(adapter: &dyn Adapter, home: &Path, dry_run: bool) -> Result<Report, String> {
-    connect_with(adapter, home, dry_run, None)
+    connect_with(adapter, home, dry_run, None, None)
 }
 
-/// [`connect`] with an optional absolute binary path (`--absolute-path`).
+/// [`connect`] with an optional absolute binary path (`--absolute-path`) and
+/// an optional cloud wiring (`--cloud`, #1822).
 pub(crate) fn connect_with(
     adapter: &dyn Adapter,
     home: &Path,
     dry_run: bool,
     bin: Option<&str>,
+    cloud: Option<&CloudWiring>,
 ) -> Result<Report, String> {
     let path = adapter.config_path(home);
     let file = read_config(&path)?;
@@ -549,7 +594,7 @@ pub(crate) fn connect_with(
         ));
     }
     if let Some(prev) = &previous {
-        let entries = adapter.render_entries_for(bin);
+        let entries = adapter.render_entries(bin, cloud);
         let stale: Vec<Entry> = prev
             .entries
             .iter()
@@ -573,7 +618,8 @@ pub(crate) fn connect_with(
         manifest.created_keys = prev.created_keys.clone();
         manifest.created_events = prev.created_events.clone();
     }
-    let entries = adapter.render_entries_for(bin);
+    let entries = adapter.render_entries(bin, cloud);
+    manifest.cloud = cloud.cloned();
     let before = value.to_value();
     adapter
         .merge(&mut value, &entries, &mut manifest)
@@ -681,7 +727,7 @@ pub(crate) fn disconnect(
 /// upgrade): `doctor` reports it and `uteke connect <agent>` (with
 /// `--absolute-path` for such an install) refreshes them.
 pub(crate) fn is_stale(adapter: &dyn Adapter, manifest: &Manifest) -> bool {
-    manifest.entries != adapter.render_entries_for(manifest.binary.as_deref())
+    manifest.entries != adapter.render_entries(manifest.binary.as_deref(), manifest.cloud.as_ref())
         || manifest
             .binary
             .as_deref()
@@ -700,6 +746,21 @@ pub(crate) struct HookStatus {
     /// The binary baked in by `--absolute-path`, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub binary: Option<String>,
+    /// The cloud wiring (#1822): the base URL the hooks target and the token
+    /// file they read, when `connect --cloud` installed them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cloud: Option<CloudStatus>,
+}
+
+/// The cloud part of a [`HookStatus`] (#1822).
+#[derive(Debug, Serialize)]
+pub(crate) struct CloudStatus {
+    pub base_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_file: Option<PathBuf>,
+    /// Whether the wiring looks usable: the token file exists (when the
+    /// install reads one) and a `/health` probe answers.
+    pub state: &'static str,
 }
 
 /// Every agent with a connect manifest under `home`.
@@ -720,15 +781,45 @@ pub(crate) fn hook_status(home: &Path) -> Vec<HookStatus> {
         } else {
             "ok"
         };
+        let cloud = manifest.cloud.as_ref().map(|c| CloudStatus {
+            base_url: c.base_url.clone(),
+            token_file: c.token_from_file.clone(),
+            state: cloud_state(c),
+        });
         out.push(HookStatus {
             agent: agent.to_string(),
             config_path: manifest.config_path.clone(),
             state,
             installed_by: manifest.uteke_version.clone(),
             binary: manifest.binary.clone(),
+            cloud,
         });
     }
     out
+}
+
+/// The doctor state of a cloud wiring (#1822): `ok` when the token file
+/// exists (installs that read one) and the endpoint answers `/health`,
+/// `unreachable` when it does not, `missing_token_file` when the file is gone.
+fn cloud_state(cloud: &CloudWiring) -> &'static str {
+    if let Some(file) = &cloud.token_from_file {
+        if !file.is_file() {
+            return "missing_token_file";
+        }
+    }
+    let url = format!("{}/health", cloud.base_url);
+    let ok = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+        .map(|client| {
+            client
+                .get(&url)
+                .send()
+                .map(|r| r.status().is_success())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    if ok { "ok" } else { "unreachable" }
 }
 
 /// The `doctor` lines for connected agents; nothing when none is connected.
@@ -757,6 +848,26 @@ pub(crate) fn print_hook_status(statuses: &[HookStatus]) {
             ),
         };
         println!("  {}: {what}", s.agent);
+        if let Some(c) = &s.cloud {
+            let token = c
+                .token_file
+                .as_ref()
+                .map(|f| format!(", token from {}", f.display()))
+                .unwrap_or_default();
+            let shape = match c.state {
+                "ok" => "\u{2713}".to_string(),
+                "missing_token_file" => format!(
+                    "\u{26a0} token file is gone: restore it or re-run `uteke connect {} --cloud {}`",
+                    s.agent, c.base_url
+                ),
+                _ => "\u{26a0} endpoint does not answer /health (offline, wrong URL, or down)"
+                    .to_string(),
+            };
+            println!(
+                "    cloud: {} (hooks route here{token}) {shape}",
+                c.base_url
+            );
+        }
     }
 }
 
@@ -801,17 +912,33 @@ fn print_report(verb: &str, name: &str, report: &Report, json: bool) {
     }
 }
 
-/// `uteke connect <agent> [--dry-run] [--absolute-path]`.
+/// `uteke connect <agent> [--dry-run] [--absolute-path] [--cloud <url>
+/// [--cloud-token-file <path>]]`.
+///
+/// `--cloud` (#1822) bakes the cloud-mode environment into the hook commands:
+/// every `hook-run` the agent fires then routes to Uteke Cloud. The token is
+/// read once here (from `--cloud-token-file`, else `UTEKE_CLOUD_TOKEN` in the
+/// connecting shell) to verify it exists; the commands re-read the token file
+/// at run time, so it never lands in the agent config. Without `--cloud`
+/// nothing changes.
 pub(crate) fn run_connect(
     agent: &str,
     dry_run: bool,
     absolute_path: bool,
     json: bool,
+    cloud_url: Option<&str>,
+    cloud_token_file: Option<&str>,
 ) -> Result<(), String> {
     if provider::PROVIDER_AGENTS.contains(&agent) {
         if absolute_path {
             return Err(format!(
                 "--absolute-path applies to the hook agents ({}); {agent} gets a plugin, not a hook command",
+                SUPPORTED.join(", ")
+            ));
+        }
+        if cloud_url.is_some() {
+            return Err(format!(
+                "--cloud applies to the hook agents ({}); {agent} gets a plugin, whose \n                   environment is configured through the agent itself",
                 SUPPORTED.join(", ")
             ));
         }
@@ -824,7 +951,22 @@ pub(crate) fn run_connect(
     } else {
         None
     };
-    let mut report = connect_with(adapter.as_ref(), &home, dry_run, bin.as_deref())?;
+    let cloud = match cloud_url {
+        Some(url) => Some(resolve_cloud_wiring(url, cloud_token_file)?),
+        None => {
+            if cloud_token_file.is_some() {
+                return Err("--cloud-token-file needs --cloud <base-url>".to_string());
+            }
+            None
+        }
+    };
+    let mut report = connect_with(
+        adapter.as_ref(),
+        &home,
+        dry_run,
+        bin.as_deref(),
+        cloud.as_ref(),
+    )?;
     if !dry_run {
         let config = crate::config::Config::load();
         if !config.engine.capture.enabled {
@@ -839,8 +981,61 @@ pub(crate) fn run_connect(
                 .push(uteke_core::capture::extractor_line(&config.extraction));
         }
     }
+    if cloud.is_some() && !dry_run {
+        report.notes.push(
+            "Cloud: the hook commands carry the Uteke Cloud environment (#1791). The token \
+             is re-read from its file on every run; rotate it there, no re-connect needed."
+                .to_string(),
+        );
+    }
     print_report("Connected", adapter.display_name(), &report, json);
     Ok(())
+}
+
+/// Validate and resolve the `--cloud` arguments into a manifest [`CloudWiring`].
+/// The token must come from somewhere: `--cloud-token-file`, else the
+/// connecting shell's `UTEKE_CLOUD_TOKEN`. Its content is checked (non-empty,
+/// no newline beyond a trailing one) but never stored — the hook commands read
+/// the file themselves at run time.
+fn resolve_cloud_wiring(url: &str, token_file: Option<&str>) -> Result<CloudWiring, String> {
+    let base_url = url.trim_end_matches('/').to_string();
+    if !base_url.starts_with("https://")
+        && !base_url.starts_with("http://127.0.0.1")
+        && !base_url.starts_with("http://localhost")
+    {
+        return Err("--cloud must be an http(s) URL, e.g. --cloud https://uteke.app".to_string());
+    }
+    let token_from_file = match token_file {
+        Some(path) => {
+            let expanded = crate::config::Config::expand_tilde(path);
+            let p = std::path::Path::new(&expanded);
+            let content = std::fs::read_to_string(p)
+                .map_err(|e| format!("Cannot read the cloud token file {expanded}: {e}"))?;
+            let token = content.trim();
+            if token.is_empty() {
+                return Err(format!("The cloud token file {expanded} is empty"));
+            }
+            Some(p.to_path_buf())
+        }
+        None => {
+            let present = std::env::var(crate::commands::cloud::TOKEN_ENV)
+                .ok()
+                .is_some_and(|t| !t.trim().is_empty());
+            if !present {
+                return Err(
+                    "No token for the cloud wiring: pass --cloud-token-file <path> (the \
+                     file the hooks will read at run time), or set UTEKE_CLOUD_TOKEN in \
+                     this shell"
+                        .to_string(),
+                );
+            }
+            None
+        }
+    };
+    Ok(CloudWiring {
+        base_url,
+        token_from_file,
+    })
 }
 
 /// `uteke disconnect <agent> [--dry-run]`.

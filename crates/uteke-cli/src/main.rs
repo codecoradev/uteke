@@ -167,8 +167,17 @@ fn main() {
             agent,
             dry_run,
             absolute_path,
+            cloud,
+            cloud_token_file,
         } => {
-            let result = connect::run_connect(agent, *dry_run, *absolute_path, cli.json);
+            let result = connect::run_connect(
+                agent,
+                *dry_run,
+                *absolute_path,
+                cli.json,
+                cloud.as_deref(),
+                cloud_token_file.as_deref(),
+            );
             if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
