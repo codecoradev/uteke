@@ -42,7 +42,6 @@ jobs:
             uteke-aarch64-apple-darwin-v0.0.0.tar.gz \
             uteke-aarch64-unknown-linux-gnu-v0.0.0.tar.gz \
             uteke-x86_64-pc-windows-msvc-v0.0.0.zip \
-            uteke-x86_64-unknown-linux-gnu-legacy-v0.0.0.tar.gz \
             uteke-x86_64-unknown-linux-gnu-v0.0.0.tar.gz \
             | sort > expected.txt
           if ! diff -u expected.txt rendered.txt; then
@@ -54,6 +53,27 @@ jobs:
           # renders as UTEKE_VERSION=vX.Y.Z (install.sh builds asset URLs from this).
           grep -qE 'UTEKE_VERSION=__VER__ ' scripts/release-notes-template.md \
             || { echo "::error::pinned-install line must use UTEKE_VERSION=__VER__ (the v comes from the tag)"; exit 1; }
+
+  # The release workflow and install.sh fetch the ONNX Runtime library with
+  # scripts/fetch-ort.sh (a pinned PyPI wheel). Run it here on the runner OS
+  # each release job uses, so a dead URL, a changed file or a missing tool
+  # shows up on a pull request and not on the release tag (v0.24.2).
+  ort-fetch:
+    name: ONNX Runtime fetch (${{ matrix.ort }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, ort: linux-x64 }
+          - { os: ubuntu-latest, ort: linux-arm64 }
+          - { os: macos-latest, ort: macos-arm64 }
+          - { os: windows-latest, ort: win-x64 }
+    steps:
+      - uses: actions/checkout@v7
+      - name: Fetch the library and check the pinned SHA-256
+        shell: bash
+        run: bash scripts/fetch-ort.sh "${{ matrix.ort }}" ort-lib
 
   fmt:
     name: Format

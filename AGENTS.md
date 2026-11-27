@@ -77,23 +77,35 @@ Rust workspace: uteke-privacy (secret detector, regex only, shared with tole), u
    `docs/core-contract.json` (regenerate with `cargo run -p docgen`), the
    `version` in `server.json` and `gemini-extension.json` (both enforced by
    `registry_manifests_match_workspace_version`; `server.json` is the MCP
-   Registry entry; the `MCP Registry`
-   workflow publishes it on the tag through GitHub OIDC and fails if the
-   version does not match; a local `mcp-publisher login github` cannot
-   publish under the organization namespace), and the CHANGELOG entry. Merge it with the normal merge gate.
+   Registry entry `app.uteke/uteke-memory`; the `MCP Registry`
+   workflow publishes it on the tag with `mcp-publisher login dns` (domain
+   `uteke.app`, key in the repository secret `MCP_DNS_PRIVATE_KEY_HEX`, since #1802)
+   and fails if the secret is empty or the version does not match the tag; the
+   old `io.github.codecoradev/uteke` entry is deprecated by hand with the
+   `MCP Registry Deprecate Legacy Entry` workflow), the version in
+   `docs/install.md` and `docs/docker.md`, and the CHANGELOG entry (the new
+   `[X.Y.Z]` section goes under an empty `[Unreleased]`; a schema bump needs a
+   rollback note in its upgrade notes, since an older binary refuses the newer
+   schema). Merge it with the normal merge gate.
 3. **Release branch.** `git checkout -b chore/release-vX.Y.Z-main origin/develop`, then
    merge `main` keeping develop's side. First prove `main` has no content `develop`
    lacks: `git diff <develop's previous release commit> origin/main` is empty and
    `git diff --name-status origin/develop origin/main | awk '$1=="A"'` lists nothing.
    Then `git merge -s ours origin/main` and check `git diff origin/develop HEAD` is
-   empty. If `main` DOES carry unique content, resolve by hand instead (never
+   empty (in a shallow clone git says "unrelated histories": `git fetch --unshallow`
+   first). If `main` DOES carry unique content, resolve by hand instead (never
    server-side: protected branch). Push the branch.
 4. **PR into `main`** (`chore: release vX.Y.Z to main`), **squash** merge (the ruleset
    rejects merge commits). Apply the full merge gate; do not accept an empty Cora
-   result without a written justification on the PR.
+   result without a written justification on the PR. This is the first review that
+   sees the whole release, so it can block with real findings (v0.24.2 got one valid
+   privacy finding and one the registry run refuted): answer each on the PR, fix what
+   is valid through a normal PR into `develop`, then bring the release branch up to
+   date with `git merge origin/develop` (no force-push) and re-run the gate.
 5. **Tag only after the merge.** Verify `origin/main` is the merge commit and its tree
    equals `develop`, then create an ANNOTATED tag on that commit
-   (`git tag -a vX.Y.Z <sha>`) and push it. Tagging before the merge once pointed
+   (`git tag -a vX.Y.Z <sha>`) and push it; pushing a `v*` tag needs the Admin role
+   (an agent session gets HTTP 403, so the owner pushes it). Tagging before the merge once pointed
    the tag at the previous release (v0.15.0). The Release workflow takes ~35 min
    (the legacy-ORT build is the long pole) and publishes GitHub assets, crates.io
    (uteke-privacy, uteke-core, uteke-mcp, uteke-cli, uteke-server, in dependency order), Docker tags and opens the Homebrew tap PR.
