@@ -143,8 +143,85 @@ fn server_binary() -> PathBuf {
     target.join(NAME)
 }
 
+/// A minimal OpenAI-compatible `/v1/embeddings` endpoint on loopback: every
+/// input gets the same unit vector, so the vector leg of a fusion recall
+/// matches whatever was stored. Returns the base URL (`.../v1`). The thread
+/// ends with the test process.
+fn start_embedder_stub(dims: usize) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the embedder stub");
+    let port = listener.local_addr().expect("stub address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let _ = serve_embeddings(stream, dims);
+        }
+    });
+    format!("http://127.0.0.1:{port}/v1")
+}
+
+fn serve_embeddings(mut stream: TcpStream, dims: usize) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let (head_end, content_length) = loop {
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            return Ok(());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&buf[..pos]).to_ascii_lowercase();
+            let len = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            break (pos + 4, len);
+        }
+    };
+    while buf.len() < head_end + content_length {
+        let n = stream.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    let body: serde_json::Value =
+        serde_json::from_slice(&buf[head_end..]).unwrap_or(serde_json::Value::Null);
+    let count = match &body["input"] {
+        serde_json::Value::Array(items) => items.len().max(1),
+        _ => 1,
+    };
+    let component = 1.0 / (dims as f64).sqrt();
+    let vector = vec![component; dims];
+    let data: Vec<_> = (0..count)
+        .map(|i| serde_json::json!({"object": "embedding", "index": i, "embedding": vector}))
+        .collect();
+    let payload = serde_json::json!({
+        "object": "list",
+        "data": data,
+        "model": "cloud-e2e",
+        "usage": {"prompt_tokens": 0, "total_tokens": 0},
+    })
+    .to_string();
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    )
+}
+
 impl Remote {
     fn start(name: &str) -> Self {
+        Self::start_with(name, "http://127.0.0.1:9/v1")
+    }
+
+    /// A remote whose embedder answers (see `start_embedder_stub`), for the
+    /// tests that recall over the default fusion strategy.
+    fn start_with_embedder(name: &str) -> Self {
+        Self::start_with(name, &start_embedder_stub(768))
+    }
+
+    fn start_with(name: &str, embedding_base_url: &str) -> Self {
         let dir = TempDir::new(name);
         let port = free_port();
         let token = format!("cloud-test-token-{name}");
@@ -161,7 +238,7 @@ impl Remote {
             // An external embedder on a closed port: no ONNX runtime, no
             // model. Writes stay FTS-only, the API still answers.
             .env("UTEKE_EMBEDDING_BACKEND", "openai")
-            .env("UTEKE_EMBEDDING_BASE_URL", "http://127.0.0.1:9/v1")
+            .env("UTEKE_EMBEDDING_BASE_URL", embedding_base_url)
             .env("UTEKE_EMBEDDING_MODEL", "cloud-e2e")
             .env("UTEKE_EMBEDDING_DIMS", "768")
             // The openai backend validates the key at build time even though
@@ -432,4 +509,121 @@ impl Cli {
             .output()
             .expect("run uteke")
     }
+}
+
+// ── connect --cloud (#1822): the hook commands route to the remote ───────
+
+/// The exact hook command `uteke connect claude --cloud <url>
+/// --absolute-path>` bakes into the agent config (POSIX form). Mirrors
+/// `connect::guarded_command_with` — kept local so a formatting change there
+/// fails this test loudly instead of silently unrouting the hooks.
+///
+/// The absolute-path form is the one the test can trust: the PATH form's
+/// `command -v uteke` guard would find whatever `uteke` is first on PATH
+/// (often the released one, without cloud mode), which is exactly the wrong
+/// binary for proving the wiring.
+fn wired_hook_command(uteke_bin: &str, base_url: &str, token_file: &str) -> String {
+    let script = format!(
+        "[ -x '{uteke_bin}' ] && UTEKE_BASE_URL='{base_url}' UTEKE_CLOUD_TOKEN=\"$(cat '{token_file}' 2>/dev/null | tr -d '\\r\\n')\" '{uteke_bin}' hook-run session-start --agent claude || true",
+    );
+    format!("sh -c '{}'", script.replace('\'', "'\\''"))
+}
+
+/// Run the `sh -c` command like an agent hook would: stdin has the hook
+/// payload, the environment is the agent's (no cloud env pre-set). The ORT
+/// stub keeps the child's local recall path from touching the embedding
+/// model — the same isolation the other CLI tests use.
+fn run_hook_command(command: &str, home: &Path, payload: &str) -> Output {
+    Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .env("UTEKE_HOME", home)
+        .env("UTEKE_NO_UPDATE_CHECK", "1")
+        .env("ORT_LIB_PATH", "/nonexistent/uteke-test/libonnxruntime.so")
+        .env_remove("UTEKE_BASE_URL")
+        .env_remove("UTEKE_CLOUD_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child.stdin.take().unwrap().write_all(payload.as_bytes())?;
+            child.wait_with_output()
+        })
+        .expect("run the hook command")
+}
+
+#[test]
+fn a_cloud_wired_hook_routes_its_recall_to_the_remote() {
+    let remote = Remote::start_with_embedder("hook");
+    let cli = Cli::new("hook");
+    let cli_home = TempDir::new("hook-home");
+
+    // Seed the remote with a memory whose content mentions the project name:
+    // the hook recalls with the project name as the query, over the fusion
+    // strategy (the CLI default). Fusion needs a working embedder on the
+    // remote, hence `Remote::start_with_embedder` (an empty result here is
+    // what a remote without one answers, not an error).
+    let project = "hookprojectzeta".to_string();
+    let project_dir = cli_home.path().join(&project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let stored = cli.json(
+        Some(&remote),
+        &[
+            "remember",
+            "--json",
+            &format!("hook-seeded memory about the deploy gate for project {project}"),
+        ],
+    );
+    assert!(!as_object_str(&stored, "id").is_empty());
+
+    // The token file the wiring reads at run time.
+    let token_file = cli_home.path().join("cloud-token");
+    std::fs::write(&token_file, format!("{}\n", remote.token)).unwrap();
+
+    // Run the exact command `connect --cloud --absolute-path` writes, like an
+    // agent would: no cloud env in the hook's own environment, everything
+    // comes from the command line. The binary is `CARGO_BIN_EXE_uteke` —
+    // cargo built it for this test, wherever the target dir keeps it.
+    let test_bin = PathBuf::from(env!("CARGO_BIN_EXE_uteke"));
+    let cmd = wired_hook_command(
+        test_bin.to_str().unwrap(),
+        &remote.base_url,
+        token_file.to_str().unwrap(),
+    );
+    let payload = format!(
+        r#"{{"cwd": "{}", "session_id": "hook-e2e"}}"#,
+        project_dir.display()
+    );
+    let out = run_hook_command(&cmd, &cli_home.path().join("home"), &payload);
+    assert!(
+        out.status.success(),
+        "the hook must never fail the agent: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let hook_log = std::fs::read_to_string(cli_home.path().join("home/.codecora/uteke/hook.log"))
+        .unwrap_or_default();
+    assert!(
+        stdout.contains("deploy gate"),
+        "the hook's recall must see the remote's memory. stdout: {stdout:?} stderr: {} hook.log: {hook_log:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("uteke-stored-data"),
+        "the context must be fenced: {stdout}"
+    );
+
+    // And the local store stayed out of it: the same hook without the cloud
+    // env prefix finds nothing.
+    let plain = format!(
+        "sh -c '[ -x {bin} ] && {bin} hook-run session-start --agent claude || true'",
+        bin = test_bin.to_str().unwrap().replace('\'', "'\\''")
+    );
+    let out = run_hook_command(&plain, &cli_home.path().join("home"), &payload);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("deploy gate"),
+        "the unwired hook must not see the remote's memory: {stdout}"
+    );
 }

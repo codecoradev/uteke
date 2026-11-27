@@ -516,6 +516,18 @@ pub enum Commands {
         /// resolving `uteke` through PATH (re-run after the binary moves)
         #[arg(long)]
         absolute_path: bool,
+        /// Wire the hook commands to a remote endpoint (#1822): the hooks' uteke
+        /// calls then carry the cloud-mode environment (#1791), e.g.
+        /// --cloud https://uteke.app. Needs a token: --cloud-token-file, or
+        /// UTEKE_CLOUD_TOKEN in this shell. Hook agents only (claude, codex,
+        /// cursor).
+        #[arg(long)]
+        cloud: Option<String>,
+        /// The file the cloud token lives in. The hook commands re-read it on
+        /// every run, so the token never lands in the agent config and can be
+        /// rotated without re-connecting.
+        #[arg(long)]
+        cloud_token_file: Option<String>,
     },
     /// Remove the hooks `uteke connect` installed, leaving everything else
     Disconnect {

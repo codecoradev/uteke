@@ -87,6 +87,9 @@ fn project_name(payload: &serde_json::Value) -> String {
 }
 
 /// A child `uteke` with the update check off (no network on the hook path).
+/// The cloud-mode environment (#1791, wired by `connect --cloud` #1822) is
+/// inherited from the hook's own environment, so a cloud-wired hook routes
+/// its recall and capture through the remote endpoint unchanged.
 fn uteke() -> Result<Command, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find the uteke binary: {e}"))?;
     let mut cmd = Command::new(exe);

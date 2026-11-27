@@ -5,7 +5,7 @@
 //! does not manage itself run only after they are trusted once in `/hooks`
 //! (learn.chatgpt.com/docs/hooks, formerly developers.openai.com/codex/hooks).
 
-use super::{Adapter, Entry, guarded_command_windows_with, guarded_command_with};
+use super::{Adapter, CloudWiring, Entry, guarded_command_windows_with, guarded_command_with};
 use std::path::{Path, PathBuf};
 
 /// `CODEX_HOME`, read by [`super::adapter_for`] from the environment; tests
@@ -48,7 +48,7 @@ impl Adapter for Codex {
         dir.join("hooks.json")
     }
 
-    fn render_entries_for(&self, bin: Option<&str>) -> Vec<Entry> {
+    fn render_entries(&self, bin: Option<&str>, cloud: Option<&CloudWiring>) -> Vec<Entry> {
         EVENTS
             .iter()
             .map(|(event, run, timeout)| Entry {
@@ -56,7 +56,7 @@ impl Adapter for Codex {
                 entry: serde_json::json!({
                     "hooks": [{
                         "type": "command",
-                        "command": guarded_command_with(run, self.agent(), None, bin),
+                        "command": guarded_command_with(run, self.agent(), None, bin, cloud),
                         "commandWindows": guarded_command_windows_with(run, self.agent(), bin),
                         "timeout": timeout,
                     }]
