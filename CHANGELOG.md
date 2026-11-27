@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Docs
+
+- **The LongMemEval comparison chart and table are on the 470 answerable questions, with both metrics** -
+  the README (English and Indonesian) chart, drawn by the new `benchmarks/longmemeval/scripts/make_comparison_chart.mjs`,
+  shows any@5 and strict@5 for Uteke (98.3% / 87.9%), MemPalace raw (96.6% / 85.7%) and the BM25
+  component of agentmemory (96.2% / 84.7%), and apart from them the rows that need an LLM or a paid API,
+  which are higher: MemPalace with an LLM rerank (99.4% / 90.0%) and gbrain (100.0% / 96.0%). The 470 basis
+  and the strict metric are what the benchmark's own retrieval scorer uses. The MemPalace counts are our
+  recount of the ranking files it committed (`benchmarks/longmemeval/scripts/recount_strict.py`, checked
+  against Uteke's own receipt and against gbrain-evals' recount); the page
+  `benchmarks/longmemeval/COMPARISON.md` has every count with its source, the caveats (no row is held out,
+  gbrain returns chunks, all rows are self-reported) and the systems left out. The previous chart compared
+  recall_any@5 on 500 questions only.
+
 ## [0.24.2] - 2026-11-26
 
 Patch release. Theme: **`doc create` works again on stores that went through schema v11, and the
